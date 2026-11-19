@@ -1,0 +1,408 @@
+package com.example.data.managers
+
+import com.example.data.api.LLMAdapterFactory
+import com.example.data.api.MemoryToolDefinition
+import com.example.data.api.MemoryToolRegistry
+import com.example.data.api.ModelResponseResult
+import com.example.data.api.RetrofitClient
+import com.example.data.local.CustomProviderDao
+import com.example.data.local.CustomProviderEntity
+import com.example.data.local.MessageEntity
+import com.example.data.local.UserSettingsEntity
+import com.example.data.repository.EmochiRepository
+import com.example.data.repository.ProviderFallbackLogEntry
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
+import org.json.JSONObject
+
+class ProviderFallbackManager(
+    private val customProviderDao: CustomProviderDao,
+    private val onLogFallback: (ProviderFallbackLogEntry) -> Unit
+) {
+    fun buildProviderChain(
+        settings: UserSettingsEntity,
+        customProviders: Map<Long, CustomProviderEntity>,
+        buildConfigGeminiKey: String
+    ): List<String> {
+        val freeFirst = ApiPriorityCodec.isFreeFirst(settings.fallbackChainOrder)
+        val hasBuildGemini = buildConfigGeminiKey.isNotBlank() && buildConfigGeminiKey != "MY_GEMINI_API_KEY"
+
+        fun isConfigured(providerKey: String): Boolean = when (providerKey) {
+            "gemini" -> settings.customApiKey.isNotBlank() || hasBuildGemini
+            "groq" -> settings.groqApiKey.isNotBlank()
+            "openai" -> settings.openaiApiKey.isNotBlank()
+            "claude" -> settings.claudeApiKey.isNotBlank()
+            "openrouter" -> settings.openRouterApiKey.isNotBlank()
+            "nvidia" -> settings.nvidiaApiKey.isNotBlank()
+            "mistral" -> settings.mistralApiKey.isNotBlank()
+            "llm7" -> settings.enableLlm7 && settings.llm7Enabled
+            "pollinations" -> settings.enablePollinations && settings.pollinationsEnabled
+            "ovh" -> settings.enableOvh && settings.ovhEnabled &&
+                System.currentTimeMillis() > EmochiRepository.ovhCooldownUntilTimestamp
+            else -> if (providerKey.startsWith("custom_")) {
+                val id = providerKey.removePrefix("custom_").toLongOrNull()
+                id != null && customProviders.containsKey(id)
+            } else false
+        }
+
+        // 1. User-ordered keyed & custom APIs (#1 = first preference, #2 = second, ...)
+        val keyedOrdered = linkedSetOf<String>()
+        val resolvedKeyed = ApiPriorityCodec.resolveOrderedConfiguredKeyedProviders(
+            settings = settings,
+            customProviders = customProviders.values.toList()
+        )
+        for (k in resolvedKeyed) {
+            if (isConfigured(k)) keyedOrdered.add(k)
+        }
+        // Fallback if BuildConfig provides Gemini key even without user-entered key
+        if (keyedOrdered.isEmpty() && hasBuildGemini) {
+            keyedOrdered.add("gemini")
+        }
+
+        // 2. Enabled free keyless providers
+        val freeEnabled = ApiProviderCatalog.FREE_KEYLESS_IDS.filter { isConfigured(it) }
+
+        val finalChain = linkedSetOf<String>()
+        if (freeFirst) {
+            finalChain.addAll(freeEnabled)
+            if (settings.enableAutoFallback || freeEnabled.isEmpty()) {
+                finalChain.addAll(keyedOrdered)
+            }
+        } else {
+            finalChain.addAll(keyedOrdered)
+            if (settings.enableAutoFallback || keyedOrdered.isEmpty()) {
+                finalChain.addAll(freeEnabled)
+            }
+        }
+
+        if (finalChain.isEmpty()) {
+            finalChain.add("pollinations")
+            finalChain.add("llm7")
+        }
+        return finalChain.toList()
+    }
+
+    suspend fun executeWithFallback(
+        model: String,
+        settings: UserSettingsEntity,
+        systemPrompt: String,
+        messages: List<MessageEntity>,
+        buildConfigGeminiKey: String,
+        tools: List<MemoryToolDefinition> = emptyList()
+    ): ModelResponseResult = withContext(Dispatchers.IO) {
+        val customList = try {
+            customProviderDao.getAllProviders()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val customMap = customList.associateBy { it.id }
+        val chain = buildProviderChain(settings, customMap, buildConfigGeminiKey)
+        val primarySelected = settings.selectedProvider.lowercase().trim()
+
+        var lastError: Exception? = null
+        for ((idx, providerKey) in chain.withIndex()) {
+            val layer = idx + 1
+            val customEntity = if (providerKey.startsWith("custom_")) {
+                providerKey.removePrefix("custom_").toLongOrNull()?.let { customMap[it] }
+            } else null
+
+            val resolvedModel = when {
+                idx == 0 && providerKey == primarySelected && model.isNotBlank() ->
+                    EmochiRepository.sanitizeModelName(model)
+                providerKey == "groq" -> EmochiRepository.sanitizeModelName(settings.groqModel.ifBlank { "openai/gpt-oss-120b" })
+                providerKey == "openai" -> settings.openaiModel.ifBlank { "gpt-4o" }
+                providerKey == "gemini" -> EmochiRepository.sanitizeModelName(settings.geminiModel.ifBlank { "gemini-2.0-flash" })
+                providerKey == "claude" -> settings.claudeModel.ifBlank { "claude-3-5-sonnet-20241022" }
+                providerKey == "openrouter" -> settings.openRouterModel.ifBlank { "deepseek/deepseek-chat" }
+                providerKey == "nvidia" -> settings.nvidiaModel.ifBlank { "meta/llama-3.3-70b-instruct" }
+                providerKey == "mistral" -> settings.mistralModel.ifBlank { "mistral-large-latest" }
+                providerKey == "pollinations" -> settings.pollinationsModel.ifBlank { "openai" }
+                providerKey == "ovh" -> settings.ovhModel.ifBlank { "Meta-Llama-3_3-70B-Instruct" }
+                providerKey == "llm7" -> "default"
+                customEntity != null -> customEntity.modelName
+                else -> "gemini-2.0-flash"
+            }
+
+            onLogFallback(
+                ProviderFallbackLogEntry(
+                    providerName = "$providerKey ($resolvedModel)",
+                    status = "TRYING",
+                    layer = layer
+                )
+            )
+
+            try {
+                val adapter = LLMAdapterFactory.createAdapter(
+                    providerKey,
+                    resolvedModel,
+                    settings,
+                    customEntity,
+                    buildConfigGeminiKey
+                )
+                val effectiveTools = if (adapter.supportsFunctionCalling()) tools else emptyList()
+                val llmResp = adapter.sendMessage(systemPrompt, messages, effectiveTools)
+                val cleanText = EmochiRepository.cleanEmotionTags(llmResp.text)
+                if (cleanText.isBlank() && llmResp.toolCalls.isNullOrEmpty() && llmResp.text.isBlank()) {
+                    throw IllegalStateException("Sağlayıcı ($providerKey) boş yanıt döndürdü.")
+                }
+
+                onLogFallback(
+                    ProviderFallbackLogEntry(
+                        providerName = llmResp.usedProvider.ifBlank { providerKey },
+                        status = "SUCCESS",
+                        layer = layer
+                    )
+                )
+                return@withContext ModelResponseResult(
+                    text = llmResp.text,
+                    toolCalls = llmResp.toolCalls ?: emptyList(),
+                    promptTokens = llmResp.usage?.promptTokens ?: 0L,
+                    candidateTokens = llmResp.usage?.candidateTokens ?: 0L,
+                    usedProvider = llmResp.usedProvider.ifBlank { providerKey }
+                )
+            } catch (e: Exception) {
+                lastError = e
+                if (providerKey == "ovh") {
+                    EmochiRepository.ovhCooldownUntilTimestamp = System.currentTimeMillis() + 60_000L
+                }
+                onLogFallback(
+                    ProviderFallbackLogEntry(
+                        providerName = providerKey,
+                        status = "FAILED",
+                        errorMessage = e.message ?: "Bilinmeyen hata",
+                        layer = layer
+                    )
+                )
+            }
+        }
+
+        throw lastError ?: IllegalStateException("Tüm AI sağlayıcıları yanıt vermekte başarısız oldu.")
+    }
+
+    suspend fun testEndpointConnection(
+        url: String,
+        apiKey: String = "",
+        modelName: String = "gpt-4o-mini",
+        apiFormat: String = "openai",
+        testTools: Boolean = false
+    ): EmochiRepository.ProviderTestResult = withContext(Dispatchers.IO) {
+        val startMs = System.currentTimeMillis()
+        try {
+            val cleanUrl = url.trim().trimEnd('/')
+            val format = apiFormat.lowercase().trim()
+
+            // 1. Google Gemini native REST test
+            if (format == "gemini" || cleanUrl.contains("generativelanguage.googleapis.com")) {
+                val safeModel = EmochiRepository.sanitizeModelName(modelName.ifBlank { "gemini-2.0-flash" })
+                val geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/$safeModel:generateContent?key=${apiKey.trim()}"
+                val payload = JSONObject().apply {
+                    put(
+                        "contents",
+                        JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("role", "user")
+                                put(
+                                    "parts",
+                                    JSONArray().apply {
+                                        put(JSONObject().apply {
+                                            put("text", "Bağlantı testi için tek kelimeyle 'aktif' yaz.")
+                                        })
+                                    }
+                                )
+                            })
+                        }
+                    )
+                    put(
+                        "generationConfig",
+                        JSONObject().apply { put("maxOutputTokens", 16) }
+                    )
+                }
+                val req = Request.Builder()
+                    .url(geminiUrl)
+                    .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                RetrofitClient.okHttpClient.newCall(req).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    val latency = System.currentTimeMillis() - startMs
+                    return@withContext if (resp.isSuccessful) {
+                        EmochiRepository.ProviderTestResult(
+                            isSuccess = true,
+                            supportsFunctionCalling = true,
+                            errorMessage = "",
+                            rawResponse = bodyStr.take(300),
+                            latencyMs = latency
+                        )
+                    } else {
+                        EmochiRepository.ProviderTestResult(
+                            isSuccess = false,
+                            supportsFunctionCalling = false,
+                            errorMessage = "HTTP ${resp.code}: ${bodyStr.take(180)}",
+                            rawResponse = bodyStr,
+                            latencyMs = latency
+                        )
+                    }
+                }
+            }
+
+            // 2. Anthropic Messages API test
+            if (format == "anthropic" || cleanUrl.contains("anthropic.com")) {
+                val endpoint = if (cleanUrl.endsWith("/messages")) cleanUrl else "$cleanUrl/v1/messages"
+                val payload = JSONObject().apply {
+                    put("model", modelName.ifBlank { "claude-3-5-sonnet-20241022" })
+                    put("max_tokens", 24)
+                    put(
+                        "messages",
+                        JSONArray().apply {
+                            put(JSONObject().apply {
+                                put("role", "user")
+                                put("content", "Bağlantı testi için tek kelimeyle 'aktif' yaz.")
+                            })
+                        }
+                    )
+                }
+                val reqBuilder = Request.Builder()
+                    .url(endpoint)
+                    .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                    .header("Content-Type", "application/json")
+                    .header("anthropic-version", "2023-06-01")
+                if (apiKey.isNotBlank()) {
+                    reqBuilder.header("x-api-key", apiKey.trim())
+                }
+                RetrofitClient.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    val latency = System.currentTimeMillis() - startMs
+                    return@withContext if (resp.isSuccessful) {
+                        EmochiRepository.ProviderTestResult(
+                            isSuccess = true,
+                            supportsFunctionCalling = true,
+                            errorMessage = "",
+                            rawResponse = bodyStr.take(300),
+                            latencyMs = latency
+                        )
+                    } else {
+                        EmochiRepository.ProviderTestResult(
+                            isSuccess = false,
+                            supportsFunctionCalling = false,
+                            errorMessage = "HTTP ${resp.code}: ${bodyStr.take(180)}",
+                            rawResponse = bodyStr,
+                            latencyMs = latency
+                        )
+                    }
+                }
+            }
+
+            // 3. OpenAI-compatible Chat Completions test (OpenAI, Groq, OpenRouter, DeepSeek, OVH, Pollinations, LLM7, Ollama, etc.)
+            val endpoint = when {
+                cleanUrl.endsWith("/chat/completions") -> cleanUrl
+                cleanUrl.contains("pollinations.ai") -> cleanUrl
+                cleanUrl.endsWith("/v1") ||
+                    cleanUrl.endsWith("/v4") ||
+                    cleanUrl.endsWith("/openai") ||
+                    cleanUrl.contains("models.inference.ai.azure.com") ||
+                    cleanUrl.contains("api.perplexity.ai") -> "$cleanUrl/chat/completions"
+                else -> "$cleanUrl/v1/chat/completions"
+            }
+
+            val payload = JSONObject().apply {
+                put("model", modelName.ifBlank { "openai" })
+                put(
+                    "messages",
+                    JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", "Merhaba, bağlantı testi için tek kelimeyle 'aktif' yaz.")
+                        })
+                    }
+                )
+                put("max_tokens", 24)
+                if (testTools) {
+                    put("tools", MemoryToolRegistry.toOpenAiToolsJsonArray())
+                }
+            }
+
+            val reqBuilder = Request.Builder()
+                .url(endpoint)
+                .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
+                .header("Content-Type", "application/json")
+
+            if (apiKey.isNotBlank()) {
+                reqBuilder.header("Authorization", "Bearer ${apiKey.trim()}")
+            }
+
+            RetrofitClient.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                val bodyStr = resp.body?.string().orEmpty()
+                val latency = System.currentTimeMillis() - startMs
+                if (!resp.isSuccessful) {
+                    if (testTools && (resp.code == 400 || resp.code == 422)) {
+                        val basicRes = testEndpointConnection(
+                            url = url,
+                            apiKey = apiKey,
+                            modelName = modelName,
+                            apiFormat = apiFormat,
+                            testTools = false
+                        )
+                        return@withContext basicRes.copy(supportsFunctionCalling = false)
+                    }
+                    return@withContext EmochiRepository.ProviderTestResult(
+                        isSuccess = false,
+                        supportsFunctionCalling = false,
+                        errorMessage = "HTTP ${resp.code}: ${bodyStr.take(180)}",
+                        rawResponse = bodyStr,
+                        latencyMs = latency
+                    )
+                }
+                return@withContext EmochiRepository.ProviderTestResult(
+                    isSuccess = true,
+                    supportsFunctionCalling = testTools,
+                    errorMessage = "",
+                    rawResponse = bodyStr.take(300),
+                    latencyMs = latency
+                )
+            }
+        } catch (e: Exception) {
+            EmochiRepository.ProviderTestResult(
+                isSuccess = false,
+                supportsFunctionCalling = false,
+                errorMessage = e.message ?: "Bağlantı kurulamadı",
+                latencyMs = System.currentTimeMillis() - startMs
+            )
+        }
+    }
+
+    suspend fun fetchModelsFromOpenAiCompatibleEndpoint(
+        baseUrl: String,
+        apiKey: String
+    ): List<String> = withContext(Dispatchers.IO) {
+        try {
+            val cleanBase = baseUrl.trim().trimEnd('/')
+            val modelsUrl = when {
+                cleanBase.endsWith("/models") -> cleanBase
+                cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") -> "$cleanBase/models"
+                else -> "$cleanBase/v1/models"
+            }
+            val reqBuilder = Request.Builder().url(modelsUrl).get()
+            if (apiKey.isNotBlank()) {
+                reqBuilder.header("Authorization", "Bearer ${apiKey.trim()}")
+            }
+            RetrofitClient.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext emptyList<String>()
+                val body = resp.body?.string().orEmpty()
+                val arr = JSONObject(body).optJSONArray("data") ?: return@withContext emptyList<String>()
+                val result = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val id = arr.optJSONObject(i)?.optString("id")?.trim().orEmpty()
+                    if (id.isNotBlank()) result.add(id)
+                }
+                result.sorted()
+            }
+        } catch (_: Exception) {
+            emptyList<String>()
+        }
+    }
+}
