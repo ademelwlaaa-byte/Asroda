@@ -51,12 +51,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -82,13 +84,13 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -157,8 +159,8 @@ fun GlobalSettingsModal(
     settings: UserSettingsEntity,
     onDismiss: () -> Unit,
     onSaveSettings: (UserSettingsEntity) -> Unit,
-    onExportData: suspend () -> String,
-    onImportData: suspend (String) -> Unit,
+    onExportData: suspend (Boolean) -> String,
+    onImportData: suspend (String, Boolean) -> com.example.data.repository.BackupImportSummary,
     viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
 ) {
     BackHandler { onDismiss() }
@@ -169,10 +171,21 @@ fun GlobalSettingsModal(
     val modalRootSizeState = remember { mutableStateOf(IntSize.Zero) }
     val modalRootPosState = remember { mutableStateOf(Offset.Zero) }
     val rootSize = modalRootSizeState.value
-    val blurredBg = remember(context) { createFrostedGlobalSettingsBackdropBitmap(context) }
+    val blurredBgState = com.example.util.rememberFrostedBackdrop(
+        key = "global_settings_cosmic_bg",
+        drawableResId = R.drawable.img_global_settings_cosmic_bg,
+        targetWidth = 360,
+        maxHeight = 1080,
+        blurRadius = 4,
+        blurPasses = 2,
+        outputRgb565 = false
+    )
+    val blurredBg = blurredBgState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
     val refPlates = remember(context) { loadGlobalSettingsRefPlates(context) }
     val motionConfig = LocalCosmicMotionConfig.current
     val currentMotionMode by CosmicMotionPreferences.mode.collectAsState()
+    val refusalAutoFallback by com.example.util.AppFeatureFlags.refusalAutoFallback.collectAsState()
+    val providerHealthMap by com.example.data.managers.ProviderHealthTracker.healthSnapshot.collectAsState()
 
     val customProviders by viewModel.customProviders.collectAsState()
 
@@ -245,10 +258,27 @@ fun GlobalSettingsModal(
     var importJson by remember { mutableStateOf("") }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     var isBusy by remember { mutableStateOf(false) }
+    var includeApiKeysInBackup by remember { mutableStateOf(false) }
+    var pendingImportJson by remember { mutableStateOf<String?>(null) }
+    var showVoicePickerDialog by remember { mutableStateOf(false) }
+
+    val availableTtsVoices by viewModel.availableTtsVoices.collectAsState()
+    val isTtsSpeaking by viewModel.isSpeaking.collectAsState()
+    val ttsReadActions by com.example.util.AppFeatureFlags.ttsReadActions.collectAsState()
+    val ttsAutoReadReplies by com.example.util.AppFeatureFlags.ttsAutoReadReplies.collectAsState()
+
+    DisposableEffect(Unit) {
+        onDispose { viewModel.stopSpeaking() }
+    }
 
     // ── Tabs & Sub-Sheet Navigation ──
     // 0: API, 1: Sohbet, 2: Ses & Dil, 3: Sistem
     var activeTab by remember { mutableIntStateOf(0) }
+    LaunchedEffect(activeTab) {
+        if (activeTab == 2) {
+            viewModel.refreshTtsVoices()
+        }
+    }
     var showCatalogSearch by remember { mutableStateOf(false) }
     var configuringCatalogSpec by remember { mutableStateOf<CatalogProviderSpec?>(null) }
     var editingCatalogExistingCustom by remember { mutableStateOf<CustomProviderEntity?>(null) }
@@ -263,6 +293,26 @@ fun GlobalSettingsModal(
     var testingActiveKey by remember { mutableStateOf<String?>(null) }
     var activeTestResults by remember { mutableStateOf<Map<String, EmochiRepository.ProviderTestResult>>(emptyMap()) }
 
+    fun executeImportWithMode(jsonContent: String, overwriteExisting: Boolean) {
+        scope.launch {
+            isBusy = true
+            try {
+                val summary = onImportData(jsonContent, overwriteExisting)
+                val memoryCount = summary.memoryFactsCount + summary.memoryEventsCount
+                val summaryText = "Yüklendi (v${summary.version}): ${summary.botsCount} bot, ${summary.messagesCount} mesaj, $memoryCount anı"
+                Toast.makeText(context, summaryText, Toast.LENGTH_LONG).show()
+                statusMessage = summaryText
+                importJson = ""
+                pendingImportJson = null
+            } catch (e: Exception) {
+                statusMessage = "Yükleme hatası: ${e.message}"
+                Toast.makeText(context, "Yükleme hatası: ${e.message}", Toast.LENGTH_SHORT).show()
+            } finally {
+                isBusy = false
+            }
+        }
+    }
+
     // ── Backup File Launchers ──
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -275,12 +325,12 @@ fun GlobalSettingsModal(
                         stream.bufferedReader().use { reader -> reader.readText() }
                     } ?: ""
                     if (content.isNotBlank()) {
-                        onImportData(content)
-                        Toast.makeText(context, "Yedek dosyadan yüklendi!", Toast.LENGTH_SHORT).show()
-                        statusMessage = "Dosya başarıyla içe aktarıldı."
+                        pendingImportJson = content
+                    } else {
+                        statusMessage = "Seçilen yedek dosyası boş."
                     }
                 } catch (e: Exception) {
-                    statusMessage = "Yükleme hatası: ${e.message}"
+                    statusMessage = "Dosya okuma hatası: ${e.message}"
                 } finally {
                     isBusy = false
                 }
@@ -295,13 +345,17 @@ fun GlobalSettingsModal(
             scope.launch {
                 try {
                     isBusy = true
-                    val json = if (exportJson.isNotBlank()) exportJson else onExportData()
+                    val json = onExportData(includeApiKeysInBackup)
                     exportJson = json
                     context.contentResolver.openOutputStream(it)?.use { stream ->
-                        stream.write(json.toByteArray())
+                        stream.write(json.toByteArray(Charsets.UTF_8))
                     }
                     Toast.makeText(context, "Yedek dosyaya kaydedildi!", Toast.LENGTH_SHORT).show()
-                    statusMessage = "Yedek dosyaya kaydedildi."
+                    statusMessage = if (includeApiKeysInBackup) {
+                        "Yedek (API anahtarlarıyla) dosyaya kaydedildi."
+                    } else {
+                        "Güvenli yedek (anahtarsız, v2) dosyaya kaydedildi."
+                    }
                 } catch (e: Exception) {
                     statusMessage = "Kaydetme hatası: ${e.message}"
                 } finally {
@@ -1002,6 +1056,7 @@ fun GlobalSettingsModal(
                                                 isFirstPreference = isFirst && !prioritizeFreeKeyless,
                                                 isTesting = testingActiveKey == item.key,
                                                 testResult = testRes,
+                                                healthState = providerHealthMap[item.key.lowercase()],
                                                 onMoveUp = { moveApiItem(index, -1) },
                                                 onMoveDown = { moveApiItem(index, 1) },
                                                 onEdit = {
@@ -1034,6 +1089,9 @@ fun GlobalSettingsModal(
                                                             modelName = item.model,
                                                             apiFormat = item.apiFormat
                                                         )
+                                                        if (res.isSuccess) {
+                                                            com.example.data.managers.ProviderHealthTracker.recordSuccess(item.key, res.latencyMs)
+                                                        }
                                                         activeTestResults = activeTestResults + (item.key to res)
                                                         testingActiveKey = null
                                                     }
@@ -1075,6 +1133,40 @@ fun GlobalSettingsModal(
                                         checked = enableAutoFallback,
                                         onCheckedChange = { enableAutoFallback = it },
                                         modifier = Modifier.testTag("auto_fallback_toggle")
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(9.dp))
+                                MorCamDivider()
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Configurable Censorship / Moralizing Auto-Fallback Protection
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Sansür / Ahlak Vaazı Koruması",
+                                            color = GlobalMorCamColors.PearlText,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = "Açıkken bir model karakterden çıkıp vaaz veya ret verirse yanıtı göstermeden sıradaki özgür API'ye geçer.",
+                                            color = GlobalMorCamColors.MutedLavender,
+                                            fontSize = 11.sp,
+                                            lineHeight = 14.5.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    GlobalMorCamSwitch(
+                                        checked = refusalAutoFallback,
+                                        onCheckedChange = { com.example.util.AppFeatureFlags.setRefusalAutoFallback(it) },
+                                        modifier = Modifier.testTag("refusal_auto_fallback_toggle")
                                     )
                                 }
                             }
@@ -1255,7 +1347,7 @@ fun GlobalSettingsModal(
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Default.VolumeUp,
+                                            imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                                             contentDescription = null,
                                             tint = GlobalMorCamColors.BrightViolet,
                                             modifier = Modifier.size(20.dp)
@@ -1408,6 +1500,159 @@ fun GlobalSettingsModal(
                                                 )
                                             }
                                         }
+                                    }
+
+                                    // ── Mor Cam Voice Picker & Live Preview ──
+                                    Spacer(modifier = Modifier.height(14.dp))
+                                    val activeVoiceLabel = remember(selectedVoiceName, availableTtsVoices) {
+                                        if (selectedVoiceName.isBlank()) {
+                                            "Sistem Varsayılanı (${if (appLanguage == "en") "English" else "Türkçe"})"
+                                        } else {
+                                            availableTtsVoices.firstOrNull { it.name == selectedVoiceName }?.displayName
+                                                ?: selectedVoiceName.take(28)
+                                        }
+                                    }
+                                    Text(
+                                        text = "Ses Seçimi (${availableTtsVoices.size} cihaz sesi)",
+                                        color = GlobalMorCamColors.LavenderSubtext,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = InterFontFamily
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1.25f)
+                                                .heightIn(min = 44.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(
+                                                    Brush.verticalGradient(listOf(Color(0x88241145), Color(0x88120726)))
+                                                )
+                                                .border(
+                                                    1.dp,
+                                                    Brush.linearGradient(listOf(Color(0x99D8B4FE), Color(0x448B5CF6))),
+                                                    RoundedCornerShape(14.dp)
+                                                )
+                                                .clickable {
+                                                    viewModel.refreshTtsVoices()
+                                                    showVoicePickerDialog = true
+                                                }
+                                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                                                .testTag("tts_voice_picker_button"),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            Text(
+                                                text = "🎙️ $activeVoiceLabel",
+                                                color = GlobalMorCamColors.PearlText,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(0.85f)
+                                                .heightIn(min = 44.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(
+                                                    if (isTtsSpeaking) {
+                                                        Brush.verticalGradient(listOf(Color(0xEEDC2626), Color(0xEE991B1B)))
+                                                    } else {
+                                                        Brush.verticalGradient(listOf(Color(0xEE8B5CF6), Color(0xEE5B21B6)))
+                                                    }
+                                                )
+                                                .border(
+                                                    1.dp,
+                                                    Brush.linearGradient(listOf(Color(0xFFFDF7FF), Color(0xFFD8B4FE))),
+                                                    RoundedCornerShape(14.dp)
+                                                )
+                                                .clickable {
+                                                    if (isTtsSpeaking) {
+                                                        viewModel.stopSpeaking()
+                                                    } else {
+                                                        viewModel.previewTtsVoice(
+                                                            voiceName = selectedVoiceName,
+                                                            speed = ttsSpeed,
+                                                            pitch = ttsPitch,
+                                                            languageTag = appLanguage
+                                                        )
+                                                    }
+                                                }
+                                                .padding(horizontal = 10.dp, vertical = 8.dp)
+                                                .testTag("tts_preview_voice_button"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = if (isTtsSpeaking) "⏹ Durdur" else "▶ Sesi Dinle",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Aksiyon (*...*) Metinlerini Oku",
+                                                color = GlobalMorCamColors.PearlText,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Text(
+                                                text = "Kapalıyken yalnızca diyaloglar seslendirilir",
+                                                color = GlobalMorCamColors.LavenderSubtext,
+                                                fontSize = 11.sp,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                        GlobalMorCamSwitch(
+                                            checked = ttsReadActions,
+                                            onCheckedChange = { com.example.util.AppFeatureFlags.setTtsReadActions(it) }
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Yeni Yanıtları Otomatik Oku",
+                                                color = GlobalMorCamColors.PearlText,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Text(
+                                                text = "Karakter her yeni mesaj yazdığında sesi başlatır",
+                                                color = GlobalMorCamColors.LavenderSubtext,
+                                                fontSize = 11.sp,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                        GlobalMorCamSwitch(
+                                            checked = ttsAutoReadReplies,
+                                            onCheckedChange = { com.example.util.AppFeatureFlags.setTtsAutoReadReplies(it) }
+                                        )
                                     }
                                     }
                                 }
@@ -1642,18 +1887,46 @@ fun GlobalSettingsModal(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text(
-                                    text = "Yedekleme & Geri Yükleme",
+                                    text = "Yedekleme & Geri Yükleme (v2)",
                                     color = GlobalMorCamColors.PearlText,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = InterFontFamily
                                 )
                                 Text(
-                                    text = "Tüm karakterlerini, sohbetlerini ve ayarlarını JSON olarak dışa/içe aktar.",
+                                    text = "Karakterler, sohbetler, Neural Vault anıları, kadro, rutinler ve başarımları tam paket olarak dışa/içe aktar.",
                                     color = GlobalMorCamColors.LavenderSubtext,
                                     fontSize = 11.5.sp,
                                     fontFamily = InterFontFamily
                                 )
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "API anahtarlarını yedeğe dahil et (Önerilmez)",
+                                            color = if (includeApiKeysInBackup) Color(0xFFFCA5A5) else GlobalMorCamColors.PearlText,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = if (includeApiKeysInBackup) "Dikkat: Düz metin anahtarlar JSON içine yazılır!" else "Güvenli mod: Tüm API anahtarları maskelenir",
+                                            color = GlobalMorCamColors.LavenderSubtext,
+                                            fontSize = 10.5.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                    GlobalMorCamSwitch(
+                                        checked = includeApiKeysInBackup,
+                                        onCheckedChange = { includeApiKeysInBackup = it }
+                                    )
+                                }
+
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 Row(
@@ -1667,11 +1940,11 @@ fun GlobalSettingsModal(
                                             scope.launch {
                                                 isBusy = true
                                                 try {
-                                                    val json = onExportData()
+                                                    val json = onExportData(includeApiKeysInBackup)
                                                     exportJson = json
                                                     clipboardManager.setText(AnnotatedString(json))
                                                     Toast.makeText(context, "Yedek panoya kopyalandı!", Toast.LENGTH_SHORT).show()
-                                                    statusMessage = "Yedek panoya kopyalandı."
+                                                    statusMessage = "v2 yedek panoya kopyalandı."
                                                 } catch (e: Exception) {
                                                     statusMessage = "Hata: ${e.message}"
                                                 } finally {
@@ -1696,14 +1969,15 @@ fun GlobalSettingsModal(
                                             scope.launch {
                                                 isBusy = true
                                                 try {
-                                                    val json = if (exportJson.isNotBlank()) exportJson else onExportData()
+                                                    val json = onExportData(includeApiKeysInBackup)
                                                     exportJson = json
-                                                    val sendIntent = Intent().apply {
-                                                        action = Intent.ACTION_SEND
-                                                        putExtra(Intent.EXTRA_TEXT, json)
-                                                        type = "text/plain"
-                                                    }
-                                                    context.startActivity(Intent.createChooser(sendIntent, "Yedeği Paylaş"))
+                                                    com.example.util.ChatExporter.shareJsonFile(
+                                                        context = context,
+                                                        jsonContent = json,
+                                                        fileName = "emochi_backup_${System.currentTimeMillis() / 1000}.json",
+                                                        chooserTitle = "Yedeği Dosya Olarak Paylaş"
+                                                    )
+                                                    statusMessage = "Yedek dosyası paylaşıma hazırlandı."
                                                 } catch (e: Exception) {
                                                     statusMessage = "Paylaşım hatası: ${e.message}"
                                                 } finally {
@@ -1753,21 +2027,7 @@ fun GlobalSettingsModal(
                                         text = "Yüklemeyi Başlat",
                                         loading = isBusy,
                                         enabled = !isBusy,
-                                        onClick = {
-                                            scope.launch {
-                                                isBusy = true
-                                                try {
-                                                    onImportData(importJson)
-                                                    Toast.makeText(context, "Geri yükleme tamamlandı!", Toast.LENGTH_SHORT).show()
-                                                    statusMessage = "Veriler başarıyla yüklendi."
-                                                    importJson = ""
-                                                } catch (e: Exception) {
-                                                    statusMessage = "Hata: ${e.message}"
-                                                } finally {
-                                                    isBusy = false
-                                                }
-                                            }
-                                        },
+                                        onClick = { pendingImportJson = importJson },
                                         modifier = Modifier.fillMaxWidth()
                                     )
                                 }
@@ -1913,6 +2173,162 @@ fun GlobalSettingsModal(
                     }
                 }
             }
+
+        // ── Mor Cam Voice Picker Dialog ──
+        if (showVoicePickerDialog) {
+            MorCamDialogShell(
+                onDismissRequest = { showVoicePickerDialog = false },
+                title = "Sesli Okuma Sesi Seç",
+                subtitle = "Türkçe sesler en üstte listelenir",
+                icon = Icons.AutoMirrored.Filled.VolumeUp
+            ) {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item(key = "voice_default") {
+                        val isDef = selectedVoiceName.isBlank()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (isDef) Color(0x668B5CF6) else Color(0x331E0E38))
+                                .border(
+                                    1.dp,
+                                    if (isDef) Color(0xFFE9D5FF) else Color(0x44A855F7),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    selectedVoiceName = ""
+                                    showVoicePickerDialog = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Sistem Varsayılanı",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = InterFontFamily
+                                )
+                                Text(
+                                    text = "Cihazın varsayılan Türkçe/seçili dil sesi",
+                                    color = GlobalMorCamColors.LavenderSubtext,
+                                    fontSize = 11.sp,
+                                    fontFamily = InterFontFamily
+                                )
+                            }
+                            if (isDef) {
+                                Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFFF3E8FF), modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+
+                    items(availableTtsVoices.size, key = { idx -> availableTtsVoices[idx].name }) { idx ->
+                        val voice = availableTtsVoices[idx]
+                        val isSel = selectedVoiceName == voice.name
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(if (isSel) Color(0x668B5CF6) else Color(0x331E0E38))
+                                .border(
+                                    1.dp,
+                                    if (isSel) Color(0xFFE9D5FF) else Color(0x44A855F7),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    selectedVoiceName = voice.name
+                                    showVoicePickerDialog = false
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = voice.displayName,
+                                    color = Color.White,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontFamily = InterFontFamily
+                                )
+                                Text(
+                                    text = "${voice.localeTag} • ${if (voice.isNetwork) "Ağ Sesi" else "Çevrimdışı"}",
+                                    color = GlobalMorCamColors.LavenderSubtext,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = InterFontFamily
+                                )
+                            }
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "▶",
+                                    color = Color(0xFFE9D5FF),
+                                    fontSize = 14.sp,
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(Color(0x44A855F7))
+                                        .clickable {
+                                            viewModel.previewTtsVoice(
+                                                voiceName = voice.name,
+                                                speed = ttsSpeed,
+                                                pitch = ttsPitch,
+                                                languageTag = appLanguage
+                                            )
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                )
+                                if (isSel) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFFF3E8FF), modifier = Modifier.size(18.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Mor Cam Backup Restore Mode Confirmation (Merge vs Overwrite) ──
+        pendingImportJson?.let { jsonToImport ->
+            MorCamDialogShell(
+                onDismissRequest = { if (!isBusy) pendingImportJson = null },
+                title = "Geri Yükleme Modunu Seç",
+                subtitle = "Mevcut API anahtarların korunur; verilerin nasıl yükleneceğini seç.",
+                icon = Icons.Default.FileDownload
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    GlobalGlassPrimaryButton(
+                        text = "Mevcutlarla Birleştir (Önerilen)",
+                        loading = isBusy,
+                        enabled = !isBusy,
+                        onClick = { executeImportWithMode(jsonToImport, overwriteExisting = false) },
+                        modifier = Modifier.fillMaxWidth().testTag("backup_import_merge_button")
+                    )
+                    GlobalGlassSecondaryButton(
+                        text = "Üzerine Yaz (Mevcutları Temizle)",
+                        enabled = !isBusy,
+                        onClick = { executeImportWithMode(jsonToImport, overwriteExisting = true) },
+                        modifier = Modifier.fillMaxWidth().testTag("backup_import_overwrite_button")
+                    )
+                    Text(
+                        text = "Not: Birleştir modu mevcut karakterlerini korur ve yedekteki verileri ekler/günceller. Üzerine Yaz mevcut tüm sohbetleri silip yedeği yükler.",
+                        color = GlobalMorCamColors.LavenderSubtext,
+                        fontSize = 11.sp,
+                        fontFamily = InterFontFamily
+                    )
+                }
+            }
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -2076,7 +2492,7 @@ fun GlobalSettingsModal(
             onFetchModels = { baseUrl, key ->
                 viewModel.fetchModelsForEndpoint(baseUrl, key)
             },
-            onSave = { label, baseUrl, key, model, format, supportsTools ->
+            onSave = { label, baseUrl, key, model, format, supportsTools, utilityModel, detectedSmallModelsJson ->
                 if (editing != null) {
                     viewModel.updateCustomProviderFull(
                         id = editing.id,
@@ -2085,7 +2501,9 @@ fun GlobalSettingsModal(
                         apiKey = key.ifBlank { null },
                         modelName = model,
                         apiFormat = format,
-                        supportsFunctionCalling = supportsTools
+                        supportsFunctionCalling = supportsTools,
+                        utilityModel = utilityModel,
+                        detectedSmallModels = detectedSmallModelsJson
                     )
                 } else {
                     viewModel.saveCustomProvider(
@@ -2095,6 +2513,8 @@ fun GlobalSettingsModal(
                         modelName = model,
                         apiFormat = format,
                         supportsFunctionCalling = supportsTools,
+                        utilityModel = utilityModel,
+                        detectedSmallModels = detectedSmallModelsJson,
                         onSaved = { newId ->
                             val ck = "custom_$newId"
                             if (ck !in orderedApiKeys) orderedApiKeys = orderedApiKeys + ck
@@ -2280,6 +2700,7 @@ private fun ActiveApiPriorityRow(
     isFirstPreference: Boolean,
     isTesting: Boolean,
     testResult: EmochiRepository.ProviderTestResult?,
+    healthState: com.example.data.managers.ProviderHealthState? = null,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onEdit: () -> Unit,
@@ -2287,6 +2708,22 @@ private fun ActiveApiPriorityRow(
     onDelete: () -> Unit
 ) {
     val shape = RoundedCornerShape(16.dp)
+    val nowMs = System.currentTimeMillis()
+    val inCooldown = healthState != null && healthState.cooldownUntilMs > nowMs
+    val remSec = if (inCooldown) ((healthState!!.cooldownUntilMs - nowMs) / 1000L).coerceAtLeast(1L) else 0L
+    val (healthLabel, healthColor, healthBg) = when {
+        inCooldown && healthState?.lastFailureType == com.example.data.managers.ProviderFailureType.AUTH_ERROR ->
+            Triple("⚠ Anahtar Hatası", Color(0xFFFCA5A5), Color(0x44881337))
+        inCooldown && healthState?.lastFailureType == com.example.data.managers.ProviderFailureType.RATE_LIMIT ->
+            Triple("⏳ Kota Bekliyor (${remSec}s)", Color(0xFFFDE68A), Color(0x4478350F))
+        inCooldown ->
+            Triple("⏳ Beklemede (${remSec}s)", Color(0xFFFDE68A), Color(0x4478350F))
+        (healthState?.lastLatencyMs ?: 0L) > 0L ->
+            Triple("● Hazır (${healthState!!.lastLatencyMs} ms)", GlobalMorCamColors.SoftEmerald, Color(0x33064E3B))
+        else ->
+            Triple("● Hazır", GlobalMorCamColors.SoftEmerald, Color(0x2B064E3B))
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2370,15 +2807,37 @@ private fun ActiveApiPriorityRow(
                         }
                     }
                 }
-                Text(
-                    text = item.model,
-                    color = GlobalMorCamColors.BrightViolet,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Medium,
-                    fontFamily = InterFontFamily,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        text = item.model,
+                        color = GlobalMorCamColors.BrightViolet,
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = InterFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(healthBg)
+                            .border(0.6.dp, healthColor.copy(alpha = 0.55f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 6.dp, vertical = 1.5.dp)
+                    ) {
+                        Text(
+                            text = healthLabel,
+                            color = healthColor,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = InterFontFamily,
+                            maxLines = 1
+                        )
+                    }
+                }
                 Text(
                     text = item.subtitle,
                     color = GlobalMorCamColors.MutedLavender,

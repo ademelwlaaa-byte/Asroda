@@ -104,7 +104,9 @@ class CastMemberManager(
         initialMood: String = "nötr",
         affectionDelta: Int = 0,
         cueSentence: String = "",
-        bot: BotEntity? = null
+        bot: BotEntity? = null,
+        confidence: Int? = null,
+        pendingConfirmation: Boolean? = null
     ) = withContext(Dispatchers.IO) {
         val cleanName = cleanCharacterNameCandidate(rawCharacterName)
         if (cleanName.length < 2) return@withContext
@@ -116,15 +118,17 @@ class CastMemberManager(
         if (blacklisted.contains(cleanName.lowercase(turkishLocale))) return@withContext
 
         val existing = castMemberDao.findByName(botId, cleanName)
-        val (isSignificant, evalRole, confidence, difficultyMult) = EmochiRepository.evaluateCharacterSignificance(
+        val (isSignificant, evalRole, evalConfidence, difficultyMult) = EmochiRepository.evaluateCharacterSignificance(
             candidateName = cleanName,
             sceneContext = cueSentence.ifBlank { role }
         )
+        val effectiveConfidence = confidence ?: evalConfidence
         val resolvedRole = if (role.isNotBlank() && role != "Yan Karakter") role else evalRole
 
         if (existing == null) {
-            if (!isSignificant && confidence < 45) return@withContext
+            if (confidence == null && !isSignificant && effectiveConfidence < 45) return@withContext
             val initialAffection = (50 + affectionDelta.coerceIn(-15, 15)).coerceIn(0, 100)
+            val resolvedPending = pendingConfirmation ?: (effectiveConfidence in 50..70)
             castMemberDao.insertCastMember(
                 CastMemberEntity(
                     botId = botId,
@@ -133,11 +137,11 @@ class CastMemberManager(
                     role = resolvedRole,
                     affectionScore = initialAffection,
                     relationshipState = initialMood.ifBlank { "Tanıdık" },
-                    importanceScore = if (confidence >= 80) 7 else 5,
+                    importanceScore = if (effectiveConfidence >= 80) 7 else 5,
                     isAutoAdded = true,
                     isBlacklisted = false,
-                    detectionConfidence = confidence,
-                    pendingUserConfirmation = confidence in 50..79,
+                    detectionConfidence = effectiveConfidence,
+                    pendingUserConfirmation = resolvedPending,
                     appearanceCount = 1,
                     lastSceneContext = cueSentence.take(200),
                     baseAffectionDifficultyMultiplier = difficultyMult
@@ -173,6 +177,58 @@ class CastMemberManager(
         }
     }
 
+    suspend fun getBlacklistedCharacterNames(botId: String): Set<String> = withContext(Dispatchers.IO) {
+        castMemberDao.getBlacklistedNamesForBot(botId)
+            .map { it.trim().lowercase(turkishLocale) }
+            .filter { it.isNotBlank() }
+            .toSet()
+    }
+
+    suspend fun detectAndRegisterCastMembers(
+        botId: String,
+        aiReplyText: String,
+        userQuery: String = ""
+    ) = withContext(Dispatchers.IO) {
+        val bot = botDao.getBotById(botId)
+        val blacklisted = getBlacklistedCharacterNames(botId)
+
+        // 1) Explicit [CAST_MEMBER: Name | Role] tag
+        val tagRegex = Regex("""\[CAST_MEMBER:\s*([^|\]]+?)(?:\s*\|\s*([^\]]+))?\]""", RegexOption.IGNORE_CASE)
+        for (match in tagRegex.findAll(aiReplyText)) {
+            val name = cleanCharacterNameCandidate(match.groupValues[1])
+            val role = match.groupValues.getOrNull(2)?.trim().orEmpty().ifBlank { "Yan Karakter" }
+            if (name.length < 2) continue
+            if (blacklisted.contains(name.lowercase(turkishLocale))) continue
+            if (bot != null && isMainOrUserCharacter(name, bot)) continue
+            ensureSideCharacterRegistered(
+                botId = botId,
+                rawCharacterName = name,
+                role = role,
+                cueSentence = aiReplyText.take(200),
+                bot = bot
+            )
+        }
+
+        // 2) Natural Turkish dialogue attribution: "dedi Tarık", "sordu Selin", "fısıldadı Kaan"
+        val verbFirstRegex = Regex("""\b(?:dedi|sordu|fısıldadı|bağırdı|mırıldandı|ekledi|cevapladı)\s+([A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,20})\b""")
+        for (match in verbFirstRegex.findAll(aiReplyText)) {
+            val name = cleanCharacterNameCandidate(match.groupValues[1])
+            if (name.length < 2) continue
+            if (blacklisted.contains(name.lowercase(turkishLocale))) continue
+            if (bot != null && isMainOrUserCharacter(name, bot)) continue
+            // Borderline single-appearance attribution -> confidence 65 (50..70 range) -> pendingUserConfirmation = true
+            ensureSideCharacterRegistered(
+                botId = botId,
+                rawCharacterName = name,
+                role = "Yan Karakter",
+                cueSentence = aiReplyText.take(200),
+                bot = bot,
+                confidence = 65,
+                pendingConfirmation = true
+            )
+        }
+    }
+
     suspend fun reEvaluateCastMemberRolesIfNeeded(
         botId: String,
         currentMessageCount: Int,
@@ -180,9 +236,46 @@ class CastMemberManager(
     ) = withContext(Dispatchers.IO) {
         if (sceneContext.isBlank()) return@withContext
         val members = castMemberDao.getConfirmedCastMembersForBot(botId)
+        val lowerScene = sceneContext.lowercase(turkishLocale)
+        val hasMajorBetrayalEvent = lowerScene.contains("ihanet") ||
+            lowerScene.contains("düşman saf") ||
+            lowerScene.contains("arkadan bıçakla") ||
+            lowerScene.contains("sattı")
+
         for (member in members) {
-            if (currentMessageCount - member.lastRoleEvaluationIndex < 8) continue
-            if (!sceneContext.contains(member.name, ignoreCase = true)) continue
+            val isPeriodicDue = currentMessageCount > 0 &&
+                (currentMessageCount - member.lastRoleEvaluationIndex >= 30 ||
+                    (currentMessageCount % 30 == 0 && currentMessageCount > member.lastRoleEvaluationIndex))
+            val mentionsMember = sceneContext.contains(member.name, ignoreCase = true)
+            if (!isPeriodicDue && !(hasMajorBetrayalEvent && mentionsMember)) continue
+
+            // Major story event (betrayal / enemy turn)
+            if (hasMajorBetrayalEvent && (mentionsMember || member.affectionScore <= 25)) {
+                castMemberDao.updateCastMember(
+                    member.copy(
+                        role = "Rakip / Düşman",
+                        baseAffectionDifficultyMultiplier = 0.5,
+                        lastRoleEvaluationIndex = currentMessageCount,
+                        lastSceneContext = sceneContext.take(200)
+                    )
+                )
+                continue
+            }
+
+            // Periodic 30-message relationship evolution (e.g., Yabancı with affection >= 80 -> Yakın Dost, 1.3)
+            if (isPeriodicDue && member.role.equals("Yabancı", ignoreCase = true) && member.affectionScore >= 80) {
+                castMemberDao.updateCastMember(
+                    member.copy(
+                        role = "Yakın Dost",
+                        baseAffectionDifficultyMultiplier = 1.3,
+                        lastRoleEvaluationIndex = currentMessageCount,
+                        lastSceneContext = sceneContext.take(200)
+                    )
+                )
+                continue
+            }
+
+            if (!mentionsMember) continue
 
             val (_, inferredRole, _, newMult) = EmochiRepository.evaluateCharacterSignificance(
                 candidateName = member.name,

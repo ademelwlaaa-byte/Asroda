@@ -206,11 +206,11 @@ private val AIDEN_CATALOG_SPECS = listOf(
     ),
     AidenCatalogRowSpec(
         presetId = "preset_aiden_dispatch",
-        title = "Beyaz Gözler - Zihin Kontrolü",
-        fullTitle = "Beyaz Gözler - Zihin Kontrolü (Dispatch Evreni)",
-        carouselTitle = "Beyaz Gözler - Zihin Kontrolü",
-        carouselSubtitle = "Aiden'ın gözleri beyazlaştığında gerçeklik bükülüyor ve halüsinasyon başlıyor.",
-        description = "Aiden'ın gözleri beyazlaştığında gerçeklik bükülüyor. Halüsinasyon, klonlar, ışınlanma ve enerji avatarı.",
+        title = "SDN Torrance: İkinci Şans",
+        fullTitle = "SDN Torrance: İkinci Şans — Dispatch & Blonde Blazer",
+        carouselTitle = "SDN Torrance: İkinci Şans",
+        carouselSubtitle = "Blonde Blazer'ın davet ettiği SDN'de Aiden'ın beyaz gözleri ve sınıflandırılamaz güçleri sınanıyor.",
+        description = "Dispatch evreninde SDN Torrance'a kabul edilen Aiden: beyaz gözler, klonlar, ışınlanma ve Blonde Blazer'la yeni bir başlangıç.",
         fullDescription = "Dispatch evreninde SDN Torrance merkezine Blonde Blazer tarafından 'ikinci bir şans' olarak dahil edilen Aiden Blackwood, sinir sistemine bağlı sınıflandırılamaz güçlere sahiptir. Normalde mavi olan gözleri, algı ve reflekslerini aşırı hızlandırdığında tıpkı Herobrine gibi tamamen parlak beyaza döner; göz temasıyla hedeflerine suçluluk dolu halüsinasyonlar yaşatır, kısa mesafe ışınlanır ve fiziksel klonlar üretir. Kontrolünü kaybettiğinde ise gözleri kor kırmızıya (Entity-303) bürünerek bilinçaltının devasa Enerji Avatarı'nı serbest bırakır.",
         universeRulesSummary = "• Güç Kademeleri: Mavi Gözler (Normal) → Parlak Beyaz Gözler (Zihin Kontrolü, Halüsinasyon, Klon & Işınlanma) → Kor Kırmızı Gözler (Yıkıcı Enerji Avatarı).\n• Merkez & Ekip: SDN Torrance Binası, Blonde Blazer gözetiminde gri-ahlaklı Z Team operasyonları.\n• Psikolojik Zırh: 5 yaşında ailesini kaybeden Aiden duygularını kusursuz bir özgüven zırhı altında gizler.",
         openingScenePreview = "SDN binasının girişinde atmosfer sakin ama amaç yüklüydü. Aiden, Blonde Blazer'ın yanında duruyordu. Blonde Blazer içten bir sesle konuştu: \"Hoş geldin Aiden. Burası SDN. Buraya gelen herkesin bir geçmişi vardır ama burada kimse yalnızca geçmişiyle yargılanmaz. Hikayen burada bitmek zorunda değil...\"",
@@ -224,17 +224,17 @@ private val AIDEN_CATALOG_SPECS = listOf(
             emberAccent = Color(0xFF38BDF8)
         ),
         badges = listOf(
-            AidenBadgeSpec(AidenBadgeIconType.EYE, "Psikolojik & Gerilim", Color(0xFF38BDF8))
+            AidenBadgeSpec(AidenBadgeIconType.EYE, "Dispatch • Süper Güç", Color(0xFF38BDF8))
         )
     ),
     AidenCatalogRowSpec(
         presetId = "preset_aiden_joker_emma",
-        title = "Kırmızı Gözler - Yıkım Protokolü",
-        fullTitle = "Kırmızı Gözler - Yıkım Protokolü (Viren City & Emma Myers)",
-        carouselTitle = "Kırmızı Gözler - Yıkım Protokolü",
-        carouselSubtitle = "Yıkıcı enerji, zaman boşlukları ve Viren City'de çift kişilikli karanlık sır.",
-        description = "Kırmızı gözler, yıkıcı enerji, zaman yavaşlaması ve gerçeklik düzenlemesi. Geceleri uyanan ikinci kimlik.",
-        fullDescription = "Viren City'de sakin bir restoran işleten Aiden Blackwood, açıklayamadığı zaman boşlukları, uykusuzluk ve gizemli yaralarla uyanmaktadır. Çocukluğunda ailesinin gözleri önünde katledilmesiyle zihni hayatta kalmak için ikiye bölünmüştür: Gündüzleri nazik ve huzur arayan Aiden; geceleri ise şehrin yozlaşmış sistemini yerle bir eden soğukkanlı stratejist 'The Joker'. Ünlü aktris Emma Myers tanınmamak için gece geç saatte Aiden'ın restoranına sığındığında, koruma içgüdüsü ile yıkım protokolü arasındaki çizgi tamamen bulanıklaşır.",
+        title = "Viren City: Gölgedeki Joker",
+        fullTitle = "Viren City: Gölgedeki Joker — Aiden & Emma Myers",
+        carouselTitle = "Viren City: Gölgedeki Joker",
+        carouselSubtitle = "Gündüz sakin restoran sahibi, gece şehri sarsan Joker; Emma Myers her şeyi değiştiriyor.",
+        description = "Viren City'de çift kişilikle yaşayan Aiden'ın gece sessiz restoranına ünlü aktris Emma Myers sığındığında karanlık sırlar uyanıyor.",
+        fullDescription = "Viren City'de sakin bir restoran işleten Aiden Blackwood, açıklayamadığı zaman boşlukları, uykusuzluk ve gizemli yaralarla uyanmaktadır. Çocukluğunda ailesinin gözleri önünde katledilmesiyle zihni hayatta kalmak için ikiye bölünmüştür: Gündüzleri nazik ve huzur arayan Aiden; geceleri ise şehrin yozlaşmış sistemini yerle bir eden soğukkanlı stratejist 'The Joker'. Ünlü aktris Emma Myers tanınmamak için gece geç saatte Aiden'ın restoranına sığındığında, koruma içgüdüsü ile karanlık gölge kimliği arasındaki çizgi tamamen bulanıklaşır.",
         universeRulesSummary = "• Çift Kişilik Dengesi: Birincil kişilik Aiden (sakin, empatik, sırlarından habersiz) ↔ İkincil kişilik Joker (hesapçı, patlayıcı ve psikolojik manipülasyon uzmanı, Aiden'ı her pahasına koruyan gölge).\n• Tetikleyiciler: Travma, doğrudan tehdit veya Emma Myers'a yönelik tehlike anında ton aniden soğur ve keskinleşir.\n• Kilit İsimler: Emma Myers, Araştırmacı Gazeteci Noah Kane, Dedektif Ronan Hale.",
         openingScenePreview = "Gece geç saatlerdi ve restoran neredeyse boştu. Sokak lambalarının solgun yansımaları masaların üzerine uzun gölgeler düşürüyordu. Kapı yavaşça açıldı; tanınmamaya çalışır gibi sade giyinmiş genç bir kadın içeri adım attı ve karşındaki sandalyeye oturdu: \"Burası beklediğimden daha sakin... Ben Emma. Bazen insan sadece kimsenin onu tanımadığı bir yere ihtiyaç duyar.\"",
         thumbDrawableRes = R.drawable.img_aiden_wide_thumb3_joker,
@@ -247,18 +247,18 @@ private val AIDEN_CATALOG_SPECS = listOf(
             emberAccent = Color(0xFFF43F5E)
         ),
         badges = listOf(
-            AidenBadgeSpec(AidenBadgeIconType.RED_ORB, "Karanlık Güç & Yoğunluk", Color(0xFFEF4444))
+            AidenBadgeSpec(AidenBadgeIconType.RED_ORB, "Çift Kişilik • Gerilim", Color(0xFFEF4444))
         )
     ),
     AidenCatalogRowSpec(
         presetId = "preset_aiden_doctor_jenna",
-        title = "Natasha Romanoff - Güven mi ...",
-        fullTitle = "Natasha Romanoff & Mucize Doktor — Güven mi İhanet mi?",
-        carouselTitle = "Natasha Romanoff - Güven mi ...",
-        carouselSubtitle = "Gölge koridorlarda tehlikeli bir sır, silinen anılar ve derin bağlantı.",
-        description = "Bekler. Adım her zaman Aiden'dır ve her zaman kayıp parçanın peşindedir. Silinme sendromu ve gece mesaisi.",
-        fullDescription = "NewYork-Presbyterian Hastanesi'nin 23 yaşındaki dahi cerrahı Aiden Blackwood, en imkânsız travma ve organ nakli vakalarını sıfır hatayla çözerek 'Mucize Doktor' unvanını kazanmıştır. Ancak zihni nadir görülen 'Erasure Syndrome' (Silinme Sendromu) nedeniyle bazı insanları ve anıları istemsizce silmektedir; neyi unuttuğunu bilmese de eksikliğin boşluğunu hisseder. Hastane başhekimi ve onu büyüten teyzesi Dr. Selene Morgan'ın gözetiminde gece yarısı gelen kritik bir vaka ve dünyaca ünlü yıldızla kesişen yolları, güven ile ihanet arasındaki tüm sırları açığa çıkaracaktır.",
-        universeRulesSummary = "• Tıbbi Deha & Kusur: Beden dilindeki en ufak mikro-tepkileri okuyan cerrahi deha + önemli anıları zihninden silen 'Erasure Syndrome'.\n• Atmosfer: Gece yarısı NewYork-Presbyterian cerrahi koridorları, acil kodlar ve gizlenen geçmiş kayıtları.\n• İlişki Dinamiği: Mesafeli ve işine saplantılı Aiden'ın, hayatına giren özel kadına karşı beklenmedik koruyuculuğu.",
+        title = "Mucize Doktor: Silinen Anılar",
+        fullTitle = "Mucize Doktor: Silinen Anılar — NewYork-Presbyterian & Jenna Ortega",
+        carouselTitle = "Mucize Doktor: Silinen Anılar",
+        carouselSubtitle = "NewYork-Presbyterian'ın 23 yaşındaki dahi cerrahı, Silinme Sendromu ve Jenna Ortega ile kesişen yollar.",
+        description = "İmkânsız vakaları çözen dahi cerrah Aiden, Silinme Sendromu'nun kayıp parçasını ararken gece nöbetinde Jenna Ortega ile karşılaşır.",
+        fullDescription = "NewYork-Presbyterian Hastanesi'nin 23 yaşındaki dahi cerrahı Aiden Blackwood, en imkânsız travma ve organ nakli vakalarını sıfır hatayla çözerek 'Mucize Doktor' unvanını kazanmıştır. Ancak zihni nadir görülen 'Erasure Syndrome' (Silinme Sendromu) nedeniyle bazı insanları ve anıları istemsizce silmektedir; neyi unuttuğunu bilmese de eksikliğin boşluğunu hisseder. Hastane başhekimi ve onu büyüten teyzesi Dr. Selene Morgan'ın gözetiminde gece yarısı gelen kritik bir vaka ve dünyaca ünlü aktris Jenna Ortega ile kesişen yolları, mesafeli kalbindeki duvarları yıkacaktır.",
+        universeRulesSummary = "• Tıbbi Deha & Kusur: Beden dilindeki en ufak mikro-tepkileri okuyan cerrahi deha + önemli anıları zihninden silen 'Erasure Syndrome'.\n• Atmosfer: Gece yarısı NewYork-Presbyterian cerrahi koridorları, acil kodlar ve gizlenen geçmiş kayıtları.\n• İlişki Dinamiği: Mesafeli ve işine saplantılı Aiden'ın, Jenna Ortega'ya karşı beklenmedik koruyuculuğu.",
         openingScenePreview = "Gece yarısını geçmişti. NewYork-Presbyterian'ın cerrahi katı alışılmadık derecede sessizdi. Dr. Selene Morgan ameliyathanenin önünde elindeki dosyayı kapattı ve Aiden'a baktı: \"Kendini yine fazla zorluyorsun.\" Tam o sırada koridorun ucundan koşarak gelen hemşire sesi sessizliği yardı: \"Dr. Morgan... Acilde kritik bir vaka var ve hiçbir doktor ne olduğunu çözemiyor!\"",
         thumbDrawableRes = R.drawable.img_aiden_wide_thumb4_hospital,
         carouselDrawableRes = R.drawable.img_aiden_wide_thumb4_hospital,
@@ -270,16 +270,16 @@ private val AIDEN_CATALOG_SPECS = listOf(
             emberAccent = Color(0xFF38BDF8)
         ),
         badges = listOf(
-            AidenBadgeSpec(AidenBadgeIconType.PINE_TREE, "Gerilim & Bağlantı", Color(0xFF10B981))
+            AidenBadgeSpec(AidenBadgeIconType.PINE_TREE, "Tıp Dramı • Romantik", Color(0xFF10B981))
         )
     ),
     AidenCatalogRowSpec(
         presetId = "preset_aiden_obsidian_sydney",
-        title = "Sıfır Noktası - Son Buluşma",
-        fullTitle = "Sıfır Noktası - Son Buluşma (Obsidian Protokolü & Sydney)",
-        carouselTitle = "Sıfır Noktası - Son Buluşma",
-        carouselSubtitle = "Ay sona eriyor. Aiden varoluşun ve şifreli ağların sınırında duruyor.",
-        description = "Her şey buraya geliyordu. Ay sona eriyor ve Aiden neon yağmurlu Tokyo gecesinde varoluşun sınırında duruyor.",
+        title = "Obsidyen Protokolü: Tokyo",
+        fullTitle = "Obsidyen Protokolü: Tokyo — Aiden & Sydney Sweeney",
+        carouselTitle = "Obsidyen Protokolü: Tokyo",
+        carouselSubtitle = "Shibuya'nın neon yağmurunda şifreli bir sır, kriptograf Aiden ve hedefteki Sydney Sweeney.",
+        description = "Aero-Kinetik Sinestezi yeteneğine sahip gölge kriptograf Aiden, Shibuya'da suikastçılardan kaçan Sydney Sweeney'yi koruyor.",
         fullDescription = "Tokyo'nun neon yağmurlu ara sokakları ile Zürih'in yeraltı arşivleri arasında faaliyet gösteren 22 yaşındaki baş kriptograf ve gölge mimarı Aiden Blackwood, 'Aero-Kinetik Sinestezi' yeteneğine sahiptir: Ses frekanslarını, yalan titreşimlerini ve mermi/hareket yörüngelerini görüş alanında süzülen obsidyen-camgöbeği geometrik çizgiler olarak görür. Ödüllü yönetmen Sydney Sweeney, Shibuya'da gizli bir yapay zekâ kartelinin şifreli defterini ele geçirip suikastçıların hedefi haline geldiğinde, Aiden onu korumak için gölgelerden çıkar.",
         universeRulesSummary = "• Özel Yetenek: Aero-Kinetik Sinestezi — ses, yalan ve kinetik momentumu görsel gümüş-camgöbeği geometri olarak algılama.\n• Geçmiş: 6 yaşında İsviçre Alpleri'ndeki bir sığınak kuşatmasından sağ çıkan tek kişi; obsidyen-gümüş gözler.\n• Görev: Shibuya çatı katından yeraltı veri mahzenlerine uzanan yüksek gerilimli koruma ve karşı-istihbarat.",
         openingScenePreview = "Shibuya'nın neon ışıklı yüksek katlı süitinde yağmur tavandan tabana camları dövüyordu. Aiden Blackwood balkon kapısının yanında durmuş, obsidyen-gümüş gözleriyle yağmurla parlayan çatıları tarıyordu. Arkasında, şifreli belleği göğsüne bastıran Sydney Sweeney sessizliği bozdu: \"Yirmi dakikadır gözünü bile kırpmadın Aiden. Çıkış rotalarını mı hesaplıyorsun, yoksa gardını indirmeyi hiç mi bilmiyorsun?\"",
@@ -293,7 +293,7 @@ private val AIDEN_CATALOG_SPECS = listOf(
             emberAccent = Color(0xFFE879F9)
         ),
         badges = listOf(
-            AidenBadgeSpec(AidenBadgeIconType.LIGHTNING, "Kozmik & Duruk", Color(0xFFD946EF))
+            AidenBadgeSpec(AidenBadgeIconType.LIGHTNING, "Siber Gerilim • Tokyo", Color(0xFFD946EF))
         )
     )
 )
@@ -890,7 +890,7 @@ fun AidenStoriesModalContent(
             modifier = Modifier
                 .fillMaxSize()
                 .navigationBarsPadding(),
-            contentPadding = PaddingValues(top = 0.dp, bottom = 56.dp)
+            contentPadding = PaddingValues(top = 0.dp, bottom = 84.dp)
         ) {
             // 1. Unified Header + Carousel Section with Lightning Flash, Breathing "Stories" Logo & 3D Pager
             item(key = "aiden_modal_top_header_and_carousel") {
@@ -1882,6 +1882,7 @@ private fun AidenHeroPeekingCarousel(
     val isPaused = isUserDragging || isUserPressed || isPausedExternal
 
     val slideTimerProgress = remember { Animatable(0f) }
+    var timerOwnerPage by remember { mutableIntStateOf(initialVirtualPage) }
 
     val settledUniverseIndex by remember {
         derivedStateOf {
@@ -1893,21 +1894,26 @@ private fun AidenHeroPeekingCarousel(
     val continuousPagePos = pagerState.currentPage + pagerState.currentPageOffsetFraction
     onContinuousUniverseChanged(continuousPagePos)
 
-    // Section 3.2: Reliable Auto-Advance Loop & Pause-on-Interaction Protection
-    // Note: Keep a SINGLE LaunchedEffect mutating slideTimerProgress so MutatorMutex never cancels animateTo(1f)!
+    // Section 3.2: Silky Auto-Advance Loop & Pause-on-Interaction Protection
+    // Ownership transfers cleanly to the newly settled page at 0%, glides smoothly 0 -> 1 over 4800ms,
+    // and keeps ownership on the outgoing page during the 520ms transition so its fill fades out naturally
+    // while the incoming pill expands cleanly from 0% without ever flashing full or stalling.
     LaunchedEffect(pagerState.settledPage, isPaused) {
+        timerOwnerPage = pagerState.settledPage
         slideTimerProgress.snapTo(0f)
         if (isPaused) {
             return@LaunchedEffect
         }
         slideTimerProgress.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 3600, easing = LinearEasing)
+            animationSpec = tween(durationMillis = 4800, easing = LinearEasing)
         )
-        slideTimerProgress.snapTo(0f)
         pagerState.animateScrollToPage(
             page = pagerState.settledPage + 1,
-            animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing)
+            animationSpec = tween(
+                durationMillis = 520,
+                easing = CubicBezierEasing(0.25f, 0.85f, 0.35f, 1f)
+            )
         )
     }
 
@@ -2218,107 +2224,96 @@ private fun AidenHeroPeekingCarousel(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Section 3.2: 5 Pagination Points where the active long capsule (w-7 = 28.dp, h-2 = 8.dp)
-        // has a live left-to-right progress fill during auto-advance!
+        // Section 3.2: 5 Balanced Pagination Dots — normal 8.dp inactive dots, compact 14.dp active pill
+        // that fills smoothly from 0% to 100% once settled without oversized bloat.
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .clip(RoundedCornerShape(50))
-                .background(Color(0x59120526))
-                .padding(horizontal = 9.dp, vertical = 3.5.dp)
+                .background(Color(0x52120526))
+                .border(0.7.dp, Color(0x44A78BFA), RoundedCornerShape(50))
+                .padding(horizontal = 9.dp, vertical = 4.5.dp)
                 .testTag("aiden_carousel_pagination_row")
         ) {
-            // Continuous fractional page position so pagination capsules morph in real time during both auto-scroll and user swipe
             val rawFractionalPage = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
             val fractionalMod = ((rawFractionalPage % count.toFloat()) + count.toFloat()) % count.toFloat()
+            val ownerUniverseIndex = ((timerOwnerPage % count) + count) % count
 
             specs.forEachIndexed { idx, _ ->
                 val rawDist = abs(fractionalMod - idx.toFloat())
                 val circularDist = min(rawDist, count.toFloat() - rawDist)
-                val continuousSelection = (1f - circularDist).coerceIn(0f, 1f)
-                val selectionAnim by animateFloatAsState(
-                    targetValue = continuousSelection,
-                    animationSpec = spring(
-                        dampingRatio = 0.78f,
-                        stiffness = Spring.StiffnessMediumLow
-                    ),
-                    label = "pagination_select_anim_$idx"
-                )
+                val linearSelection = (1f - circularDist).coerceIn(0f, 1f)
+                // Direct frame-accurate smoothstep curve synced 1:1 with pager scroll (zero rubber-band lag!)
+                val smoothSel = linearSelection * linearSelection * (3f - 2f * linearSelection)
 
-                val capsuleWidth = 10.dp + (18.dp * selectionAnim) // 10.dp -> 28.dp (w-7)
-                val capsuleHeight = 6.5.dp + (1.5.dp * selectionAnim) // -> 8.dp (h-2)
-                val morphBounce = 1f + 0.14f * sin((selectionAnim * PI).toFloat())
+                val capsuleWidth = 8.dp + (8.dp * smoothSel) // Normal 8.dp dot -> sleek 16.dp active pill
+                val capsuleHeight = 6.5.dp
 
-                val isCurrentSettled = idx == settledUniverseIndex && !pagerState.isScrollInProgress
-                val timerFill = if (isCurrentSettled) {
-                    slideTimerProgress.value
+                val isTimerOwner = idx == ownerUniverseIndex
+                val fillProgress = if (isTimerOwner) {
+                    slideTimerProgress.value.coerceIn(0f, 1f)
                 } else {
-                    selectionAnim
+                    0f
                 }
 
                 Box(
                     modifier = Modifier
                         .width(capsuleWidth)
                         .height(capsuleHeight)
-                        .graphicsLayer {
-                            scaleY = morphBounce
-                        }
                         .neonOuterGlow(
-                            cornerRadius = 4.dp,
+                            cornerRadius = 3.25.dp,
                             glowColor = Color(0xFFD946EF),
                             secondaryColor = Color(0xFFF5D0FE),
-                            blurRadius = 5.dp,
-                            glowAlpha = 0.74f * selectionAnim * glowPulse,
+                            blurRadius = 3.5.dp,
+                            glowAlpha = 0.50f * smoothSel * glowPulse,
                             flowPhase = ambientPhase
                         )
                         .clip(RoundedCornerShape(50))
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
-                                    Color(0xFF7A61A3),
-                                    Color(0xFF5E4785)
+                                    Color(0xFF6B5394).copy(alpha = 0.72f + 0.24f * smoothSel),
+                                    Color(0xFF47316E).copy(alpha = 0.76f + 0.20f * smoothSel)
                                 )
                             )
                         )
                         .border(
-                            width = 0.85.dp,
-                            color = Color(0xFFA78BFA).copy(alpha = 0.65f + 0.30f * selectionAnim),
+                            width = 0.75.dp,
+                            color = Color(0xFFC4B5FD).copy(alpha = 0.42f + 0.48f * smoothSel),
                             shape = RoundedCornerShape(50)
                         )
                         .drawWithContent {
                             drawContent()
-                            if (selectionAnim > 0.01f) {
-                                // Unfilled track inside active capsule
+                            if (smoothSel > 0.02f) {
+                                // Dark amethyst unfilled track inside active pill
                                 drawRoundRect(
                                     brush = Brush.horizontalGradient(
                                         colors = listOf(
-                                            Color(0xFF4C1D95).copy(alpha = 0.82f * selectionAnim),
-                                            Color(0xFF3B0764).copy(alpha = 0.78f * selectionAnim)
+                                            Color(0xFF3B126E).copy(alpha = 0.85f * smoothSel),
+                                            Color(0xFF2A0852).copy(alpha = 0.82f * smoothSel)
                                         )
                                     ),
                                     cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
                                 )
 
-                                // Live left-to-right progress fill
-                                val fillFraction = if (isCurrentSettled) {
-                                    (0.22f + 0.78f * timerFill).coerceIn(0.22f, 1f)
-                                } else {
-                                    (0.35f + 0.65f * selectionAnim).coerceIn(0f, 1f)
+                                // Smooth 0% -> 100% progress fill; fades cleanly with smoothSel as outgoing pill shrinks
+                                if (fillProgress > 0.002f) {
+                                    val fillWidth = (size.width * fillProgress).coerceIn(0f, size.width)
+                                    val barAlpha = smoothSel.coerceIn(0f, 1f)
+                                    drawRect(
+                                        brush = Brush.horizontalGradient(
+                                            colors = listOf(
+                                                Color(0xFFFFFFFF).copy(alpha = barAlpha),
+                                                Color(0xFFF5D0FE).copy(alpha = barAlpha),
+                                                Color(0xFFE879F9).copy(alpha = barAlpha * 0.96f)
+                                            ),
+                                            startX = 0f,
+                                            endX = size.width
+                                        ),
+                                        size = Size(fillWidth, size.height)
+                                    )
                                 }
-                                val fillWidth = (size.width * fillFraction).coerceAtLeast(size.height * selectionAnim)
-
-                                drawRoundRect(
-                                    brush = Brush.horizontalGradient(
-                                        colors = listOf(
-                                            Color(0xFFFFFFFF).copy(alpha = selectionAnim),
-                                            Color(0xFFF5D0FE).copy(alpha = selectionAnim),
-                                            Color(0xFFE879F9).copy(alpha = selectionAnim)
-                                        )
-                                    ),
-                                    size = Size(fillWidth, size.height),
-                                    cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
-                                )
                             }
                         }
                         .clickable {
@@ -2330,7 +2325,7 @@ private fun AidenHeroPeekingCarousel(
                                 coroutineScope.launch {
                                     pagerState.animateScrollToPage(
                                         page = pagerState.currentPage + delta,
-                                        animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing)
+                                        animationSpec = tween(durationMillis = 480, easing = FastOutSlowInEasing)
                                     )
                                 }
                             }

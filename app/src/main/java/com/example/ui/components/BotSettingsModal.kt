@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.testTag
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -382,8 +383,15 @@ fun BotSettingsModal(
     ) {
         // Live preview if user picked a new custom wallpaper inside settings
         if (chatBgUrl != bot.chatBgUrl && chatBgUrl.isNotBlank() && chatBgUrl != "USE_AVATAR") {
+            val previewBgRequest = remember(chatBgUrl, context) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(chatBgUrl)
+                    .allowRgb565(true)
+                    .crossfade(250)
+                    .build()
+            }
             coil.compose.AsyncImage(
-                model = chatBgUrl,
+                model = previewBgRequest,
                 contentDescription = "Yeni Arka Plan Önizlemesi",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -2141,50 +2149,33 @@ fun BotSettingsModal(
         }
     }
 
-    // 5. Chat Export Dialog (.txt / .json + Date Filter + Share / Copy)
+    // 5. Chat Export Dialog (.txt / .md / .json + Date Filter + Copy / SAF Save / FileProvider Share)
     if (showExportDialog) {
-        var exportFormat by remember { mutableStateOf("txt") }
-        var dateRangeFilter by remember { mutableStateOf("all") }
+        var exportFormat by remember { mutableStateOf(com.example.util.ChatExporter.ExportFormat.TEXT) }
+        var dateRangeFilter by remember { mutableStateOf(com.example.util.ChatExporter.DateRange.ALL) }
 
-        val now = System.currentTimeMillis()
         val filteredMessages = remember(activeMessages, dateRangeFilter) {
-            val cutoff = when (dateRangeFilter) {
-                "today" -> now - 24L * 3600L * 1000L
-                "week" -> now - 7L * 24L * 3600L * 1000L
-                "month" -> now - 30L * 24L * 3600L * 1000L
-                else -> 0L
-            }
-            activeMessages.filter { it.timestamp >= cutoff }
+            com.example.util.ChatExporter.filterByRange(activeMessages, dateRangeFilter)
         }
 
-        fun formatExportContent(): String {
-            return if (exportFormat == "json") {
-                val root = org.json.JSONObject()
-                root.put("botId", bot.id)
-                root.put("botName", displayTitle)
-                root.put("exportedAt", System.currentTimeMillis())
-                val arr = org.json.JSONArray()
-                filteredMessages.forEach { msg ->
-                    val o = org.json.JSONObject()
-                    o.put("role", msg.role)
-                    o.put("text", msg.text)
-                    o.put("timestamp", msg.timestamp)
-                    arr.put(o)
-                }
-                root.put("messages", arr)
-                root.toString(2)
-            } else {
-                val sb = StringBuilder()
-                sb.appendLine("=== $displayTitle — Sohbet Kaydı (${filteredMessages.size} Mesaj) ===")
-                sb.appendLine()
-                val sdf = java.text.SimpleDateFormat("dd.MM.yyyy HH:mm", java.util.Locale.getDefault())
-                filteredMessages.forEach { msg ->
-                    val who = if (msg.role == "user") (userCharName.ifBlank { "Sen" }) else displayTitle
-                    sb.appendLine("[${sdf.format(java.util.Date(msg.timestamp))}] $who:")
-                    sb.appendLine(msg.text)
-                    sb.appendLine()
-                }
-                sb.toString()
+        val exportSaveLauncher = rememberLauncherForActivityResult(
+            contract = ActivityResultContracts.CreateDocument(exportFormat.mimeType)
+        ) { uri ->
+            uri?.let { targetUri ->
+                val ok = com.example.util.ChatExporter.exportToUri(
+                    context = context,
+                    uri = targetUri,
+                    bot = bot,
+                    messages = activeMessages,
+                    format = exportFormat,
+                    dateRange = dateRangeFilter
+                )
+                Toast.makeText(
+                    context,
+                    if (ok) "Sohbet dosyaya kaydedildi" else "Dosya kaydedilemedi",
+                    Toast.LENGTH_SHORT
+                ).show()
+                if (ok) showExportDialog = false
             }
         }
 
@@ -2206,7 +2197,11 @@ fun BotSettingsModal(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    listOf("txt" to "Metin (.txt)", "json" to "Veri (.json)").forEach { (fmt, label) ->
+                    listOf(
+                        com.example.util.ChatExporter.ExportFormat.TEXT to "Metin (.txt)",
+                        com.example.util.ChatExporter.ExportFormat.MARKDOWN to "Markdown (.md)",
+                        com.example.util.ChatExporter.ExportFormat.JSON to "Veri (.json)"
+                    ).forEach { (fmt, label) ->
                         MorCamChipPill(
                             label = label,
                             selected = exportFormat == fmt,
@@ -2229,10 +2224,10 @@ fun BotSettingsModal(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     listOf(
-                        "all" to "Tümü",
-                        "today" to "24 Saat",
-                        "week" to "1 Hafta",
-                        "month" to "1 Ay"
+                        com.example.util.ChatExporter.DateRange.ALL to "Tümü",
+                        com.example.util.ChatExporter.DateRange.LAST_24_HOURS to "24 Saat",
+                        com.example.util.ChatExporter.DateRange.LAST_7_DAYS to "1 Hafta",
+                        com.example.util.ChatExporter.DateRange.LAST_30_DAYS to "1 Ay"
                     ).forEach { (rng, label) ->
                         MorCamChipPill(
                             label = label,
@@ -2245,33 +2240,53 @@ fun BotSettingsModal(
                 Spacer(modifier = Modifier.height(4.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     MorCamCapsuleButton(
                         text = "Kopyala",
                         onClick = {
-                            clipboardManager.setText(AnnotatedString(formatExportContent()))
+                            val content = com.example.util.ChatExporter.buildExportContent(
+                                bot = bot,
+                                messages = activeMessages,
+                                format = exportFormat,
+                                dateRange = dateRangeFilter
+                            )
+                            clipboardManager.setText(AnnotatedString(content))
                             Toast.makeText(context, "Sohbet panoya kopyalandı", Toast.LENGTH_SHORT).show()
                             showExportDialog = false
                         },
                         variant = MorCamButtonVariant.Secondary,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).testTag("export_copy_button")
+                    )
+                    MorCamCapsuleButton(
+                        text = "Kaydet",
+                        onClick = {
+                            exportSaveLauncher.launch(
+                                com.example.util.ChatExporter.suggestedFileName(bot, exportFormat)
+                            )
+                        },
+                        variant = MorCamButtonVariant.Secondary,
+                        modifier = Modifier.weight(1f).testTag("export_save_button")
                     )
                     MorCamCapsuleButton(
                         text = "Paylaş",
                         onClick = {
-                            val content = formatExportContent()
-                            val sendIntent = android.content.Intent().apply {
-                                action = android.content.Intent.ACTION_SEND
-                                putExtra(android.content.Intent.EXTRA_TEXT, content)
-                                type = "text/plain"
+                            try {
+                                com.example.util.ChatExporter.export(
+                                    context = context,
+                                    bot = bot,
+                                    messages = activeMessages,
+                                    format = exportFormat,
+                                    dateRange = dateRangeFilter
+                                )
+                                showExportDialog = false
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Dışa aktarma başarısız oldu: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
-                            context.startActivity(android.content.Intent.createChooser(sendIntent, "Sohbeti Paylaş"))
-                            showExportDialog = false
                         },
                         variant = MorCamButtonVariant.Primary,
                         icon = Icons.Default.Share,
-                        modifier = Modifier.weight(1.1f)
+                        modifier = Modifier.weight(1.1f).testTag("export_share_button")
                     )
                 }
             }
@@ -2288,85 +2303,18 @@ fun BotSettingsModal(
  * Deeply frosted wisteria bitmap (3-pass radius-12 separable blur) so glass panels
  * completely melt sharp cathedral edges behind them while preserving rich purple light refraction.
  */
-private var cachedSettingsDeepFrostedBitmap: ImageBitmap? = null
-
 private fun createSettingsDeepFrostedWisteriaBitmap(context: android.content.Context): ImageBitmap {
-    cachedSettingsDeepFrostedBitmap?.let { return it }
-    return try {
-        val opts = android.graphics.BitmapFactory.Options().apply {
-            inSampleSize = 2
-            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-        }
-        val raw = android.graphics.BitmapFactory.decodeResource(
-            context.resources,
-            R.drawable.img_chat_bg_aiden_wisteria,
-            opts
-        ) ?: return createFrostedWisteriaBackdropBitmap(context)
-
-        val w = 320
-        val h = ((raw.height.toFloat() / raw.width.toFloat().coerceAtLeast(1f)) * w).toInt().coerceIn(320, 960)
-        val scaled = android.graphics.Bitmap.createScaledBitmap(raw, w, h, true)
-        if (raw !== scaled) raw.recycle()
-
-        val pixels = IntArray(w * h)
-        scaled.getPixels(pixels, 0, w, 0, 0, w, h)
-        val tmp = IntArray(w * h)
-
-        val radius = 12
-        val div = radius * 2 + 1
-        repeat(3) {
-            for (y in 0 until h) {
-                val rowOffset = y * w
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (dx in -radius..radius) {
-                    val px = pixels[rowOffset + dx.coerceIn(0, w - 1)]
-                    rSum += (px ushr 16) and 0xFF
-                    gSum += (px ushr 8) and 0xFF
-                    bSum += px and 0xFF
-                }
-                for (x in 0 until w) {
-                    tmp[rowOffset + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val nextX = (x + radius + 1).coerceAtMost(w - 1)
-                    val prevX = (x - radius).coerceAtLeast(0)
-                    val nextPx = pixels[rowOffset + nextX]
-                    val prevPx = pixels[rowOffset + prevX]
-                    rSum += ((nextPx ushr 16) and 0xFF) - ((prevPx ushr 16) and 0xFF)
-                    gSum += ((nextPx ushr 8) and 0xFF) - ((prevPx ushr 8) and 0xFF)
-                    bSum += (nextPx and 0xFF) - (prevPx and 0xFF)
-                }
-            }
-            for (x in 0 until w) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (dy in -radius..radius) {
-                    val px = tmp[dy.coerceIn(0, h - 1) * w + x]
-                    rSum += (px ushr 16) and 0xFF
-                    gSum += (px ushr 8) and 0xFF
-                    bSum += px and 0xFF
-                }
-                for (y in 0 until h) {
-                    pixels[y * w + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val nextY = (y + radius + 1).coerceAtMost(h - 1)
-                    val prevY = (y - radius).coerceAtLeast(0)
-                    val nextPx = tmp[nextY * w + x]
-                    val prevPx = tmp[prevY * w + x]
-                    rSum += ((nextPx ushr 16) and 0xFF) - ((prevPx ushr 16) and 0xFF)
-                    gSum += ((nextPx ushr 8) and 0xFF) - ((prevPx ushr 8) and 0xFF)
-                    bSum += (nextPx and 0xFF) - (prevPx and 0xFF)
-                }
-            }
-        }
-
-        val out = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565)
-        out.setPixels(pixels, 0, w, 0, 0, w, h)
-        scaled.recycle()
-        out.asImageBitmap().also { cachedSettingsDeepFrostedBitmap = it }
-    } catch (_: Throwable) {
-        createFrostedWisteriaBackdropBitmap(context)
-    }
+    return com.example.util.FrostedBackdropCache.getOrGenerateSync(
+        context = context,
+        key = "wisteria_settings_deep_bg",
+        drawableResId = R.drawable.img_chat_bg_aiden_wisteria,
+        targetWidth = 320,
+        maxHeight = 960,
+        blurRadius = 12,
+        blurPasses = 3,
+        violetShiftWarmPixels = false,
+        outputRgb565 = true
+    )
 }
 
 /**

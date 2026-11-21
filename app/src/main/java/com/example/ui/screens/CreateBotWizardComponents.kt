@@ -1,8 +1,16 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,16 +21,19 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -34,10 +45,15 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -58,6 +74,10 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -164,7 +184,9 @@ internal fun WizardMorCamHeader(
     frostedBackdrop: ImageBitmap,
     scrollSync: Int,
     glowAlpha: Float,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onStepSelect: ((Int) -> Unit)? = null,
+    canJumpToStep: ((Int) -> Boolean)? = null
 ) {
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
@@ -177,6 +199,13 @@ internal fun WizardMorCamHeader(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    0.00f to Color(0xD6090315),
+                    0.72f to Color(0x800B0419),
+                    1.00f to Color.Transparent
+                )
+            )
             .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 10.dp)
     ) {
@@ -338,9 +367,9 @@ internal fun WizardMorCamHeader(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        // 6 Equal Full-Width Frosted Crystal Progress Segments
+        // 6 Equal Full-Width Interactive Frosted Crystal Progress Segments
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -349,50 +378,67 @@ internal fun WizardMorCamHeader(
             repeat(totalSteps) { idx ->
                 val isActive = idx == stepIdx
                 val isDone = idx < stepIdx
+                val isClickable = onStepSelect != null && (isDone || (canJumpToStep?.invoke(idx) == true))
                 val segScaleY by animateFloatAsState(
-                    targetValue = if (isActive) 1.25f else 1f,
+                    targetValue = if (isActive) 1.28f else 1f,
                     animationSpec = CosmicMotionSpecs.snappyOrb(),
                     label = "wizardSegScale_$idx"
                 )
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(5.5.dp)
-                        .graphicsLayer { scaleY = segScaleY }
+                        .height(22.dp)
                         .then(
-                            if (isActive) {
-                                Modifier.wizardMorCamGlow(
-                                    cornerRadius = 3.dp,
-                                    glowColor = Color(0xFFD8B4FE),
-                                    alpha = 0.75f * glowAlpha,
-                                    blurDp = 6.dp
-                                )
+                            if (isClickable) {
+                                Modifier.clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null
+                                ) { onStepSelect?.invoke(idx) }
                             } else Modifier
                         )
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            when {
-                                isActive -> Brush.horizontalGradient(
-                                    listOf(Color(0xFFFAF5FF), Color(0xFFD8B4FE), Color(0xFFA855F7))
-                                )
-                                isDone -> Brush.horizontalGradient(
-                                    listOf(Color(0xCC9333EA), Color(0xCCA855F7))
-                                )
-                                else -> Brush.horizontalGradient(
-                                    listOf(Color(0x4428154D), Color(0x4428154D))
-                                )
-                            }
-                        )
-                        .border(
-                            width = 0.6.dp,
-                            color = when {
-                                isActive -> Color(0xE8FFFFFF)
-                                isDone -> Color(0x99D8B4FE)
-                                else -> Color(0x44C4B5FD)
-                            },
-                            shape = RoundedCornerShape(50)
-                        )
-                )
+                        .testTag("wizard_progress_segment_$idx"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(5.5.dp)
+                            .graphicsLayer { scaleY = segScaleY }
+                            .then(
+                                if (isActive) {
+                                    Modifier.wizardMorCamGlow(
+                                        cornerRadius = 3.dp,
+                                        glowColor = Color(0xFFD8B4FE),
+                                        alpha = 0.75f * glowAlpha,
+                                        blurDp = 6.dp
+                                    )
+                                } else Modifier
+                            )
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                when {
+                                    isActive -> Brush.horizontalGradient(
+                                        listOf(Color(0xFFFAF5FF), Color(0xFFD8B4FE), Color(0xFFA855F7))
+                                    )
+                                    isDone -> Brush.horizontalGradient(
+                                        listOf(Color(0xCC9333EA), Color(0xCCA855F7))
+                                    )
+                                    else -> Brush.horizontalGradient(
+                                        listOf(Color(0x4428154D), Color(0x4428154D))
+                                    )
+                                }
+                            )
+                            .border(
+                                width = 0.6.dp,
+                                color = when {
+                                    isActive -> Color(0xE8FFFFFF)
+                                    isDone -> Color(0x99D8B4FE)
+                                    else -> Color(0x44C4B5FD)
+                                },
+                                shape = RoundedCornerShape(50)
+                            )
+                    )
+                }
             }
         }
     }
@@ -408,7 +454,9 @@ internal fun WizardMorCamBottomDock(
     scrollSync: Int,
     glowAlpha: Float,
     onBack: () -> Unit,
-    onNext: () -> Unit
+    onNext: () -> Unit,
+    validationHint: String? = null,
+    onDisabledNextClick: (() -> Unit)? = null
 ) {
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
@@ -426,13 +474,46 @@ internal fun WizardMorCamBottomDock(
         label = "dockNextScale"
     )
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
-            .imePadding()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+            .background(
+                Brush.verticalGradient(
+                    0.00f to Color.Transparent,
+                    0.26f to Color(0x8C0B0419),
+                    0.68f to Color(0xDC090315),
+                    1.00f to Color(0xF2070210)
+                )
+            )
+            .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
+            .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 12.dp)
     ) {
+        AnimatedVisibility(
+            visible = !validationHint.isNullOrBlank(),
+            enter = fadeIn(tween(180)) + expandVertically(),
+            exit = fadeOut(tween(160)) + shrinkVertically()
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xCC3B1347))
+                    .border(1.dp, Color(0xCCFDA4AF), RoundedCornerShape(14.dp))
+                    .padding(horizontal = 14.dp, vertical = 9.dp)
+                    .testTag("wizard_validation_hint")
+            ) {
+                Text(
+                    text = "✦ ${validationHint.orEmpty()}",
+                    fontFamily = InterFontFamily,
+                    color = Color(0xFFFFE4E6),
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    lineHeight = 17.sp
+                )
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -549,10 +630,11 @@ internal fun WizardMorCamBottomDock(
                         shape = RoundedCornerShape(50)
                     )
                     .clickable(
-                        enabled = canNext,
                         interactionSource = nextInteraction,
                         indication = null,
-                        onClick = onNext
+                        onClick = {
+                            if (canNext) onNext() else onDisabledNextClick?.invoke()
+                        }
                     )
                     .testTag("wizard_next_button")
                     .padding(horizontal = 18.dp),
@@ -982,6 +1064,17 @@ internal fun WizardFieldLabel(
     }
 }
 
+internal class WizardFocusScrollHost(
+    val scrollState: ScrollState
+) {
+    var safeTopInWindowPx by mutableFloatStateOf(0f)
+    var safeBottomInWindowPx by mutableFloatStateOf(0f)
+}
+
+internal val LocalWizardFocusScrollHost = compositionLocalOf<WizardFocusScrollHost?> { null }
+
+private val WizardFocusScrollEase = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
+
 // ── Recessed Frosted Crystal Glass Text Field ────────────────────────────────
 @Composable
 internal fun WizardMorCamTextField(
@@ -995,10 +1088,86 @@ internal fun WizardMorCamTextField(
     minHeight: Dp = 54.dp
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    var boxCoords by remember { mutableStateOf<LayoutCoordinates?>(null) }
+    val scrollHost = LocalWizardFocusScrollHost.current
+    val density = LocalDensity.current
     val shape = RoundedCornerShape(18.dp)
+
+    // Zero-ping, silky-smooth focus scroll:
+    // - On initial tap (0ms delay), glides smoothly via CubicBezier animation if the box is outside the safe viewport.
+    // - While the Android keyboard is sliding up/down, follows safeBottomInWindowPx frame-by-frame in 1:1 lockstep
+    //   with the native IME animation (never cancels or delays!).
+    LaunchedEffect(isFocused, scrollHost) {
+        if (!isFocused) return@LaunchedEffect
+        val host = scrollHost ?: return@LaunchedEffect
+
+        val labelMarginPx = with(density) { 36.dp.toPx() }
+        val bottomMarginPx = with(density) { 24.dp.toPx() }
+        val minDeltaPx = with(density) { 2.dp.toPx() }
+
+        fun computeDeltaPx(safeTop: Float, safeBottom: Float): Float {
+            val coords = boxCoords ?: return 0f
+            if (!coords.isAttached) return 0f
+            val targetTop = safeTop + labelMarginPx
+            val targetBottom = safeBottom - bottomMarginPx
+            if (targetBottom <= targetTop + 20f) return 0f
+
+            val bounds = coords.boundsInWindow()
+            return when {
+                bounds.bottom > targetBottom -> {
+                    val neededDown = bounds.bottom - targetBottom
+                    val maxDownWithoutClippingTop = (bounds.top - targetTop).coerceAtLeast(0f)
+                    if (bounds.height <= (targetBottom - targetTop)) {
+                        neededDown
+                    } else {
+                        maxDownWithoutClippingTop
+                    }
+                }
+                bounds.top < targetTop -> bounds.top - targetTop
+                else -> 0f
+            }
+        }
+
+        // 1. Immediate smooth animation on tap (e.g. switching fields while keyboard is already open)
+        val initialDelta = computeDeltaPx(host.safeTopInWindowPx, host.safeBottomInWindowPx)
+        if (kotlin.math.abs(initialDelta) > minDeltaPx) {
+            val target = (host.scrollState.value + initialDelta.toInt())
+                .coerceIn(0, host.scrollState.maxValue)
+            host.scrollState.animateScrollTo(
+                value = target,
+                animationSpec = tween(durationMillis = 280, easing = WizardFocusScrollEase)
+            )
+        }
+
+        // 2. Frame-accurate tracking while the keyboard opens/closes (zero delay, zero ping!)
+        val continuousImeStepCapPx = with(density) { 48.dp.toPx() }
+        var lastSafeBottom = host.safeBottomInWindowPx
+        snapshotFlow {
+            Triple(host.safeTopInWindowPx, host.safeBottomInWindowPx, host.scrollState.maxValue)
+        }.collect { (safeTop, safeBottom, maxVal) ->
+            val stepSizePx = kotlin.math.abs(safeBottom - lastSafeBottom)
+            val isContinuousImeFrame = stepSizePx > 0.5f && stepSizePx < continuousImeStepCapPx
+            lastSafeBottom = safeBottom
+            val delta = computeDeltaPx(safeTop, safeBottom)
+            if (kotlin.math.abs(delta) > minDeltaPx) {
+                val target = (host.scrollState.value + delta.toInt()).coerceIn(0, maxVal)
+                if (isContinuousImeFrame) {
+                    // Keyboard is smoothly animating frame-by-frame -> lockstep 1:1 with native IME curve!
+                    host.scrollState.scrollTo(target)
+                } else {
+                    // Single-step keyboard jump or stationary field switch -> silky CubicBezier glide!
+                    host.scrollState.animateScrollTo(
+                        value = target,
+                        animationSpec = tween(durationMillis = 300, easing = WizardFocusScrollEase)
+                    )
+                }
+            }
+        }
+    }
 
     Box(
         modifier = modifier
+            .onGloballyPositioned { boxCoords = it }
             .height(minHeight)
             .then(
                 if (isFocused) {

@@ -351,104 +351,204 @@ fun FallbackLogModal(
     logs: List<com.example.data.repository.ProviderFallbackLogEntry>,
     onDismiss: () -> Unit
 ) {
+    var selectedTab by remember { mutableStateOf(0) } // 0 = Deneme Logları, 1 = Güvenilirlik
+    val liveHealth by com.example.data.managers.ProviderHealthTracker.healthSnapshot.collectAsStateWithLifecycle()
+
     MorCamDialogShell(
         onDismissRequest = onDismiss,
-        title = "Sağlayıcı Deneme Logları",
-        subtitle = "API geçiş ve yedekleme geçmişi",
+        title = "Sağlayıcı Deneme & Güvenilirlik",
+        subtitle = "API geçiş geçmişi, devre kesici ve canlı metrikler",
         icon = Icons.Default.List
     ) {
-        if (logs.isEmpty()) {
-            MorCamGlassCard(
-                cornerRadius = 18.dp,
-                paddingVertical = 28.dp
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally
+        // 2-tab Mor Cam switcher
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0x45120826))
+                .border(0.8.dp, Color(0x55B794F4), RoundedCornerShape(14.dp))
+                .padding(3.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf("Deneme Logları" to 0, "Güvenilirlik" to 1).forEach { (title, idx) ->
+                val isSelected = selectedTab == idx
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 38.dp)
+                        .clip(RoundedCornerShape(11.dp))
+                        .background(if (isSelected) Color(0xAA7C3AED) else Color.Transparent)
+                        .clickable { selectedTab = idx },
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = MorCamTokens.LavenderSoft,
-                        modifier = Modifier.size(28.dp)
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = "Henüz kayıtlı bir sağlayıcı deneme logu yok.",
+                        text = title,
                         fontFamily = com.example.ui.theme.InterFontFamily,
-                        color = MorCamTokens.LavenderMuted,
-                        fontSize = 13.sp
+                        color = if (isSelected) Color(0xFFFDFBFF) else MorCamTokens.LavenderMuted,
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
                     )
                 }
             }
-        } else {
-            androidx.compose.foundation.lazy.LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 420.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(logs) { entry ->
-                    val isSuccess = entry.status == "SUCCESS"
-                    val isFailed = entry.status == "FAILED"
-                    val badgeColor = when {
-                        isSuccess -> Color(0xFFDDD6FE)
-                        isFailed -> MorCamTokens.DestructiveRimLight
-                        else -> MorCamTokens.LavenderSoft
-                    }
-                    val badgeBg = when {
-                        isSuccess -> Color(0x457C3AED)
-                        isFailed -> Color(0x55831843)
-                        else -> Color(0x38581C87)
-                    }
-                    MorCamGlassCard(
-                        cornerRadius = 16.dp,
-                        highlighted = isSuccess,
-                        paddingHorizontal = 13.dp,
-                        paddingVertical = 11.dp
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (selectedTab == 0) {
+            if (logs.isEmpty()) {
+                MorCamGlassCard(
+                    cornerRadius = 18.dp,
+                    paddingVertical = 28.dp
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Icon(
+                            imageVector = Icons.Default.AutoAwesome,
+                            contentDescription = null,
+                            tint = MorCamTokens.LavenderSoft,
+                            modifier = Modifier.size(28.dp)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text(
+                            text = "Henüz kayıtlı bir sağlayıcı deneme logu yok.",
+                            fontFamily = com.example.ui.theme.InterFontFamily,
+                            color = MorCamTokens.LavenderMuted,
+                            fontSize = 13.sp
+                        )
+                    }
+                }
+            } else {
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 400.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(logs) { entry ->
+                        val isSuccess = entry.status == "SUCCESS"
+                        val isFailed = entry.status == "FAILED"
+                        val isRefusal = entry.status == "OOC_REFUSAL_FALLBACK"
+                        val isCooldown = entry.status == "COOLDOWN_SKIP"
+                        val badgeColor = when {
+                            isSuccess -> Color(0xFFDDD6FE)
+                            isFailed -> MorCamTokens.DestructiveRimLight
+                            isRefusal || isCooldown -> Color(0xFFFDE68A)
+                            else -> MorCamTokens.LavenderSoft
+                        }
+                        val badgeBg = when {
+                            isSuccess -> Color(0x457C3AED)
+                            isFailed -> Color(0x55831843)
+                            isRefusal || isCooldown -> Color(0x5578350F)
+                            else -> Color(0x38581C87)
+                        }
+                        MorCamGlassCard(
+                            cornerRadius = 16.dp,
+                            highlighted = isSuccess,
+                            paddingHorizontal = 13.dp,
+                            paddingVertical = 11.dp
                         ) {
-                            Text(
-                                text = "[Katman ${entry.layer}] ${entry.providerName}",
-                                fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
-                                color = MorCamTokens.SilverLavenderBright,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.weight(1f)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .background(badgeBg)
-                                    .border(0.8.dp, badgeColor.copy(alpha = 0.65f), RoundedCornerShape(50))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = entry.status,
+                                    text = "[Katman ${entry.layer}] ${entry.providerName}",
+                                    fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
+                                    color = MorCamTokens.SilverLavenderBright,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(badgeBg)
+                                        .border(0.8.dp, badgeColor.copy(alpha = 0.65f), RoundedCornerShape(50))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text(
+                                        text = entry.status,
+                                        fontFamily = com.example.ui.theme.InterFontFamily,
+                                        color = badgeColor,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            if (!entry.errorMessage.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = if (isRefusal) "Koruma: ${entry.errorMessage}" else "Detay: ${entry.errorMessage}",
                                     fontFamily = com.example.ui.theme.InterFontFamily,
-                                    color = badgeColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
+                                    color = badgeColor.copy(alpha = 0.9f),
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 15.sp
                                 )
                             }
                         }
-                        if (!entry.errorMessage.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Hata: ${entry.errorMessage}",
-                                fontFamily = com.example.ui.theme.InterFontFamily,
-                                color = MorCamTokens.DestructiveRimLight.copy(alpha = 0.9f),
-                                fontSize = 11.5.sp,
-                                lineHeight = 15.sp
-                            )
+                    }
+                }
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (liveHealth.isNotEmpty()) {
+                    MorCamGlassCard(
+                        cornerRadius = 16.dp,
+                        highlighted = true,
+                        paddingHorizontal = 12.dp,
+                        paddingVertical = 10.dp
+                    ) {
+                        Text(
+                            text = "Devre Kesici & Canlı Sağlık",
+                            fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        val now = System.currentTimeMillis()
+                        liveHealth.values.sortedBy { it.providerKey }.forEach { st ->
+                            val inCd = st.cooldownUntilMs > now
+                            val rem = if (inCd) ((st.cooldownUntilMs - now) / 1000L).coerceAtLeast(1L) else 0L
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 3.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = st.providerKey,
+                                    fontFamily = com.example.ui.theme.InterFontFamily,
+                                    color = MorCamTokens.SilverLavenderBright,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = if (inCd) {
+                                        "⏳ ${st.lastFailureType?.name ?: "COOLDOWN"} (${rem}s)"
+                                    } else {
+                                        "● Hazır • ${st.lastLatencyMs} ms • ${st.totalSuccessCount}✓/${st.totalFailureCount}✗"
+                                    },
+                                    fontFamily = com.example.ui.theme.InterFontFamily,
+                                    color = if (inCd) Color(0xFFFDE68A) else Color(0xFF6EE7B7),
+                                    fontSize = 10.5.sp
+                                )
+                            }
                         }
                     }
                 }
+                ProviderReliabilityDashboardUI()
             }
         }
 

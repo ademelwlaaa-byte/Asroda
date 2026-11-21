@@ -178,19 +178,31 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         modelName: String,
         apiFormat: String,
         supportsFunctionCalling: Boolean,
+        utilityModel: String = "",
+        detectedSmallModels: String = "[]",
         onSaved: (Long) -> Unit = {}
     ) {
         viewModelScope.launch {
             val encryptedKey = com.example.util.KeystoreEncryptionManager.encrypt(apiKey.trim())
+            val cleanUtil = utilityModel.trim()
+            val utilSource = when {
+                cleanUtil.isNotBlank() -> "manual"
+                detectedSmallModels.isNotBlank() && detectedSmallModels != "[]" -> "auto"
+                else -> ""
+            }
             val entity = com.example.data.local.CustomProviderEntity(
                 label = label.ifBlank { modelName },
                 baseUrl = baseUrl.trim(),
                 apiKeyEncrypted = encryptedKey,
                 modelName = modelName.trim(),
                 apiFormat = apiFormat,
-                supportsFunctionCalling = supportsFunctionCalling
+                supportsFunctionCalling = supportsFunctionCalling,
+                utilityModel = cleanUtil,
+                utilityModelSource = utilSource,
+                detectedSmallModels = detectedSmallModels.ifBlank { "[]" }
             )
             val newId = repository.insertCustomProvider(entity)
+            com.example.data.managers.ProviderHealthTracker.resetHealth("custom_$newId")
             onSaved(newId)
         }
     }
@@ -200,6 +212,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
             val existing = repository.getCustomProviderById(id) ?: return@launch
             val updated = existing.copy(modelName = newModelName.trim())
             repository.updateCustomProvider(updated)
+            com.example.data.managers.ProviderHealthTracker.resetHealth("custom_$id")
             val currentSettings = repository.getOrCreateSettings()
             if (currentSettings.selectedProvider == "custom_$id") {
                 updateSettings(currentSettings.copy(selectedModel = newModelName.trim()))
@@ -214,7 +227,9 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         apiKey: String?,
         modelName: String,
         apiFormat: String,
-        supportsFunctionCalling: Boolean
+        supportsFunctionCalling: Boolean,
+        utilityModel: String? = null,
+        detectedSmallModels: String? = null
     ) {
         viewModelScope.launch {
             val existing = repository.getCustomProviderById(id) ?: return@launch
@@ -223,15 +238,26 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
             } else {
                 existing.apiKeyEncrypted
             }
+            val finalUtil = utilityModel?.trim() ?: existing.utilityModel
+            val finalDetected = detectedSmallModels?.ifBlank { "[]" } ?: existing.detectedSmallModels
+            val finalUtilSource = when {
+                finalUtil.isNotBlank() -> "manual"
+                finalDetected != "[]" -> "auto"
+                else -> ""
+            }
             val updated = existing.copy(
                 label = label.ifBlank { modelName },
                 baseUrl = baseUrl.trim(),
                 apiKeyEncrypted = finalEncryptedKey,
                 modelName = modelName.trim(),
                 apiFormat = apiFormat,
-                supportsFunctionCalling = supportsFunctionCalling
+                supportsFunctionCalling = supportsFunctionCalling,
+                utilityModel = finalUtil,
+                utilityModelSource = finalUtilSource,
+                detectedSmallModels = finalDetected
             )
             repository.updateCustomProvider(updated)
+            com.example.data.managers.ProviderHealthTracker.resetHealth("custom_$id")
             val currentSettings = repository.getOrCreateSettings()
             if (currentSettings.selectedProvider == "custom_$id") {
                 updateSettings(currentSettings.copy(selectedModel = modelName.trim()))
@@ -268,6 +294,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         streamingJob?.cancel()
         _streamingMsgId.value = msgId
         _streamingText.value = ""
+        maybeAutoSpeakReply(msgId, fullText)
         streamingJob = viewModelScope.launch {
             val sb = StringBuilder()
             for (ch in fullText) {
@@ -281,74 +308,70 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private val _isSpeaking = MutableStateFlow(false)
-    val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
-
-    private var tts: TextToSpeech? = null
+    private val ttsManager = com.example.util.ChatTtsManager(application)
+    val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
+    val speakingMessageId: StateFlow<String?> = ttsManager.speakingMessageId
+    val availableTtsVoices: StateFlow<List<com.example.util.ChatTtsManager.TtsVoiceOption>> = ttsManager.availableVoices
 
     init {
         viewModelScope.launch {
             repository.getOrCreateSettings()
             repository.initStarterBotsIfEmpty()
         }
-        try {
-            tts = TextToSpeech(application) { status ->
-                if (status == TextToSpeech.SUCCESS) {
-                    tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
-                        override fun onStart(utteranceId: String?) {
-                            _isSpeaking.value = true
-                        }
-                        override fun onDone(utteranceId: String?) {
-                            _isSpeaking.value = false
-                        }
-                        @Deprecated("Deprecated in Java")
-                        override fun onError(utteranceId: String?) {
-                            _isSpeaking.value = false
-                        }
-                    })
-                    val result = tts?.setLanguage(Locale.forLanguageTag("tr-TR"))
-                    if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        tts?.setLanguage(Locale.getDefault())
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+    }
+
+    private fun maybeAutoSpeakReply(messageId: String, fullText: String) {
+        val settings = userSettings.value ?: return
+        if (settings.enableTts && AppFeatureFlags.isTtsAutoReadRepliesEnabled) {
+            speakMessage(messageId = messageId, text = fullText)
         }
     }
 
-    fun speakText(text: String, speed: Float? = null, pitch: Float? = null) {
+    fun speakMessage(messageId: String, text: String, speed: Float? = null, pitch: Float? = null) {
+        if (ttsManager.speakingMessageId.value == messageId && ttsManager.isSpeaking.value) {
+            ttsManager.stop()
+            return
+        }
         val settings = userSettings.value
         val effSpeed = speed ?: settings?.ttsSpeed ?: 1.0f
         val effPitch = pitch ?: settings?.ttsPitch ?: 1.0f
-        tts?.setSpeechRate(effSpeed)
-        tts?.setPitch(effPitch)
-
         val voiceName = settings?.selectedVoiceName ?: ""
-        if (voiceName.isNotBlank()) {
-            try {
-                tts?.voices?.firstOrNull { it.name == voiceName }?.let { voice ->
-                    tts?.voice = voice
-                }
-            } catch (_: Exception) {}
-        }
+        val lang = settings?.appLanguage ?: "tr"
+        ttsManager.speakMessage(
+            messageId = messageId,
+            rawText = text,
+            speed = effSpeed,
+            pitch = effPitch,
+            voiceName = voiceName,
+            languageTag = lang,
+            readActions = AppFeatureFlags.isTtsReadActionsEnabled
+        )
+    }
 
-        val cleanText = text.replace(Regex("\\*.*?\\*"), "").trim()
-        if (cleanText.isNotBlank()) {
-            _isSpeaking.value = true
-            tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "EmochiTTS")
-        }
+    fun speakText(text: String, speed: Float? = null, pitch: Float? = null) {
+        speakMessage(messageId = "tts_legacy_global", text = text, speed = speed, pitch = pitch)
+    }
+
+    fun previewTtsVoice(voiceName: String, speed: Float, pitch: Float, languageTag: String = "tr") {
+        ttsManager.previewVoice(
+            voiceName = voiceName,
+            speed = speed,
+            pitch = pitch,
+            languageTag = languageTag
+        )
+    }
+
+    fun refreshTtsVoices() {
+        ttsManager.refreshVoices()
     }
 
     fun stopSpeaking() {
-        tts?.stop()
-        _isSpeaking.value = false
+        ttsManager.stop()
     }
 
     override fun onCleared() {
         super.onCleared()
-        stopSpeaking()
-        tts?.shutdown()
+        ttsManager.shutdown()
     }
 
     fun openMenu() {
@@ -428,44 +451,58 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         _errorMessage.value = null
     }
 
-    // ── Wizard baseline analysis state ────────────────────────────────────────
+    // ── Wizard baseline analysis state (Single unified, cancellable flow) ─────
 
     sealed class BaselineAnalysisUiState {
         object Idle : BaselineAnalysisUiState()
         object Loading : BaselineAnalysisUiState()
         data class Success(
             val result: BaselineEmotionEngine.BaselineAnalysisResult,
-            val isLowConfidence: Boolean
+            val updatedBot: BotEntity,
+            val isLowConfidence: Boolean,
+            val resetUserEdits: Boolean = false
         ) : BaselineAnalysisUiState()
-        data class Error(val message: String, val fallbackResult: BaselineEmotionEngine.BaselineAnalysisResult) : BaselineAnalysisUiState()
+        data class Error(
+            val message: String,
+            val fallbackResult: BaselineEmotionEngine.BaselineAnalysisResult
+        ) : BaselineAnalysisUiState()
     }
 
     private val _baselineAnalysisState = MutableStateFlow<BaselineAnalysisUiState>(BaselineAnalysisUiState.Idle)
     val baselineAnalysisState: StateFlow<BaselineAnalysisUiState> = _baselineAnalysisState.asStateFlow()
 
-    private var _pendingBaselineBot: BotEntity? = null
-    private var _pendingBaselineUserEdited: Set<String> = emptySet()
     private var _baselineAnalysisJob: kotlinx.coroutines.Job? = null
 
-    fun analyzeBaseline(bot: BotEntity, forceReanalyze: Boolean = false, userEditedFields: Set<String> = emptySet()) {
+    fun analyzeBaseline(
+        bot: BotEntity,
+        forceReanalyze: Boolean = false,
+        userEditedFields: Set<String> = emptySet()
+    ) {
         _baselineAnalysisJob?.cancel()
-        _pendingBaselineBot = bot
-        _pendingBaselineUserEdited = userEditedFields
         _baselineAnalysisState.value = BaselineAnalysisUiState.Loading
         _baselineAnalysisJob = viewModelScope.launch {
             try {
-                val (_, result) = repository.runBaselineAnalysis(bot, forceReanalyze, userEditedFields)
+                val (updatedBot, result) = repository.runBaselineAnalysis(bot, forceReanalyze, userEditedFields)
                 _baselineAnalysisState.value = BaselineAnalysisUiState.Success(
                     result = result,
-                    isLowConfidence = result.confidence < 60
+                    updatedBot = updatedBot,
+                    isLowConfidence = result.confidence < 60,
+                    resetUserEdits = forceReanalyze
                 )
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (e: Exception) {
+                val effectiveName = if (bot.mode == "universe" && bot.universeName.isNotBlank()) bot.universeName else bot.aiName
                 val fallback = BaselineEmotionEngine.calculateDeterministicFallback(
-                    botId = bot.id, aiName = bot.aiName, personality = bot.aiPersonality,
-                    scenario = bot.scenario, userCharName = bot.userCharName, userCharDesc = bot.userCharDesc
+                    botId = bot.id,
+                    aiName = effectiveName,
+                    personality = bot.aiPersonality,
+                    scenario = bot.scenario,
+                    userCharName = bot.userCharName,
+                    userCharDesc = bot.userCharDesc
                 )
                 _baselineAnalysisState.value = BaselineAnalysisUiState.Error(
-                    message = e.message ?: "Analiz başarısız",
+                    message = e.message ?: "Analiz başarısız. Otomatik tahmin uygulandı.",
                     fallbackResult = fallback
                 )
             }
@@ -474,43 +511,16 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
 
     fun cancelBaselineAnalysis() {
         _baselineAnalysisJob?.cancel()
-        _baselineAnalysisState.value = BaselineAnalysisUiState.Idle
+        _baselineAnalysisJob = null
+        if (_baselineAnalysisState.value is BaselineAnalysisUiState.Loading) {
+            _baselineAnalysisState.value = BaselineAnalysisUiState.Idle
+        }
     }
 
     fun resetBaselineAnalysisState() {
+        _baselineAnalysisJob?.cancel()
+        _baselineAnalysisJob = null
         _baselineAnalysisState.value = BaselineAnalysisUiState.Idle
-        _pendingBaselineBot = null
-        _pendingBaselineUserEdited = emptySet()
-    }
-
-    // Applies a user-edited result back to the pending draft and returns the updated bot
-    fun applyBaselineEditsToDraft(
-        draft: BotEntity,
-        result: BaselineEmotionEngine.BaselineAnalysisResult,
-        userEditedFields: Set<String>
-    ): BotEntity {
-        val emotionJson = result.baselineEmotionState.toJson()
-        return draft.copy(
-            emotionState = emotionJson,
-            previousEmotionState = emotionJson,
-            baseAffectionDifficulty = result.difficultyMultiplier,
-            emotionalRegulationCapacity = result.regulationCapacity,
-            baselineEmotionAnalysisJson = result.rawJson.ifBlank { "" },
-            baselineAnalysisSource = if (userEditedFields.isNotEmpty()) "user_edited" else result.analysisSource,
-            baselineUserEditedFields = userEditedFields.joinToString(","),
-            updatedAt = System.currentTimeMillis()
-        )
-    }
-
-    suspend fun analyzeBaselineForWizard(draft: BotEntity): BaselineEmotionEngine.BaselineAnalysisResult {
-        return try {
-            repository.runBaselineAnalysis(draft, forceReanalyze = false).second
-        } catch (_: Exception) {
-            BaselineEmotionEngine.calculateDeterministicFallback(
-                botId = draft.id, aiName = draft.aiName, personality = draft.aiPersonality,
-                scenario = draft.scenario, userCharName = draft.userCharName, userCharDesc = draft.userCharDesc
-            )
-        }
     }
 
     fun createBotFromWizard(
@@ -522,9 +532,18 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 _isSending.value = true
                 repository.saveBot(bot)
-                // Save any user-edited triggers (analysis may have already saved defaults)
-                if (triggers.isNotEmpty()) {
-                    try { repository.saveSensitiveTriggers(bot.id, triggers) } catch (_: Exception) {}
+
+                // Always persist user-confirmed triggers anchored strictly to bot.id
+                val cleanTriggers = triggers
+                    .filter { it.triggerTopic.isNotBlank() }
+                    .map { it.copy(botId = bot.id) }
+                if (cleanTriggers.isNotEmpty()) {
+                    try { repository.saveSensitiveTriggers(bot.id, cleanTriggers) } catch (_: Exception) {}
+                }
+
+                // In Universe mode, mirror cleaned KeyCharacters into CastMemberEntity rows (0 extra tokens)
+                if (bot.mode == "universe") {
+                    try { repository.syncWizardCastMembers(bot) } catch (_: Exception) {}
                 }
 
                 val openingMsg = MessageEntity(
@@ -536,6 +555,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                 )
                 repository.saveMessage(openingMsg)
 
+                resetBaselineAnalysisState()
                 _activeBotId.value = bot.id
                 EmochiRepository.activeBotId = bot.id
                 _uiState.value = UiState.Chat(bot.id)
@@ -572,8 +592,52 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
     private val _memoryCommitNotice = MutableStateFlow<MemoryCommitNotice?>(null)
     val memoryCommitNotice: StateFlow<MemoryCommitNotice?> = _memoryCommitNotice.asStateFlow()
 
+    val lastRagRouteMode: StateFlow<com.example.data.repository.MemoryEngine.RagRouteMode> =
+        repository.lastRagRouteMode
+
+    private val _archivedMemories = MutableStateFlow<List<com.example.data.local.ArchivedMemoryEntity>>(emptyList())
+    val archivedMemories: StateFlow<List<com.example.data.local.ArchivedMemoryEntity>> = _archivedMemories.asStateFlow()
+
     fun dismissMemoryCommitNotice() {
         _memoryCommitNotice.value = null
+    }
+
+    private fun emitMemoryCommitNotice(
+        summary: EmochiRepository.MemoryCommitSummary,
+        defaultPov: String
+    ) {
+        if (!summary.hasAnyChange) return
+        val crudParts = mutableListOf<String>()
+        if (summary.savedFactsCount > 0) crudParts.add("+${summary.savedFactsCount} eklendi")
+        if (summary.updatedFactsCount > 0) crudParts.add("${summary.updatedFactsCount} güncellendi")
+        if (summary.deletedFactsCount > 0) crudParts.add("${summary.deletedFactsCount} arşivlendi")
+        val crudText = crudParts.joinToString(" • ")
+
+        val hasLiving = !summary.savedMemoryTitle.isNullOrBlank()
+        val notice = when {
+            hasLiving && crudText.isNotBlank() -> MemoryCommitNotice(
+                title = "Yeni Anı & Neural Vault Güncellendi",
+                subtitle = "${summary.savedMemoryPov ?: defaultPov}'ın gözünden • $crudText",
+                isLivingMemory = true
+            )
+            hasLiving -> MemoryCommitNotice(
+                title = "Yeni Anı: ${summary.savedMemoryTitle}",
+                subtitle = "${summary.savedMemoryPov ?: defaultPov}'ın gözünden işlendi",
+                isLivingMemory = true
+            )
+            else -> MemoryCommitNotice(
+                title = "Neural Vault Güncellendi",
+                subtitle = crudText.ifBlank { "Bellek kaydı güncellendi" },
+                isLivingMemory = false
+            )
+        }
+        viewModelScope.launch {
+            _memoryCommitNotice.value = notice
+            kotlinx.coroutines.delay(4500L)
+            if (_memoryCommitNotice.value?.id == notice.id) {
+                _memoryCommitNotice.value = null
+            }
+        }
     }
 
     private fun schedulePostTurnMemoryExtraction(
@@ -592,27 +656,9 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                     latestAiReply = aiReply
                 )
                 if (summary.hasAnyChange) {
-                    val notice = when {
-                        !summary.savedMemoryTitle.isNullOrBlank() && summary.savedFactsCount > 0 -> MemoryCommitNotice(
-                            title = "Yeni Anı & Neural Vault Güncellendi",
-                            subtitle = "${summary.savedMemoryPov ?: bot.aiName}'ın gözünden • +${summary.savedFactsCount} bilgi",
-                            isLivingMemory = true
-                        )
-                        !summary.savedMemoryTitle.isNullOrBlank() -> MemoryCommitNotice(
-                            title = "Yeni Anı: ${summary.savedMemoryTitle}",
-                            subtitle = "${summary.savedMemoryPov ?: bot.aiName}'ın gözünden işlendi",
-                            isLivingMemory = true
-                        )
-                        else -> MemoryCommitNotice(
-                            title = "Neural Vault Güncellendi",
-                            subtitle = "+${summary.savedFactsCount} kalıcı bilgi otomatik kaydedildi",
-                            isLivingMemory = false
-                        )
-                    }
-                    _memoryCommitNotice.value = notice
-                    kotlinx.coroutines.delay(4500L)
-                    if (_memoryCommitNotice.value?.id == notice.id) {
-                        _memoryCommitNotice.value = null
+                    emitMemoryCommitNotice(summary, bot.aiName)
+                    if (_activeBotId.value == bot.id) {
+                        _archivedMemories.value = repository.getArchivedMemories(bot.id)
                     }
                 }
             } catch (_: Exception) {
@@ -686,6 +732,10 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                     repository.saveBot(currentBot.copy(updatedAt = System.currentTimeMillis()))
 
                     val finalMsgs = currentMsgs + aiMsg
+                    if (replyResult.memoryCommitSummary.hasAnyChange) {
+                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, currentBot.aiName)
+                        loadArchivedMemories(botId)
+                    }
                     schedulePostTurnMemoryExtraction(currentBot, finalMsgs, sanitizedText, replyText)
                     if (shouldRunSummarization(botId, finalMsgs.size)) {
                         repository.updateMemorySummaries(currentBot, finalMsgs)
@@ -750,6 +800,10 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                     repository.saveBot(currentBot.copy(updatedAt = now))
 
                     val finalMsgs = currentMsgs + aiMsg
+                    if (replyResult.memoryCommitSummary.hasAnyChange) {
+                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, currentBot.aiName)
+                        loadArchivedMemories(botId)
+                    }
                     val lastUserText = currentMsgs.lastOrNull { it.role == "user" }?.text.orEmpty()
                     if (lastUserText.isNotBlank()) {
                         schedulePostTurnMemoryExtraction(currentBot, finalMsgs, lastUserText, replyText)
@@ -986,6 +1040,10 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleMessageStar(msgId: String) {
         viewModelScope.launch {
             repository.toggleMessageStar(msgId)
+            val botId = _activeBotId.value
+            if (botId != null) {
+                _starredMessages.value = repository.getStarredMessages(botId)
+            }
         }
     }
 
@@ -1049,7 +1107,11 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                     val currentMsgs = repository.getMessageListForBot(botId)
                     if (currentMsgs.isEmpty() || currentMsgs.last().role != "user") return@withSendLock
 
-                    val replyResult = repository.generateAiReply(currentBot, currentMsgs)
+                    val replyResult = repository.generateAiReply(
+                        bot = currentBot,
+                        messages = currentMsgs,
+                        literaryFramingMode = true
+                    )
                     val replyText = replyResult.replyText
                     if (replyText.isBlank()) {
                         throw IllegalStateException("Model boş yanıt döndürdü.")
@@ -1222,6 +1284,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
 
     fun updateSettings(settings: UserSettingsEntity) {
         viewModelScope.launch {
+            val previous = try { repository.getOrCreateSettings() } catch (_: Exception) { null }
             val sanitized = settings.copy(
                 customApiKey = settings.customApiKey.trim(),
                 groqApiKey = settings.groqApiKey.trim(),
@@ -1238,6 +1301,29 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                 ttsPitch = settings.ttsPitch.coerceIn(0.5f, 2.0f)
             )
             repository.updateUserSettings(sanitized)
+            if (previous != null) {
+                if (previous.customApiKey != sanitized.customApiKey || previous.geminiModel != sanitized.geminiModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("gemini")
+                }
+                if (previous.groqApiKey != sanitized.groqApiKey || previous.groqModel != sanitized.groqModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("groq")
+                }
+                if (previous.openaiApiKey != sanitized.openaiApiKey || previous.openaiModel != sanitized.openaiModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("openai")
+                }
+                if (previous.claudeApiKey != sanitized.claudeApiKey || previous.claudeModel != sanitized.claudeModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("claude")
+                }
+                if (previous.openRouterApiKey != sanitized.openRouterApiKey || previous.openRouterModel != sanitized.openRouterModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("openrouter")
+                }
+                if (previous.nvidiaApiKey != sanitized.nvidiaApiKey || previous.nvidiaModel != sanitized.nvidiaModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("nvidia")
+                }
+                if (previous.mistralApiKey != sanitized.mistralApiKey || previous.mistralModel != sanitized.mistralModel) {
+                    com.example.data.managers.ProviderHealthTracker.resetHealth("mistral")
+                }
+            }
         }
     }
 
@@ -1253,16 +1339,27 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         return repository.testMistralConnection(apiKey, modelName)
     }
 
-    suspend fun exportBackupJson(): String {
-        return repository.exportDataSnapshot()
+    suspend fun exportBackupJson(includeApiKeys: Boolean = false): String {
+        return repository.exportDataSnapshot(includeApiKeys = includeApiKeys)
     }
 
-    suspend fun importBackupJson(jsonStr: String) {
-        repository.importDataSnapshot(jsonStr)
+    suspend fun importBackupJson(
+        jsonStr: String,
+        overwriteExisting: Boolean = false
+    ): com.example.data.repository.BackupImportSummary {
+        return repository.importDataSnapshot(jsonStr = jsonStr, overwriteExisting = overwriteExisting)
     }
 
-    suspend fun generateOpeningForWizard(botDraft: BotEntity): String {
-        return repository.generateOpeningMessage(botDraft)
+    suspend fun generateOpeningForWizard(
+        botDraft: BotEntity,
+        forceRegenerate: Boolean = true,
+        toneHint: String = ""
+    ): String {
+        return repository.generateOpeningMessage(
+            bot = botDraft,
+            forceRegenerate = forceRegenerate,
+            toneHint = toneHint
+        )
     }
 
     fun deleteCharacter(botId: String, characterName: String) {
@@ -1289,15 +1386,52 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
     fun getActiveFactsFlow(botId: String) = repository.getActiveFactsFlow(botId)
     fun getActiveEventsFlow(botId: String) = repository.getActiveEventsFlow(botId)
 
+    fun loadArchivedMemories(botId: String) {
+        viewModelScope.launch {
+            _archivedMemories.value = repository.getArchivedMemories(botId)
+        }
+    }
+
+    fun toggleMemoryFactLock(fact: com.example.data.local.MemoryFactEntity) {
+        viewModelScope.launch {
+            repository.toggleMemoryFactLock(fact)
+        }
+    }
+
+    fun restoreArchivedMemory(botId: String, archive: com.example.data.local.ArchivedMemoryEntity) {
+        viewModelScope.launch {
+            val restored = repository.restoreArchivedMemory(botId, archive)
+            _archivedMemories.value = repository.getArchivedMemories(botId)
+            if (restored) {
+                val notice = MemoryCommitNotice(
+                    title = "Kayıt Arşivden Geri Yüklendi",
+                    subtitle = if (archive.memoryType.equals("event", ignoreCase = true)) {
+                        "Yaşanan Anı tekrar aktif belleğe alındı"
+                    } else {
+                        "Neural Vault bilgisi tekrar aktif belleğe alındı"
+                    },
+                    isLivingMemory = archive.memoryType.equals("event", ignoreCase = true)
+                )
+                _memoryCommitNotice.value = notice
+                kotlinx.coroutines.delay(3500L)
+                if (_memoryCommitNotice.value?.id == notice.id) {
+                    _memoryCommitNotice.value = null
+                }
+            }
+        }
+    }
+
     fun deleteMemoryFact(id: Long) {
         viewModelScope.launch {
             repository.deleteMemoryFact(id)
+            _activeBotId.value?.let { _archivedMemories.value = repository.getArchivedMemories(it) }
         }
     }
 
     fun deleteMemoryEvent(id: Long) {
         viewModelScope.launch {
             repository.deleteMemoryEvent(id)
+            _activeBotId.value?.let { _archivedMemories.value = repository.getArchivedMemories(it) }
         }
     }
 
@@ -1316,6 +1450,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
     fun clearAllAutoMemories(botId: String) {
         viewModelScope.launch {
             repository.deleteAllAutoMemories(botId)
+            _archivedMemories.value = repository.getArchivedMemories(botId)
         }
     }
 

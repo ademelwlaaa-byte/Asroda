@@ -30,15 +30,20 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Memory
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,6 +84,15 @@ fun NeuralVaultModal(
 
     val activeEventsFlow = remember(bot.id) { viewModel?.getActiveEventsFlow(bot.id) }
     val activeEvents by (activeEventsFlow ?: kotlinx.coroutines.flow.flowOf(emptyList())).collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val archivedMemories by (viewModel?.archivedMemories ?: kotlinx.coroutines.flow.flowOf(emptyList()))
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val lastRagRouteMode by (viewModel?.lastRagRouteMode ?: kotlinx.coroutines.flow.flowOf(com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST))
+        .collectAsStateWithLifecycle(initialValue = com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST)
+
+    LaunchedEffect(bot.id, activeFacts.size, activeEvents.size) {
+        viewModel?.loadArchivedMemories(bot.id)
+    }
 
     var editingFact by remember { mutableStateOf<com.example.data.local.MemoryFactEntity?>(null) }
     var editingEvent by remember { mutableStateOf<com.example.data.local.MemoryEventEntity?>(null) }
@@ -153,12 +167,20 @@ fun NeuralVaultModal(
         matchesCategory && matchesSearch
     }
 
+    val filteredArchives = archivedMemories.filter { archive ->
+        categoryFilter == "Arşiv" && (
+            searchQuery.isBlank() ||
+                archive.content.contains(searchQuery, ignoreCase = true) ||
+                archive.archivedReason.contains(searchQuery, ignoreCase = true)
+            )
+    }
+
     val totalSaved = memoriesList.size + activeFacts.size + activeEvents.size
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Neural Vault • Bellek Mahzeni",
-        subtitle = "$totalSaved kayıt • Hibrit RAG & Çoklu Bakış Açılı Anılar",
+        subtitle = "$totalSaved aktif • ${archivedMemories.size} arşiv • Ortak Hibrit + AI RAG",
         icon = Icons.Default.Memory,
         maxWidthFraction = 0.94f
     ) {
@@ -169,7 +191,7 @@ fun NeuralVaultModal(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Stats Badges Row
+            // Stats Badges Row + Live RAG Mode Badge
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -177,8 +199,21 @@ fun NeuralVaultModal(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 MorCamChipPill(label = "$totalSaved Kayıt", selected = true, onClick = {})
-                MorCamChipPill(label = "V4.0 Sync", selected = false, onClick = {})
-                MorCamChipPill(label = "Uzun Dönem Bellek", selected = false, onClick = {})
+                MorCamChipPill(
+                    label = lastRagRouteMode.badgeLabel,
+                    selected = lastRagRouteMode != com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST,
+                    icon = Icons.Default.AutoAwesome,
+                    onClick = {},
+                    modifier = Modifier.testTag("rag_mode_badge")
+                )
+                if (archivedMemories.isNotEmpty()) {
+                    MorCamChipPill(
+                        label = "${archivedMemories.size} Arşiv",
+                        selected = categoryFilter == "Arşiv",
+                        onClick = { categoryFilter = "Arşiv" },
+                        modifier = Modifier.testTag("archive_count_badge")
+                    )
+                }
             }
 
             // Inject Memory Glass Card
@@ -327,8 +362,8 @@ fun NeuralVaultModal(
                 )
             }
 
-            // Category Filter Chips
-            val presetCategories = listOf("Tümü", "Anılar", "Otomatik Bilgiler", "Sabit", "İlişki", "Dünya/Mekan")
+            // Category Filter Chips (including Arşiv tab)
+            val presetCategories = listOf("Tümü", "Anılar", "Otomatik Bilgiler", "Arşiv", "Sabit", "İlişki", "Dünya/Mekan")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -336,10 +371,17 @@ fun NeuralVaultModal(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 presetCategories.forEach { cat ->
+                    val chipLabel = if (cat == "Arşiv" && archivedMemories.isNotEmpty()) "Arşiv (${archivedMemories.size})" else cat
                     MorCamChipPill(
-                        label = cat,
+                        label = chipLabel,
                         selected = categoryFilter == cat,
-                        onClick = { categoryFilter = cat }
+                        onClick = {
+                            categoryFilter = cat
+                            if (cat == "Arşiv") {
+                                viewModel?.loadArchivedMemories(bot.id)
+                            }
+                        },
+                        modifier = if (cat == "Arşiv") Modifier.testTag("vault_tab_archive") else Modifier
                     )
                 }
             }
@@ -348,7 +390,7 @@ fun NeuralVaultModal(
             MorCamGlassTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = "Hafızada ara...",
+                placeholder = if (categoryFilter == "Arşiv") "Arşivde ara..." else "Hafızada ara...",
                 leadingIcon = Icons.Default.Search,
                 trailingContent = if (searchQuery.isNotEmpty()) {
                     {
@@ -362,8 +404,13 @@ fun NeuralVaultModal(
                 } else null
             )
 
-            // Saved Memory List Cards
-            val totalItemsCount = filteredMemories.size + filteredFacts.size + filteredEvents.size
+            // Saved Memory List Cards (or Arşiv List when Arşiv tab active)
+            val isArchiveTab = categoryFilter == "Arşiv"
+            val totalItemsCount = if (isArchiveTab) {
+                filteredArchives.size
+            } else {
+                filteredMemories.size + filteredFacts.size + filteredEvents.size
+            }
             if (totalItemsCount == 0) {
                 MorCamGlassCard(
                     cornerRadius = 16.dp,
@@ -372,13 +419,97 @@ fun NeuralVaultModal(
                     modifier = Modifier.cosmicFloatingLevitation(amplitudeDp = 3.dp, durationMs = 2800)
                 ) {
                     Text(
-                        text = "Henüz enjekte edilmiş veya öğrenilmiş bellek yok.",
+                        text = if (isArchiveTab) {
+                            "Arşivlenmiş eski bellek kaydı bulunmuyor."
+                        } else {
+                            "Henüz enjekte edilmiş veya öğrenilmiş bellek yok."
+                        },
                         fontFamily = InterFontFamily,
                         color = MorCamTokens.LavenderMuted,
                         fontSize = 12.5.sp,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            } else if (isArchiveTab) {
+                filteredArchives.forEachIndexed { idx, archive ->
+                    val reasonLabel = when (archive.archivedReason) {
+                        "ai_updated" -> "AI Güncelledi"
+                        "ai_deleted" -> "AI Arşivledi"
+                        "natural_decay_ttl" -> "Doğal Unutma"
+                        "user_double_correction" -> "Çift Düzeltme"
+                        "living_memory_enriched" -> "Anı Zenginleştirildi"
+                        else -> "Arşivlendi"
+                    }
+                    val typeLabel = if (archive.memoryType.equals("event", ignoreCase = true)) "ANILAR" else "BİLGİ"
+                    val displayBody = remember(archive.id, archive.content, archive.memoryType) {
+                        if (archive.memoryType.equals("event", ignoreCase = true)) {
+                            val parsed = com.example.data.repository.LivingMemoryCodec.parse(archive.content, 80)
+                            if (parsed.isStructured) {
+                                buildString {
+                                    if (parsed.title.isNotBlank()) append("${parsed.title} — ")
+                                    append(parsed.narrative)
+                                }
+                            } else archive.content
+                        } else {
+                            archive.content
+                        }
+                    }
+                    MorCamGlassCard(
+                        cornerRadius = 16.dp,
+                        modifier = Modifier.cosmicStaggeredEnter(index = idx, key = "arch_${archive.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "#${archive.originalMemoryId} • $typeLabel",
+                                fontFamily = LiterarySerifFontFamily,
+                                color = MorCamTokens.SilverLavenderBright,
+                                fontSize = 12.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color(0x456D28D9))
+                                    .border(0.7.dp, MorCamTokens.SubtleRimGradient, RoundedCornerShape(50))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = reasonLabel,
+                                    fontFamily = InterFontFamily,
+                                    color = MorCamTokens.LavenderLight,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = displayBody,
+                            fontFamily = InterFontFamily,
+                            color = MorCamTokens.LavenderLight,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            MorCamCapsuleButton(
+                                text = "Geri Yükle",
+                                onClick = { viewModel?.restoreArchivedMemory(bot.id, archive) },
+                                variant = MorCamButtonVariant.Secondary,
+                                icon = Icons.Default.Restore,
+                                modifier = Modifier.testTag("restore_archive_${archive.id}")
+                            )
+                        }
+                    }
                 }
             } else {
                 // 1. Manual Injected Memories
@@ -447,8 +578,15 @@ fun NeuralVaultModal(
                     }
                 }
 
-                // 2. Automatic Neural Vault Facts
+                // 2. Automatic Neural Vault Facts (with #ID, tier badge, and one-tap ★ permanent lock button)
                 filteredFacts.forEachIndexed { idx, fact ->
+                    val lifecycle = remember(fact.id, fact.confidence) {
+                        com.example.data.repository.MemoryLifecycleCodec.parse(fact.confidence)
+                    }
+                    val remainingDays = com.example.data.repository.MemoryLifecycleCodec.remainingDays(
+                        lifecycle,
+                        bot.storyDayCounter
+                    )
                     MorCamGlassCard(
                         cornerRadius = 16.dp,
                         modifier = Modifier.cosmicStaggeredEnter(index = idx + filteredMemories.size, key = "fact_${categoryFilter}_${fact.id}")
@@ -459,7 +597,7 @@ fun NeuralVaultModal(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${fact.subject} • ${fact.key}",
+                                text = "#${fact.id} • ${fact.subject} • ${fact.key}",
                                 fontFamily = LiterarySerifFontFamily,
                                 color = MorCamTokens.SilverLavenderBright,
                                 fontSize = 13.sp,
@@ -474,10 +612,50 @@ fun NeuralVaultModal(
                                     .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = if (fact.userCorrected) "★ SABİTLENDİ" else "AI OTOMATİK",
+                                    text = if (fact.userCorrected) "★ KİLİTLİ" else "AI OTOMATİK",
                                     fontFamily = InterFontFamily,
                                     color = MorCamTokens.SilverLavenderBright,
                                     fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                        if (!fact.userCorrected && lifecycle.tier == com.example.data.repository.MemoryTier.EPHEMERAL) {
+                            Spacer(modifier = Modifier.height(5.dp))
+                            val ephemeralLabel = if (remainingDays > 0L) {
+                                "⏳ Geçici · $remainingDays gün kaldı"
+                            } else {
+                                "⏳ Geçici"
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color(0x38D97706))
+                                    .border(0.7.dp, Color(0x88FCD34D), RoundedCornerShape(50))
+                                    .padding(horizontal = 9.dp, vertical = 2.5.dp)
+                            ) {
+                                Text(
+                                    text = ephemeralLabel,
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFFEF3C7),
+                                    fontSize = 9.8.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        } else if (!fact.userCorrected && lifecycle.tier == com.example.data.repository.MemoryTier.ARC) {
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color(0x458B5CF6))
+                                    .border(0.7.dp, Color(0x88C4B5FD), RoundedCornerShape(50))
+                                    .padding(horizontal = 9.dp, vertical = 2.5.dp)
+                            ) {
+                                Text(
+                                    text = "◈ Aktif Ark",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFEDE9FE),
+                                    fontSize = 9.8.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
                             }
@@ -497,17 +675,27 @@ fun NeuralVaultModal(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             MorCamCircleIconButton(
+                                icon = if (fact.userCorrected) Icons.Default.Star else Icons.Outlined.StarBorder,
+                                contentDescription = if (fact.userCorrected) "Kilidi Kaldır" else "AI Düzenlemesine Karşı Kilitle",
+                                onClick = { viewModel?.toggleMemoryFactLock(fact) },
+                                size = 48.dp,
+                                isActive = fact.userCorrected,
+                                modifier = Modifier.testTag("lock_fact_${fact.id}")
+                            )
+                            MorCamCircleIconButton(
                                 icon = Icons.Default.Edit,
                                 contentDescription = "Düzenle",
                                 onClick = { editingFact = fact },
-                                size = 36.dp
+                                size = 48.dp,
+                                modifier = Modifier.testTag("edit_fact_${fact.id}")
                             )
                             MorCamCircleIconButton(
                                 icon = Icons.Default.Delete,
                                 contentDescription = "Sil",
                                 onClick = { viewModel?.deleteMemoryFact(fact.id) },
-                                size = 36.dp,
-                                isDestructive = true
+                                size = 48.dp,
+                                isDestructive = true,
+                                modifier = Modifier.testTag("delete_fact_${fact.id}")
                             )
                         }
                     }

@@ -312,12 +312,345 @@ object LivingMemoryCodec {
 }
 
 /**
- * Memory Engine V4 — 10/10 Unlimited Turkish-Aware Hybrid RAG & Living Memory Core.
+ * 4-Tier Human-Like Cognitive Memory Hierarchy (Section 1):
+ * - DISCARD: trivial scene choreography / filler gestures (never saved)
+ * - EPHEMERAL: temporary daily details (2-3 story days or 35 messages TTL)
+ * - ARC: ongoing plot/injury/mission states (10-14 story days TTL)
+ * - CORE: permanent identity, preferences, secrets, relationships, ★ locked entries
+ */
+enum class MemoryTier(val code: String) {
+    DISCARD("discard"),
+    EPHEMERAL("ephemeral"),
+    ARC("arc"),
+    CORE("core");
+
+    companion object {
+        fun fromRaw(raw: String?): MemoryTier {
+            return when (TurkishTextAnalyzer.normalize(raw.orEmpty())) {
+                "discard", "noise", "ignore", "gurultu", "gürültü", "at", "tier0", "0" -> DISCARD
+                "ephemeral", "temp", "temporary", "short", "kisa", "kısa", "gecici", "geçici", "tier1", "1" -> EPHEMERAL
+                "arc", "mid", "plot", "ark", "orta", "gorev", "görev", "tier2", "2" -> ARC
+                else -> CORE
+            }
+        }
+    }
+}
+
+data class MemoryLifecycleMeta(
+    val baseConfidence: String = "certain",
+    val tier: MemoryTier = MemoryTier.CORE,
+    val createdStoryDay: Long = 1L,
+    val expiresStoryDay: Long = 0L,
+    val expiresMessageIndex: Int = 0,
+    val accessCount: Int = 0,
+    val lastAccessStoryDay: Long = 0L
+)
+
+/**
+ * Backwards-compatible lifecycle metadata codec stored in MemoryFactEntity.confidence
+ * so JAR-locked Room entities require ZERO schema migrations:
+ * - Legacy: "certain" / "inferred" / "disputed" -> parsed automatically as CORE.
+ * - Structured: "certain|t:ephemeral|cd:4|ed:7|em:95|hit:1|la:4"
+ */
+object MemoryLifecycleCodec {
+    fun parseConfidenceBase(rawConfidence: String): String {
+        val base = rawConfidence.substringBefore('|').trim().lowercase()
+        return base.ifBlank { "certain" }
+    }
+
+    fun isDisputed(rawConfidence: String): Boolean {
+        return parseConfidenceBase(rawConfidence).equals("disputed", ignoreCase = true)
+    }
+
+    fun encode(meta: MemoryLifecycleMeta): String {
+        val cleanBase = parseConfidenceBase(meta.baseConfidence)
+        if (meta.tier == MemoryTier.CORE && meta.expiresStoryDay <= 0L && meta.expiresMessageIndex <= 0 && meta.accessCount <= 0) {
+            return cleanBase
+        }
+        val cd = meta.createdStoryDay.coerceAtLeast(1L)
+        val ed = meta.expiresStoryDay.coerceAtLeast(0L)
+        val em = meta.expiresMessageIndex.coerceAtLeast(0)
+        val hit = meta.accessCount.coerceAtLeast(0)
+        val la = meta.lastAccessStoryDay.coerceAtLeast(0L)
+        return "$cleanBase|t:${meta.tier.code}|cd:$cd|ed:$ed|em:$em|hit:$hit|la:$la"
+    }
+
+    fun parse(rawConfidence: String): MemoryLifecycleMeta {
+        val trimmed = rawConfidence.trim()
+        if (!trimmed.contains('|')) {
+            return MemoryLifecycleMeta(
+                baseConfidence = parseConfidenceBase(trimmed),
+                tier = MemoryTier.CORE
+            )
+        }
+        val parts = trimmed.split('|')
+        val base = parts.firstOrNull()?.trim()?.lowercase().orEmpty().ifBlank { "certain" }
+        var tier = MemoryTier.CORE
+        var cd = 1L
+        var ed = 0L
+        var em = 0
+        var hit = 0
+        var la = 0L
+        for (i in 1 until parts.size) {
+            val kv = parts[i].trim()
+            val idx = kv.indexOf(':')
+            if (idx <= 0) continue
+            val k = kv.substring(0, idx).lowercase()
+            val v = kv.substring(idx + 1).trim()
+            when (k) {
+                "t" -> tier = MemoryTier.fromRaw(v)
+                "cd" -> cd = v.toLongOrNull()?.coerceAtLeast(1L) ?: 1L
+                "ed" -> ed = v.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+                "em" -> em = v.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                "hit" -> hit = v.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                "la" -> la = v.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+            }
+        }
+        return MemoryLifecycleMeta(
+            baseConfidence = base,
+            tier = tier,
+            createdStoryDay = cd,
+            expiresStoryDay = ed,
+            expiresMessageIndex = em,
+            accessCount = hit,
+            lastAccessStoryDay = la
+        )
+    }
+
+    fun withDisputed(rawConfidence: String): String {
+        val meta = parse(rawConfidence)
+        return encode(meta.copy(baseConfidence = "disputed"))
+    }
+
+    fun withPromotedCore(rawConfidence: String): String {
+        val meta = parse(rawConfidence)
+        val cleanBase = if (meta.baseConfidence.equals("disputed", ignoreCase = true)) "certain" else meta.baseConfidence
+        return cleanBase
+    }
+
+    /**
+     * Records a RAG recall hit on a temporary/arc memory.
+     * When an EPHEMERAL memory reaches [promoteThreshold] hits before expiry,
+     * it is automatically promoted to permanent CORE (human-like habit reinforcement).
+     * Returns Pair(updatedConfidenceString, wasPromotedToCore).
+     */
+    fun withAccessHit(
+        rawConfidence: String,
+        currentStoryDay: Long,
+        promoteThreshold: Int = 2
+    ): Pair<String, Boolean> {
+        val meta = parse(rawConfidence)
+        if (meta.tier == MemoryTier.CORE) return Pair(rawConfidence, false)
+
+        val safeDay = currentStoryDay.coerceAtLeast(1L)
+        val newHits = meta.accessCount + 1
+        val newLastAccess = maxOf(meta.lastAccessStoryDay, safeDay)
+
+        if (meta.tier == MemoryTier.EPHEMERAL && newHits >= promoteThreshold) {
+            return Pair(withPromotedCore(rawConfidence), true)
+        }
+
+        val updated = meta.copy(
+            accessCount = newHits,
+            lastAccessStoryDay = newLastAccess
+        )
+        return Pair(encode(updated), false)
+    }
+
+    fun remainingDays(meta: MemoryLifecycleMeta, currentStoryDay: Long): Long {
+        if (meta.tier == MemoryTier.CORE || meta.expiresStoryDay <= 0L) return -1L
+        return (meta.expiresStoryDay - currentStoryDay.coerceAtLeast(1L)).coerceAtLeast(0L)
+    }
+
+    fun relativeStoryDayLabel(createdStoryDay: Long, currentStoryDay: Long): String {
+        if (createdStoryDay <= 0L || currentStoryDay <= 0L) return "Geçmiş"
+        val diff = (currentStoryDay - createdStoryDay).coerceAtLeast(0L)
+        return when (diff) {
+            0L -> "Bugün"
+            1L -> "Dün"
+            else -> "$diff gün önce"
+        }
+    }
+}
+
+/**
+ * Pure Kotlin (<1 ms) relative-time and anaphoric reference resolver for prompts like
+ * "Bana dünkinden yap", "Sabahki kahveden getir", "Geçen gün giydiğin ceket", "Aynısından bir daha".
+ */
+data class TemporalTarget(
+    val targetStoryDayMin: Long,
+    val targetStoryDayMax: Long,
+    val isAnaphoricRef: Boolean
+)
+
+object RelativeTimeCueResolver {
+    private val YESTERDAY_REGEX = Regex("""\b(dün|dünkü|dünki|dünkinden|dünkü\w*|dünki\w*)\b""")
+    private val RECENT_DAYS_REGEX = Regex("""\b(evvelsi\s+gün|iki\s+gün\s+önce|geçen\s+gün|geçen\s+günkü|geçen\s+seferki|geçen\s+sefer)\b""")
+    private val SAME_DAY_OR_ANAPHORIC_REGEX = Regex("""\b(sabahki|az\s+önceki|bugünkü|deminki|aynısından|aynısı|ondan\s+yap|ondan\s+getir|yine\s+ondan)\b""")
+
+    fun resolveTemporalTarget(userText: String, currentStoryDay: Long): TemporalTarget? {
+        if (userText.isBlank()) return null
+        val t = TurkishTextAnalyzer.normalize(userText)
+        val safeDay = currentStoryDay.coerceAtLeast(1L)
+        return when {
+            YESTERDAY_REGEX.containsMatchIn(t) ->
+                TemporalTarget((safeDay - 1L).coerceAtLeast(1L), (safeDay - 1L).coerceAtLeast(1L), true)
+            RECENT_DAYS_REGEX.containsMatchIn(t) ->
+                TemporalTarget((safeDay - 3L).coerceAtLeast(1L), (safeDay - 1L).coerceAtLeast(1L), true)
+            SAME_DAY_OR_ANAPHORIC_REGEX.containsMatchIn(t) ->
+                TemporalTarget((safeDay - 1L).coerceAtLeast(1L), safeDay, true)
+            else -> null
+        }
+    }
+}
+
+/**
+ * Memory Engine V4 — 10/10 Unlimited Turkish-Aware Hybrid RAG, Cognitive Selectivity & Living Memory Core.
  */
 object MemoryEngine {
 
     const val LOCAL_EMBEDDING_DIMS = 256
-    const val MAX_MEMORY_PROMPT_TOKENS = 950
+    const val MAX_MEMORY_PROMPT_TOKENS = 750
+
+    enum class RagRouteMode(val badgeLabel: String) {
+        HYBRID_FAST("Hibrit Hızlı"),
+        CO_PILOTED_AI("Ortak Hibrit + AI"),
+        CO_PILOTED_DEEP("Ortak Hibrit + AI • Derin")
+    }
+
+    /**
+     * Reciprocal Rank Fusion (k = 60) eliminating raw score scale mismatches across
+     * Semantic, Morphological BM25, and Entity/Salience channels.
+     */
+    fun rrfScore(semRank: Int, lexRank: Int, entityRank: Int, boost: Float = 0f): Float {
+        val k = 60f
+        return (1f / (k + semRank.coerceAtLeast(1))) * 1.15f +
+            (1f / (k + lexRank.coerceAtLeast(1))) * 1.00f +
+            (1f / (k + entityRank.coerceAtLeast(1))) * 0.85f +
+            boost
+    }
+
+    /**
+     * Dynamic memory token budget for the main chat prompt based on routing tier and model context window.
+     * - Pure Hybrid (simplest turns): max 260 tokens
+     * - Co-Piloted Hybrid + AI (standard story turns): max 750 tokens
+     * - Co-Piloted Hybrid + AI + miss_queries (deep lore/secret turns): max 1050 tokens
+     * - Automatically caps at 650 tokens for <= 32K context models.
+     */
+    fun computeDynamicMemoryBudget(
+        routeMode: RagRouteMode,
+        modelContextWindowTokens: Int = 128_000
+    ): Int {
+        val base = when (routeMode) {
+            RagRouteMode.HYBRID_FAST -> 260
+            RagRouteMode.CO_PILOTED_AI -> 750
+            RagRouteMode.CO_PILOTED_DEEP -> 1050
+        }
+        return if (modelContextWindowTokens <= 32_768) minOf(base, 650) else base
+    }
+
+    /**
+     * Compact ID-tagged Neural Vault prompt line with human-readable relative time & tier tags
+     * for EPHEMERAL / ARC memories so both utility RAG and the main chat model resolve
+     * indirect references like "Bana dünkinden yap" effortlessly.
+     */
+    fun formatFactForPrompt(fact: MemoryFactEntity, currentStoryDay: Long = 0L): String {
+        val meta = MemoryLifecycleCodec.parse(fact.confidence)
+        if (fact.userCorrected || meta.tier == MemoryTier.CORE) {
+            val lockMark = if (fact.userCorrected) "★" else ""
+            return "[#${fact.id}$lockMark](${fact.subject}|${fact.key}): ${fact.value}"
+        }
+        val relLabel = if (currentStoryDay > 0L) {
+            "${MemoryLifecycleCodec.relativeStoryDayLabel(meta.createdStoryDay, currentStoryDay)} (Gün #${meta.createdStoryDay})"
+        } else {
+            "Gün #${meta.createdStoryDay}"
+        }
+        val tierLabel = if (meta.tier == MemoryTier.EPHEMERAL) "Geçici" else "Aktif Ark"
+        return "[#${fact.id} | $relLabel | $tierLabel](${fact.subject}|${fact.key}): ${fact.value}"
+    }
+
+    /**
+     * Ultra-short 1-line micro-index entries (~12-18 tokens each) sent to the Co-Piloted AI RAG selector.
+     */
+    fun formatFactMicroIndex(fact: MemoryFactEntity, currentStoryDay: Long = 0L): String {
+        val meta = MemoryLifecycleCodec.parse(fact.confidence)
+        val cleanVal = fact.value.replace('\n', ' ').trim()
+        if (fact.userCorrected || meta.tier == MemoryTier.CORE) {
+            val lock = if (fact.userCorrected) "★" else ""
+            return "F${fact.id}: (${fact.subject}|${fact.key}$lock) ${cleanVal.take(74)}"
+        }
+        val relLabel = if (currentStoryDay > 0L) {
+            "${MemoryLifecycleCodec.relativeStoryDayLabel(meta.createdStoryDay, currentStoryDay)} (Gün #${meta.createdStoryDay})"
+        } else {
+            "Gün #${meta.createdStoryDay}"
+        }
+        val tierLabel = if (meta.tier == MemoryTier.EPHEMERAL) "Geçici" else "Aktif Ark"
+        return "F${fact.id}: [$relLabel | $tierLabel] (${fact.subject}|${fact.key}) ${cleanVal.take(68)}"
+    }
+
+    /**
+     * Code-side Contextual Selectivity safety gate (Section 2):
+     * Rejects importance <= 2 and trivial mundane physical choreography ("elini masaya koydu",
+     * "pencereden baktı", "derin nefes aldı", bare "yemek yedi") UNLESS the sentence carries
+     * contextual plot, trust, secret, evidence, or concrete ephemeral significance.
+     */
+    fun isTrivialNoiseFact(key: String, value: String, importance: Int = 5): Boolean {
+        if (importance <= 2) return true
+        val trimmedVal = value.trim()
+        if (trimmedVal.length < 4) return true
+
+        val norm = TurkishTextAnalyzer.normalize("$key $trimmedVal")
+        val normVal = TurkishTextAnalyzer.normalize(trimmedVal)
+
+        val contextualSignificanceMarkers = listOf(
+            "gizli", "kanıt", "dosya", "şifreli", "şifre", "sır", "güven", "ilk kez",
+            "sakla", "çal", "silah", "bıçak", "tabanca", "yara", "sargı", "kan", "itiraf",
+            "yemin", "anahtar", "tehlike", "ihanet", "aşk", "öp", "ağla", "söz", "yüzük",
+            "mektup", "kod", "operasyon", "görev", "plan", "zehir", "ilaç", "küs", "kavga",
+            "geri çekilmedi", "elini elinin", "yirmi yıl", "makarna", "sarımsak", "kremalı",
+            "mantar", "pizza", "suşi", "çorba", "biftek", "tatlı", "pasta", "salata",
+            "köfte", "kebap", "omlet", "tost", "şarap", "viski", "ramen", "kahve", "espresso",
+            "latte", "ceket", "mont", "elbise", "kıyafet", "gömlek", "ağrıyor", "ağrı",
+            "ateşi", "hasta", "sehpada", "bıraktı", "unuttu", "alerji", "fobi"
+        )
+        if (contextualSignificanceMarkers.any { norm.contains(it) }) {
+            return false
+        }
+
+        val trivialChoreographyPatterns = listOf(
+            Regex("""\belini\s+(masaya|omzuna|dizine|cebine|beline|masanın\s+üstüne)\s+koy"""),
+            Regex("""\b(pencereden|camdan|dışarı|etrafına|etrafa|yere|tavana)\s+(dışarı\s+)?bak"""),
+            Regex("""\bderin\s+(bir\s+)?nefes\s+al"""),
+            Regex("""\b(iç\s+çekti|arkasına\s+yaslandı|omuz\s+silkti|başını\s+salladı|kafasını\s+salladı|gözlerini\s+kırptı)\b"""),
+            Regex("""\b(kapıyı\s+kapattı|kapıyı\s+açtı|sandalyeye\s+oturdu|koltuğa\s+oturdu|ayağa\s+kalktı|yürümeye\s+devam\s+etti)\b"""),
+            Regex("""\b(kahvesini|çayını)\s+karıştırdı\b"""),
+            Regex("""^(sadece\s+)?(gülümsedi|oturdu|baktı|gitti|geldi|yemek\s+yedi|su\s+içti|uyudu|kalktı)\.?$""")
+        )
+        if (trivialChoreographyPatterns.any { it.containsMatchIn(normVal) || it.containsMatchIn(norm) }) {
+            return true
+        }
+
+        return false
+    }
+
+    fun formatEventMicroIndex(event: MemoryEventEntity): String {
+        val parsed = LivingMemoryCodec.parse(event.description, event.importanceScore)
+        return if (parsed.isStructured) {
+            val snippet = parsed.narrative.replace('\n', ' ').trim().take(74)
+            "E${event.id}: [${parsed.povCharacter}|${parsed.title}|${parsed.salience}/10] $snippet"
+        } else {
+            val snippet = parsed.narrative.replace('\n', ' ').trim().take(80)
+            "E${event.id}: [Anı|${(event.importanceScore / 10).coerceIn(1, 10)}/10] $snippet"
+        }
+    }
+
+    fun formatCheckpointMicroIndex(cp: MemoryCheckpointEntity): String {
+        return "C${cp.checkpointNumber}: Sahne #${cp.checkpointNumber}: ${cp.summaryText.replace('\n', ' ').trim().take(84)}"
+    }
+
+    fun formatFragmentMicroIndex(frag: MemoryFragmentEntity): String {
+        return "M${frag.id}: ${frag.content.replace('\n', ' ').trim().take(74)}"
+    }
 
     /**
      * Computes a 256-dim signed feature-hashing embedding combining:
@@ -381,12 +714,29 @@ object MemoryEngine {
      */
     fun isTrivialCasualMessage(query: String): Boolean {
         val clean = TurkishTextAnalyzer.normalize(query)
+        val stripped = clean.replace(Regex("""[.,!?;:]+"""), " ").replace(Regex("""\s+"""), " ").trim()
+
+        val trivialExact = setOf(
+            "selam", "merhaba", "slm", "mrb", "hey", "hi",
+            "nasılsın", "naber", "n'aber", "ne haber", "selam nasılsın", "merhaba nasılsın",
+            "selam naber", "merhaba naber", "hey nasılsın", "slm naber",
+            "günaydın", "iyi akşamlar", "iyi geceler", "iyi sabahlar",
+            "tamam", "olur", "evet", "hayır", "peki", "ok", "okay",
+            "eyvallah", "sağol", "teşekkürler", "teşekkür", "tşk",
+            "hm", "hmm", "ah", "oh", "aa", "ehe", "e", "ya",
+            "dur", "bekle", "anladım", "anla", "yok", "yok mu",
+            "harika", "süper", "güzel", "iyi", "kötü", "neden",
+            "devam", "devam et", "söyle", "anlat", "evet anlat"
+        )
+        if (trivialExact.contains(stripped)) return true
 
         val forceRetrievalSignals = listOf(
             "?", "hatırla", "hatırlıyor", "kimdi", "kimsin", "nerede", "nereden", "nereli",
             "geçen", "daha önce", "eskiden", "önceki", "bahsetmiştin", "demiştin",
             "anlattığım", "söylemiştim", "biliyorsun", "neydi", "neymiş", "kaçtı", "kim",
-            "söz", "sır", "seviyorum", "nefret", "korkuyorum", "affet", "ihanet", "güven"
+            "söz", "sır", "seviyorum", "nefret", "korkuyorum", "affet", "ihanet", "güven",
+            "dün", "dünkü", "dünki", "dünkinden", "evvelsi", "sabahki", "deminki",
+            "aynısından", "aynısı", "ondan yap", "ondan getir"
         )
         if (forceRetrievalSignals.any { clean.contains(it) }) return false
 
@@ -396,25 +746,58 @@ object MemoryEngine {
         }
         if (hasProperName) return false
 
-        if (clean.length > 32) return false
-
-        val trivialExact = setOf(
-            "selam", "merhaba", "slm", "mrb", "hey", "hi",
-            "nasılsın", "naber", "n'aber", "ne haber",
-            "günaydın", "iyi akşamlar", "iyi geceler", "iyi sabahlar",
-            "tamam", "olur", "evet", "hayır", "peki", "ok", "okay",
-            "eyvallah", "sağol", "teşekkürler", "teşekkür", "tşk",
-            "hm", "hmm", "ah", "oh", "aa", "ehe", "e", "ya",
-            "dur", "bekle", "anladım", "anla", "yok", "yok mu",
-            "harika", "süper", "güzel", "iyi", "kötü", "neden",
-            "devam", "devam et", "söyle", "anlat", "evet anlat"
-        )
-        if (trivialExact.contains(clean)) return true
+        if (stripped.length > 32) return false
 
         val trivialPrefixes = setOf("selam", "merhaba", "hey", "tamam", "hm", "ah", "oh")
-        if (clean.length < 20 && trivialPrefixes.any { clean.startsWith(it) }) return true
+        if (stripped.length < 20 && trivialPrefixes.any { stripped.startsWith(it) }) return true
 
         return false
+    }
+
+    /**
+     * Routing Durum B: Returns true ONLY for short, plain, single-fact direct questions with
+     * zero emotional subtext, RP narration, dialogue quotes, or ambiguous pronouns.
+     * Example true: "Aiden kaç yaşındaydı?", "En sevdiği içecek neydi?", "Natasha'nın mesleği ne?"
+     * Example false: "*gözlerini kısar* Dün gece ona verdiğin sözü hâlâ tutuyor musun?"
+     */
+    fun isDirectSingleFactQuestion(userText: String): Boolean {
+        val trimmed = userText.trim()
+        if (trimmed.length !in 8..76) return false
+        if (trimmed.contains('*') || trimmed.contains('"') || trimmed.contains('“') || trimmed.contains('”')) return false
+        if (trimmed.count { it == '?' } > 1) return false
+
+        val clean = TurkishTextAnalyzer.normalize(trimmed)
+        val complexStorySignals = listOf(
+            "neden bana", "niye bana", "hissediyor", "hissetti", "sır", "gizli", "ihanet", "yalan",
+            "kırgın", "güven", "korkuyor", "kork", "aşk", "seviyor", "nefret", "o gece", "dün",
+            "ona ", "buna ", "şuna ", "onunla", "aramızda", "hatırlıyor musun", "söz", "yemin",
+            "affet", "özür", "çatı", "kalbim", "gözler", "sessiz", "fısılda", "bakış"
+        )
+        if (complexStorySignals.any { clean.contains(it) }) return false
+
+        val plainFactPatterns = listOf(
+            "kaç yaşında", "yaşı kaç", "en sevdiği", "favori", "mesleği ne", "işi ne",
+            "nereli", "nerede yaşıyor", "doğum günü", "adı ne", "ismi ne", "neydi", "kaçtı",
+            "hangi şehir", "hangi renk", "hangi içecek", "hangi yemek", "göz rengi"
+        )
+        return plainFactPatterns.any { clean.contains(it) }
+    }
+
+    /**
+     * Detects explicit user intent to correct, overwrite, forget, or delete an existing memory
+     * (required before AI may modify or archive a ★ user-locked fact).
+     */
+    fun hasExplicitUserOverrideIntent(userText: String): Boolean {
+        val clean = TurkishTextAnalyzer.normalize(userText)
+        val overridePhrases = listOf(
+            "hayır öyle değil", "hayır oyle degil", "öyle değil", "öyle değildi",
+            "yanlış hatırlıyorsun", "yanlış biliyorsun", "yanlış kayıt", "yanlış kaydet",
+            "değiştir", "bunu değiştir", "güncelle", "olarak güncelle", "kilidi geç",
+            "unut bunu", "bunu unut", "hafızandan sil", "bunu sil",
+            "kaydı sil", "düzelt", "artık değil", "tamamen yanlış", "artık yaşamıyorum",
+            "artık sevmiyorum", "bıraktım", "ayrıldık"
+        )
+        return overridePhrases.any { clean.contains(it) }
     }
 
     /**
@@ -433,7 +816,8 @@ object MemoryEngine {
             "annem", "babam", "kardeş", "adım", "yaşım", "güç", "yetenek", "görev",
             "plan", "tehlike", "yaralan", "kurtar", "ölüm", "öldür", "sakla", "gizli",
             "güveniyorum", "güvenmiyorum", "öp", "sarıl", "ağla", "gözyaş", "kalbim",
-            "asla", "unutma", "hatırla", "karar", "seçim", "anlaşma", "ittifak", "düşman"
+            "asla", "unutma", "hatırla", "karar", "seçim", "anlaşma", "ittifak", "düşman",
+            "makarna", "kahve", "ceket", "kıyafet", "ağrıyor", "anahtar", "sehpada", "dosya", "kanıt"
         )
         if (highSignalKeywords.any { lower.contains(it) }) return true
 
@@ -572,7 +956,7 @@ object MemoryEngine {
         currentStoryDay: Long,
         importanceScore: Int
     ): String {
-        if (importanceScore >= 80) return "[Net Anı]"
+        if (importanceScore >= 90) return "[Net Anı]"
         if (storyDayIndex <= 0L) return "[Bulanık Anı]"
 
         val ageDays = (currentStoryDay - storyDayIndex).coerceAtLeast(0L).toFloat()
@@ -607,9 +991,7 @@ object MemoryEngine {
         }
 
         for (f in facts) {
-            val pinMark = if (f.userCorrected) "★ " else ""
-            val line = "- $pinMark(${f.subject}) [${f.key}]: ${f.value}"
-            tryAdd(line)
+            tryAdd(formatFactForPrompt(f, currentStoryDay))
         }
 
         for (ev in events) {
@@ -637,7 +1019,7 @@ object MemoryEngine {
         fun isRedundant(text: String): Boolean {
             val norm = TurkishTextAnalyzer.normalize(text)
             return seenFingerprints.any { existing ->
-                existing == norm || TurkishTextAnalyzer.stemOverlapRatio(existing, norm) >= 0.85f
+                existing == norm || TurkishTextAnalyzer.stemOverlapRatio(existing, norm) >= 0.80f
             }
         }
 

@@ -14,4 +14,10 @@ interface MilestoneDao {
 
     @Query("SELECT type FROM milestones WHERE botId = :botId")
     suspend fun getReachedMilestoneTypes(botId: String): List<String>
+
+    @Query("DELETE FROM milestones WHERE botId = :botId AND reachedAt > :timestamp")
+    suspend fun deleteMilestonesAfterTimestamp(botId: String, timestamp: Long)
+
+    @Query("DELETE FROM milestones WHERE botId = :botId")
+    suspend fun deleteMilestonesForBot(botId: String)
 }

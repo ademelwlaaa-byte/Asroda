@@ -92,10 +92,8 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
     val activeCharacterEmotions by viewModel.activeCharacterEmotions.collectAsStateWithLifecycle()
     val activeAffectionEvents by viewModel.activeAffectionEvents.collectAsStateWithLifecycle()
     val isSending by viewModel.isSending.collectAsStateWithLifecycle()
-    val isSpeaking by viewModel.isSpeaking.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
-    val streamingMsgId by viewModel.streamingMsgId.collectAsStateWithLifecycle()
-    val streamingText by viewModel.streamingText.collectAsStateWithLifecycle()
+    val baselineAnalysisState by viewModel.baselineAnalysisState.collectAsStateWithLifecycle()
 
     AnimatedContent(
         targetState = uiState,
@@ -120,8 +118,8 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                     onNewBot = { viewModel.startWizard() },
                     onDeleteBot = { viewModel.deleteBot(it) },
                     onSaveSettings = { viewModel.updateSettings(it) },
-                    onExportData = { viewModel.exportBackupJson() },
-                    onImportData = { viewModel.importBackupJson(it) },
+                    onExportData = { includeApiKeys -> viewModel.exportBackupJson(includeApiKeys) },
+                    onImportData = { json, overwrite -> viewModel.importBackupJson(json, overwrite) },
                     onImportPresetBot = { viewModel.createPresetBot(it) },
                     onTogglePrivacy = { viewModel.updateBotProfile(it) },
                     onCloneBot = { viewModel.cloneBot(it) }
@@ -129,21 +127,25 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
             }
 
             is UiState.SetupWizard -> {
-                BackHandler {
-                    viewModel.openMenu()
-                }
                 CreateBotWizardScreen(
-                    onBack = { viewModel.openMenu() },
-                    onFinish = { newBot ->
-                        viewModel.createBotFromWizard(newBot) {
+                    baselineAnalysisState = baselineAnalysisState,
+                    onBack = {
+                        viewModel.resetBaselineAnalysisState()
+                        viewModel.openMenu()
+                    },
+                    onFinish = { newBot, triggers ->
+                        viewModel.createBotFromWizard(newBot, triggers) {
                             // Opened automatically
                         }
                     },
-                    onGenerateOpening = { draft ->
-                        viewModel.generateOpeningForWizard(draft)
+                    onGenerateOpening = { draft, forceRegenerate, toneHint ->
+                        viewModel.generateOpeningForWizard(draft, forceRegenerate, toneHint)
                     },
-                    onAnalyzeBaseline = { draft ->
-                        viewModel.analyzeBaselineForWizard(draft)
+                    onAnalyzeBaseline = { draft, forceReanalyze, editedFields ->
+                        viewModel.analyzeBaseline(draft, forceReanalyze, editedFields)
+                    },
+                    onCancelBaseline = {
+                        viewModel.cancelBaselineAnalysis()
                     }
                 )
             }
@@ -194,7 +196,8 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                         onResetChat = { fullReset -> viewModel.resetChat(currentBot.id, fullReset) },
                         onDeleteBot = { viewModel.deleteBot(currentBot.id) },
                         onSpeakText = { text -> viewModel.speakText(text) },
-                        isSpeaking = isSpeaking,
+                        onSpeakMessage = { msgId, text -> viewModel.speakMessage(msgId, text) },
+                        speakingMessageIdFlow = viewModel.speakingMessageId,
                         onStopSpeaking = { viewModel.stopSpeaking() },
                         onEnsureOpeningMessage = { viewModel.ensureOpeningMessageForActiveBot() },
                         onClearError = { viewModel.clearError() },
@@ -202,8 +205,8 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                         onRetryFromBanner = { viewModel.retryWithSoftenedPrompt(currentBot.id) },
                         onRewindToMessage = { msgId -> viewModel.rewindToMessage(currentBot.id, msgId) },
                         onCloneBot = { viewModel.cloneBot(currentBot.id) },
-                        streamingMsgId = streamingMsgId,
-                        streamingText = streamingText
+                        streamingMsgIdFlow = viewModel.streamingMsgId,
+                        streamingTextFlow = viewModel.streamingText
                     )
                 }
             }

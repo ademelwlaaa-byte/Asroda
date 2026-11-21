@@ -1,23 +1,23 @@
 package com.example.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,7 +25,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -35,36 +36,34 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Public
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,8 +73,12 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,77 +86,177 @@ import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.data.local.BotEntity
 import com.example.data.local.EmotionState
+import com.example.data.local.PersonalityProfile
 import com.example.data.local.RelationshipAxes
 import com.example.data.local.SensitiveTriggerEntity
 import com.example.data.local.WorldAtmosphere
 import com.example.data.repository.BaselineEmotionEngine
 import com.example.data.repository.KeyCharacter
-import com.example.ui.components.AppBackground
-import com.example.ui.components.BotAvatarImage
-import com.example.ui.components.EmochiLoadingSpinner
-import com.example.ui.components.MorCamCircleIconButton
-import com.example.ui.components.MorCamGlassSlider
-import com.example.ui.theme.DisplaySerifFontFamily
-import android.widget.Toast
 import com.example.ui.animation.CosmicMotionSpecs
-import com.example.ui.animation.CosmicOrbLoader
 import com.example.ui.animation.LocalCosmicMotionConfig
 import com.example.ui.animation.cosmicShimmerSweep
+import com.example.ui.components.AppBackground
+import com.example.ui.components.BotAvatarImage
+import com.example.ui.components.MorCamCircleIconButton
+import com.example.ui.components.MorCamDialogShell
+import com.example.ui.components.MorCamSwitchRow
+import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+import com.example.ui.viewmodel.EmochiViewModel
 import com.example.util.AvatarOptimizer
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import java.util.UUID
 
+private val PERSONAL_SPARK_CHIPS = listOf(
+    "Soğukkanlı & Korumacı",
+    "Kıskanç & Tutkulu",
+    "Gizemli & Alaycı",
+    "Sadık Sırdaş",
+    "Tehlikeli Anti-Kahraman",
+    "Zeki & Mesafeli"
+)
+
+private val UNIVERSE_SPARK_CHIPS = listOf(
+    "Karanlık Gotik & Gizemli",
+    "Destansı & Sinematik",
+    "Politik Entrika & İhanet",
+    "Sıcak & Büyülü Atmosfer"
+)
+
+private val OPENING_TONE_OPTIONS = listOf(
+    "dramatic" to "Dramatik & Gerilimli",
+    "warm" to "Sıcak & Samimi",
+    "mysterious" to "Gizemli & Yavaş"
+)
+
+private fun serializeWizardKeyCharacters(list: List<KeyCharacter>, dropBlank: Boolean): String {
+    val filtered = if (dropBlank) list.filter { it.name.isNotBlank() } else list
+    if (filtered.isEmpty()) return "[]"
+    val array = JSONArray()
+    for (char in filtered) {
+        val obj = JSONObject()
+        obj.put("id", char.id)
+        obj.put("name", char.name.trim())
+        obj.put("desc", char.desc.trim())
+        array.put(obj)
+    }
+    return array.toString()
+}
+
+private fun deserializeWizardKeyCharacters(json: String): List<KeyCharacter> {
+    if (json.isBlank() || json == "[]") return emptyList()
+    return try {
+        val arr = JSONArray(json)
+        val out = mutableListOf<KeyCharacter>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            out.add(
+                KeyCharacter(
+                    id = o.optString("id", UUID.randomUUID().toString()),
+                    name = o.optString("name", ""),
+                    desc = o.optString("desc", "")
+                )
+            )
+        }
+        out
+    } catch (_: Exception) {
+        emptyList()
+    }
+}
+
+private fun isValidIsoStoryDate(input: String): Boolean {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return true
+    if (!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(trimmed)) return false
+    return try {
+        LocalDate.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE)
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CreateBotWizardScreen(
+    baselineAnalysisState: EmochiViewModel.BaselineAnalysisUiState = EmochiViewModel.BaselineAnalysisUiState.Idle,
     onBack: () -> Unit,
-    onFinish: (BotEntity) -> Unit,
-    onGenerateOpening: suspend (BotEntity) -> String,
-    onAnalyzeBaseline: (suspend (BotEntity) -> BaselineEmotionEngine.BaselineAnalysisResult)? = null
+    onFinish: (BotEntity, List<SensitiveTriggerEntity>) -> Unit,
+    onGenerateOpening: suspend (BotEntity, Boolean, String) -> String,
+    onAnalyzeBaseline: (BotEntity, Boolean, Set<String>) -> Unit = { _, _, _ -> },
+    onCancelBaseline: () -> Unit = {}
 ) {
-    var stepIdx by remember { mutableIntStateOf(0) }
+    // Fixed single draftBotId across the entire wizard lifecycle (fixes orphaned triggers bug)
+    val draftBotId = rememberSaveable { UUID.randomUUID().toString() }
 
-    var mode by remember { mutableStateOf("personal") }
-    var aiName by remember { mutableStateOf("") }
-    var aiPersonality by remember { mutableStateOf("") }
-    var avatarUrl by remember { mutableStateOf("") }
-    var pinnedMemory by remember { mutableStateOf("") }
-    var scenario by remember { mutableStateOf("") }
-    var universeName by remember { mutableStateOf("") }
-    var userCharName by remember { mutableStateOf("") }
-    var userCharDesc by remember { mutableStateOf("") }
-    var openingMessage by remember { mutableStateOf("") }
-    var writingStyle by remember { mutableStateOf("rp") }
-    var intensity by remember { mutableStateOf("normal") }
-    var isPublic by remember { mutableStateOf(true) }
-    var storyStartDate by remember { mutableStateOf("") }
-    var keyCharacters by remember { mutableStateOf<List<KeyCharacter>>(emptyList()) }
+    var stepIdx by rememberSaveable { mutableIntStateOf(0) }
+    var mode by rememberSaveable { mutableStateOf("personal") }
+    var aiName by rememberSaveable { mutableStateOf("") }
+    var aiPersonality by rememberSaveable { mutableStateOf("") }
+    var avatarUrl by rememberSaveable { mutableStateOf("") }
+    var pinnedMemory by rememberSaveable { mutableStateOf("") }
+    var scenario by rememberSaveable { mutableStateOf("") }
+    var universeName by rememberSaveable { mutableStateOf("") }
+    var userCharName by rememberSaveable { mutableStateOf("") }
+    var userCharDesc by rememberSaveable { mutableStateOf("") }
+    var openingMessage by rememberSaveable { mutableStateOf("") }
+    var selectedOpeningTone by rememberSaveable { mutableStateOf("dramatic") }
+    var writingStyle by rememberSaveable { mutableStateOf("rp") }
+    var intensity by rememberSaveable { mutableStateOf("normal") }
+    var isPublic by rememberSaveable { mutableStateOf(false) } // Default: Sadece Bana Özel
+    var enableOoc by rememberSaveable { mutableStateOf(true) }
+    var isNsfw by rememberSaveable { mutableStateOf(true) }
+    var storyStartDate by rememberSaveable { mutableStateOf("") }
+    var keyCharactersSerialized by rememberSaveable { mutableStateOf("[]") }
+    var showPinnedMemorySection by rememberSaveable { mutableStateOf(false) }
+
+    val keyCharacters = remember(keyCharactersSerialized) {
+        deserializeWizardKeyCharacters(keyCharactersSerialized)
+    }
+    fun updateKeyCharacters(updated: List<KeyCharacter>) {
+        keyCharactersSerialized = serializeWizardKeyCharacters(updated, dropBlank = false)
+    }
 
     // Baseline emotion analysis review state (Step 5)
     var analysisResult by remember { mutableStateOf<BaselineEmotionEngine.BaselineAnalysisResult?>(null) }
-    var isAnalyzing by remember { mutableStateOf(false) }
+    var analyzedBotSnapshot by remember { mutableStateOf<BotEntity?>(null) }
     var analysisError by remember { mutableStateOf<String?>(null) }
     var userEditedFields by remember { mutableStateOf<Set<String>>(emptySet()) }
     var reviewRelType by remember { mutableStateOf("") }
     var reviewAttachment by remember { mutableStateOf("secure") }
     var reviewSpeechStyle by remember { mutableStateOf("") }
     var reviewDominantEmotion by remember { mutableStateOf("") }
+    var reviewRegulationCapacity by remember { mutableIntStateOf(50) }
     var reviewTriggers by remember { mutableStateOf<List<SensitiveTriggerEntity>>(emptyList()) }
     var reviewBigFive by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
     var reviewAxes by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     var isGeneratingOpening by remember { mutableStateOf(false) }
     var genError by remember { mutableStateOf<String?>(null) }
+    var validationHint by remember { mutableStateOf<String?>(null) }
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
+
+    val isAnalyzing = baselineAnalysisState is EmochiViewModel.BaselineAnalysisUiState.Loading
 
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val scrollState = rememberScrollState()
-    val frostedBackdrop = remember(context) {
-        createFrostedGothicManorBitmap(context, R.drawable.img_botlist_gothic_wisteria_bg)
-    }
+    val frostedBackdropState = com.example.util.rememberFrostedBackdrop(
+        key = "gothic_manor_${R.drawable.img_botlist_gothic_wisteria_bg}",
+        drawableResId = R.drawable.img_botlist_gothic_wisteria_bg,
+        targetWidth = 360,
+        maxHeight = 860,
+        blurRadius = 4,
+        blurPasses = 2,
+        violetShiftWarmPixels = true,
+        outputRgb565 = true
+    )
+    val frostedBackdrop = frostedBackdropState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
 
     // Zero-permission Android Photo Picker -> OOM-safe 256x256 Micro-WebP (~15 KB Base64)
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -186,50 +289,127 @@ fun CreateBotWizardScreen(
         "Stil & Yayın"
     )
 
-    BackHandler {
-        if (stepIdx > 0) stepIdx-- else onBack()
+    val hasUnsavedDraft = aiName.isNotBlank() ||
+        aiPersonality.isNotBlank() ||
+        universeName.isNotBlank() ||
+        scenario.isNotBlank() ||
+        userCharName.isNotBlank() ||
+        openingMessage.isNotBlank() ||
+        avatarUrl.isNotBlank() ||
+        pinnedMemory.isNotBlank() ||
+        keyCharacters.any { it.name.isNotBlank() || it.desc.isNotBlank() }
+
+    val isStoryDateValid = isValidIsoStoryDate(storyStartDate)
+
+    val canNext = when (stepIdx) {
+        0 -> true
+        1 -> if (mode == "personal") aiName.isNotBlank() && aiPersonality.isNotBlank() else universeName.isNotBlank()
+        2 -> scenario.isNotBlank() && userCharName.isNotBlank()
+        3 -> openingMessage.isNotBlank()
+        4 -> !isAnalyzing
+        5 -> isStoryDateValid
+        else -> true
+    }
+
+    fun computeMissingHint(): String? = when (stepIdx) {
+        1 -> if (mode == "personal") {
+            when {
+                aiName.isBlank() && aiPersonality.isBlank() -> "Devam etmek için Karakter Adı ve Kişilik alanlarını doldurun."
+                aiName.isBlank() -> "Devam etmek için Karakter Adı girin."
+                aiPersonality.isBlank() -> "Devam etmek için Kişilik ve Özellikler alanını doldurun."
+                else -> null
+            }
+        } else {
+            if (universeName.isBlank()) "Devam etmek için Evren Adı girin." else null
+        }
+        2 -> when {
+            scenario.isBlank() && userCharName.isBlank() -> "Devam etmek için Senaryo ve Karakterinizin Adını girin."
+            scenario.isBlank() -> "Devam etmek için Senaryo / Bağlam alanını doldurun."
+            userCharName.isBlank() -> "Devam etmek için canlandıracağınız karakterin adını girin."
+            else -> null
+        }
+        3 -> if (openingMessage.isBlank()) "Devam etmek için bir açılış sahnesi yazın veya AI ile üretin." else null
+        4 -> if (isAnalyzing) "Analiz tamamlanana kadar lütfen bekleyin." else null
+        5 -> if (!isStoryDateValid) "Başlangıç tarihi yyyy-AA-gg biçiminde olmalı (örn. 2045-06-15) veya boş bırakılmalı." else null
+        else -> null
+    }
+
+    // Clear soft validation hint whenever user edits inputs or moves steps
+    LaunchedEffect(stepIdx, mode, aiName, aiPersonality, universeName, scenario, userCharName, openingMessage, storyStartDate) {
+        validationHint = null
     }
 
     LaunchedEffect(stepIdx) {
         scrollState.scrollTo(0)
     }
 
-    fun applyAnalysisState(res: BaselineEmotionEngine.BaselineAnalysisResult) {
+    fun applyAnalysisResult(res: BaselineEmotionEngine.BaselineAnalysisResult, preserveEdits: Boolean) {
         analysisResult = res
-        reviewRelType = res.relationshipType
-        reviewAttachment = res.personalityProfile.attachmentStyle
-        reviewSpeechStyle = res.speechPattern
-        reviewDominantEmotion = res.baselineEmotionState.dominantEmotion
-        reviewTriggers = res.sensitiveTriggers.toMutableList()
-        reviewBigFive = mapOf(
-            "openness" to res.personalityProfile.openness,
-            "conscientiousness" to res.personalityProfile.conscientiousness,
-            "extraversion" to res.personalityProfile.extraversion,
-            "agreeableness" to res.personalityProfile.agreeableness,
-            "neuroticism" to res.personalityProfile.neuroticism
-        )
-        reviewAxes = mapOf(
-            "affection" to res.baselineEmotionState.affection,
-            "respect" to res.baselineEmotionState.relationshipAxes.respectScore,
-            "comfort" to res.baselineEmotionState.relationshipAxes.comfortScore,
-            "resentment" to res.baselineEmotionState.relationshipAxes.resentmentScore
-        )
+        val edited = if (preserveEdits) userEditedFields else emptySet()
+        if ("relationshipType" !in edited || reviewRelType.isBlank()) {
+            reviewRelType = res.relationshipType
+        }
+        if ("attachmentStyle" !in edited) {
+            reviewAttachment = BaselineEmotionEngine.normalizeAttachment(res.personalityProfile.attachmentStyle)
+        }
+        if ("speechStyle" !in edited || reviewSpeechStyle.isBlank()) {
+            reviewSpeechStyle = res.speechPattern
+        }
+        if ("dominantEmotion" !in edited || reviewDominantEmotion.isBlank()) {
+            reviewDominantEmotion = res.baselineEmotionState.dominantEmotion
+        }
+        if ("regulationCapacity" !in edited) {
+            reviewRegulationCapacity = res.regulationCapacity.coerceIn(10, 100)
+        }
+        if ("sensitiveTriggers" !in edited || reviewTriggers.isEmpty()) {
+            reviewTriggers = res.sensitiveTriggers.map { it.copy(botId = draftBotId) }
+        }
+        if ("bigFive" !in edited || reviewBigFive.isEmpty()) {
+            reviewBigFive = mapOf(
+                "openness" to res.personalityProfile.openness,
+                "conscientiousness" to res.personalityProfile.conscientiousness,
+                "extraversion" to res.personalityProfile.extraversion,
+                "agreeableness" to res.personalityProfile.agreeableness,
+                "neuroticism" to res.personalityProfile.neuroticism
+            )
+        }
+        if ("axes" !in edited || reviewAxes.isEmpty()) {
+            reviewAxes = mapOf(
+                "affection" to res.baselineEmotionState.affection,
+                "respect" to res.baselineEmotionState.relationshipAxes.respectScore,
+                "comfort" to res.baselineEmotionState.relationshipAxes.comfortScore,
+                "resentment" to res.baselineEmotionState.relationshipAxes.resentmentScore
+            )
+        }
     }
 
-    fun buildCurrentDraft(): BotEntity {
-        val serializedCast = if (keyCharacters.isEmpty()) "[]" else {
-            val array = JSONArray()
-            for (char in keyCharacters) {
-                val obj = JSONObject()
-                obj.put("id", char.id)
-                obj.put("name", char.name)
-                obj.put("desc", char.desc)
-                array.put(obj)
+    // Observe unified ViewModel baselineAnalysisState
+    LaunchedEffect(baselineAnalysisState) {
+        when (val st = baselineAnalysisState) {
+            is EmochiViewModel.BaselineAnalysisUiState.Loading -> {
+                analysisError = null
             }
-            array.toString()
+            is EmochiViewModel.BaselineAnalysisUiState.Success -> {
+                analysisError = null
+                analyzedBotSnapshot = st.updatedBot
+                if (st.resetUserEdits) {
+                    userEditedFields = emptySet()
+                }
+                applyAnalysisResult(st.result, preserveEdits = !st.resetUserEdits)
+            }
+            is EmochiViewModel.BaselineAnalysisUiState.Error -> {
+                analysisError = st.message
+                applyAnalysisResult(st.fallbackResult, preserveEdits = true)
+            }
+            is EmochiViewModel.BaselineAnalysisUiState.Idle -> Unit
         }
+    }
+
+    fun buildCurrentDraft(cleanBlankCast: Boolean = false): BotEntity {
+        val serializedCast = serializeWizardKeyCharacters(keyCharacters, dropBlank = cleanBlankCast)
+        val effectiveName = if (mode == "personal") aiName.trim() else universeName.trim()
         val baselineEmotion = EmotionState.calculateBaselineEmotionState(
-            aiName = if (mode == "personal") aiName.trim() else universeName.trim(),
+            aiName = effectiveName,
             personality = aiPersonality.trim(),
             scenario = scenario.trim(),
             userCharName = userCharName.trim(),
@@ -237,22 +417,29 @@ fun CreateBotWizardScreen(
         ).toJson()
 
         val initialWorldAtmosphere = if (mode == "universe") {
-            val intensityInt = when (intensity) {
-                "düşük" -> 3
-                "yüksek", "intense" -> 8
-                else -> 5
+            val dynamicFromAnalysis = analyzedBotSnapshot?.worldAtmosphere?.takeIf { it.isNotBlank() }
+            if (dynamicFromAnalysis != null) {
+                dynamicFromAnalysis
+            } else {
+                val intensityInt = when (intensity) {
+                    "düşük" -> 3
+                    "yüksek", "intense" -> 8
+                    else -> 5
+                }
+                WorldAtmosphere(
+                    mood = "sakin ve beklentili",
+                    intensity = intensityInt,
+                    currentEvent = "Açılış sahnesi ve hikayenin başlangıcı",
+                    macroAtmosphere = "${universeName.trim()} evreninin genel düzeni ve toplumsal kuralları hakim.",
+                    microAtmosphere = "Hikayenin başladığı fiziki mekan ve başlangıç ortamı."
+                ).toJson()
             }
-            WorldAtmosphere(
-                mood = "sakin ve beklentili",
-                intensity = intensityInt,
-                currentEvent = "Açılış sahnesi ve hikayenin başlangıcı",
-                macroAtmosphere = "${universeName.trim()} evreninin genel düzeni ve toplumsal kuralları hakim.",
-                microAtmosphere = "Hikayenin başladığı fiziki mekan ve başlangıç ortamı."
-            ).toJson()
         } else ""
 
+        val cleanDate = storyStartDate.trim().takeIf { it.isNotBlank() && isValidIsoStoryDate(it) } ?: ""
+
         return BotEntity(
-            id = UUID.randomUUID().toString(),
+            id = draftBotId,
             mode = mode,
             aiName = aiName.trim(),
             aiPersonality = aiPersonality.trim(),
@@ -267,59 +454,61 @@ fun CreateBotWizardScreen(
             writingStyle = writingStyle,
             intensity = intensity,
             customLength = "default",
-            isNsfw = true,
+            isNsfw = isNsfw,
             isPublic = isPublic,
+            enableOoc = enableOoc,
             emotionState = baselineEmotion,
             previousEmotionState = baselineEmotion,
             worldAtmosphere = initialWorldAtmosphere,
-            storyCalendarDate = storyStartDate.trim(),
-            hasExplicitStoryDate = storyStartDate.trim().isNotBlank(),
+            storyCalendarDate = cleanDate,
+            hasExplicitStoryDate = cleanDate.isNotBlank(),
+            baselineInputHash = analyzedBotSnapshot?.baselineInputHash ?: "",
+            baselineEmotionAnalysisJson = analyzedBotSnapshot?.baselineEmotionAnalysisJson ?: "",
             updatedAt = System.currentTimeMillis()
         )
     }
 
-    fun triggerBaselineAnalysis(resetEdits: Boolean) {
-        val draft = buildCurrentDraft()
-        scope.launch {
-            isAnalyzing = true
-            analysisError = null
-            if (resetEdits) userEditedFields = emptySet()
-            try {
-                val res = onAnalyzeBaseline?.invoke(draft)
-                    ?: BaselineEmotionEngine.calculateDeterministicFallback(
-                        botId = draft.id,
-                        aiName = draft.aiName,
-                        personality = draft.aiPersonality,
-                        scenario = draft.scenario,
-                        userCharName = draft.userCharName,
-                        userCharDesc = draft.userCharDesc
-                    )
-                applyAnalysisState(res)
-            } catch (_: Exception) {
-                analysisError = "Analiz başarısız. Otomatik tahmin uygulandı."
-                val fb = BaselineEmotionEngine.calculateDeterministicFallback(
-                    botId = draft.id,
-                    aiName = draft.aiName,
-                    personality = draft.aiPersonality,
-                    scenario = draft.scenario,
-                    userCharName = draft.userCharName,
-                    userCharDesc = draft.userCharDesc
-                )
-                applyAnalysisState(fb)
-            } finally {
-                isAnalyzing = false
-            }
+    fun triggerBaselineAnalysis(forceReanalyze: Boolean) {
+        if (forceReanalyze) {
+            userEditedFields = emptySet()
+        }
+        val draft = buildCurrentDraft(cleanBlankCast = true)
+        onAnalyzeBaseline(draft, forceReanalyze, if (forceReanalyze) emptySet() else userEditedFields)
+    }
+
+    fun handleBackAction() {
+        if (stepIdx == 4 && isAnalyzing) {
+            onCancelBaseline()
+        }
+        if (stepIdx > 0) {
+            stepIdx--
+        } else if (hasUnsavedDraft) {
+            showExitConfirmDialog = true
+        } else {
+            onBack()
         }
     }
 
-    val canNext = when (stepIdx) {
-        0 -> true
-        1 -> if (mode == "personal") aiName.isNotBlank() && aiPersonality.isNotBlank() else universeName.isNotBlank()
-        2 -> scenario.isNotBlank() && userCharName.isNotBlank()
-        3 -> openingMessage.isNotBlank()
-        4 -> !isAnalyzing
-        5 -> true
-        else -> true
+    fun advanceToStep(targetStep: Int) {
+        if (targetStep == stepIdx) return
+        if (stepIdx == 4 && isAnalyzing) {
+            onCancelBaseline()
+        }
+        if (stepIdx == 1 && mode == "universe") {
+            // Auto-clean empty cast rows when leaving Step 2
+            val cleaned = keyCharacters.filter { it.name.isNotBlank() || it.desc.isNotBlank() }
+            if (cleaned.size != keyCharacters.size) {
+                updateKeyCharacters(cleaned)
+            }
+        }
+        stepIdx = targetStep
+        if (targetStep == 4) {
+            triggerBaselineAnalysis(forceReanalyze = false)
+        }
+    }
+
+    BackHandler {
+        handleBackAction()
     }
 
     val motionConfig = LocalCosmicMotionConfig.current
@@ -340,10 +529,8 @@ fun CreateBotWizardScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Unified Cosmic Wisteria App Background (harmonized across all app menus)
         AppBackground(activeTab = "chats")
 
-        // Subtle amethyst atmospheric depth veil for high legibility
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -369,7 +556,17 @@ fun CreateBotWizardScreen(
                     frostedBackdrop = frostedBackdrop,
                     scrollSync = scrollState.value,
                     glowAlpha = pulseGlowAlpha,
-                    onBackClick = { if (stepIdx > 0) stepIdx-- else onBack() }
+                    onBackClick = { handleBackAction() },
+                    onStepSelect = { target ->
+                        if (target < stepIdx) {
+                            advanceToStep(target)
+                        } else if (target == stepIdx + 1 && canNext) {
+                            advanceToStep(target)
+                        }
+                    },
+                    canJumpToStep = { target ->
+                        target < stepIdx || (target == stepIdx + 1 && canNext)
+                    }
                 )
             },
             bottomBar = {
@@ -380,73 +577,148 @@ fun CreateBotWizardScreen(
                     frostedBackdrop = frostedBackdrop,
                     scrollSync = scrollState.value,
                     glowAlpha = pulseGlowAlpha,
-                    onBack = { if (stepIdx > 0) stepIdx-- else onBack() },
+                    validationHint = validationHint,
+                    onDisabledNextClick = {
+                        validationHint = computeMissingHint()
+                    },
+                    onBack = { handleBackAction() },
                     onNext = {
                         when {
-                            stepIdx == 3 -> {
-                                stepIdx++
-                                triggerBaselineAnalysis(resetEdits = false)
-                            }
                             stepIdx < totalSteps - 1 -> {
-                                stepIdx++
+                                advanceToStep(stepIdx + 1)
                             }
                             else -> {
-                                val base = buildCurrentDraft()
+                                val base = buildCurrentDraft(cleanBlankCast = true)
                                 val res = analysisResult
+                                val finalTriggers = if (reviewTriggers.isNotEmpty()) {
+                                    reviewTriggers
+                                        .filter { it.triggerTopic.isNotBlank() }
+                                        .map { it.copy(botId = draftBotId) }
+                                } else {
+                                    res?.sensitiveTriggers?.map { it.copy(botId = draftBotId) } ?: emptyList()
+                                }
+
                                 val finalBot = if (res != null) {
-                                    val axes = RelationshipAxes(
+                                    val editedAxes = RelationshipAxes(
                                         affectionScore = reviewAxes["affection"] ?: res.baselineEmotionState.affection,
                                         respectScore = reviewAxes["respect"] ?: res.baselineEmotionState.relationshipAxes.respectScore,
                                         comfortScore = reviewAxes["comfort"] ?: res.baselineEmotionState.relationshipAxes.comfortScore,
                                         resentmentScore = reviewAxes["resentment"] ?: res.baselineEmotionState.relationshipAxes.resentmentScore
                                     )
+                                    val editedProfile = PersonalityProfile(
+                                        openness = reviewBigFive["openness"] ?: res.personalityProfile.openness,
+                                        conscientiousness = reviewBigFive["conscientiousness"] ?: res.personalityProfile.conscientiousness,
+                                        extraversion = reviewBigFive["extraversion"] ?: res.personalityProfile.extraversion,
+                                        agreeableness = reviewBigFive["agreeableness"] ?: res.personalityProfile.agreeableness,
+                                        neuroticism = reviewBigFive["neuroticism"] ?: res.personalityProfile.neuroticism,
+                                        attachmentStyle = BaselineEmotionEngine.normalizeAttachment(reviewAttachment)
+                                    )
                                     val editedState = res.baselineEmotionState.copy(
-                                        relationshipAxes = axes,
-                                        dominantEmotion = reviewDominantEmotion,
-                                        speechPattern = reviewSpeechStyle,
-                                        primaryEmotions = res.baselineEmotionState.primaryEmotions
+                                        relationshipAxes = editedAxes,
+                                        dominantEmotion = reviewDominantEmotion.ifBlank { res.baselineEmotionState.dominantEmotion },
+                                        speechPattern = reviewSpeechStyle.ifBlank { res.speechPattern }
+                                    )
+                                    val finalSource = if (userEditedFields.isNotEmpty()) "user_edited" else res.analysisSource
+                                    val finalAnalysisResult = res.copy(
+                                        relationshipType = reviewRelType.ifBlank { res.relationshipType },
+                                        personalityProfile = editedProfile,
+                                        regulationCapacity = reviewRegulationCapacity.coerceIn(10, 100),
+                                        baselineEmotionState = editedState,
+                                        sensitiveTriggers = finalTriggers,
+                                        speechPattern = reviewSpeechStyle.ifBlank { res.speechPattern },
+                                        analysisSource = finalSource
                                     )
                                     val emotionJson = editedState.toJson()
+                                    val canonicalJson = finalAnalysisResult.toCanonicalJson()
                                     base.copy(
                                         emotionState = emotionJson,
                                         previousEmotionState = emotionJson,
-                                        baseAffectionDifficulty = res.difficultyMultiplier,
-                                        emotionalRegulationCapacity = res.regulationCapacity,
-                                        baselineEmotionAnalysisJson = res.rawJson.ifBlank { "" },
-                                        baselineAnalysisSource = if (userEditedFields.isNotEmpty()) "user_edited" else res.analysisSource,
+                                        baseAffectionDifficulty = finalAnalysisResult.difficultyMultiplier,
+                                        emotionalRegulationCapacity = finalAnalysisResult.regulationCapacity,
+                                        baselineEmotionAnalysisJson = canonicalJson,
+                                        baselineAnalysisSource = finalSource,
                                         baselineUserEditedFields = userEditedFields.joinToString(",")
                                     )
                                 } else {
                                     base
                                 }
-                                onFinish(finalBot)
+                                onFinish(finalBot, finalTriggers)
                             }
                         }
                     }
                 )
             }
         ) { innerPadding ->
-            AnimatedContent(
-                targetState = stepIdx,
-                transitionSpec = {
-                    CosmicMotionSpecs.cosmicTabTransition(
-                        forward = targetState > initialState,
-                        config = motionConfig
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding),
-                label = "wizardStepTransition"
-            ) { currentStep ->
-                Column(
+            val topInset = innerPadding.calculateTopPadding()
+            val bottomInset = innerPadding.calculateBottomPadding()
+            val density = LocalDensity.current
+            var viewportTopInWindowPx by remember { mutableFloatStateOf(0f) }
+            var viewportBottomInWindowPx by remember { mutableFloatStateOf(0f) }
+
+            val focusScrollHost = remember(scrollState) {
+                WizardFocusScrollHost(scrollState = scrollState)
+            }
+            val topInsetPx = with(density) { topInset.toPx() }
+            val bottomInsetPx = with(density) { bottomInset.toPx() }
+            focusScrollHost.safeTopInWindowPx = viewportTopInWindowPx + topInsetPx
+            focusScrollHost.safeBottomInWindowPx = (viewportBottomInWindowPx - bottomInsetPx)
+                .coerceAtLeast(viewportTopInWindowPx + topInsetPx)
+
+            CompositionLocalProvider(LocalWizardFocusScrollHost provides focusScrollHost) {
+                AnimatedContent(
+                    targetState = stepIdx,
+                    transitionSpec = {
+                        CosmicMotionSpecs.cosmicTabTransition(
+                            forward = targetState > initialState,
+                            config = motionConfig
+                        )
+                    },
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 18.dp)
-                        .verticalScroll(scrollState),
-                    horizontalAlignment = Alignment.Start
-                ) {
-                    Spacer(modifier = Modifier.height(10.dp))
+                        .onGloballyPositioned { coords ->
+                            val rect = coords.boundsInWindow()
+                            viewportTopInWindowPx = rect.top
+                            viewportBottomInWindowPx = rect.bottom
+                        }
+                        .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
+                        .drawWithContent {
+                            drawContent()
+                            val h = size.height
+                            if (h > 4f) {
+                                val topPx = with(density) { topInset.toPx() }.coerceIn(0f, h * 0.45f)
+                                val bottomPx = with(density) { bottomInset.toPx() }.coerceIn(0f, h * 0.72f)
+                                val topFadePx = with(density) { 20.dp.toPx() }
+                                val bottomFadePx = with(density) { 36.dp.toPx() }
+                                val bottomBoundary = (h - bottomPx).coerceAtLeast(topPx + 4f)
+
+                                val s0 = ((topPx - with(density) { 4.dp.toPx() }) / h).coerceIn(0f, 0.96f)
+                                val s1 = ((topPx + topFadePx) / h).coerceIn(s0, 0.97f)
+                                val s2 = ((bottomBoundary - bottomFadePx) / h).coerceIn(s1, 0.98f)
+                                val s3 = ((bottomBoundary + with(density) { 10.dp.toPx() }) / h).coerceIn(s2, 1f)
+
+                                drawRect(
+                                    brush = Brush.verticalGradient(
+                                        0f to Color.Transparent,
+                                        s0 to Color.Transparent,
+                                        s1 to Color.Black,
+                                        s2 to Color.Black,
+                                        s3 to Color.Transparent,
+                                        1f to Color.Transparent
+                                    ),
+                                    blendMode = BlendMode.DstIn
+                                )
+                            }
+                        },
+                    label = "wizardStepTransition"
+                ) { currentStep ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 18.dp)
+                            .verticalScroll(scrollState),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Spacer(modifier = Modifier.height(topInset + 10.dp))
 
                     when (currentStep) {
                         // ── STEP 1 / 6: INTERACTION MODE ─────────────────────
@@ -478,7 +750,7 @@ fun CreateBotWizardScreen(
                                 title = "Evren / Hikaye (RP)",
                                 subtitle1 = "Kurgusal bir dünyada geçen roleplay.",
                                 subtitle2 = "AI evrenin anlatıcısı olur ve kadroyu yönetir.",
-                                iconVector = Icons.Default.MenuBook,
+                                iconVector = Icons.AutoMirrored.Filled.MenuBook,
                                 isSelected = mode == "universe",
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value,
@@ -489,7 +761,6 @@ fun CreateBotWizardScreen(
 
                             Spacer(modifier = Modifier.height(18.dp))
 
-                            // Subtle contextual tip pill matching Mor Cam aesthetic
                             WizardMorCamSectionCard(
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value
@@ -530,103 +801,19 @@ fun CreateBotWizardScreen(
 
                                 Spacer(modifier = Modifier.height(20.dp))
 
-                                // Frosted Glass Avatar Upload Card
-                                WizardMorCamSectionCard(
+                                WizardAvatarPickerCard(
+                                    title = "Bot Profil Fotoğrafı",
+                                    emptySubtitle = "Galeriden özel bir portre veya kapak seçin.",
+                                    avatarUrl = avatarUrl,
                                     frostedBackdrop = frostedBackdrop,
                                     scrollSync = scrollState.value,
-                                    modifier = Modifier
-                                        .clickable(
-                                            indication = null,
-                                            interactionSource = remember { MutableInteractionSource() }
-                                        ) {
-                                            photoPickerLauncher.launch(
-                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                            )
-                                        }
-                                        .testTag("wizard_avatar_picker_card")
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(60.dp)
-                                                .clip(RoundedCornerShape(17.dp))
-                                                .background(
-                                                    Brush.radialGradient(
-                                                        listOf(Color(0x806D28D9), Color(0x551F0A3D))
-                                                    )
-                                                )
-                                                .border(
-                                                    width = 1.4.dp,
-                                                    brush = Brush.linearGradient(
-                                                        listOf(Color(0xFFF3E8FF), Color(0xFFC084FC), Color(0xFF7C3AED))
-                                                    ),
-                                                    shape = RoundedCornerShape(17.dp)
-                                                ),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            BotAvatarImage(
-                                                avatarUrl = avatarUrl.takeIf { it.isNotBlank() },
-                                                contentDescription = "Karakter Profil Fotoğrafı",
-                                                modifier = Modifier.fillMaxSize(),
-                                                fallback = {
-                                                    Icon(
-                                                        imageVector = Icons.Default.Person,
-                                                        contentDescription = null,
-                                                        tint = Color(0xFFEDE9FE),
-                                                        modifier = Modifier.size(28.dp)
-                                                    )
-                                                }
-                                            )
-                                        }
-
-                                        Spacer(modifier = Modifier.width(15.dp))
-
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Bot Profil Fotoğrafı",
-                                                fontFamily = DisplaySerifFontFamily,
-                                                color = Color(0xFFFAF6FF),
-                                                fontSize = 16.5.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                            Spacer(modifier = Modifier.height(3.dp))
-                                            Text(
-                                                text = if (avatarUrl.isNotBlank()) {
-                                                    "Görsel seçildi • Değiştirmek için dokun"
-                                                } else {
-                                                    "Galeriden özel bir portre veya kapak seçin."
-                                                },
-                                                fontFamily = InterFontFamily,
-                                                color = Color(0xFFCBBCEE),
-                                                fontSize = 12.5.sp,
-                                                lineHeight = 17.sp
-                                            )
-                                        }
-
-                                        Spacer(modifier = Modifier.width(8.dp))
-
-                                        if (avatarUrl.isNotBlank()) {
-                                            MorCamCircleIconButton(
-                                                icon = Icons.Default.Close,
-                                                contentDescription = "Fotoğrafı Kaldır",
-                                                onClick = { avatarUrl = "" },
-                                                size = 38.dp,
-                                                isDestructive = true,
-                                                testTag = "wizard_remove_avatar_button"
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.ChevronRight,
-                                                contentDescription = null,
-                                                tint = Color(0xFFD8B4FE),
-                                                modifier = Modifier.size(22.dp)
-                                            )
-                                        }
-                                    }
-                                }
+                                    onPickClick = {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    onRemoveClick = { avatarUrl = "" }
+                                )
 
                                 Spacer(modifier = Modifier.height(18.dp))
 
@@ -655,19 +842,69 @@ fun CreateBotWizardScreen(
                                     singleLine = false,
                                     frostedBackdrop = frostedBackdrop,
                                     scrollSync = scrollState.value,
-                                    minHeight = 142.dp,
+                                    minHeight = 136.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("ai_personality_input")
                                 )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "✦ Hızlı Kişilik Kıvılcımları",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFD8B4FE),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    PERSONAL_SPARK_CHIPS.forEach { spark ->
+                                        val isIncluded = aiPersonality.contains(spark, ignoreCase = true)
+                                        WizardMorCamPillChip(
+                                            label = if (isIncluded) "✓ $spark" else "+ $spark",
+                                            selected = isIncluded,
+                                            onClick = {
+                                                aiPersonality = if (isIncluded) {
+                                                    aiPersonality
+                                                        .replace(", $spark", "", ignoreCase = true)
+                                                        .replace("$spark, ", "", ignoreCase = true)
+                                                        .replace(spark, "", ignoreCase = true)
+                                                        .trim()
+                                                } else {
+                                                    if (aiPersonality.isBlank()) spark else "${aiPersonality.trim().trimEnd(',', '.')}, $spark"
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
                             } else {
                                 WizardStepHeader(
                                     title = "Evren ve karakter\nkadrosunu kurun",
-                                    subtitle = "Kurgusal dünyanın adını ve ana karakter kadrosunu belirleyin.",
+                                    subtitle = "Kurgusal dünyanın kapağını, adını, anlatıcı kurallarını ve kadrosunu belirleyin.",
                                     glowAlpha = pulseGlowAlpha
                                 )
 
                                 Spacer(modifier = Modifier.height(20.dp))
+
+                                WizardAvatarPickerCard(
+                                    title = "Evren Kapak Görseli",
+                                    emptySubtitle = "Dünyanızın atmosferini yansıtan bir kapak seçin.",
+                                    avatarUrl = avatarUrl,
+                                    frostedBackdrop = frostedBackdrop,
+                                    scrollSync = scrollState.value,
+                                    onPickClick = {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    onRemoveClick = { avatarUrl = "" }
+                                )
+
+                                Spacer(modifier = Modifier.height(18.dp))
 
                                 WizardFieldLabel(title = "Evren Adı", required = true)
                                 Spacer(modifier = Modifier.height(8.dp))
@@ -682,6 +919,49 @@ fun CreateBotWizardScreen(
                                         .fillMaxWidth()
                                         .testTag("universe_name_input")
                                 )
+
+                                Spacer(modifier = Modifier.height(18.dp))
+
+                                WizardFieldLabel(title = "Evren Kuralları & Anlatıcı Üslubu (Opsiyonel)", required = false)
+                                Spacer(modifier = Modifier.height(8.dp))
+                                WizardMorCamTextField(
+                                    value = aiPersonality,
+                                    onValueChange = { aiPersonality = it },
+                                    placeholder = "Büyü sistemi, toplumsal hiyerarşi, anlatıcının tonu ve dünya kuralları...",
+                                    singleLine = false,
+                                    frostedBackdrop = frostedBackdrop,
+                                    scrollSync = scrollState.value,
+                                    minHeight = 112.dp,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("universe_rules_input")
+                                )
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    UNIVERSE_SPARK_CHIPS.forEach { spark ->
+                                        val isIncluded = aiPersonality.contains(spark, ignoreCase = true)
+                                        WizardMorCamPillChip(
+                                            label = if (isIncluded) "✓ $spark" else "+ $spark",
+                                            selected = isIncluded,
+                                            onClick = {
+                                                aiPersonality = if (isIncluded) {
+                                                    aiPersonality
+                                                        .replace(", $spark", "", ignoreCase = true)
+                                                        .replace("$spark, ", "", ignoreCase = true)
+                                                        .replace(spark, "", ignoreCase = true)
+                                                        .trim()
+                                                } else {
+                                                    if (aiPersonality.isBlank()) spark else "${aiPersonality.trim().trimEnd(',', '.')}, $spark"
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
 
                                 Spacer(modifier = Modifier.height(20.dp))
 
@@ -702,9 +982,10 @@ fun CreateBotWizardScreen(
                                             WizardMorCamTextField(
                                                 value = char.name,
                                                 onValueChange = { newName ->
-                                                    keyCharacters = keyCharacters.toMutableList().apply {
+                                                    val next = keyCharacters.toMutableList().apply {
                                                         this[idx] = this[idx].copy(name = newName)
                                                     }
+                                                    updateKeyCharacters(next)
                                                 },
                                                 placeholder = "İsim",
                                                 singleLine = true,
@@ -716,9 +997,10 @@ fun CreateBotWizardScreen(
                                             WizardMorCamTextField(
                                                 value = char.desc,
                                                 onValueChange = { newDesc ->
-                                                    keyCharacters = keyCharacters.toMutableList().apply {
+                                                    val next = keyCharacters.toMutableList().apply {
                                                         this[idx] = this[idx].copy(desc = newDesc)
                                                     }
+                                                    updateKeyCharacters(next)
                                                 },
                                                 placeholder = "Rol / Tanım",
                                                 singleLine = true,
@@ -731,7 +1013,8 @@ fun CreateBotWizardScreen(
                                                 icon = Icons.Default.Close,
                                                 contentDescription = "Karakteri Sil",
                                                 onClick = {
-                                                    keyCharacters = keyCharacters.toMutableList().apply { removeAt(idx) }
+                                                    val next = keyCharacters.toMutableList().apply { removeAt(idx) }
+                                                    updateKeyCharacters(next)
                                                 },
                                                 size = 38.dp,
                                                 isDestructive = true
@@ -740,7 +1023,6 @@ fun CreateBotWizardScreen(
                                     }
                                 }
 
-                                // Frosted Glass "Karakter Ekle" Action Capsule
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -757,7 +1039,7 @@ fun CreateBotWizardScreen(
                                             shape = RoundedCornerShape(50)
                                         )
                                         .clickable {
-                                            keyCharacters = keyCharacters + KeyCharacter(name = "", desc = "")
+                                            updateKeyCharacters(keyCharacters + KeyCharacter(name = "", desc = ""))
                                         }
                                         .testTag("wizard_add_character_button"),
                                     contentAlignment = Alignment.Center
@@ -836,9 +1118,81 @@ fun CreateBotWizardScreen(
                                 singleLine = false,
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value,
-                                minHeight = 108.dp,
+                                minHeight = 104.dp,
                                 modifier = Modifier.fillMaxWidth()
                             )
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            // Collapsible Pinned Memory / World Rule section
+                            WizardMorCamSectionCard(
+                                frostedBackdrop = frostedBackdrop,
+                                scrollSync = scrollState.value,
+                                modifier = Modifier.testTag("wizard_pinned_memory_card")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showPinnedMemorySection = !showPinnedMemorySection }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "✦ Sabit Hafıza / Evren Kuralı Ekle (Opsiyonel)",
+                                            fontFamily = LiterarySerifFontFamily,
+                                            color = Color(0xFFFAF6FF),
+                                            fontSize = 14.5.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                        if (pinnedMemory.isNotBlank() && !showPinnedMemorySection) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                text = "Sabit kural eklendi (${pinnedMemory.length} karakter)",
+                                                fontFamily = InterFontFamily,
+                                                color = Color(0xFFD8B4FE),
+                                                fontSize = 11.5.sp
+                                            )
+                                        }
+                                    }
+                                    Icon(
+                                        imageVector = if (showPinnedMemorySection) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                        contentDescription = if (showPinnedMemorySection) "Daralt" else "Genişlet",
+                                        tint = Color(0xFFD8B4FE),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                }
+
+                                AnimatedVisibility(
+                                    visible = showPinnedMemorySection,
+                                    enter = fadeIn() + expandVertically(),
+                                    exit = fadeOut() + shrinkVertically()
+                                ) {
+                                    Column(modifier = Modifier.padding(top = 10.dp)) {
+                                        Text(
+                                            text = "Botun asla unutmaması gereken çekirdek gerçekler, yasaklar veya dünyaya dair değişmez kurallar.",
+                                            fontFamily = InterFontFamily,
+                                            color = Color(0xFFC2B2E4),
+                                            fontSize = 11.8.sp,
+                                            lineHeight = 16.sp
+                                        )
+                                        Spacer(Modifier.height(8.dp))
+                                        WizardMorCamTextField(
+                                            value = pinnedMemory,
+                                            onValueChange = { pinnedMemory = it },
+                                            placeholder = "Ör. Karakter asla gerçek adını ilk buluşmada söylemez...",
+                                            singleLine = false,
+                                            frostedBackdrop = frostedBackdrop,
+                                            scrollSync = scrollState.value,
+                                            minHeight = 96.dp,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("wizard_pinned_memory_input")
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         // ── STEP 4 / 6: OPENING SCENE ────────────────────────
@@ -861,12 +1215,12 @@ fun CreateBotWizardScreen(
                             ) {
                                 WizardMorCamTextField(
                                     value = openingMessage,
-                                    onValueChange = { if (it.length <= 1000) openingMessage = it },
+                                    onValueChange = { if (it.length <= 1500) openingMessage = it },
                                     placeholder = "Açılış mesajını kendiniz yazın veya aşağıdaki yapay zeka kartını kullanın...",
                                     singleLine = false,
                                     frostedBackdrop = frostedBackdrop,
                                     scrollSync = scrollState.value,
-                                    minHeight = 176.dp,
+                                    minHeight = 190.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("opening_message_input")
@@ -882,7 +1236,7 @@ fun CreateBotWizardScreen(
                                         .padding(horizontal = 10.dp, vertical = 3.dp)
                                 ) {
                                     Text(
-                                        text = "${openingMessage.length} / 1000",
+                                        text = "${openingMessage.length} / 1500",
                                         fontFamily = InterFontFamily,
                                         color = Color(0xFFE9D5FF),
                                         fontSize = 11.sp,
@@ -893,9 +1247,42 @@ fun CreateBotWizardScreen(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
+                            Text(
+                                text = "✦ Açılış Sahnesi Tonu",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFD8B4FE),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                OPENING_TONE_OPTIONS.forEach { (toneKey, toneLabel) ->
+                                    WizardMorCamPillChip(
+                                        label = toneLabel,
+                                        selected = selectedOpeningTone == toneKey,
+                                        onClick = { selectedOpeningTone = toneKey }
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+
+                            val hasExistingOpening = openingMessage.isNotBlank()
                             WizardMorCamChoiceCard(
-                                title = if (isGeneratingOpening) "Yapay Zeka Sahneyi Yazıyor..." else "AI Otomatik Yazsın",
-                                subtitle1 = "Senaryo ve karakter kişiliğine uygun sinematik açılış.",
+                                title = when {
+                                    isGeneratingOpening -> "Yapay Zeka Sahneyi Yazıyor..."
+                                    hasExistingOpening -> "Alternatif Açılış Üret ✦"
+                                    else -> "AI Otomatik Yazsın ✦"
+                                },
+                                subtitle1 = if (hasExistingOpening) {
+                                    "Mevcut metni tekrarlamadan seçili tonda yepyeni bir açılış üret."
+                                } else {
+                                    "Senaryo ve karakter kişiliğine uygun sinematik açılış."
+                                },
                                 subtitle2 = "Tek dokunuşla atmosferik ilk mesajı oluştur.",
                                 iconVector = Icons.Default.AutoAwesome,
                                 isSelected = true,
@@ -909,8 +1296,12 @@ fun CreateBotWizardScreen(
                                             isGeneratingOpening = true
                                             genError = null
                                             try {
-                                                val generated = onGenerateOpening(buildCurrentDraft())
-                                                openingMessage = generated
+                                                val generated = onGenerateOpening(
+                                                    buildCurrentDraft(cleanBlankCast = true),
+                                                    true,
+                                                    selectedOpeningTone
+                                                )
+                                                openingMessage = generated.take(1500)
                                             } catch (e: Exception) {
                                                 genError = e.message ?: "Oluşturulamadı."
                                             } finally {
@@ -934,435 +1325,90 @@ fun CreateBotWizardScreen(
 
                         // ── STEP 5 / 6: EMOTIONAL PROFILE & BASELINE REVIEW ──
                         4 -> {
-                            WizardStepHeader(
-                                title = "Duygusal profil ve\nilişki analizi",
-                                subtitle = "Başlangıç duygu durumunu, bağlanma stilini ve kişilik eksenlerini inceleyin.",
-                                glowAlpha = pulseGlowAlpha
-                            )
-
-                            Spacer(modifier = Modifier.height(18.dp))
-
-                            if (isAnalyzing) {
-                                WizardMorCamSectionCard(
-                                    frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
-                                    modifier = Modifier.cosmicShimmerSweep(active = true, cornerRadius = 22.dp)
-                                ) {
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 26.dp),
-                                        horizontalAlignment = Alignment.CenterHorizontally
-                                    ) {
-                                        CosmicOrbLoader(size = 42.dp)
-                                        Spacer(Modifier.height(14.dp))
-                                        Text(
-                                            text = "Yapay Zeka Karakterinizi Analiz Ediyor…",
-                                            fontFamily = LiterarySerifFontFamily,
-                                            color = Color(0xFFF3E8FF),
-                                            fontSize = 14.5.sp,
-                                            fontWeight = FontWeight.Medium
+                            WizardBaselineReviewStep(
+                                draftBotId = draftBotId,
+                                mode = mode,
+                                isAnalyzing = isAnalyzing,
+                                analysisError = analysisError,
+                                analysisResult = analysisResult,
+                                userEditedFields = userEditedFields,
+                                reviewRelType = reviewRelType,
+                                reviewAttachment = reviewAttachment,
+                                reviewSpeechStyle = reviewSpeechStyle,
+                                reviewDominantEmotion = reviewDominantEmotion,
+                                reviewRegulationCapacity = reviewRegulationCapacity,
+                                reviewTriggers = reviewTriggers,
+                                reviewBigFive = reviewBigFive,
+                                reviewAxes = reviewAxes,
+                                frostedBackdrop = frostedBackdrop,
+                                scrollSync = scrollState.value,
+                                pulseGlowAlpha = pulseGlowAlpha,
+                                onRelTypeChange = { rt ->
+                                    reviewRelType = rt
+                                    userEditedFields = userEditedFields + "relationshipType"
+                                    if ("axes" !in userEditedFields) {
+                                        val suggested = BaselineEmotionEngine.defaultAxesForRelType(rt)
+                                        reviewAxes = mapOf(
+                                            "affection" to suggested.affectionScore,
+                                            "respect" to suggested.respectScore,
+                                            "comfort" to suggested.comfortScore,
+                                            "resentment" to suggested.resentmentScore
                                         )
                                     }
-                                }
-                            } else {
-                                val res = analysisResult
-                                if (analysisError != null) {
-                                    Text(
-                                        text = "⚠ $analysisError",
-                                        fontFamily = InterFontFamily,
-                                        color = Color(0xFFFCA5A5),
-                                        fontSize = 12.sp,
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(bottom = 10.dp)
+                                },
+                                onAttachmentChange = { att ->
+                                    reviewAttachment = BaselineEmotionEngine.normalizeAttachment(att)
+                                    userEditedFields = userEditedFields + "attachmentStyle"
+                                },
+                                onDominantEmotionChange = { dom ->
+                                    reviewDominantEmotion = dom
+                                    userEditedFields = userEditedFields + "dominantEmotion"
+                                },
+                                onSpeechStyleChange = { style ->
+                                    reviewSpeechStyle = style
+                                    userEditedFields = userEditedFields + "speechStyle"
+                                },
+                                onRegulationCapacityChange = { cap ->
+                                    reviewRegulationCapacity = cap.coerceIn(10, 100)
+                                    userEditedFields = userEditedFields + "regulationCapacity"
+                                },
+                                onAxisChange = { key, value ->
+                                    reviewAxes = reviewAxes + (key to value.coerceIn(0, 100))
+                                    userEditedFields = userEditedFields + "axes" + "emotionState"
+                                },
+                                onBigFiveChange = { key, value ->
+                                    reviewBigFive = reviewBigFive + (key to value.coerceIn(0, 100))
+                                    userEditedFields = userEditedFields + "bigFive"
+                                },
+                                onTriggersChange = { nextList ->
+                                    reviewTriggers = nextList.map { it.copy(botId = draftBotId) }
+                                    userEditedFields = userEditedFields + "sensitiveTriggers"
+                                },
+                                onReanalyzeClick = {
+                                    triggerBaselineAnalysis(forceReanalyze = true)
+                                },
+                                onResetToDefaultClick = {
+                                    val effectiveName = if (mode == "personal") aiName else universeName
+                                    val fb = BaselineEmotionEngine.calculateDeterministicFallback(
+                                        botId = draftBotId,
+                                        aiName = effectiveName,
+                                        personality = aiPersonality,
+                                        scenario = scenario,
+                                        userCharName = userCharName,
+                                        userCharDesc = userCharDesc
                                     )
+                                    userEditedFields = emptySet()
+                                    analysisError = null
+                                    applyAnalysisResult(fb, preserveEdits = false)
                                 }
-                                if (res != null) {
-                                    val (sourceBadge, sourceColor) = when (res.analysisSource) {
-                                        "llm" -> Pair("✦ Yapay Zeka Analizi", Color(0xFFE9D5FF))
-                                        "keyword" -> Pair("✦ Otomatik Tahmin", Color(0xFFC4B5FD))
-                                        else -> Pair("✦ Kullanıcı Düzenlemesi", Color(0xFFFAF5FF))
-                                    }
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(50))
-                                                .background(Color(0x5C3B1A74))
-                                                .border(1.dp, sourceColor.copy(alpha = 0.72f), RoundedCornerShape(50))
-                                                .padding(horizontal = 12.dp, vertical = 5.dp)
-                                        ) {
-                                            Text(
-                                                text = sourceBadge,
-                                                fontFamily = InterFontFamily,
-                                                color = sourceColor,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                        if (res.confidence < 60) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(50))
-                                                    .background(Color(0x52451A03))
-                                                    .border(1.dp, Color(0xAAFB923C), RoundedCornerShape(50))
-                                                    .padding(horizontal = 10.dp, vertical = 5.dp)
-                                            ) {
-                                                Text(
-                                                    text = "Güven: ${res.confidence}/100",
-                                                    fontFamily = InterFontFamily,
-                                                    color = Color(0xFFFDE047),
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(14.dp))
-
-                                    // Relationship Type Selector with smooth horizontal edge fade
-                                    WizardMorCamSectionCard(
-                                        title = "İlişki Türü",
-                                        subtitle = "Karakter ile aranızdaki başlangıç bağı",
-                                        frostedBackdrop = frostedBackdrop,
-                                        scrollSync = scrollState.value
-                                    ) {
-                                        val relTypes = BaselineEmotionEngine.VALID_REL_TYPES.toList()
-                                        val relLabels = mapOf(
-                                            "parent" to "Ebeveyn",
-                                            "sibling" to "Kardeş",
-                                            "friend" to "Arkadaş",
-                                            "romantic" to "Sevgili",
-                                            "ex_romantic" to "Eski Sevgili",
-                                            "conflicted_romantic" to "Çatışmalı Sevgili",
-                                            "rival" to "Rakip",
-                                            "enemy" to "Düşman",
-                                            "stranger" to "Yabancı",
-                                            "authority" to "Otorite",
-                                            "mentor" to "Mentor",
-                                            "subordinate" to "Ast",
-                                            "companion_creature" to "Yaratık/Evcil",
-                                            "other" to "Diğer"
-                                        )
-                                        LazyRow(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            contentPadding = PaddingValues(horizontal = 4.dp),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                                                .drawWithContent {
-                                                    drawContent()
-                                                    drawRect(
-                                                        brush = Brush.horizontalGradient(
-                                                            0.00f to Color.Transparent,
-                                                            0.05f to Color.White,
-                                                            0.95f to Color.White,
-                                                            1.00f to Color.Transparent
-                                                        ),
-                                                        blendMode = BlendMode.DstIn
-                                                    )
-                                                }
-                                        ) {
-                                            items(relTypes) { rt ->
-                                                WizardMorCamPillChip(
-                                                    label = relLabels[rt] ?: rt,
-                                                    selected = reviewRelType == rt,
-                                                    onClick = {
-                                                        reviewRelType = rt
-                                                        userEditedFields = userEditedFields + "relationshipType"
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(12.dp))
-
-                                    // Big Five Sliders
-                                    WizardMorCamSectionCard(
-                                        title = "Kişilik Eksenleri (Big Five)",
-                                        subtitle = "Karakterin psikolojik eğilim oranları",
-                                        frostedBackdrop = frostedBackdrop,
-                                        scrollSync = scrollState.value
-                                    ) {
-                                        val bigFiveLabels = listOf(
-                                            "openness" to "Açıklık",
-                                            "conscientiousness" to "Sorumluluk",
-                                            "extraversion" to "Dışadönüklük",
-                                            "agreeableness" to "Uyumluluk",
-                                            "neuroticism" to "Nevrotiklik"
-                                        )
-                                        bigFiveLabels.forEach { (key, label) ->
-                                            val value = reviewBigFive[key] ?: 50
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = label,
-                                                    fontFamily = InterFontFamily,
-                                                    color = Color(0xFFE5D8FF),
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    modifier = Modifier.width(92.dp)
-                                                )
-                                                MorCamGlassSlider(
-                                                    value = value.toFloat(),
-                                                    onValueChange = {
-                                                        reviewBigFive = reviewBigFive + (key to it.toInt())
-                                                        userEditedFields = userEditedFields + "bigFive"
-                                                    },
-                                                    valueRange = 0f..100f,
-                                                    accentColor = Color(0xFFC084FC),
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                Box(
-                                                    modifier = Modifier
-                                                        .width(38.dp)
-                                                        .clip(RoundedCornerShape(10.dp))
-                                                        .background(Color(0x553B1A70))
-                                                        .border(0.9.dp, Color(0x99D8B4FE), RoundedCornerShape(10.dp))
-                                                        .padding(vertical = 3.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(
-                                                        text = "$value",
-                                                        fontFamily = InterFontFamily,
-                                                        color = Color.White,
-                                                        fontSize = 11.5.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(12.dp))
-
-                                    // Attachment Style
-                                    WizardMorCamSectionCard(
-                                        title = "Bağlanma Stili",
-                                        subtitle = "Yakınlık ve güven kurma biçimi",
-                                        frostedBackdrop = frostedBackdrop,
-                                        scrollSync = scrollState.value
-                                    ) {
-                                        val attachStyles = listOf(
-                                            "secure" to "Güvenli",
-                                            "anxious" to "Kaygılı",
-                                            "avoidant" to "Kaçınan",
-                                            "disorganized" to "Düzensiz"
-                                        )
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(7.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            attachStyles.forEach { (key, label) ->
-                                                WizardMorCamPillChip(
-                                                    label = label,
-                                                    selected = reviewAttachment == key,
-                                                    onClick = {
-                                                        reviewAttachment = key
-                                                        userEditedFields = userEditedFields + "attachmentStyle"
-                                                    },
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(12.dp))
-
-                                    // Dominant Emotion & Speech Style
-                                    WizardMorCamSectionCard(
-                                        title = "Baskın Duygu & Konuşma Tarzı",
-                                        subtitle = "İlk sahnedeki ton ve hitap biçimi",
-                                        frostedBackdrop = frostedBackdrop,
-                                        scrollSync = scrollState.value
-                                    ) {
-                                        WizardFieldLabel(title = "Baskın Duygu", required = false)
-                                        Spacer(Modifier.height(6.dp))
-                                        WizardMorCamTextField(
-                                            value = reviewDominantEmotion,
-                                            onValueChange = {
-                                                reviewDominantEmotion = it
-                                                userEditedFields = userEditedFields + "dominantEmotion"
-                                            },
-                                            placeholder = "Ör. Sakin ve mesafeli",
-                                            singleLine = true,
-                                            frostedBackdrop = frostedBackdrop,
-                                            scrollSync = scrollState.value,
-                                            minHeight = 48.dp,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                        Spacer(Modifier.height(12.dp))
-                                        WizardFieldLabel(title = "Konuşma Tarzı", required = false)
-                                        Spacer(Modifier.height(6.dp))
-                                        WizardMorCamTextField(
-                                            value = reviewSpeechStyle,
-                                            onValueChange = {
-                                                reviewSpeechStyle = it
-                                                userEditedFields = userEditedFields + "speechStyle"
-                                            },
-                                            placeholder = "Ör. Kısa, net ve otoriter cümleler",
-                                            singleLine = false,
-                                            frostedBackdrop = frostedBackdrop,
-                                            scrollSync = scrollState.value,
-                                            minHeight = 76.dp,
-                                            modifier = Modifier.fillMaxWidth()
-                                        )
-                                    }
-
-                                    Spacer(Modifier.height(12.dp))
-
-                                    // Sensitive Triggers
-                                    WizardMorCamSectionCard(
-                                        title = "Hassas Konular",
-                                        subtitle = "Karakteri duygusal olarak tetikleyen unsurlar",
-                                        frostedBackdrop = frostedBackdrop,
-                                        scrollSync = scrollState.value
-                                    ) {
-                                        reviewTriggers.forEachIndexed { idx, trig ->
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(bottom = 8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                WizardMorCamTextField(
-                                                    value = trig.triggerTopic,
-                                                    onValueChange = { v ->
-                                                        reviewTriggers = reviewTriggers.toMutableList().also {
-                                                            it[idx] = trig.copy(triggerTopic = v)
-                                                        }
-                                                        userEditedFields = userEditedFields + "sensitiveTriggers"
-                                                    },
-                                                    placeholder = "Hassas konu...",
-                                                    singleLine = true,
-                                                    frostedBackdrop = frostedBackdrop,
-                                                    scrollSync = scrollState.value,
-                                                    minHeight = 46.dp,
-                                                    modifier = Modifier.weight(1f)
-                                                )
-                                                Spacer(Modifier.width(8.dp))
-                                                MorCamCircleIconButton(
-                                                    icon = Icons.Default.Close,
-                                                    contentDescription = "Sil",
-                                                    onClick = {
-                                                        if (reviewTriggers.size > 1) {
-                                                            reviewTriggers = reviewTriggers.toMutableList().also { it.removeAt(idx) }
-                                                            userEditedFields = userEditedFields + "sensitiveTriggers"
-                                                        }
-                                                    },
-                                                    size = 38.dp,
-                                                    isDestructive = true
-                                                )
-                                            }
-                                        }
-                                        if (reviewTriggers.size < 3) {
-                                            WizardMorCamPillChip(
-                                                label = "+ Konu Ekle",
-                                                selected = false,
-                                                onClick = {
-                                                    reviewTriggers = reviewTriggers + SensitiveTriggerEntity(
-                                                        botId = "",
-                                                        triggerTopic = "",
-                                                        sourceDescription = "",
-                                                        intensityMultiplier = 1.8
-                                                    )
-                                                    userEditedFields = userEditedFields + "sensitiveTriggers"
-                                                }
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(Modifier.height(14.dp))
-
-                                    // Re-analyze & Reset Frosted Action Pills
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp)
-                                                .clip(RoundedCornerShape(50))
-                                                .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.74f, scrollSync = scrollState.value)
-                                                .background(
-                                                    Brush.horizontalGradient(listOf(Color(0x5E5B21B6), Color(0x4C3B1470)))
-                                                )
-                                                .border(1.15.dp, Color(0xCCE9D5FF), RoundedCornerShape(50))
-                                                .clickable { triggerBaselineAnalysis(resetEdits = true) }
-                                                .testTag("wizard_reanalyze_button"),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Refresh,
-                                                    contentDescription = null,
-                                                    tint = Color(0xFFF3E8FF),
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                                Text(
-                                                    text = "Yeniden Analiz",
-                                                    fontFamily = InterFontFamily,
-                                                    color = Color.White,
-                                                    fontSize = 12.5.sp,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                            }
-                                        }
-
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp)
-                                                .clip(RoundedCornerShape(50))
-                                                .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.72f, scrollSync = scrollState.value)
-                                                .background(Color(0x441B0B36))
-                                                .border(1.dp, Color(0x77C4B5FD), RoundedCornerShape(50))
-                                                .clickable {
-                                                    val fb = BaselineEmotionEngine.calculateDeterministicFallback(
-                                                        botId = "",
-                                                        aiName = aiName,
-                                                        personality = aiPersonality,
-                                                        scenario = scenario,
-                                                        userCharName = userCharName,
-                                                        userCharDesc = userCharDesc
-                                                    )
-                                                    applyAnalysisState(fb)
-                                                    userEditedFields = emptySet()
-                                                    analysisError = null
-                                                }
-                                                .testTag("wizard_reset_analysis_button"),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "Varsayılana Dön",
-                                                fontFamily = InterFontFamily,
-                                                color = Color(0xFFE5D8FF),
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.Medium
-                                            )
-                                        }
-                                    }
-                                }
-                            }
+                            )
                         }
 
-                        // ── STEP 6 / 6: WRITING STYLE, TONE & VISIBILITY ─────
+                        // ── STEP 6 / 6: WRITING STYLE, TONE, PERMISSIONS & PUBLISH ─
                         5 -> {
                             WizardStepHeader(
                                 title = "Yazım tarzı ve\ngörünürlük ayarları",
-                                subtitle = "Yanıtların biçimini, tematik yoğunluğunu ve gizliliğini seçin.",
+                                subtitle = "Yanıtların biçimini, tematik yoğunluğunu, kuralları ve gizliliğini seçin.",
                                 glowAlpha = pulseGlowAlpha
                             )
 
@@ -1375,7 +1421,7 @@ fun CreateBotWizardScreen(
                                 title = "RP / Anlatı Tarzı",
                                 subtitle1 = "Üçüncü şahıs roman anlatımı.",
                                 subtitle2 = "Ortam ve mimik betimlemeleri + diyaloglar.",
-                                iconVector = Icons.Default.MenuBook,
+                                iconVector = Icons.AutoMirrored.Filled.MenuBook,
                                 isSelected = writingStyle == "rp",
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value,
@@ -1430,7 +1476,22 @@ fun CreateBotWizardScreen(
 
                             Spacer(modifier = Modifier.height(20.dp))
 
-                            WizardFieldLabel(title = "Hikâye Başlangıç Tarihi (İsteğe Bağlı)", required = false)
+                            // Story Start Date with live yyyy-MM-dd validation + "Bugünü Kullan" chip
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                WizardFieldLabel(title = "Hikâye Başlangıç Tarihi", required = false)
+                                WizardMorCamPillChip(
+                                    label = "Bugünü Kullan",
+                                    selected = false,
+                                    onClick = {
+                                        storyStartDate = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+                                    },
+                                    modifier = Modifier.testTag("wizard_use_today_date_button")
+                                )
+                            }
                             Spacer(modifier = Modifier.height(5.dp))
                             Text(
                                 text = "Boş bırakırsanız bot yalnızca Gün #N sayacını kullanır.",
@@ -1446,13 +1507,64 @@ fun CreateBotWizardScreen(
                                 singleLine = true,
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("wizard_story_date_input")
+                            )
+                            if (!isStoryDateValid) {
+                                Text(
+                                    text = "⚠ Geçersiz tarih biçimi. Lütfen yyyy-AA-gg girin (örn. 2026-05-14).",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 11.8.sp,
+                                    modifier = Modifier.padding(top = 6.dp)
+                                )
+                            }
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            // OOC & NSFW Switches
+                            WizardFieldLabel(title = "Etkileşim Kuralları & İzinler", required = false)
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            MorCamSwitchRow(
+                                title = "Parantez İçi Yönetmen Komutları (OOC)",
+                                subtitle = "Sohbette (sahneyi hızlandır) gibi parantez içi yönlendirmelere izin ver.",
+                                checked = enableOoc,
+                                onCheckedChange = { enableOoc = it },
+                                modifier = Modifier.testTag("wizard_ooc_switch")
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            MorCamSwitchRow(
+                                title = "Sansürsüz Kurgu (+18)",
+                                subtitle = "Yetişkin ve olgun dramatik temalarda yumuşatma yapma.",
+                                checked = isNsfw,
+                                onCheckedChange = { isNsfw = it },
+                                badge = "+18",
+                                modifier = Modifier.testTag("wizard_nsfw_switch")
                             )
 
                             Spacer(modifier = Modifier.height(20.dp))
 
                             WizardFieldLabel(title = "Görünürlük & Yayınlama", required = false)
                             Spacer(modifier = Modifier.height(10.dp))
+
+                            WizardMorCamChoiceCard(
+                                title = "Sadece Bana Özel",
+                                subtitle1 = "Tamamen gizli ve kişisel (Varsayılan).",
+                                subtitle2 = "Bot yalnızca sizin cihazınızda ve sohbetlerinizde gözükür.",
+                                iconVector = Icons.Default.Lock,
+                                isSelected = !isPublic,
+                                frostedBackdrop = frostedBackdrop,
+                                scrollSync = scrollState.value,
+                                glowAlpha = pulseGlowAlpha,
+                                testTag = "wizard_visibility_private",
+                                onClick = { isPublic = false }
+                            )
+
+                            Spacer(modifier = Modifier.height(12.dp))
 
                             WizardMorCamChoiceCard(
                                 title = "Herkese Açık (Keşfette Yayınla)",
@@ -1463,27 +1575,216 @@ fun CreateBotWizardScreen(
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value,
                                 glowAlpha = pulseGlowAlpha,
+                                testTag = "wizard_visibility_public",
                                 onClick = { isPublic = true }
                             )
 
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(modifier = Modifier.height(20.dp))
 
-                            WizardMorCamChoiceCard(
-                                title = "Sadece Bana Özel",
-                                subtitle1 = "Tamamen gizli ve kişisel.",
-                                subtitle2 = "Bot yalnızca sizin cihazınızda ve sohbetlerinizde gözükür.",
-                                iconVector = Icons.Default.Lock,
-                                isSelected = !isPublic,
+                            // Final 3-Line Mor Cam Summary Preview Card before "Botu Oluştur"
+                            val displayName = if (mode == "personal") aiName.trim().ifBlank { "İsimsiz Karakter" } else universeName.trim().ifBlank { "İsimsiz Evren" }
+                            val modeLabel = if (mode == "personal") "Kişisel Karakter" else "Evren / RP"
+                            val relLabel = WIZARD_REL_TYPE_LABELS[reviewRelType] ?: "Dengeli"
+                            val domLabel = reviewDominantEmotion.ifBlank { "Nötr" }
+                            val trigCount = reviewTriggers.count { it.triggerTopic.isNotBlank() }
+
+                            WizardMorCamSectionCard(
+                                title = "✦ Oluşturma Özeti",
                                 frostedBackdrop = frostedBackdrop,
                                 scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
-                                onClick = { isPublic = false }
-                            )
+                                modifier = Modifier.testTag("wizard_final_summary_card")
+                            ) {
+                                Text(
+                                    text = "$displayName  •  $modeLabel",
+                                    fontFamily = DisplaySerifFontFamily,
+                                    color = Color(0xFFFAF6FF),
+                                    fontSize = 15.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "İlişki: $relLabel  •  Baskın Duygu: $domLabel",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFE5D8FF),
+                                    fontSize = 12.5.sp
+                                )
+                                Spacer(Modifier.height(3.dp))
+                                Text(
+                                    text = "Hassas Konu: $trigCount adet  •  ${if (isPublic) "Herkese Açık" else "Sadece Bana Özel"}  •  OOC: ${if (enableOoc) "Açık" else "Kapalı"}",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFC4B5FD),
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(28.dp))
+                        Spacer(modifier = Modifier.height(bottomInset + 36.dp))
+                    }
                 }
+            }
+        }
+
+        // Accidental Exit Confirmation Dialog
+        if (showExitConfirmDialog) {
+            MorCamDialogShell(
+                onDismissRequest = { showExitConfirmDialog = false },
+                title = "Taslağı Bırak?",
+                subtitle = "Henüz botu oluşturmadın. Çıkarsan girdiğin bilgiler kaybolacak."
+            ) {
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0x552E1559))
+                            .border(1.dp, Color(0xAAE9D5FF), RoundedCornerShape(50))
+                            .clickable { showExitConfirmDialog = false }
+                            .testTag("wizard_exit_continue_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Devam Et",
+                            fontFamily = LiterarySerifFontFamily,
+                            color = Color(0xFFFAF6FF),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0x887F1D1D))
+                            .border(1.dp, Color(0xCCFDA4AF), RoundedCornerShape(50))
+                            .clickable {
+                                showExitConfirmDialog = false
+                                onCancelBaseline()
+                                onBack()
+                            }
+                            .testTag("wizard_exit_discard_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Taslağı Bırak",
+                            fontFamily = LiterarySerifFontFamily,
+                            color = Color(0xFFFFE4E6),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WizardAvatarPickerCard(
+    title: String,
+    emptySubtitle: String,
+    avatarUrl: String,
+    frostedBackdrop: ImageBitmap,
+    scrollSync: Int,
+    onPickClick: () -> Unit,
+    onRemoveClick: () -> Unit
+) {
+    WizardMorCamSectionCard(
+        frostedBackdrop = frostedBackdrop,
+        scrollSync = scrollSync,
+        modifier = Modifier
+            .clickable(
+                indication = null,
+                interactionSource = remember { MutableInteractionSource() },
+                onClick = onPickClick
+            )
+            .testTag("wizard_avatar_picker_card")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RoundedCornerShape(17.dp))
+                    .background(
+                        Brush.radialGradient(
+                            listOf(Color(0x806D28D9), Color(0x551F0A3D))
+                        )
+                    )
+                    .border(
+                        width = 1.4.dp,
+                        brush = Brush.linearGradient(
+                            listOf(Color(0xFFF3E8FF), Color(0xFFC084FC), Color(0xFF7C3AED))
+                        ),
+                        shape = RoundedCornerShape(17.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                BotAvatarImage(
+                    avatarUrl = avatarUrl.takeIf { it.isNotBlank() },
+                    contentDescription = title,
+                    modifier = Modifier.fillMaxSize(),
+                    fallback = {
+                        Icon(
+                            imageVector = Icons.Default.Person,
+                            contentDescription = null,
+                            tint = Color(0xFFEDE9FE),
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+                )
+            }
+
+            Spacer(modifier = Modifier.width(15.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontFamily = DisplaySerifFontFamily,
+                    color = Color(0xFFFAF6FF),
+                    fontSize = 16.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(3.dp))
+                Text(
+                    text = if (avatarUrl.isNotBlank()) {
+                        "Görsel seçildi • Değiştirmek için dokun"
+                    } else {
+                        emptySubtitle
+                    },
+                    fontFamily = InterFontFamily,
+                    color = Color(0xFFCBBCEE),
+                    fontSize = 12.5.sp,
+                    lineHeight = 17.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            if (avatarUrl.isNotBlank()) {
+                MorCamCircleIconButton(
+                    icon = Icons.Default.Close,
+                    contentDescription = "Fotoğrafı Kaldır",
+                    onClick = onRemoveClick,
+                    size = 38.dp,
+                    isDestructive = true,
+                    testTag = "wizard_remove_avatar_button"
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = Color(0xFFD8B4FE),
+                    modifier = Modifier.size(22.dp)
+                )
             }
         }
     }

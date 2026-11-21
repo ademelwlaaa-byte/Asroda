@@ -1975,5 +1975,853 @@ class MemoryEmotionRegressionTest {
             0.01
         )
     }
+
+    // =========================================================================
+    // SECTION 13: 10/10 ORTAK (HİBRİT + AI) RAG, NEURAL VAULT CRUD & CACHE TESTS
+    // =========================================================================
+
+    @Test
+    fun test10_10_CoPilotedRouting_SimpleUsesHybridZeroTokens_StoryUsesCoPilotedAI() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_10_10_routing"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Gizemli ve sadık",
+            scenario = "New York çatıları",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Natasha",
+            userCharDesc = "Ajan",
+            openingMessage = "Selam.",
+            writingStyle = "rp",
+            intensity = "normal"
+        )
+        db.botDao().insertOrUpdate(bot)
+
+        val fCoffeeId = db.memoryFactDao().insertFact(
+            com.example.data.local.MemoryFactEntity(
+                botId = botId,
+                subject = "Aiden",
+                key = "favori kahve",
+                value = "Sade soğuk demleme filtre kahve",
+                confidence = "certain",
+                userCorrected = true,
+                lastConfirmedAt = System.currentTimeMillis()
+            )
+        )
+        val fPromiseId = db.memoryFactDao().insertFact(
+            com.example.data.local.MemoryFactEntity(
+                botId = botId,
+                subject = "Aiden",
+                key = "çatı sözü",
+                value = "Yağmurlu gecede Natasha'yı asla yarı yolda bırakmayacağına yemin etti",
+                confidence = "certain",
+                userCorrected = false,
+                lastConfirmedAt = System.currentTimeMillis() - 10_000L
+            )
+        )
+        repo.invalidateMemoryCache(botId)
+
+        // 1) Trivial casual greeting -> Pure Hybrid (0 AI tokens)
+        var aiCallsCount = 0
+        val casualBundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = bot,
+            recentMessages = listOf(
+                com.example.data.local.MessageEntity(id = "m1", botId = botId, role = "user", text = "Selam, nasılsın?", timestamp = 1000L)
+            ),
+            aiSelector = { _, _ ->
+                aiCallsCount++
+                """{"pick":["F$fCoffeeId"],"miss_queries":[]}"""
+            }
+        )
+        assertEquals("Trivial casual greeting must route to HYBRID_FAST", com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST, casualBundle.routeMode)
+        assertFalse("Trivial casual greeting must NOT invoke AI selector", casualBundle.aiSelectorInvoked)
+        assertEquals("0 AI calls for trivial greeting", 0, aiCallsCount)
+
+        // 2) Emotional/subtext/pronoun RP turn -> Co-Piloted Hybrid + AI (1 unified AI selector call)
+        val storyBundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = bot,
+            recentMessages = listOf(
+                com.example.data.local.MessageEntity(
+                    id = "m2",
+                    botId = botId,
+                    role = "user",
+                    text = "*Gözlerini kısıp sessizce fısıldar* \"O gece bana verdiğin o şeyi çoktan unutmuş gibi davranma...\"",
+                    timestamp = 2000L
+                )
+            ),
+            aiSelector = { _, _ ->
+                aiCallsCount++
+                """{"pick":["F$fPromiseId"],"miss_queries":[]}"""
+            }
+        )
+        assertEquals("Emotional RP turn must route to CO_PILOTED_AI", com.example.data.repository.MemoryEngine.RagRouteMode.CO_PILOTED_AI, storyBundle.routeMode)
+        assertTrue("Emotional RP turn must invoke AI selector", storyBundle.aiSelectorInvoked)
+        assertEquals("Exactly 1 unified AI selector call must run", 1, aiCallsCount)
+        assertTrue("AI-selected promise fact must be returned", storyBundle.facts.any { it.id == fPromiseId })
+
+        db.close()
+    }
+
+    @Test
+    fun test10_10_CoPilotedAI_MissQueriesRecovery_CatchesAbstractMemoryOnSecondPass() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_10_10_miss_queries"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Temkinli",
+            scenario = "Eski malikane",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Wanda",
+            userCharDesc = "Büyücü",
+            openingMessage = "Dinliyorum.",
+            writingStyle = "rp",
+            intensity = "normal"
+        )
+        db.botDao().insertOrUpdate(bot)
+
+        // Seed 18 distractor memories that overlap superficially with "kapı / oda / malikane"
+        for (i in 1..18) {
+            db.memoryFactDao().insertFact(
+                com.example.data.local.MemoryFactEntity(
+                    botId = botId,
+                    subject = "Malikane",
+                    key = "kapı notu $i",
+                    value = "Kapının ardındaki koridorda $i numaralı oda ve duvar tablosu bulunuyor",
+                    confidence = "certain",
+                    lastConfirmedAt = System.currentTimeMillis() - (i * 1000L)
+                )
+            )
+        }
+
+        // Seed 1 abstract hidden memory whose keywords do NOT appear in the user's oblique question
+        val hiddenFactId = db.memoryFactDao().insertFact(
+            com.example.data.local.MemoryFactEntity(
+                botId = botId,
+                subject = "Wanda",
+                key = "gümüş anahtar",
+                value = "Çatı katındaki gizli ceviz sandığı yalnızca gümüş anahtar ile açılır",
+                confidence = "certain",
+                lastConfirmedAt = System.currentTimeMillis() - 90_000L
+            )
+        )
+        repo.invalidateMemoryCache(botId)
+
+        val bundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = bot,
+            recentMessages = listOf(
+                com.example.data.local.MessageEntity(
+                    id = "mq1",
+                    botId = botId,
+                    role = "user",
+                    text = "*Kapının önünde durup bana baktı* \"Bunu açmak için sakladığımız şeyi hâlâ unutmadın değil mi?\"",
+                    timestamp = 5000L
+                )
+            ),
+            aiSelector = { _, _ ->
+                // AI inspects the 15-line shortlist, sees the hidden silver key is missing, and requests a targeted miss_query
+                """{"pick":[],"miss_queries":["gümüş anahtar çatı ceviz sandık"]}"""
+            }
+        )
+
+        assertEquals("Recovery via miss_queries must promote routeMode to CO_PILOTED_DEEP", com.example.data.repository.MemoryEngine.RagRouteMode.CO_PILOTED_DEEP, bundle.routeMode)
+        assertTrue("AI selector must have been invoked", bundle.aiSelectorInvoked)
+        assertTrue("missQueriesUsed must record the AI recovery query", bundle.missQueriesUsed.any { it.contains("gümüş anahtar") })
+        assertTrue(
+            "2nd local Hybrid pass must recover the abstract 'gümüş anahtar' memory (#$hiddenFactId)",
+            bundle.facts.any { it.id == hiddenFactId }
+        )
+
+        db.close()
+    }
+
+    @Test
+    fun test10_10_FullAiCrud_SoftArchive_AndRestoreUndo() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_10_10_crud"
+
+        // 1) AI ADD via native tool call
+        val addSummary = repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "",
+            toolCalls = listOf(
+                com.example.data.api.ParsedMemoryToolCall(
+                    name = "save_memory",
+                    arguments = mapOf(
+                        "subject" to "Steve",
+                        "key" to "sığınak",
+                        "content" to "Brooklyn'deki eski spor salonunda saklanıyor",
+                        "category" to "fact",
+                        "importance" to 8
+                    )
+                )
+            )
+        )
+        assertEquals("AI add must increment savedFactsCount", 1, addSummary.savedFactsCount)
+        val addedFact = db.memoryFactDao().getActiveFacts(botId).firstOrNull { it.value.contains("Brooklyn") }
+        assertNotNull("Added fact must exist in active Neural Vault", addedFact)
+
+        // 2) AI UPDATE by #ID -> creates new version & soft-archives old version with reason "ai_updated"
+        val updateSummary = repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "[ACTIVE_MEMORY_CALL: update_memory(memoryId=\"#${addedFact!!.id}\", newContent=\"Artık Queens'teki güvenli eve taşındı\")]",
+            toolCalls = emptyList()
+        )
+        assertEquals("AI update must increment updatedFactsCount", 1, updateSummary.updatedFactsCount)
+        val activeAfterUpdate = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Updated fact must have new content", activeAfterUpdate.any { it.value.contains("Queens") })
+        assertFalse("Old fact value must no longer be active", activeAfterUpdate.any { it.value.contains("Brooklyn") })
+
+        val archivesAfterUpdate = repo.getArchivedMemories(botId)
+        val updatedArchive = archivesAfterUpdate.firstOrNull { it.originalMemoryId == addedFact.id && it.archivedReason == "ai_updated" }
+        assertNotNull("Previous version must be stored in archived_memories with reason ai_updated", updatedArchive)
+
+        // 3) AI DELETE by #ID -> soft-deletes & archives with reason "ai_deleted"
+        val updatedFact = activeAfterUpdate.first { it.value.contains("Queens") }
+        val deleteSummary = repo.executeActiveMemoryToolCalls(
+            botId = botId,
+            responseText = "[ACTIVE_MEMORY_CALL: delete_memory(memoryId=\"#${updatedFact.id}\", reason=\"Bilgi artık geçersiz\")]",
+            toolCalls = emptyList()
+        )
+        assertEquals("AI delete must increment deletedFactsCount", 1, deleteSummary.deletedFactsCount)
+        assertTrue("Deleted fact must be excluded from active facts", db.memoryFactDao().getActiveFacts(botId).none { it.id == updatedFact.id })
+
+        val deletedArchive = repo.getArchivedMemories(botId).firstOrNull { it.originalMemoryId == updatedFact.id && it.archivedReason == "ai_deleted" }
+        assertNotNull("Soft-deleted fact must be stored in archived_memories with reason ai_deleted", deletedArchive)
+
+        // 4) ONE-TAP UNDO / RESTORE from archive
+        val restored = repo.restoreArchivedMemory(botId, deletedArchive!!)
+        assertTrue("restoreArchivedMemory must succeed", restored)
+        val activeAfterRestore = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Restored fact must reappear in active Neural Vault", activeAfterRestore.any { it.id == updatedFact.id && it.value.contains("Queens") })
+
+        db.close()
+    }
+
+    @Test
+    fun test10_10_UserLockProtection_BlocksNormalAiEdit_AllowsExplicitOverride() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_10_10_lock"
+
+        val lockedId = db.memoryFactDao().insertFact(
+            com.example.data.local.MemoryFactEntity(
+                botId = botId,
+                subject = "Kullanıcı",
+                key = "göz rengi",
+                value = "Buz mavisi",
+                confidence = "certain",
+                userCorrected = true, // ★ User locked
+                lastConfirmedAt = System.currentTimeMillis()
+            )
+        )
+        repo.invalidateMemoryCache(botId)
+
+        // 1) Normal AI update without explicit user override MUST be blocked
+        val blockedUpdate = repo.aiUpdateNeuralVaultFact(
+            botId = botId,
+            rawTarget = "#$lockedId",
+            newValue = "Kahverengi",
+            explicitUserOverride = false
+        )
+        assertFalse("Locked fact must block normal AI update", blockedUpdate)
+        assertEquals("Locked fact value must remain untouched", "Buz mavisi", db.memoryFactDao().getFactById(lockedId)?.value)
+
+        // 2) Normal AI delete without explicit user override MUST be blocked
+        val blockedDelete = repo.aiDeleteNeuralVaultFact(
+            botId = botId,
+            rawTarget = "#$lockedId",
+            reason = "AI tahmin etti",
+            explicitUserOverride = false
+        )
+        assertFalse("Locked fact must block normal AI delete", blockedDelete)
+        assertTrue("Locked fact must stay active", db.memoryFactDao().getActiveFacts(botId).any { it.id == lockedId })
+        assertTrue("No archive record should be created when blocked", repo.getArchivedMemories(botId).isEmpty())
+
+        // 3) Explicit user override (e.g. user says "Yanlış kaydetmişsin, kilidi geçip güncelle") MUST succeed
+        assertTrue(
+            "Explicit user correction phrasing must trigger override intent",
+            com.example.data.repository.MemoryEngine.hasExplicitUserOverrideIntent("Yanlış kaydetmişsin, göz rengimi kehribar olarak güncelle.")
+        )
+        val allowedUpdate = repo.aiUpdateNeuralVaultFact(
+            botId = botId,
+            rawTarget = "#$lockedId",
+            newValue = "Kehribar",
+            explicitUserOverride = true
+        )
+        assertTrue("Explicit user override must allow updating locked fact", allowedUpdate)
+        val activeAfterOverride = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("New value must be active after explicit override", activeAfterOverride.any { it.value == "Kehribar" })
+        assertTrue("Previous locked version must be safely archived", repo.getArchivedMemories(botId).any { it.originalMemoryId == lockedId })
+
+        db.close()
+    }
+
+    @Test
+    fun test10_10_UtilityModel_LowTemperature_AndNoHeaderLeakageInterceptor() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+
+        val customProvider = CustomProviderEntity(
+            id = 88L,
+            label = "TestCustomUtility",
+            baseUrl = "https://utility.local.test/v1",
+            apiKeyEncrypted = com.example.util.KeystoreEncryptionManager.encrypt("sk-utility-test-key"),
+            modelName = "llama-3.3-70b-instruct", // Expensive main model
+            apiFormat = "openai",
+            utilityModel = "llama-3.1-8b-instant", // Cheap utility model
+            utilityModelSource = "auto_detected",
+            detectedSmallModels = "[\"llama-3.1-8b-instant\"]"
+        )
+        db.customProviderDao().insertProvider(customProvider)
+        db.userSettingsDao().insertOrUpdate(UserSettingsEntity(id = 1, selectedProvider = "custom_88"))
+
+        var capturedModel: String? = null
+        var capturedTemperature: Double = -1.0
+        var capturedCallTypeHeader: String? = "NOT_CHECKED"
+
+        RetrofitClient.customInterceptor = Interceptor { chain ->
+            val req = chain.request()
+            // Because TemperatureInterceptor runs BEFORE customInterceptor, X-Emochi-Call-Type MUST be stripped!
+            capturedCallTypeHeader = req.header(EmochiApplication.HEADER_CALL_TYPE)
+            val buffer = okio.Buffer()
+            req.body?.writeTo(buffer)
+            val bodyStr = buffer.readUtf8()
+            if (bodyStr.isNotBlank()) {
+                val json = JSONObject(bodyStr)
+                capturedModel = json.optString("model")
+                capturedTemperature = json.optDouble("temperature", -1.0)
+            }
+            val fakeResponse = """
+                {
+                  "choices": [
+                    {
+                      "message": {
+                        "role": "assistant",
+                        "content": "{\"pick\":[\"F1\"],\"miss_queries\":[]}"
+                      }
+                    }
+                  ]
+                }
+            """.trimIndent()
+            Response.Builder()
+                .request(req)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(fakeResponse.toResponseBody("application/json".toMediaType()))
+                .build()
+        }
+
+        try {
+            val reply = repo.callUtilityLlm(
+                settings = repo.getOrCreateSettings(),
+                systemPrompt = "Sadece JSON döndür.",
+                userMessage = "Test sorgusu",
+                maxTokens = 160,
+                timeoutMs = 2500L
+            )
+            assertTrue("Utility response must be returned", reply.contains("pick"))
+            assertEquals("Utility call MUST route to cheap utilityModel, NOT main 70B model", "llama-3.1-8b-instant", capturedModel)
+            assertTrue("Utility call temperature must be <= 0.15 (actual=$capturedTemperature)", capturedTemperature in 0.0..0.15)
+            assertNull("X-Emochi-Call-Type header MUST be stripped before hitting external API", capturedCallTypeHeader)
+        } finally {
+            RetrofitClient.customInterceptor = null
+            db.close()
+        }
+    }
+
+    @Test
+    fun test10_10_MemoryVectorCache_InvalidationOnCrud_NeverReturnsStaleData() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_10_10_cache_inv"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Hızlı",
+            scenario = "Şehir",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Tony",
+            userCharDesc = "Mühendis",
+            openingMessage = "Hazır.",
+            writingStyle = "rp",
+            intensity = "normal"
+        )
+        db.botDao().insertOrUpdate(bot)
+
+        val factId = db.memoryFactDao().insertFact(
+            com.example.data.local.MemoryFactEntity(
+                botId = botId,
+                subject = "Aiden",
+                key = "aracı",
+                value = "Siyah motosiklet kullanıyor",
+                confidence = "certain",
+                lastConfirmedAt = System.currentTimeMillis()
+            )
+        )
+        repo.invalidateMemoryCache(botId)
+
+        val queryMsgs = listOf(
+            com.example.data.local.MessageEntity(
+                id = "c1",
+                botId = botId,
+                role = "user",
+                text = "Aiden'in aracı neydi?",
+                timestamp = 1000L
+            )
+        )
+
+        // 1) Warm MemoryVectorCache -> returns "Siyah motosiklet"
+        val pass1 = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(bot = bot, recentMessages = queryMsgs)
+        assertTrue("Initial cached retrieval must return original value", pass1.facts.any { it.value.contains("Siyah motosiklet") })
+
+        // 2) CRUD Update -> cache MUST invalidate immediately, returning "Gümüş spor araba" and NEVER "Siyah motosiklet"
+        assertTrue(repo.aiUpdateNeuralVaultFact(botId, "#$factId", "Gümüş spor araba kullanıyor"))
+        val pass2 = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(bot = bot, recentMessages = queryMsgs)
+        assertTrue("Post-update retrieval must return updated value", pass2.facts.any { it.value.contains("Gümüş spor araba") })
+        assertFalse("Post-update retrieval must NEVER return stale cached value", pass2.facts.any { it.value.contains("Siyah motosiklet") })
+
+        // 3) CRUD Delete -> cache MUST invalidate immediately, returning ZERO deleted facts
+        val newFactId = pass2.facts.first { it.value.contains("Gümüş spor araba") }.id
+        assertTrue(repo.aiDeleteNeuralVaultFact(botId, "#$newFactId", "Aracını sattı"))
+        val pass3 = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(bot = bot, recentMessages = queryMsgs)
+        assertFalse("Post-delete retrieval must NEVER return deleted fact from cache", pass3.facts.any { it.value.contains("Gümüş spor araba") })
+
+        db.close()
+    }
+
+    @Test
+    fun testHumanSelectivity_1_DiscardsMundanePhysicalNoise() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_sel_noise_1"
+
+        db.botDao().insertOrUpdate(
+            com.example.data.local.BotEntity(
+                id = botId,
+                mode = "personal",
+                aiName = "Aiden",
+                aiPersonality = "Soğukkanlı",
+                scenario = "Ofis",
+                universeName = "",
+                keyCharactersJson = "[]",
+                userCharName = "Kullanıcı",
+                userCharDesc = "Dedektif",
+                openingMessage = "Merhaba.",
+                writingStyle = "rp",
+                intensity = "normal",
+                storyDayCounter = 4L
+            )
+        )
+
+        // 1) Explicit DISCARD tier / importance <= 2 must be rejected
+        val savedDiscard = repo.upsertNeuralVaultFact(
+            botId = botId,
+            subject = "Aiden",
+            key = "Hareket",
+            value = "Elini masaya koydu ve pencereden dışarı baktı",
+            tier = com.example.data.repository.MemoryTier.DISCARD,
+            importance = 2,
+            storyDay = 4L
+        )
+        assertFalse("DISCARD / importance <= 2 must never be saved", savedDiscard)
+
+        // 2) Even if a chatty model labels mundane choreography with importance=5 & EPHEMERAL, code-side gate must reject it
+        val savedNoiseGuard = repo.upsertNeuralVaultFact(
+            botId = botId,
+            subject = "Aiden",
+            key = "Jest",
+            value = "Elini masaya koydu ve pencereden dışarı baktı",
+            tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+            ttlDays = 3,
+            importance = 5,
+            storyDay = 4L
+        )
+        assertFalse("Code-side noise gate must reject mundane physical choreography", savedNoiseGuard)
+
+        // 3) Bare detail-less filler ("Yemek yedi", "Derin nefes aldı") must also be rejected
+        val savedBareFood = repo.upsertNeuralVaultFact(
+            botId = botId,
+            subject = "Kullanıcı",
+            key = "Eylem",
+            value = "Yemek yedi",
+            tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+            ttlDays = 3,
+            importance = 4,
+            storyDay = 4L
+        )
+        assertFalse("Detail-less filler 'Yemek yedi' must be discarded", savedBareFood)
+
+        val activeFacts = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Neural Vault must remain completely clean of mundane physical noise", activeFacts.isEmpty())
+
+        db.close()
+    }
+
+    @Test
+    fun testHumanSelectivity_2_RetainsContextualPlotCriticalAction() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_sel_context_2"
+
+        db.botDao().insertOrUpdate(
+            com.example.data.local.BotEntity(
+                id = botId,
+                mode = "personal",
+                aiName = "Natasha",
+                aiPersonality = "Zeki",
+                scenario = "Sığınak",
+                universeName = "",
+                keyCharactersJson = "[]",
+                userCharName = "Aiden",
+                userCharDesc = "Ajan",
+                openingMessage = "Dinliyorum.",
+                writingStyle = "rp",
+                intensity = "intense",
+                storyDayCounter = 4L
+            )
+        )
+
+        val savedPlotAction = repo.upsertNeuralVaultFact(
+            botId = botId,
+            subject = "Aiden",
+            key = "Gizli Kanıt",
+            value = "Elini masadaki şifreli dosyanın üzerine koyup kanıtı gizlice ceketine sakladı",
+            tier = com.example.data.repository.MemoryTier.ARC,
+            ttlDays = 12,
+            importance = 8,
+            storyDay = 4L
+        )
+        assertTrue("Plot-critical action involving encrypted file & hidden evidence MUST be saved", savedPlotAction)
+
+        val savedTrustMilestone = repo.upsertNeuralVaultFact(
+            botId = botId,
+            subject = "Natasha",
+            key = "Güven Dönüm Noktası",
+            value = "Yirmi yıl sonra ilk kez birine güvenip elini elinin üstüne koydu, geri çekilmedi",
+            tier = com.example.data.repository.MemoryTier.CORE,
+            importance = 9,
+            storyDay = 4L
+        )
+        assertTrue("Emotionally transformative touch MUST be saved as CORE", savedTrustMilestone)
+
+        val activeFacts = db.memoryFactDao().getActiveFacts(botId)
+        assertEquals("Both contextually critical facts must be persisted", 2, activeFacts.size)
+        val arcFact = activeFacts.first { it.key == "Gizli Kanıt" }
+        val coreFact = activeFacts.first { it.key == "Güven Dönüm Noktası" }
+        assertEquals(com.example.data.repository.MemoryTier.ARC, com.example.data.repository.MemoryLifecycleCodec.parse(arcFact.confidence).tier)
+        assertEquals(com.example.data.repository.MemoryTier.CORE, com.example.data.repository.MemoryLifecycleCodec.parse(coreFact.confidence).tier)
+
+        db.close()
+    }
+
+    @Test
+    fun testHumanSelectivity_3_BanaDunkindenYap_RecallsYesterdaysEphemeralFact() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_sel_dunkinden_3"
+
+        val botDay5 = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Sıcak",
+            scenario = "Mutfak",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Kullanıcı",
+            userCharDesc = "Ev arkadaşı",
+            openingMessage = "Günaydın.",
+            writingStyle = "rp",
+            intensity = "normal",
+            storyDayCounter = 5L
+        )
+        db.botDao().insertOrUpdate(botDay5)
+
+        // Unrelated CORE facts to prove query without the word "makarna" still surfaces yesterday's EPHEMERAL meal #1
+        repo.upsertNeuralVaultFact(botId, "Aiden", "Meslek", "Gizli ajan olarak çalışıyor", tier = com.example.data.repository.MemoryTier.CORE, importance = 9, storyDay = 1L)
+        repo.upsertNeuralVaultFact(botId, "Kullanıcı", "Şehir", "İstanbul'da yaşıyor", tier = com.example.data.repository.MemoryTier.CORE, importance = 8, storyDay = 1L)
+
+        // Day #4 EPHEMERAL (ttl=3 -> expires after Day #7) meal record
+        val savedMeal = repo.upsertNeuralVaultFact(
+            botId = botId,
+            subject = "Kullanıcı",
+            key = "Akşam Yemeği",
+            value = "Akşam sarımsaklı kremalı makarna yedi",
+            tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+            ttlDays = 3,
+            importance = 4,
+            storyDay = 4L
+        )
+        assertTrue("Detailed ephemeral meal must be saved", savedMeal)
+
+        // Verify RelativeTimeCueResolver resolves "Bana dünkinden yap" on Day #5 -> target Day #4
+        val target = com.example.data.repository.RelativeTimeCueResolver.resolveTemporalTarget("Bana dünkinden yap", 5L)
+        assertNotNull("RelativeTimeCueResolver must detect 'dünkinden'", target)
+        assertEquals(4L, target!!.targetStoryDayMin)
+        assertEquals(4L, target.targetStoryDayMax)
+        assertTrue(target.isAnaphoricRef)
+
+        // Verify Co-Piloted (Hybrid + AI) RAG is FORCED (never shortcut in Hybrid Fast) and receives [Dün (Gün #4) | Geçici]
+        var capturedMicroIndex = ""
+        val mealFactId = db.memoryFactDao().getActiveFacts(botId).first { it.value.contains("makarna") }.id
+        val queryMsgs = listOf(
+            com.example.data.local.MessageEntity(
+                id = "m_dunkinden",
+                botId = botId,
+                role = "user",
+                text = "Bana dünkinden yap",
+                timestamp = 5000L
+            )
+        )
+
+        val bundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = botDay5,
+            recentMessages = queryMsgs,
+            aiSelector = { _, userPrompt ->
+                capturedMicroIndex = userPrompt
+                """{"pick":["F$mealFactId"],"miss_queries":[]}"""
+            }
+        )
+
+        assertTrue("Relative-time cue must set temporalTargetMatched=true", bundle.temporalTargetMatched)
+        assertTrue("Relative-time cue must force Co-Piloted AI selector", bundle.aiSelectorInvoked)
+        assertTrue("Micro-index must include '[Dün (Gün #4) | Geçici]' tag", capturedMicroIndex.contains("Dün (Gün #4) | Geçici"))
+        assertTrue("Recalled facts must contain yesterday's makarna at top rank", bundle.facts.firstOrNull()?.value?.contains("makarna") == true)
+
+        // Also verify prompt formatting emits human-readable relative tag for the main chat model
+        val promptLine = com.example.data.repository.MemoryEngine.formatFactForPrompt(bundle.facts.first(), currentStoryDay = 5L)
+        assertTrue("Main prompt line must show [Dün (Gün #4) | Geçici], got: $promptLine", promptLine.contains("Dün (Gün #4) | Geçici"))
+
+        // Also verify Hybrid-only fallback (when aiSelector == null) STILL ranks makarna #1 via temporalBoost = +0.55f
+        val hybridFallbackBundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = botDay5,
+            recentMessages = queryMsgs,
+            aiSelector = null
+        )
+        assertTrue(
+            "Hybrid fallback must ALSO rank yesterday's ephemeral makarna #1 via temporalBoost",
+            hybridFallbackBundle.facts.firstOrNull()?.value?.contains("makarna") == true
+        )
+
+        db.close()
+    }
+
+    @Test
+    fun testHumanSelectivity_4_ReaperForgetsEphemeralAfterTtlToArchive() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_sel_reaper_4"
+
+        val bot = com.example.data.local.BotEntity(
+            id = botId,
+            mode = "personal",
+            aiName = "Aiden",
+            aiPersonality = "Sıcak",
+            scenario = "Ev",
+            universeName = "",
+            keyCharactersJson = "[]",
+            userCharName = "Kullanıcı",
+            userCharDesc = "Dost",
+            openingMessage = "Selam.",
+            writingStyle = "rp",
+            intensity = "normal",
+            storyDayCounter = 4L
+        )
+        db.botDao().insertOrUpdate(bot)
+
+        // Day #4: Save unreinforced EPHEMERAL (ttl=3 -> expires after Day #7) + permanent CORE
+        assertTrue(
+            repo.upsertNeuralVaultFact(
+                botId = botId,
+                subject = "Kullanıcı",
+                key = "Akşam Yemeği",
+                value = "Akşam sarımsaklı kremalı makarna yedi",
+                tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+                ttlDays = 3,
+                importance = 4,
+                storyDay = 4L
+            )
+        )
+        assertTrue(
+            repo.upsertNeuralVaultFact(
+                botId = botId,
+                subject = "Kullanıcı",
+                key = "Alerji",
+                value = "Fıstığa karşı ciddi alerjisi var",
+                tier = com.example.data.repository.MemoryTier.CORE,
+                importance = 9,
+                storyDay = 4L
+            )
+        )
+
+        // Warm MemoryVectorCache on Day #6 -> still alive (Day 6 <= expiresDay 7)
+        assertEquals("Should not reap on Day #6", 0, repo.reapExpiredMemories(botId, currentStoryDay = 6L))
+        val day6Bundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = bot.copy(storyDayCounter = 6L),
+            recentMessages = listOf(com.example.data.local.MessageEntity("m6", botId, "user", "Makarna nasıldı?", 6000L))
+        )
+        assertTrue("Ephemeral fact must still be active on Day #6", day6Bundle.facts.any { it.value.contains("makarna") })
+
+        // Advance calendar to Day #8 (+4 days from Day #4) -> Reaper forgets unreinforced makarna!
+        val reapedCount = repo.reapExpiredMemories(botId, currentStoryDay = 8L)
+        assertEquals("Exactly 1 expired EPHEMERAL fact must be reaped on Day #8", 1, reapedCount)
+
+        // Active DB & MemoryVectorCache RAG must NO LONGER return forgotten makarna, while CORE remains
+        val activeAfterReap = db.memoryFactDao().getActiveFacts(botId)
+        assertFalse("Expired makarna must exit active facts", activeAfterReap.any { it.value.contains("makarna") })
+        assertTrue("Permanent CORE fact must remain active", activeAfterReap.any { it.value.contains("Fıstığa") })
+
+        val day8Bundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = bot.copy(storyDayCounter = 8L),
+            recentMessages = listOf(com.example.data.local.MessageEntity("m8", botId, "user", "Makarna yedik mi?", 8000L))
+        )
+        assertFalse("Evicted ephemeral fact must NEVER leak from MemoryVectorCache", day8Bundle.facts.any { it.value.contains("makarna") })
+
+        // Zero data loss: check ArchivedMemoryEntity has natural_decay_ttl
+        val archives = repo.getArchivedMemories(botId)
+        val decayedArchive = archives.firstOrNull { it.archivedReason == "natural_decay_ttl" && it.content.contains("makarna") }
+        assertNotNull("Reaped ephemeral fact must be soft-archived with archivedReason='natural_decay_ttl'", decayedArchive)
+
+        // Restoring from archive brings it back permanently as CORE
+        assertTrue(repo.restoreArchivedMemory(botId, decayedArchive!!))
+        val restoredFact = db.memoryFactDao().getActiveFacts(botId).firstOrNull { it.value.contains("makarna") }
+        assertNotNull("Restored fact must return to active facts", restoredFact)
+        assertEquals(
+            "Restored fact must be promoted to permanent CORE",
+            com.example.data.repository.MemoryTier.CORE,
+            com.example.data.repository.MemoryLifecycleCodec.parse(restoredFact!!.confidence).tier
+        )
+
+        db.close()
+    }
+
+    @Test
+    fun testHumanSelectivity_5_ReinforcementPromotionAndStarLockSurvivePastTtl() = runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).allowMainThreadQueries().build()
+        val repo = EmochiRepository(db, context)
+        val botId = "bot_sel_promote_5"
+
+        db.botDao().insertOrUpdate(
+            com.example.data.local.BotEntity(
+                id = botId,
+                mode = "personal",
+                aiName = "Aiden",
+                aiPersonality = "Dikkatli",
+                scenario = "Kafe",
+                universeName = "",
+                keyCharactersJson = "[]",
+                userCharName = "Kullanıcı",
+                userCharDesc = "Misafir",
+                openingMessage = "Hoş geldin.",
+                writingStyle = "rp",
+                intensity = "normal",
+                storyDayCounter = 4L
+            )
+        )
+
+        // Fact A: EPHEMERAL that gets reinforced 2x before expiry -> must promote to permanent CORE
+        assertTrue(
+            repo.upsertNeuralVaultFact(
+                botId = botId,
+                subject = "Kullanıcı",
+                key = "Akşam Yemeği",
+                value = "Sarımsaklı kremalı makarnayı çok beğenerek yedi",
+                tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+                ttlDays = 3,
+                importance = 4,
+                storyDay = 4L
+            )
+        )
+
+        // Fact B: EPHEMERAL that user locks with ★ -> must immediately become CORE and immune to decay
+        assertTrue(
+            repo.upsertNeuralVaultFact(
+                botId = botId,
+                subject = "Aiden",
+                key = "Kıyafet",
+                value = "Siyah deri ceket giyiyor",
+                tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+                ttlDays = 2,
+                importance = 4,
+                storyDay = 4L
+            )
+        )
+
+        // Fact C: Unreinforced, unlocked EPHEMERAL -> control group that MUST decay by Day #10
+        assertTrue(
+            repo.upsertNeuralVaultFact(
+                botId = botId,
+                subject = "Kullanıcı",
+                key = "Hafif Ağrı",
+                value = "Başı hafif ağrıyor",
+                tier = com.example.data.repository.MemoryTier.EPHEMERAL,
+                ttlDays = 2,
+                importance = 3,
+                storyDay = 4L
+            )
+        )
+
+        // 1) Reinforce Fact A twice (Day #5 and Day #6) before TTL expires
+        val factADay5 = db.memoryFactDao().getActiveFacts(botId).first { it.key == "Akşam Yemeği" }
+        assertEquals(0, repo.reinforceRecalledFacts(botId, listOf(factADay5), currentStoryDay = 5L))
+        val factADay6 = db.memoryFactDao().getActiveFacts(botId).first { it.key == "Akşam Yemeği" }
+        assertEquals(1, repo.reinforceRecalledFacts(botId, listOf(factADay6), currentStoryDay = 6L))
+
+        val promotedFactA = db.memoryFactDao().getActiveFacts(botId).first { it.key == "Akşam Yemeği" }
+        assertEquals(
+            "2+ recall hits must promote EPHEMERAL fact to permanent CORE",
+            com.example.data.repository.MemoryTier.CORE,
+            com.example.data.repository.MemoryLifecycleCodec.parse(promotedFactA.confidence).tier
+        )
+
+        // 2) Tap ★ lock on Fact B
+        val factB = db.memoryFactDao().getActiveFacts(botId).first { it.key == "Kıyafet" }
+        repo.toggleMemoryFactLock(factB)
+        val lockedFactB = db.memoryFactDao().getActiveFacts(botId).first { it.key == "Kıyafet" }
+        assertTrue("★ lock must set userCorrected=true", lockedFactB.userCorrected)
+        assertEquals(
+            "★ lock must promote EPHEMERAL fact to CORE",
+            com.example.data.repository.MemoryTier.CORE,
+            com.example.data.repository.MemoryLifecycleCodec.parse(lockedFactB.confidence).tier
+        )
+
+        // 3) Advance to Day #10 and run reaper -> ONLY Fact C decays; Fact A (reinforced) & Fact B (★ locked) SURVIVE!
+        val reapedOnDay10 = repo.reapExpiredMemories(botId, currentStoryDay = 10L)
+        assertEquals("Only the unreinforced control fact should expire on Day #10", 1, reapedOnDay10)
+
+        val survivors = db.memoryFactDao().getActiveFacts(botId)
+        assertTrue("Reinforced makarna habit must survive Day #10", survivors.any { it.key == "Akşam Yemeği" })
+        assertTrue("★ locked jacket fact must survive Day #10", survivors.any { it.key == "Kıyafet" })
+        assertFalse("Unreinforced headache fact must be forgotten by Day #10", survivors.any { it.key == "Hafif Ağrı" })
+
+        db.close()
+    }
 }
+
 

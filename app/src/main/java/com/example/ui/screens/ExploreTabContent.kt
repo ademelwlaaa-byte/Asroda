@@ -37,6 +37,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawWithContent
@@ -179,105 +181,21 @@ import androidx.compose.ui.unit.IntSize
 // Pre-computes a true optical frosted-glass (~9dp Gaussian blur) bitmap from a background drawable
 // Preserves 100% of the architectural shapes, glowing Gothic windows, wisteria vines, and wet stone reflections
 // while gently hue-shifting only warm orange streetlamp pixels into violet-lavender.
-private val frostedBackdropCache = android.util.LruCache<Int, ImageBitmap>(4)
-
 internal fun createFrostedGothicManorBitmap(
     context: android.content.Context,
     drawableResId: Int = R.drawable.img_templates_bg_gothic_manor
 ): ImageBitmap {
-    frostedBackdropCache.get(drawableResId)?.let { return it }
-    return try {
-        val opts = android.graphics.BitmapFactory.Options().apply {
-            inSampleSize = 2
-            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-        }
-        val raw = android.graphics.BitmapFactory.decodeResource(
-            context.resources,
-            drawableResId,
-            opts
-        ) ?: return ImageBitmap(1, 1)
-
-        val w = 360
-        val h = ((raw.height.toFloat() / raw.width.toFloat().coerceAtLeast(1f)) * w).toInt().coerceIn(360, 860)
-        val scaled = android.graphics.Bitmap.createScaledBitmap(raw, w, h, true)
-        if (raw !== scaled) raw.recycle()
-
-        val pixels = IntArray(w * h)
-        scaled.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        // Only shift warm yellow-orange streetlamp pixels (r > b + 8) into glowing violet-lavender
-        // while keeping 100% of the natural contrast and brightness of the Gothic Manor & Cosmic backgrounds!
-        for (i in pixels.indices) {
-            val px = pixels[i]
-            var r = (px ushr 16) and 0xFF
-            var g = (px ushr 8) and 0xFF
-            var b = px and 0xFF
-            if (r > b + 8) {
-                val warmExcess = r - b
-                b = (b + (warmExcess * 0.95f).toInt()).coerceAtMost(255)
-                r = (r - (warmExcess * 0.22f).toInt()).coerceIn(0, 255)
-                g = (g - (warmExcess * 0.32f).toInt()).coerceIn(0, 255)
-                pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-            }
-        }
-
-        val tmp = IntArray(w * h)
-        // Two-pass separable box blur (radius 4 on 360px wide ~= 9dp realistic optical frosted glass)
-        val radius = 4
-        val div = radius * 2 + 1
-        repeat(2) {
-            for (y in 0 until h) {
-                val rowOffset = y * w
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (dx in -radius..radius) {
-                    val px = pixels[rowOffset + dx.coerceIn(0, w - 1)]
-                    rSum += (px ushr 16) and 0xFF
-                    gSum += (px ushr 8) and 0xFF
-                    bSum += px and 0xFF
-                }
-                for (x in 0 until w) {
-                    tmp[rowOffset + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val nextX = (x + radius + 1).coerceAtMost(w - 1)
-                    val prevX = (x - radius).coerceAtLeast(0)
-                    val nextPx = pixels[rowOffset + nextX]
-                    val prevPx = pixels[rowOffset + prevX]
-                    rSum += ((nextPx ushr 16) and 0xFF) - ((prevPx ushr 16) and 0xFF)
-                    gSum += ((nextPx ushr 8) and 0xFF) - ((prevPx ushr 8) and 0xFF)
-                    bSum += (nextPx and 0xFF) - (prevPx and 0xFF)
-                }
-            }
-            for (x in 0 until w) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (dy in -radius..radius) {
-                    val px = tmp[dy.coerceIn(0, h - 1) * w + x]
-                    rSum += (px ushr 16) and 0xFF
-                    gSum += (px ushr 8) and 0xFF
-                    bSum += px and 0xFF
-                }
-                for (y in 0 until h) {
-                    pixels[y * w + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val nextY = (y + radius + 1).coerceAtMost(h - 1)
-                    val prevY = (y - radius).coerceAtLeast(0)
-                    val nextPx = tmp[nextY * w + x]
-                    val prevPx = tmp[prevY * w + x]
-                    rSum += ((nextPx ushr 16) and 0xFF) - ((prevPx ushr 16) and 0xFF)
-                    gSum += ((nextPx ushr 8) and 0xFF) - ((prevPx ushr 8) and 0xFF)
-                    bSum += (nextPx and 0xFF) - (prevPx and 0xFF)
-                }
-            }
-        }
-
-        val out = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565)
-        out.setPixels(pixels, 0, w, 0, 0, w, h)
-        scaled.recycle()
-        out.asImageBitmap().also { frostedBackdropCache.put(drawableResId, it) }
-    } catch (_: Throwable) {
-        ImageBitmap(1, 1)
-    }
+    return com.example.util.FrostedBackdropCache.getOrGenerateSync(
+        context = context,
+        key = "gothic_manor_$drawableResId",
+        drawableResId = drawableResId,
+        targetWidth = 360,
+        maxHeight = 860,
+        blurRadius = 4,
+        blurPasses = 2,
+        violetShiftWarmPixels = true,
+        outputRgb565 = true
+    )
 }
 
 // Samples the frosted background bitmap(s) at the composable's real-time root window coordinates.
@@ -559,8 +477,17 @@ fun ExploreTabContent(
     val isEnglish = userSettings?.appLanguage == "en"
     var selectedCategory by remember { mutableStateOf("all") } // "all", "universe", "personal"
 
-    // Pre-computed high-resolution softly-frosted Gothic Manor bitmap for real-time screen-space refraction
-    val frostedManorBitmap = remember { createFrostedGothicManorBitmap(context) }
+    val frostedManorState = com.example.util.rememberFrostedBackdrop(
+        key = "gothic_manor_${R.drawable.img_templates_bg_gothic_manor}",
+        drawableResId = R.drawable.img_templates_bg_gothic_manor,
+        targetWidth = 360,
+        maxHeight = 860,
+        blurRadius = 4,
+        blurPasses = 2,
+        violetShiftWarmPixels = true,
+        outputRgb565 = true
+    )
+    val frostedManorBitmap = frostedManorState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
     val scrollSync = lazyListState.firstVisibleItemIndex * 100000 + lazyListState.firstVisibleItemScrollOffset
 
@@ -691,12 +618,14 @@ fun ExploreTabContent(
         cascadeTrigger++
     }
 
+    val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     LazyColumn(
         state = lazyListState,
         modifier = Modifier
             .fillMaxSize()
             .onGloballyPositioned { rootSize = it.size },
-        contentPadding = PaddingValues(top = 0.dp, bottom = 128.dp),
+        contentPadding = PaddingValues(top = 0.dp, bottom = 168.dp + navBottomPadding),
         verticalArrangement = Arrangement.spacedBy(11.dp)
     ) {
         // ── 1. TOP HEADER + "Şablonlar" + LIVING 3D HERO SECTION (Always 100% Opaque & Crisp!) ──

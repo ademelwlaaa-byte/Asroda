@@ -142,6 +142,7 @@ class BackgroundMemoryMergeWorker(
             }
 
             group.forEach { merged.add(it.id) }
+            repository.invalidateMemoryCache(botId)
             mergeCount++
         }
     }
@@ -157,11 +158,13 @@ class BackgroundMemoryMergeWorker(
                 "Eğer bunlar aynı bilgiyi veya olayı anlatıyorsa, tek bir kısa ve olgusal cümle olarak birleştir.\n" +
                 "Eğer farklı olaylarsa sadece 'FARKLI' yaz.\n\n$numbered"
 
-            val text = repository.callLlmForAudit(
+            val text = repository.callUtilityLlm(
                 settings = settings,
                 systemPrompt = "Sen kısa hafıza birleştirici bir asistansın. Yalnızca birleşik cümle veya FARKLI yaz.",
                 userMessage = userMessage,
-                botId = group.first().botId
+                botId = group.first().botId,
+                maxTokens = 180,
+                timeoutMs = 5000L
             ).trim()
 
             if (text.equals("FARKLI", ignoreCase = true) || text.isBlank()) null

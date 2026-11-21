@@ -38,13 +38,18 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -197,8 +202,8 @@ fun BotListScreen(
     onNewBot: () -> Unit,
     onDeleteBot: (String) -> Unit,
     onSaveSettings: (UserSettingsEntity) -> Unit,
-    onExportData: suspend () -> String,
-    onImportData: suspend (String) -> Unit,
+    onExportData: suspend (Boolean) -> String,
+    onImportData: suspend (String, Boolean) -> com.example.data.repository.BackupImportSummary,
     onImportPresetBot: ((BotEntity) -> Unit)? = null,
     onTogglePrivacy: ((BotEntity) -> Unit)? = null,
     onCloneBot: ((String) -> Unit)? = null
@@ -229,8 +234,28 @@ fun BotListScreen(
     var bottomBarTopInRootPx by remember { mutableStateOf(0f) }
     var contentTopInRootPx by remember { mutableStateOf(0f) }
     val context = LocalContext.current
-    val frostedManorBitmap = remember { createFrostedGothicManorBitmap(context, R.drawable.img_templates_bg_gothic_manor) }
-    val frostedCosmicBitmap = remember { createFrostedGothicManorBitmap(context, R.drawable.img_botlist_gothic_wisteria_bg) }
+    val frostedManorState = com.example.util.rememberFrostedBackdrop(
+        key = "gothic_manor_${R.drawable.img_templates_bg_gothic_manor}",
+        drawableResId = R.drawable.img_templates_bg_gothic_manor,
+        targetWidth = 360,
+        maxHeight = 860,
+        blurRadius = 4,
+        blurPasses = 2,
+        violetShiftWarmPixels = true,
+        outputRgb565 = true
+    )
+    val frostedCosmicState = com.example.util.rememberFrostedBackdrop(
+        key = "gothic_manor_${R.drawable.img_botlist_gothic_wisteria_bg}",
+        drawableResId = R.drawable.img_botlist_gothic_wisteria_bg,
+        targetWidth = 360,
+        maxHeight = 860,
+        blurRadius = 4,
+        blurPasses = 2,
+        violetShiftWarmPixels = true,
+        outputRgb565 = true
+    )
+    val frostedManorBitmap = frostedManorState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
+    val frostedCosmicBitmap = frostedCosmicState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
     val bgSeamlessEasing = remember { androidx.compose.animation.core.CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f) }
     val templatesBgProgress by animateFloatAsState(
         targetValue = if (activeTab == "templates") 1f else 0f,
@@ -915,6 +940,30 @@ fun BotListScreen(
         ) {
             val tabOrder = listOf("discover", "chats", "templates", "books")
             val homeMotionConfig = LocalCosmicMotionConfig.current
+            val sharedFavContext = LocalContext.current
+            val sharedFavPrefs = remember(sharedFavContext) {
+                sharedFavContext.getSharedPreferences("velora_bot_favorites_v1", android.content.Context.MODE_PRIVATE)
+            }
+            var sharedFavoriteBotIds by remember {
+                mutableStateOf(
+                    if (sharedFavPrefs.contains("fav_ids")) {
+                        sharedFavPrefs.getStringSet("fav_ids", emptySet())?.toSet() ?: emptySet()
+                    } else {
+                        setOf("starter_ayla")
+                    }
+                )
+            }
+            val toggleSharedFavorite: (String) -> Unit = { botId ->
+                val adding = !sharedFavoriteBotIds.contains(botId)
+                val updated = if (adding) sharedFavoriteBotIds + botId else sharedFavoriteBotIds - botId
+                sharedFavoriteBotIds = updated
+                sharedFavPrefs.edit().putStringSet("fav_ids", updated).apply()
+                android.widget.Toast.makeText(
+                    sharedFavContext,
+                    if (adding) "★ Favorilere eklendi ve üste sabitlendi" else "Favorilerden çıkarıldı",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
             AnimatedContent(
                 targetState = activeTab,
                 transitionSpec = {
@@ -932,7 +981,7 @@ fun BotListScreen(
                         }
                     )
                     // Exact root-coordinate measured feathered DstIn vertical fade mask right above the bottom dock:
-                    // Scrolling cards dissolve smoothly over a ~50dp feather zone before reaching the top border
+                    // Scrolling cards dissolve smoothly over a ~30dp feather zone before reaching the top border
                     // of the bottom dock, so there is NO hard horizontal scissor-cut line when scrolling AND
                     // NO cards ever show through behind the see-through glass bottom bar!
                     .graphicsLayer {
@@ -948,7 +997,7 @@ fun BotListScreen(
                                 (h - 94.dp.toPx()).coerceAtLeast(0f)
                             }
                             val fadeEndPx = (dockTopLocalY - 2.dp.toPx()).coerceAtLeast(1f)
-                            val fadeStartPx = (fadeEndPx - 50.dp.toPx()).coerceAtLeast(0f)
+                            val fadeStartPx = (fadeEndPx - 30.dp.toPx()).coerceAtLeast(0f)
                             val s0 = (fadeStartPx / h).coerceIn(0f, 1f)
                             val s1 = (fadeEndPx / h).coerceIn(s0, 1f)
                             drawRect(
@@ -987,6 +1036,8 @@ fun BotListScreen(
                             onOpenSettings = { showGlobalSettings = true },
                             lazyListState = discoverListState,
                             onCloneBot = onCloneBot,
+                            favoriteBotIds = sharedFavoriteBotIds,
+                            onToggleFavorite = toggleSharedFavorite,
                             frostedBackdrop = frostedCosmicBitmap,
                             scrollSync = activeScrollSync
                         )
@@ -1023,6 +1074,8 @@ fun BotListScreen(
                             onOpenSettings = { showGlobalSettings = true },
                             onNewBot = onNewBot,
                             lazyListState = chatsListState,
+                            favoriteBotIds = sharedFavoriteBotIds,
+                            onToggleFavorite = toggleSharedFavorite,
                             frostedBackdrop = frostedCosmicBitmap,
                             scrollSync = activeScrollSync
                         )
@@ -1154,34 +1207,17 @@ fun TopHeader(
                     )
                 }
 
-                // Calligraphic Script Hero Title ("Botlarım") in Pearl-White -> Soft Lavender with Royal Violet Halo
-                Text(
+                // Calligraphic Script Hero Title ("Botlarım", "Keşfet", "Şablonlar", "Kitaplar")
+                // Renders seamless Great Vibes glyphs for Turkish ş/Ş/ğ/Ğ/İ without jarring Roboto fallback
+                CalligraphicTurkishTitle(
                     text = titleText,
-                    style = androidx.compose.ui.text.TextStyle(
-                        fontFamily = CalligraphicScriptFontFamily,
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White,
-                                Color(0xFFF5EEFF),
-                                Color(0xFFD8B4FE)
-                            )
-                        ),
-                        fontSize = 52.sp,
-                        lineHeight = 54.sp,
-                        fontWeight = FontWeight.Normal,
-                        shadow = Shadow(
-                            color = Color(0xCC7C3AED),
-                            offset = Offset(0f, 2f),
-                            blurRadius = 18f
-                        )
-                    ),
-                    modifier = Modifier.offset(y = (-4).dp)
+                    modifier = Modifier.offset(y = (-2).dp)
                 )
 
-                // Ornamental Glowing Starlight Curve Underline directly beneath script title
+                // Ornamental Glowing Starlight Curve Underline cleanly spaced below script descenders
                 Canvas(
                     modifier = Modifier
-                        .offset(y = (-8).dp)
+                        .padding(top = 1.dp, bottom = 2.dp)
                         .width(196.dp)
                         .height(14.dp)
                 ) {
@@ -1287,6 +1323,8 @@ fun ChatsTabContent(
     onOpenSettings: () -> Unit,
     onNewBot: (() -> Unit)? = null,
     lazyListState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
+    favoriteBotIds: Set<String> = emptySet(),
+    onToggleFavorite: ((String) -> Unit)? = null,
     frostedBackdrop: ImageBitmap? = null,
     scrollSync: Int = 0
 ) {
@@ -1295,28 +1333,13 @@ fun ChatsTabContent(
         createFrostedGothicManorBitmap(context, R.drawable.img_botlist_cosmic_bg)
     }
 
-    // Persistent Favorite Bot IDs (SharedPreferences, starter_ayla starred by default on first run)
-    val favPrefs = remember(context) {
-        context.getSharedPreferences("velora_bot_favorites_v1", android.content.Context.MODE_PRIVATE)
-    }
-    var favoriteBotIds by remember {
-        mutableStateOf(
-            if (favPrefs.contains("fav_ids")) {
-                favPrefs.getStringSet("fav_ids", emptySet())?.toSet() ?: emptySet()
-            } else {
-                setOf("starter_ayla")
-            }
-        )
-    }
     val toggleFavorite: (String) -> Unit = { botId ->
-        val updated = if (favoriteBotIds.contains(botId)) favoriteBotIds - botId else favoriteBotIds + botId
-        favoriteBotIds = updated
-        favPrefs.edit().putStringSet("fav_ids", updated).apply()
+        onToggleFavorite?.invoke(botId)
     }
 
     // Sort & Quick Filter Mode controlled by the circular Tune Glass Orb next to the Search bar
-    // "recent" = default, "favorites_first" = favorites on top, "favorites_only" = only favorites, "name_asc" = A-Z
-    var sortMode by remember { mutableStateOf("recent") }
+    // Default to "favorites_first" so starring any bot immediately pins it to the top of the list!
+    var sortMode by remember { mutableStateOf("favorites_first") }
     var showSortMenu by remember { mutableStateOf(false) }
 
     val chatsOnlyList = remember(botList) {
@@ -1339,6 +1362,7 @@ fun ChatsTabContent(
                     bot.scenario.lowercase().contains(query)
 
             val matchesFilter = when (selectedFilter) {
+                "favorites" -> favoriteBotIds.contains(bot.id)
                 "personal" -> bot.mode == "personal"
                 "universe" -> bot.mode == "universe"
                 else -> true
@@ -1355,12 +1379,14 @@ fun ChatsTabContent(
         }
     }
 
+    val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     LazyColumn(
         state = lazyListState,
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(bottom = 112.dp),
+        contentPadding = PaddingValues(bottom = 168.dp + navBottomPadding),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // 1. Top Header (Greeting + Calligraphic Script "Botlarım" + Starlight Underline + Subtitle + Orbiting Gear Orb)
@@ -1615,6 +1641,7 @@ fun ChatsTabContent(
                 // Category Filter Pills Row (Reference layout: Icon + Label + Circular Count Badge)
                 // Smooth dynamic alpha fading-edge transitions on both left & right edges + bloom clearance
                 val allCount = chatsOnlyList.size
+                val favoritesCount = chatsOnlyList.count { favoriteBotIds.contains(it.id) }
                 val personalCount = chatsOnlyList.count { it.mode == "personal" }
                 val universeCount = chatsOnlyList.count { it.mode == "universe" }
                 val filterScrollState = rememberScrollState()
@@ -1678,6 +1705,7 @@ fun ChatsTabContent(
                 ) {
                     val filters = listOf(
                         Triple("all", "Tümü", allCount),
+                        Triple("favorites", "Favoriler", favoritesCount),
                         Triple("personal", "Karakterler", personalCount),
                         Triple("universe", "Evrenler", universeCount)
                     )
@@ -1805,6 +1833,14 @@ fun ChatsTabContent(
                                             drawRoundRect(tintColor, Offset(start, start + cell + gap), Size(cell, cell), cr, stroke)
                                             drawRoundRect(tintColor, Offset(start + cell + gap, start + cell + gap), Size(cell, cell), cr, stroke)
                                         }
+                                    }
+                                    "favorites" -> {
+                                        Icon(
+                                            imageVector = Icons.Default.Star,
+                                            contentDescription = null,
+                                            tint = if (isSelected) Color(0xFFFDE68A) else Color(0xFFD8B4FE),
+                                            modifier = Modifier.size(16.dp)
+                                        )
                                     }
                                     "personal" -> {
                                         Icon(
@@ -1965,8 +2001,8 @@ fun ChatsTabContent(
                                 .cosmicFloatingLevitation(amplitudeDp = 3.dp, durationMs = 2600)
                         )
                         Text(
-                            text = if (sortMode == "favorites_only") {
-                                "Favorilere eklenmiş bot bulunamadı."
+                            text = if (sortMode == "favorites_only" || selectedFilter == "favorites") {
+                                "Henüz favorilere eklenmiş bot yok. Bot kartlarındaki yıldız (★) simgesine dokunarak favori ekleyebilirsin."
                             } else {
                                 "Aramanıza uygun sonuç bulunamadı."
                             },
@@ -1976,7 +2012,7 @@ fun ChatsTabContent(
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.Center
                         )
-                        if (searchQuery.isNotBlank() || sortMode != "recent" || selectedFilter != "all") {
+                        if (searchQuery.isNotBlank() || sortMode != "favorites_first" || selectedFilter != "all") {
                             Spacer(modifier = Modifier.height(4.dp))
                             MorCamChipPill(
                                 label = "Filtreyi Sıfırla",
@@ -1985,7 +2021,7 @@ fun ChatsTabContent(
                                 onClick = {
                                     onSearchQueryChange("")
                                     onFilterChange("all")
-                                    sortMode = "recent"
+                                    sortMode = "favorites_first"
                                 }
                             )
                         }
@@ -2195,25 +2231,29 @@ fun DiscoverTabContent(
     onOpenSettings: () -> Unit,
     lazyListState: androidx.compose.foundation.lazy.LazyListState = androidx.compose.foundation.lazy.rememberLazyListState(),
     onCloneBot: ((String) -> Unit)? = null,
+    favoriteBotIds: Set<String> = emptySet(),
+    onToggleFavorite: ((String) -> Unit)? = null,
     frostedBackdrop: ImageBitmap? = null,
     scrollSync: Int = 0
 ) {
-    val filteredPublicBots = remember(botList, searchQuery) {
+    val filteredPublicBots = remember(botList, searchQuery, favoriteBotIds) {
         botList.filter { bot ->
             val query = searchQuery.trim().lowercase()
             query.isEmpty() ||
                     bot.aiName.lowercase().contains(query) ||
                     bot.universeName.lowercase().contains(query) ||
                     bot.scenario.lowercase().contains(query)
-        }
+        }.sortedByDescending { if (favoriteBotIds.contains(it.id)) 1 else 0 }
     }
+
+    val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     LazyColumn(
         state = lazyListState,
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(bottom = 116.dp),
+        contentPadding = PaddingValues(bottom = 168.dp + navBottomPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "top_header") {
@@ -2366,11 +2406,146 @@ fun DiscoverTabContent(
                     onOpenBot = onOpenBot,
                     onDeleteBot = null,
                     onTogglePrivacy = null,
-                    onCloneBot = onCloneBot
+                    onCloneBot = onCloneBot,
+                    isFavorite = favoriteBotIds.contains(bot.id),
+                    onToggleFavorite = onToggleFavorite?.let { toggle -> { toggle(bot.id) } },
+                    frostedBackdrop = frostedBackdrop,
+                    scrollSync = scrollSync
                 )
             }
         }
     }
+}
+
+/**
+ * Renders calligraphic Great Vibes titles ("Botlarım", "Keşfet", "Şablonlar", "Kitaplar")
+ * with native-looking Turkish diacritics (ş/Ş cedilla, ğ/Ğ breve, İ dot) so bundled latin-subset
+ * Great Vibes never falls back to a mismatched upright Roboto glyph for 'ş'.
+ */
+@Composable
+private fun CalligraphicTurkishTitle(
+    text: String,
+    modifier: Modifier = Modifier
+) {
+    val baseText = remember(text) {
+        buildString(text.length) {
+            text.forEach { ch ->
+                append(
+                    when (ch) {
+                        'ş' -> 's'
+                        'Ş' -> 'S'
+                        'ğ' -> 'g'
+                        'Ğ' -> 'G'
+                        'İ' -> 'I'
+                        else -> ch
+                    }
+                )
+            }
+        }
+    }
+    val diacriticIndices = remember(text) {
+        text.mapIndexedNotNull { idx, ch ->
+            when (ch) {
+                'ş', 'Ş', 'ğ', 'Ğ', 'İ' -> idx to ch
+                else -> null
+            }
+        }
+    }
+    var textLayoutResult by remember(text) { mutableStateOf<TextLayoutResult?>(null) }
+
+    Text(
+        text = baseText,
+        onTextLayout = { textLayoutResult = it },
+        style = androidx.compose.ui.text.TextStyle(
+            fontFamily = CalligraphicScriptFontFamily,
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.White,
+                    Color(0xFFF5EEFF),
+                    Color(0xFFD8B4FE)
+                )
+            ),
+            fontSize = 52.sp,
+            lineHeight = 56.sp,
+            fontWeight = FontWeight.Normal,
+            shadow = Shadow(
+                color = Color(0xCC7C3AED),
+                offset = Offset(0f, 2f),
+                blurRadius = 18f
+            )
+        ),
+        modifier = modifier
+            .semantics { contentDescription = text }
+            .drawWithContent {
+                drawContent()
+                val layout = textLayoutResult ?: return@drawWithContent
+                if (diacriticIndices.isEmpty()) return@drawWithContent
+                val baseline = layout.getLineBaseline(0)
+                val accentBrush = Brush.verticalGradient(
+                    colors = listOf(Color(0xFFF7F0FF), Color(0xFFD8B4FE))
+                )
+                diacriticIndices.forEach { (idx, ch) ->
+                    if (idx < baseText.length) {
+                        val box = layout.getBoundingBox(idx)
+                        when (ch) {
+                            'ş', 'Ş' -> {
+                                // Delicate italic calligraphic cedilla matching Great Vibes stroke flow
+                                val startX = box.left + box.width * if (ch == 'Ş') 0.42f else 0.36f
+                                val startY = baseline - 0.5.dp.toPx()
+                                val cedillaPath = Path().apply {
+                                    moveTo(startX, startY)
+                                    cubicTo(
+                                        startX - 1.2.dp.toPx(), startY + 2.8.dp.toPx(),
+                                        startX + 3.2.dp.toPx(), startY + 3.0.dp.toPx(),
+                                        startX + 2.6.dp.toPx(), startY + 6.4.dp.toPx()
+                                    )
+                                    cubicTo(
+                                        startX + 2.1.dp.toPx(), startY + 8.6.dp.toPx(),
+                                        startX - 1.8.dp.toPx(), startY + 9.2.dp.toPx(),
+                                        startX - 3.6.dp.toPx(), startY + 7.4.dp.toPx()
+                                    )
+                                }
+                                // Royal violet halo glow behind cedilla matching text shadow
+                                drawPath(
+                                    path = cedillaPath,
+                                    color = Color(0x997C3AED),
+                                    style = Stroke(width = 4.2.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                                drawPath(
+                                    path = cedillaPath,
+                                    brush = accentBrush,
+                                    style = Stroke(width = 1.95.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                            }
+                            'ğ', 'Ğ' -> {
+                                val cx = box.left + box.width * 0.55f
+                                val topY = box.top + if (ch == 'Ğ') 1.dp.toPx() else 10.dp.toPx()
+                                val brevePath = Path().apply {
+                                    moveTo(cx - 4.2.dp.toPx(), topY)
+                                    quadraticBezierTo(cx, topY + 3.4.dp.toPx(), cx + 4.4.dp.toPx(), topY - 0.5.dp.toPx())
+                                }
+                                drawPath(
+                                    path = brevePath,
+                                    color = Color(0x887C3AED),
+                                    style = Stroke(width = 3.8.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                                drawPath(
+                                    path = brevePath,
+                                    brush = accentBrush,
+                                    style = Stroke(width = 1.75.dp.toPx(), cap = StrokeCap.Round)
+                                )
+                            }
+                            'İ' -> {
+                                val cx = box.left + box.width * 0.58f
+                                val dotY = box.top + 2.dp.toPx()
+                                drawCircle(color = Color(0x997C3AED), radius = 3.6.dp.toPx(), center = Offset(cx, dotY))
+                                drawCircle(brush = accentBrush, radius = 1.8.dp.toPx(), center = Offset(cx, dotY))
+                            }
+                        }
+                    }
+                }
+            }
+    )
 }
 
 

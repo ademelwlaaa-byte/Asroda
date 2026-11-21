@@ -18,6 +18,7 @@ object ImageStorageManager {
     private const val TAG = "ImageStorageManager"
     private const val TARGET_AVATAR_SIZE = 256
     private const val WEBP_QUALITY = 82
+    private const val BOT_IMAGES_DIR = "bot_images"
 
     /**
      * OOM-safe WebP compression and storage into app internal storage (filesDir/bot_images/).
@@ -115,15 +116,67 @@ object ImageStorageManager {
     fun isBase64DataUri(value: String): Boolean = value.startsWith("data:image/")
 
     /**
-     * Infrastructure Helper: Prepares image for remote Cloud Storage.
+     * Safely deletes a locally stored background image ONLY IF it is owned by Emochi
+     * inside `context.filesDir/bot_images/`. External URIs, URLs, and Base64 strings are ignored.
      */
-    suspend fun uploadToCloudStorage(
-        localUriOrPath: String,
-        cloudEndpointUrl: String? = null
-    ): String = withContext(Dispatchers.IO) {
-        if (localUriOrPath.startsWith("http://") || localUriOrPath.startsWith("https://")) {
-            return@withContext localUriOrPath
+    fun deleteLocalBackgroundIfOwned(context: Context, uriStr: String?): Boolean {
+        if (uriStr.isNullOrBlank()) return false
+        if (uriStr == "USE_AVATAR" || isBase64DataUri(uriStr) ||
+            uriStr.startsWith("http://") || uriStr.startsWith("https://") ||
+            uriStr.startsWith("content://")
+        ) {
+            return false
         }
-        localUriOrPath
+        return try {
+            val ownedDir = File(context.filesDir, BOT_IMAGES_DIR).canonicalFile
+            val rawPath = if (uriStr.startsWith("file://")) {
+                Uri.parse(uriStr).path ?: return false
+            } else {
+                uriStr
+            }
+            val target = File(rawPath).canonicalFile
+            val isOwned = target.path.startsWith(ownedDir.path + File.separator)
+            if (isOwned && target.exists() && target.isFile) {
+                target.delete()
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "deleteLocalBackgroundIfOwned skipped for $uriStr", e)
+            false
+        }
+    }
+
+    /**
+     * Deletes orphaned WebP files inside `filesDir/bot_images/` that are no longer referenced
+     * by any active bot's `chatBgUrl` or `avatarUrl`. Returns the number of deleted files.
+     */
+    fun pruneOrphanBackgrounds(context: Context, activeUrls: Set<String>): Int {
+        return try {
+            val ownedDir = File(context.filesDir, BOT_IMAGES_DIR)
+            if (!ownedDir.exists() || !ownedDir.isDirectory) return 0
+            val activeCanonicalPaths = activeUrls
+                .filter { it.isNotBlank() && !isBase64DataUri(it) && !it.startsWith("http") && !it.startsWith("content://") }
+                .mapNotNull { url ->
+                    try {
+                        val path = if (url.startsWith("file://")) Uri.parse(url).path else url
+                        path?.let { File(it).canonicalPath }
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                .toSet()
+
+            var deletedCount = 0
+            ownedDir.listFiles()?.forEach { file ->
+                if (file.isFile && file.canonicalPath !in activeCanonicalPaths) {
+                    if (file.delete()) deletedCount++
+                }
+            }
+            deletedCount
+        } catch (e: Exception) {
+            Log.w(TAG, "pruneOrphanBackgrounds failed", e)
+            0
+        }
     }
 }

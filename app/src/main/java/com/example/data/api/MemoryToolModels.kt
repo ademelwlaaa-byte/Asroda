@@ -33,59 +33,122 @@ object MemoryToolRegistry {
     val CENTRAL_TOOLS: List<MemoryToolDefinition> = listOf(
         MemoryToolDefinition(
             name = "save_memory",
-            description = "Konuşma sırasında önemli, kalıcı bir bilgi veya olay fark ettiğinde bunu hafızaya kaydeder. Geçici durumlar (anlık ruh hali, o anki hareket) kaydedilmez.",
+            description = "Konuşma sırasında bağlamsal olarak anlamlı bir bilgi veya geçici/kalıcı olay fark ettiğinde Neural Vault hafızasına kaydeder. 'Elini masaya koydu', 'derin nefes aldı', 'pencereden baktı' gibi sıradan fiziksel hareketler ASLA kaydedilmez; ancak aynı hareket gizli kanıt saklamak veya ilk kez güvenmek gibi olay örgüsünü değiştiriyorsa kaydedilir. Günlük geçici detaylar (yenen yemek, giyilen ceket, baş ağrısı) tier='ephemeral' (ttl_days=2..3) ile kaydedilir.",
             properties = mapOf(
                 "content" to MemoryToolProperty(
                     type = "string",
-                    description = "Hatırlanacak bilgi veya olay açıklaması"
+                    description = "Hatırlanacak net bilgi veya olay açıklaması"
                 ),
                 "category" to MemoryToolProperty(
                     type = "string",
-                    description = "Bilgi türü: fact (sabit bilgi, isim/yaş/tercih/ilişki) veya event (yaşanan önemli olay/söz)",
+                    description = "Bilgi türü: fact (bilgi/durum/tercih/ilişki) veya event (yaşanan önemli olay/söz)",
                     enum = listOf("fact", "event")
+                ),
+                "key" to MemoryToolProperty(
+                    type = "string",
+                    description = "Opsiyonel 1-3 kelimelik kısa Türkçe konu başlığı (ör. 'Akşam Yemeği', 'Gizli Sır', 'Meslek', 'Güven Durumu')"
+                ),
+                "tier" to MemoryToolProperty(
+                    type = "string",
+                    description = "Bellek katmanı: ephemeral (2-3 hikâye günü geçici detay: yemek, kıyafet, hafif ağrı), arc (10-14 gün süren görev/yara/küs kalma durumu), core (kalıcı kimlik, sır, kalıcı tercih, ilişki).",
+                    enum = listOf("ephemeral", "arc", "core")
+                ),
+                "ttl_days" to MemoryToolProperty(
+                    type = "string",
+                    description = "Opsiyonel hikâye günü ömrü: ephemeral için 2-3, arc için 10-14, core için 0."
                 ),
                 "importance" to MemoryToolProperty(
                     type = "string",
-                    description = "Önem derecesi 1-10. 4 ve altı: önemsiz (kaydedilmez). 5+: orta. 8+: çok önemli."
+                    description = "Önem derecesi 1-10. 2 ve altı: gürültü (kaydedilmez). 3-5: geçici (ephemeral). 6-7: orta/arc. 8+: kalıcı/çok önemli (core)."
                 ),
                 "subject" to MemoryToolProperty(
                     type = "string",
-                    description = "Bilginin kimin hakkında olduğu: 'kullanıcı', 'karakter', veya yan karakterin adı (ör. 'Kerem'). Belirsizse boş bırak."
+                    description = "Bilginin kimin hakkında olduğu: 'kullanıcı', 'karakter', veya sahnedeki karakterin adı (ör. 'Natasha', 'Aiden')."
                 )
             ),
             required = listOf("content", "category")
         ),
         MemoryToolDefinition(
             name = "update_memory",
-            description = "Var olan bir hafıza kaydını günceller.",
+            description = "Var olan bir Neural Vault hafıza kaydını #ID ile günceller (★ kilitli kayıtlar yalnızca kullanıcı açıkça isterse değişir).",
             properties = mapOf(
                 "memoryId" to MemoryToolProperty(
                     type = "string",
-                    description = "Güncellenecek hafıza kaydının ID'si"
+                    description = "Güncellenecek hafıza kaydının ID'si (ör. '12', '#12', 'F12') veya eşleşen mevcut metni"
                 ),
                 "newContent" to MemoryToolProperty(
                     type = "string",
-                    description = "Yeni içeriği"
+                    description = "Güncellenmiş yeni içerik"
+                ),
+                "reason" to MemoryToolProperty(
+                    type = "string",
+                    description = "Opsiyonel güncelleme nedeni"
                 )
             ),
             required = listOf("memoryId", "newContent")
         ),
         MemoryToolDefinition(
             name = "delete_memory",
-            description = "Geçersiz veya silinmesi gereken bir hafıza kaydını siler.",
+            description = "Geçersizleşmiş veya yanlış olduğu belirtilen bir Neural Vault kaydını #ID ile arşive kaldırarak siler.",
             properties = mapOf(
                 "memoryId" to MemoryToolProperty(
                     type = "string",
-                    description = "Silinecek hafıza kaydının ID'si"
+                    description = "Silinecek hafıza kaydının ID'si (ör. '12', '#12', 'F12') veya eşleşen mevcut metni"
                 ),
                 "reason" to MemoryToolProperty(
                     type = "string",
-                    description = "Silme nedeni"
+                    description = "Silme / arşivleme nedeni"
                 )
             ),
             required = listOf("memoryId")
         )
     )
+
+    /**
+     * Tolerantly extracts a numeric DB ID from model arguments such as "12", "#12", "[#12]", "[#12★]", "F12", "E12".
+     * Returns null when the model supplied descriptive text instead of a numeric ID so callers can fall back to semantic lookup.
+     */
+    fun parseMemoryId(raw: String?): Long? {
+        if (raw.isNullOrBlank()) return null
+        val trimmed = raw.trim()
+        val match = Regex("""^\[?\s*[#fFeEmM]?\s*(\d+)\s*★?\s*\]?$""").find(trimmed)
+        return match?.groupValues?.getOrNull(1)?.toLongOrNull()
+    }
+
+    /**
+     * Parses text-fallback memory commands emitted by Custom Providers without native function calling:
+     * Example: [ACTIVE_MEMORY_CALL: save_memory(content="...", category="fact", key="Meslek", importance=8)]
+     * Supports multiple pipe-separated calls inside one tag or multiple tags in the same response.
+     */
+    fun parseTextFallbackMemoryCalls(responseText: String): List<ParsedMemoryToolCall> {
+        if (responseText.isBlank() || !responseText.contains("ACTIVE_MEMORY_CALL", ignoreCase = true)) {
+            return emptyList()
+        }
+        val results = mutableListOf<ParsedMemoryToolCall>()
+        val blockRegex = Regex("""(?is)\[ACTIVE_MEMORY_CALL:\s*(.*?)\]""")
+        val callRegex = Regex("""(?is)\b(save_memory|update_memory|delete_memory)\s*\(([^)]*)\)""")
+        val argRegex = Regex("""(?is)([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^,)\s]+))""")
+
+        for (blockMatch in blockRegex.findAll(responseText)) {
+            val blockBody = blockMatch.groupValues[1]
+            for (callMatch in callRegex.findAll(blockBody)) {
+                val fnName = callMatch.groupValues[1].lowercase().trim()
+                val argsBody = callMatch.groupValues[2]
+                val argsMap = mutableMapOf<String, Any>()
+                for (argMatch in argRegex.findAll(argsBody)) {
+                    val argName = argMatch.groupValues[1].trim()
+                    val argVal = argMatch.groupValues[2].ifEmpty {
+                        argMatch.groupValues[3].ifEmpty { argMatch.groupValues[4] }
+                    }.trim()
+                    argsMap[argName] = argVal
+                }
+                if (argsMap.isNotEmpty()) {
+                    results.add(ParsedMemoryToolCall(name = fnName, arguments = argsMap))
+                }
+            }
+        }
+        return results
+    }
 
     // 1) Gemini Mapper (GeminiTool format)
     fun toGeminiTools(definitions: List<MemoryToolDefinition> = CENTRAL_TOOLS): List<GeminiTool> {

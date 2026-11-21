@@ -16,13 +16,36 @@ import com.example.util.ImageStorageManager
 import java.nio.ByteBuffer
 
 /**
+ * Immutable Base64 decoder helper for Micro-WebP / legacy data URIs.
+ * Returns a fresh [ByteArray] that can safely be wrapped into a new [ByteBuffer]
+ * on every Coil request without ever hitting the stateful `position == limit` bug.
+ */
+internal object BotAvatarCodec {
+    fun decodeBase64DataUriBytes(avatarUrl: String): ByteArray? {
+        return try {
+            val base64Part = avatarUrl.substringAfter(",")
+            if (base64Part.isBlank()) null
+            else Base64.decode(base64Part, Base64.NO_WRAP)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun wrapFreshBuffer(bytes: ByteArray): ByteBuffer = ByteBuffer.wrap(bytes)
+
+    fun buildCacheKey(avatarUrl: String): String =
+        "avatar_b64_${avatarUrl.hashCode()}_${avatarUrl.length}"
+}
+
+/**
  * Unified, memory-efficient bot avatar composable powered by Coil.
  *
  * Handles 3 cases transparently without ever requesting Size.ORIGINAL:
- *  1. Micro-WebP / Legacy Base64 Data URI ("data:image/webp;base64,...") -> decoded to ByteBuffer
- *     and rendered through Coil's MemoryCache with automatic target-box downsampling & RGB_565.
- *  2. file:// or content:// URI -> Coil AsyncImage with allowRgb565(true) & crossfade(300).
- *  3. http/https URL -> Coil AsyncImage with disk & memory caching.
+ *  1. Micro-WebP / Legacy Base64 Data URI ("data:image/webp;base64,...") -> decoded once into an
+ *     immutable [ByteArray], wrapped into a fresh [ByteBuffer] per [ImageRequest], cached in
+ *     Coil's MemoryCache with `allowRgb565(false)` so purple/gothic gradients never band.
+ *  2. file:// or content:// URI -> Coil AsyncImage with `allowRgb565(false)`.
+ *  3. http/https URL -> Coil AsyncImage with disk & memory caching and `allowRgb565(false)`.
  *
  * Falls back to [fallback] composable when no valid image is available or decoding fails.
  */
@@ -41,24 +64,18 @@ fun BotAvatarImage(
         avatarUrl.isNullOrBlank() || loadFailed -> fallback()
 
         ImageStorageManager.isBase64DataUri(avatarUrl) -> {
-            val byteBuffer: ByteBuffer? = remember(avatarUrl) {
-                try {
-                    val base64Part = avatarUrl.substringAfter(",")
-                    if (base64Part.isBlank()) null
-                    else ByteBuffer.wrap(Base64.decode(base64Part, Base64.NO_WRAP))
-                } catch (_: Exception) {
-                    null
-                }
+            // Keep immutable ByteArray across recompositions; wrap a fresh ByteBuffer per ImageRequest
+            // so Coil never reads an already-drained ByteBuffer (position == limit) after cache eviction.
+            val decodedBytes: ByteArray? = remember(avatarUrl) {
+                BotAvatarCodec.decodeBase64DataUriBytes(avatarUrl)
             }
-            if (byteBuffer != null) {
-                val request = remember(avatarUrl, context) {
-                    ImageRequest.Builder(context)
-                        .data(byteBuffer)
-                        .memoryCacheKey("avatar_b64_${avatarUrl.hashCode()}_${avatarUrl.length}")
-                        .allowRgb565(true)
-                        .crossfade(false)
-                        .build()
-                }
+            if (decodedBytes != null && decodedBytes.isNotEmpty()) {
+                val request = ImageRequest.Builder(context)
+                    .data(BotAvatarCodec.wrapFreshBuffer(decodedBytes))
+                    .memoryCacheKey(BotAvatarCodec.buildCacheKey(avatarUrl))
+                    .allowRgb565(false)
+                    .crossfade(false)
+                    .build()
                 AsyncImage(
                     model = request,
                     contentDescription = contentDescription,
@@ -76,7 +93,7 @@ fun BotAvatarImage(
             val request = remember(avatarUrl, context) {
                 ImageRequest.Builder(context)
                     .data(avatarUrl)
-                    .allowRgb565(true)
+                    .allowRgb565(false)
                     .crossfade(if (isRemote) 250 else 0)
                     .build()
             }

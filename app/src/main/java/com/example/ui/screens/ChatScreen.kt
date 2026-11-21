@@ -276,90 +276,20 @@ fun formatNarrativeText(text: String): AnnotatedString {
     }
 }
 
-private var cachedFrostedWisteriaBackdrop: ImageBitmap? = null
-
 // Generates a detail-preserving, natural-contrast optical frosted bitmap from the gothic wisteria background
+// Backed by centralized FrostedBackdropCache (LruCache max 4, evicted on onTrimMemory).
 fun createFrostedWisteriaBackdropBitmap(context: android.content.Context): ImageBitmap {
-    cachedFrostedWisteriaBackdrop?.let { return it }
-    return try {
-        val opts = android.graphics.BitmapFactory.Options().apply {
-            inSampleSize = 2
-            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-        }
-        val raw = android.graphics.BitmapFactory.decodeResource(
-            context.resources,
-            com.example.R.drawable.img_chat_bg_aiden_wisteria,
-            opts
-        ) ?: return ImageBitmap(1, 1)
-
-        // Preserve exact image aspect ratio at 360px width so window mullions, flowers, arches & stairs align 1:1
-        val w = 360
-        val h = ((raw.height.toFloat() / raw.width.toFloat().coerceAtLeast(1f)) * w).toInt().coerceIn(360, 1080)
-        val scaled = android.graphics.Bitmap.createScaledBitmap(raw, w, h, true)
-        if (raw !== scaled) raw.recycle()
-
-        val pixels = IntArray(w * h)
-        scaled.getPixels(pixels, 0, w, 0, 0, w, h)
-        val tmp = IntArray(w * h)
-
-        // Two-pass separable box blur (radius 5 on 360px keeps stained-glass window frames and wisteria blossoms clearly recognizable)
-        val radius = 5
-        val div = radius * 2 + 1
-        repeat(2) {
-            // Horizontal pass
-            for (y in 0 until h) {
-                val rowOffset = y * w
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (dx in -radius..radius) {
-                    val px = pixels[rowOffset + dx.coerceIn(0, w - 1)]
-                    rSum += (px ushr 16) and 0xFF
-                    gSum += (px ushr 8) and 0xFF
-                    bSum += px and 0xFF
-                }
-                for (x in 0 until w) {
-                    tmp[rowOffset + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val nextX = (x + radius + 1).coerceAtMost(w - 1)
-                    val prevX = (x - radius).coerceAtLeast(0)
-                    val nextPx = pixels[rowOffset + nextX]
-                    val prevPx = pixels[rowOffset + prevX]
-                    rSum += ((nextPx ushr 16) and 0xFF) - ((prevPx ushr 16) and 0xFF)
-                    gSum += ((nextPx ushr 8) and 0xFF) - ((prevPx ushr 8) and 0xFF)
-                    bSum += (nextPx and 0xFF) - (prevPx and 0xFF)
-                }
-            }
-            // Vertical pass
-            for (x in 0 until w) {
-                var rSum = 0
-                var gSum = 0
-                var bSum = 0
-                for (dy in -radius..radius) {
-                    val px = tmp[dy.coerceIn(0, h - 1) * w + x]
-                    rSum += (px ushr 16) and 0xFF
-                    gSum += (px ushr 8) and 0xFF
-                    bSum += px and 0xFF
-                }
-                for (y in 0 until h) {
-                    pixels[y * w + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val nextY = (y + radius + 1).coerceAtMost(h - 1)
-                    val prevY = (y - radius).coerceAtLeast(0)
-                    val nextPx = tmp[nextY * w + x]
-                    val prevPx = tmp[prevY * w + x]
-                    rSum += ((nextPx ushr 16) and 0xFF) - ((prevPx ushr 16) and 0xFF)
-                    gSum += ((nextPx ushr 8) and 0xFF) - ((prevPx ushr 8) and 0xFF)
-                    bSum += (nextPx and 0xFF) - (prevPx and 0xFF)
-                }
-            }
-        }
-
-        val out = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.RGB_565)
-        out.setPixels(pixels, 0, w, 0, 0, w, h)
-        scaled.recycle()
-        out.asImageBitmap().also { cachedFrostedWisteriaBackdrop = it }
-    } catch (_: Throwable) {
-        ImageBitmap(1, 1)
-    }
+    return com.example.util.FrostedBackdropCache.getOrGenerateSync(
+        context = context,
+        key = "wisteria_chat_bg",
+        drawableResId = com.example.R.drawable.img_chat_bg_aiden_wisteria,
+        targetWidth = 360,
+        maxHeight = 1080,
+        blurRadius = 5,
+        blurPasses = 2,
+        violetShiftWarmPixels = false,
+        outputRgb565 = true
+    )
 }
 
 val LocalAetheriaRootPos = androidx.compose.runtime.compositionLocalOf { mutableStateOf(Offset.Zero) }
@@ -1906,7 +1836,8 @@ fun ChatScreen(
     onResetChat: (Boolean) -> Unit,
     onDeleteBot: () -> Unit,
     onSpeakText: ((String) -> Unit)? = null,
-    isSpeaking: Boolean = false,
+    onSpeakMessage: ((String, String) -> Unit)? = null,
+    speakingMessageIdFlow: kotlinx.coroutines.flow.StateFlow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null),
     onStopSpeaking: () -> Unit = {},
     onEnsureOpeningMessage: () -> Unit = {},
     onClearError: () -> Unit = {},
@@ -1914,8 +1845,8 @@ fun ChatScreen(
     onRetryFromBanner: (() -> Unit)? = null,
     onRewindToMessage: ((String) -> Unit)? = null,
     onCloneBot: (() -> Unit)? = null,
-    streamingMsgId: String? = null,
-    streamingText: String? = null
+    streamingMsgIdFlow: kotlinx.coroutines.flow.StateFlow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null),
+    streamingTextFlow: kotlinx.coroutines.flow.StateFlow<String?> = kotlinx.coroutines.flow.MutableStateFlow(null)
 ) {
     var inputText by remember { mutableStateOf("") }
     var showBotSettings by remember { mutableStateOf(false) }
@@ -1999,8 +1930,7 @@ fun ChatScreen(
     // Snap cleanly to the newest message after collapsing extra loaded 20-message batches at bottom
     LaunchedEffect(pendingSnapToBottomAfterCollapse, paginatedValidMessages.size) {
         if (!pendingSnapToBottomAfterCollapse) return@LaunchedEffect
-        val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (hasWaitingItem) 1 else 0
+        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (isSending) 1 else 0
         if (totalItems > 0) {
             try {
                 listState.scrollToItem(totalItems - 1)
@@ -2008,6 +1938,58 @@ fun ChatScreen(
             }
         }
         pendingSnapToBottomAfterCollapse = false
+    }
+
+    // Jump-to-message & soft golden-lavender pulse (used by both Starred Messages sheet & Live Search navigation)
+    var highlightedMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var pendingJumpMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var activeSearchIndex by remember(bot.id, localSearchQuery) { mutableIntStateOf(0) }
+
+    val jumpToMessageById: (String) -> Unit = remember(rawValidMessages, visibleMessageLimit) {
+        { targetMsgId: String ->
+            val rawIdx = rawValidMessages.indexOfFirst { it.id == targetMsgId }
+            if (rawIdx >= 0) {
+                val neededFromEnd = rawValidMessages.size - rawIdx
+                if (neededFromEnd > visibleMessageLimit) {
+                    visibleMessageLimit = ((neededFromEnd + chatPageSize - 1) / chatPageSize) * chatPageSize
+                }
+                expandedOldMessageIds = expandedOldMessageIds + targetMsgId
+                pendingJumpMessageId = targetMsgId
+            }
+        }
+    }
+
+    LaunchedEffect(bot.id) {
+        viewModel.loadStarredMessages()
+    }
+
+    LaunchedEffect(searchResults, localSearchQuery) {
+        if (showSearchBar && localSearchQuery.isNotBlank() && searchResults.isNotEmpty()) {
+            activeSearchIndex = 0
+            jumpToMessageById(searchResults[0].id)
+        }
+    }
+
+    LaunchedEffect(pendingJumpMessageId, paginatedValidMessages.size, hasLoadOlderHeader) {
+        val targetId = pendingJumpMessageId ?: return@LaunchedEffect
+        val idxInVisible = paginatedValidMessages.indexOfFirst { it.id == targetId }
+        if (idxInVisible >= 0) {
+            val lazyIdx = idxInVisible + if (hasLoadOlderHeader) 1 else 0
+            try {
+                listState.animateScrollToItem(lazyIdx)
+            } catch (_: Exception) {
+                try { listState.scrollToItem(lazyIdx) } catch (_: Exception) {}
+            }
+            highlightedMessageId = targetId
+            pendingJumpMessageId = null
+        }
+    }
+
+    LaunchedEffect(highlightedMessageId) {
+        if (highlightedMessageId != null) {
+            delay(2200)
+            highlightedMessageId = null
+        }
     }
 
     // Close message action pills and reaction picker automatically if the active message scrolls off-screen
@@ -2050,10 +2032,10 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(isChatAtBottom, listState.isScrollInProgress, visibleMessageLimit, expandedOldMessageIds.size) {
-        if (isChatAtBottom && !listState.isScrollInProgress) {
+    LaunchedEffect(isChatAtBottom, listState.isScrollInProgress, visibleMessageLimit, expandedOldMessageIds.size, pendingJumpMessageId, highlightedMessageId) {
+        if (isChatAtBottom && !listState.isScrollInProgress && pendingJumpMessageId == null && highlightedMessageId == null) {
             delay(180)
-            if (isChatAtBottom && !listState.isScrollInProgress) {
+            if (isChatAtBottom && !listState.isScrollInProgress && pendingJumpMessageId == null && highlightedMessageId == null) {
                 if (expandedOldMessageIds.isNotEmpty()) {
                     expandedOldMessageIds = emptySet()
                 }
@@ -2071,14 +2053,32 @@ fun ChatScreen(
         }
     }
 
-    // Scroll to bottom on new messages or streaming updates
-    LaunchedEffect(rawValidMessages.size, isSending, streamingText) {
-        val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (hasWaitingItem) 1 else 0
+    // Scroll to bottom on new messages (no streamingText recomposition at ChatScreen scope!)
+    LaunchedEffect(rawValidMessages.size, isSending) {
+        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (isSending) 1 else 0
         if (totalItems > 0) {
             try {
                 listState.animateScrollToItem(totalItems - 1)
             } catch (_: Exception) {}
+        }
+    }
+
+    // Coroutine-only throttled auto-scroll during streaming: zero ChatScreen recompositions!
+    LaunchedEffect(streamingTextFlow) {
+        var lastScrollMs = 0L
+        streamingTextFlow.collect { chunk ->
+            if (!chunk.isNullOrEmpty() && isChatAtBottom) {
+                val nowMs = System.currentTimeMillis()
+                if (nowMs - lastScrollMs >= 180L) {
+                    lastScrollMs = nowMs
+                    val total = listState.layoutInfo.totalItemsCount
+                    if (total > 0) {
+                        try {
+                            listState.scrollToItem(total - 1)
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
         }
     }
 
@@ -2214,7 +2214,16 @@ fun ChatScreen(
     val rootSizeState = remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
     val rootPosState = remember { mutableStateOf(Offset.Zero) }
     val rootSize = rootSizeState.value
-    val blurredBgBitmap = remember(context) { createFrostedWisteriaBackdropBitmap(context) }
+    val blurredBgState = com.example.util.rememberFrostedBackdrop(
+        key = "wisteria_chat_bg",
+        drawableResId = com.example.R.drawable.img_chat_bg_aiden_wisteria,
+        targetWidth = 360,
+        maxHeight = 1080,
+        blurRadius = 5,
+        blurPasses = 2,
+        outputRgb565 = true
+    )
+    val blurredBgBitmap = blurredBgState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
     val refGlassBitmaps = remember(context) { loadAetheriaRefGlassBitmaps(context) }
     val headerTitle = displayName
     val validMessages = paginatedValidMessages
@@ -2241,8 +2250,7 @@ fun ChatScreen(
             if (isImeVisible) {
                 val activeId = reactionPickerMessageId ?: expandedMenuMessageId ?: expandedUserMenuMessageId
                 if (activeId == null) {
-                    val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-                    val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (hasWaitingItem) 1 else 0
+                    val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (isSending) 1 else 0
                     if (totalItems > 0) {
                         kotlinx.coroutines.delay(90)
                         try {
@@ -2287,8 +2295,15 @@ fun ChatScreen(
 
         // Custom wallpaper overlay only when explicitly customized with a custom image path/URL
         if (bot.chatBgUrl.isNotBlank() && bot.chatBgUrl != "USE_AVATAR" && bot.id != "starter_aetheria" && bot.id != "starter_aiden_stories") {
+            val chatBgRequest = remember(bot.chatBgUrl, context) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(bot.chatBgUrl)
+                    .allowRgb565(true)
+                    .crossfade(250)
+                    .build()
+            }
             coil.compose.AsyncImage(
-                model = bot.chatBgUrl,
+                model = chatBgRequest,
                 contentDescription = "Sohbet Arka Planı",
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
@@ -2456,7 +2471,7 @@ fun ChatScreen(
                                             onBack()
                                         }
                                 )
-                                // 2.2 Orta Avatar + Bot Başlık Kapsülü
+                                // 2.2 Orta Avatar + Bot Başlık Kapsülü → Hızlı Karakter Kartı (BotQuickProfileSheet)
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
@@ -2464,7 +2479,8 @@ fun ChatScreen(
                                         .clickable(
                                             interactionSource = remember { MutableInteractionSource() },
                                             indication = null
-                                        ) { showBotSettings = true }
+                                        ) { showQuickProfile = true }
+                                        .testTag("chat_header_quick_profile_button")
                                 )
                                 // 2.3 Sağ Arama (🔍)
                                 Box(
@@ -2478,11 +2494,13 @@ fun ChatScreen(
                                             showSearchBar = !showSearchBar
                                             if (!showSearchBar) {
                                                 localSearchQuery = ""
+                                                activeSearchIndex = 0
                                                 viewModel.clearSearch()
                                             }
                                         }
+                                        .testTag("chat_search_toggle_button")
                                 )
-                                // 2.4 Sağ Ayarlar (⚙️)
+                                // 2.4 Sağ Ayarlar (⚙️) → Tam Bot Ayarları Modalı
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
@@ -2496,115 +2514,50 @@ fun ChatScreen(
                             }
                         }
 
-                        // Search bar (slide-in) — Mor Cam Frosted Capsule
-                        AnimatedVisibility(
+                        // Modular Search bar with 1 / N navigation + ↑/↓ + ⭐ Yıldızlı shortcut
+                        ChatSearchBarAndNavigation(
                             visible = showSearchBar,
-                            enter = slideInVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(220)),
-                            exit = slideOutVertically(tween(180)) { -it } + fadeOut(tween(180))
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                MorCamGlassTextField(
-                                    value = localSearchQuery,
-                                    onValueChange = { q ->
-                                        localSearchQuery = q
-                                        viewModel.setSearchQuery(q.ifBlank { null })
-                                    },
-                                    placeholder = "Mesajlarda ara...",
-                                    leadingIcon = Icons.Default.Search,
-                                    singleLine = true,
-                                    minHeight = 46.dp,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.55f),
-                                    trailingContent = if (localSearchQuery.isNotEmpty()) {
-                                        {
-                                            MorCamCircleIconButton(
-                                                icon = Icons.Default.Close,
-                                                contentDescription = "Temizle",
-                                                onClick = {
-                                                    localSearchQuery = ""
-                                                    viewModel.clearSearch()
-                                                },
-                                                size = 36.dp
-                                            )
-                                        }
-                                    } else null
-                                )
-                            }
-                        }
-
-                        // Search results summary
-                        AnimatedVisibility(
-                            visible = showSearchBar && searchResults.isNotEmpty(),
-                            enter = fadeIn(tween(200)),
-                            exit = fadeOut(tween(150))
-                        ) {
-                            Text(
-                                text = "${searchResults.size} sonuç bulundu",
-                                color = MorCamTokens.LavenderSoft,
-                                fontSize = 11.5.sp,
-                                fontFamily = LiterarySerifFontFamily,
-                                modifier = Modifier.padding(start = 18.dp, bottom = 4.dp)
-                            )
-                        }
-
-                        AnimatedVisibility(
-                            visible = isSpeaking && !isImeVisible,
-                            enter = fadeIn(tween(200)) + expandVertically(tween(200)),
-                            exit = fadeOut(tween(160)) + shrinkVertically(tween(160))
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 4.dp)
-                                    .clip(RoundedCornerShape(50))
-                                    .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.62f)
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            listOf(Color(0xA6200D44), Color(0xB814082C), Color(0xA6200D44))
-                                        )
-                                    )
-                                    .border(BorderStroke(1.dp, MorCamTokens.RimGradient), RoundedCornerShape(50))
-                                    .padding(start = 14.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        CosmicVoiceEqualizer(
-                                            active = isSpeaking,
-                                            barCount = 5,
-                                            color = MorCamTokens.LavenderLight,
-                                            height = 15.dp
-                                        )
-                                        Text(
-                                            text = "Sesli okunuyor...",
-                                            color = MorCamTokens.SilverLavenderBright,
-                                            fontFamily = LiterarySerifFontFamily,
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    MorCamChipPill(
-                                        label = "Durdur",
-                                        selected = true,
-                                        icon = Icons.Default.Stop,
-                                        onClick = { onStopSpeaking() }
-                                    )
+                            localSearchQuery = localSearchQuery,
+                            matchCount = searchResults.size,
+                            activeMatchIndex = activeSearchIndex,
+                            starredCount = starredMessages.size,
+                            rootSize = rootSize,
+                            blurredBgBitmap = blurredBgBitmap,
+                            onQueryChange = { q ->
+                                localSearchQuery = q
+                                activeSearchIndex = 0
+                                viewModel.setSearchQuery(q.ifBlank { null })
+                            },
+                            onClearQuery = {
+                                localSearchQuery = ""
+                                activeSearchIndex = 0
+                                viewModel.clearSearch()
+                            },
+                            onPrevMatch = {
+                                if (searchResults.isNotEmpty()) {
+                                    activeSearchIndex = (activeSearchIndex - 1 + searchResults.size) % searchResults.size
+                                    jumpToMessageById(searchResults[activeSearchIndex].id)
                                 }
+                            },
+                            onNextMatch = {
+                                if (searchResults.isNotEmpty()) {
+                                    activeSearchIndex = (activeSearchIndex + 1) % searchResults.size
+                                    jumpToMessageById(searchResults[activeSearchIndex].id)
+                                }
+                            },
+                            onOpenStarredSheet = {
+                                showStarredSheet = true
                             }
-                        }
+                        )
+
+                        // Isolated TTS Speaking Status Banner
+                        ChatSpeakingStatusBanner(
+                            speakingMessageIdFlow = speakingMessageIdFlow,
+                            isImeVisible = isImeVisible,
+                            rootSize = rootSize,
+                            blurredBgBitmap = blurredBgBitmap,
+                            onStopSpeaking = onStopSpeaking
+                        )
                     }
                 }
             },
@@ -2619,95 +2572,22 @@ fun ChatScreen(
                             .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
                             .padding(top = 4.dp, bottom = 4.dp)
                     ) {
-                        // Interactive (+) RP & Sahne Araçları Drawer
-                        AnimatedVisibility(
+                        // Modular (+) RP & Sahne Araçları Drawer (includes ⭐ Yıldızlananlar pill)
+                        ChatPlusToolkitDrawer(
                             visible = showPlusToolkit,
-                            enter = fadeIn(tween(180)) + expandVertically(tween(180)),
-                            exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                val tools = listOf(
-                                    "⏩ Devam Et" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) {
-                                            if (onContinueScene != null) onContinueScene()
-                                            else viewModel.continueStoryScene()
-                                        }
-                                    },
-                                    "✨ Sahneyi Derinleştir" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) {
-                                            onSendMessage("Mevcut sahneyi kesmeden ortam atmosferini, karakterin iç sesini ve duygusal gerilimi edebi olarak derinleştir.")
-                                        }
-                                    },
-                                    "💡 Ne Yapmalıyım?" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) {
-                                            onSendMessage("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
-                                        }
-                                    },
-                                    "✨ *Eylem Ekle*" to {
-                                        val t = inputText.trim()
-                                        inputText = if (t.isBlank()) "*...*" else if (t.startsWith("*") && t.endsWith("*")) t.trim('*') else "*$t*"
-                                        showPlusToolkit = false
-                                    },
-                                    "🎲 Kader Zarı" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) onSendMessage("*Beklenmedik bir gelişme yaşanır ve sahnenin dengesi aniden değişir.*")
-                                    },
-                                    "⏳ Zaman Atla" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) onSendMessage("*Aradan biraz zaman geçer; sahne bir sonraki kritik ana ilerler.*")
-                                    },
-                                    "🌌 Ortamı Betimle" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) onSendMessage("Lütfen şu an bulunduğumuz ortamı, ışığı, sesleri ve atmosferi tüm duyularla hissettirecek şekilde betimle.")
-                                    },
-                                    "🧠 İç Ses" to {
-                                        showPlusToolkit = false
-                                        if (!isSending) onSendMessage("Karakterin şu an dışarıya belli etmediği gerçek iç düşüncelerini ve duygularını hissettirerek devam et.")
-                                    }
-                                )
-                                tools.forEach { (label, action) ->
-                                    Box(
-                                        modifier = Modifier
-                                            .height(36.dp)
-                                            .morCamOuterGlow(cornerRadius = 18.dp, shadowAlpha = 0.28f, rimGlowAlpha = 0.26f, bottomFlareAlpha = 0.56f)
-                                            .clip(RoundedCornerShape(50))
-                                            .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.65f)
-                                            .morCamGlassSurface(
-                                                baseSmokeColor = Color(0x2816072C),
-                                                topRightFrostAlpha = 0.20f,
-                                                topLeftFrostAlpha = 0.12f,
-                                                topStarFrostAlpha = 0f,
-                                                bottomEdgeRefractionAlpha = 0.18f
-                                            )
-                                            .border(
-                                                BorderStroke(0.9.dp, Color(0xCCE9D5FF)),
-                                                RoundedCornerShape(50)
-                                            )
-                                            .morCamTopAndBottomSpecular(cornerRadius = 18.dp, topSheenAlpha = 0.24f, bottomFlareAlpha = 0.60f)
-                                            .clickable { action() }
-                                            .padding(horizontal = 14.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(
-                                            text = label,
-                                            color = Color.White,
-                                            fontSize = 12.5.sp,
-                                            fontFamily = LiterarySerifFontFamily
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                            isSending = isSending,
+                            inputText = inputText,
+                            rootSize = rootSize,
+                            blurredBgBitmap = blurredBgBitmap,
+                            onDismiss = { showPlusToolkit = false },
+                            onOpenStarredSheet = { showStarredSheet = true },
+                            onContinueScene = {
+                                if (onContinueScene != null) onContinueScene()
+                                else viewModel.continueStoryScene()
+                            },
+                            onSendPrompt = onSendMessage,
+                            onUpdateInputText = { inputText = it }
+                        )
 
                         // ── SECTION 5: ALT HIZLI ÖNERİ KARTLARI (1:1 Reference Plate with Translucent See-Through Glass) ──
                         Box(
@@ -2761,8 +2641,8 @@ fun ChatScreen(
                                             onSendMessage("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
                                         }
                                 )
-                                // Card 3: Düzenle (x = 587..822) — Disabled until message generation finishes!
-                                val canEditLastMessage = !isSending && streamingMsgId == null && validMessages.isNotEmpty()
+                                // Card 3: Düzenle (x = 587..822) — Disabled while generating!
+                                val canEditLastMessage = !isSending && validMessages.isNotEmpty()
                                 Box(
                                     modifier = Modifier
                                         .fillMaxHeight()
@@ -2916,8 +2796,7 @@ fun ChatScreen(
         // Keep chat anchored to the latest message whenever the keyboard (IME) expands the bottom inset
         LaunchedEffect(bottomInsetPadding, isImeVisible) {
             if (isImeVisible) {
-                val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-                val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (hasWaitingItem) 1 else 0
+                val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (isSending) 1 else 0
                 if (totalItems > 0) {
                     try {
                         listState.scrollToItem(totalItems - 1)
@@ -3252,12 +3131,18 @@ fun ChatScreen(
                                 }
                             }
 
-                            // Two ticks (✓✓) if the bot has started writing or already replied after this user message; single tick (✓) otherwise
-                            val hasBotStartedReplying = remember(validMessages, index, isSending, streamingText) {
-                                validMessages.drop(index + 1).any { it.role == "assistant" && it.text.isNotBlank() } ||
-                                    (isSending && index == validMessages.lastIndex && !streamingText.isNullOrBlank())
+                            // Two ticks (✓✓) if the bot has replied after this user message; single tick (✓) otherwise
+                            val hasBotStartedReplying = remember(validMessages, index) {
+                                validMessages.drop(index + 1).any { it.role == "assistant" && it.text.isNotBlank() }
                             }
 
+                            var userStarBurstTrigger by remember(msg.id) { mutableIntStateOf(0) }
+                            val isUserHighlighted = highlightedMessageId == msg.id
+                            val userHighlightAlpha by animateFloatAsState(
+                                targetValue = if (isUserHighlighted) 1f else 0f,
+                                animationSpec = tween(320),
+                                label = "userHighlightAlpha_${msg.id}"
+                            )
                             val isFreshUserMsg = msg.id !in initialMessageIds
                             BoxWithConstraints(
                                 modifier = Modifier
@@ -3266,6 +3151,20 @@ fun ChatScreen(
                                     .graphicsLayer {
                                         scaleX = userScale
                                         scaleY = userScale
+                                    }
+                                    .drawBehind {
+                                        if (userHighlightAlpha > 0.01f) {
+                                            drawRoundRect(
+                                                brush = Brush.horizontalGradient(
+                                                    listOf(
+                                                        Color.Transparent,
+                                                        Color(0xFFFDE68A).copy(alpha = 0.28f * userHighlightAlpha),
+                                                        Color(0xFFD8B4FE).copy(alpha = 0.34f * userHighlightAlpha)
+                                                    )
+                                                ),
+                                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(24.dp.toPx(), 24.dp.toPx())
+                                            )
+                                        }
                                     }
                                     .aetheriaThreeSliceGlassBubble(
                                         rootSize = rootSize,
@@ -3297,9 +3196,11 @@ fun ChatScreen(
                             ) {
                                 val uW = maxWidth
                                 val cleanUserText = remember(msg.text) { cleanCopyText(msg.text) }
-                                val isUserMsgAutoCollapsible = orderFromBottom >= 7 &&
+                                // Last 5 Messages rule: collapse older long messages (> 5 from bottom)
+                                val isUserMsgAutoCollapsible = orderFromBottom > 5 &&
                                     (cleanUserText.length > 180 || cleanUserText.count { it == '\n' } >= 4)
                                 val isUserMsgCollapsed = isUserMsgAutoCollapsible && msg.id !in expandedOldMessageIds
+                                val activeHighlightQuery = if (showSearchBar) localSearchQuery else ""
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -3313,7 +3214,9 @@ fun ChatScreen(
                                         )
                                 ) {
                                     Text(
-                                        text = formatNarrativeText(cleanUserText),
+                                        text = remember(cleanUserText, activeHighlightQuery) {
+                                            formatNarrativeTextWithHighlight(cleanUserText, activeHighlightQuery)
+                                        },
                                         color = Color.White.copy(alpha = 0.97f),
                                         fontSize = 15.sp,
                                         lineHeight = 22.5.sp,
@@ -3369,21 +3272,77 @@ fun ChatScreen(
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.End,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text(
-                                            text = timeFormatted.ifBlank { "22:47" },
-                                            color = Color(0xEBF8F5FF),
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Normal,
-                                            fontFamily = InterFontFamily
-                                        )
-                                        Spacer(modifier = Modifier.width(4.dp))
-                                        if (hasBotStartedReplying) {
-                                            DoubleCheckmarkIcon(tint = Color(0xEBFFFFFF))
-                                        } else {
-                                            SingleCheckmarkIcon(tint = Color(0xEBFFFFFF))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            androidx.compose.animation.AnimatedVisibility(
+                                                visible = msg.reaction.isNotBlank(),
+                                                enter = androidx.compose.animation.fadeIn(tween(150)) +
+                                                    androidx.compose.animation.scaleIn(
+                                                        initialScale = 0.55f,
+                                                        animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessMedium)
+                                                    ),
+                                                exit = androidx.compose.animation.fadeOut(tween(110)) +
+                                                    androidx.compose.animation.scaleOut(targetScale = 0.6f, animationSpec = tween(110))
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Color(0x5A3B1568))
+                                                        .border(0.9.dp, Color(0xCCE9D5FF), RoundedCornerShape(50))
+                                                        .clickable(
+                                                            interactionSource = remember { MutableInteractionSource() },
+                                                            indication = null
+                                                        ) {
+                                                            viewModel.setMessageReaction(msg.id, "")
+                                                        }
+                                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                        .testTag("user_reaction_badge_${msg.id}"),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = msg.reaction, fontSize = 13.sp)
+                                                }
+                                            }
+                                            if (msg.isStarred || userStarBurstTrigger > 0) {
+                                                Box(contentAlignment = Alignment.Center) {
+                                                    if (msg.isStarred) {
+                                                        Text(
+                                                            text = "⭐",
+                                                            fontSize = 12.sp,
+                                                            modifier = Modifier.cosmicPopOnTrigger(userStarBurstTrigger, peakScale = 1.35f)
+                                                        )
+                                                    }
+                                                    CosmicSparkleBurst(
+                                                        triggerKey = userStarBurstTrigger,
+                                                        accentColor = Color(0xFFFDE68A),
+                                                        secondaryColor = Color(0xFFD8B4FE),
+                                                        particleCount = 8,
+                                                        maxRadius = 20.dp,
+                                                        modifier = Modifier.size(28.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = timeFormatted.ifBlank { "22:47" },
+                                                color = Color(0xEBF8F5FF),
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Normal,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            if (hasBotStartedReplying) {
+                                                DoubleCheckmarkIcon(tint = Color(0xEBFFFFFF))
+                                            } else {
+                                                SingleCheckmarkIcon(tint = Color(0xEBFFFFFF))
+                                            }
                                         }
                                     }
                                 }
@@ -3529,6 +3488,19 @@ fun ChatScreen(
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
+                                                UserGlassActionPill(
+                                                    label = if (msg.isStarred) "⭐ Yıldızı Kaldır" else "☆ Yıldızla",
+                                                    isActive = msg.isStarred
+                                                ) {
+                                                    val willStar = !msg.isStarred
+                                                    if (willStar) userStarBurstTrigger += 1
+                                                    viewModel.toggleMessageStar(msg.id)
+                                                    android.widget.Toast.makeText(
+                                                        context,
+                                                        if (willStar) "★ Mesaj yıldızlandı — AI hafızasında öncelikli tutulacak" else "Yıldız kaldırıldı",
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                    ).show()
+                                                }
                                                 UserGlassActionPill(label = "✏️ Düzenle") {
                                                     editingMessageId = msg.id
                                                     editingText = msg.text
@@ -3549,11 +3521,24 @@ fun ChatScreen(
                                         }
                                     }
                                 }
+
+                                // 😊 Vertical Center-Anchored Reaction Picker for User Messages
+                                MorCamReactionPickerCapsule(
+                                    visible = reactionPickerMessageId == msg.id,
+                                    messageId = msg.id,
+                                    selectedReaction = msg.reaction,
+                                    reactionEmojis = reactionEmojis,
+                                    rootSize = rootSize,
+                                    blurredBgBitmap = blurredBgBitmap,
+                                    onSelectEmoji = { chosen ->
+                                        viewModel.setMessageReaction(msg.id, chosen)
+                                        reactionPickerMessageId = null
+                                    },
+                                    modifier = Modifier.padding(end = 18.dp, top = 6.dp, bottom = 4.dp)
+                                )
                             }
                         } else {
                             // ── SECTION 3.2: SOL HİZALI BOT / HİKAYE MESAJ BALONLARI (3-SLICE AUTHENTIC REFERENCE PLATE + TRANSLUCENT FROSTED GLASS) ──
-                            val isThisStreaming = streamingMsgId == msg.id
-                            val displayText = if (isThisStreaming && streamingText != null) streamingText else msg.text
                             val isFreshBotMsg = msg.id !in initialMessageIds
                             var starBurstTrigger by remember(msg.id) { mutableIntStateOf(0) }
 
@@ -3580,7 +3565,6 @@ fun ChatScreen(
                                 }
                             }
 
-                            // Always use consistent botTop/botMid/botBottom so the sigil ring center is always at exact (71.5 / 841, 50.5 / 841)
                             val bTop = refGlassBitmaps.botTop
                             val bMid = refGlassBitmaps.botMid
                             val bBot = refGlassBitmaps.botBottom
@@ -3594,7 +3578,7 @@ fun ChatScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .cosmicBorderBreathing(
-                                            enabled = isThisStreaming,
+                                            enabled = isSending && index == validMessages.lastIndex,
                                             cornerRadius = 24.dp,
                                             glowColor = emotionAuraColor,
                                             minAlpha = 0.14f,
@@ -3614,6 +3598,20 @@ fun ChatScreen(
                                             isUserBubble = false,
                                             frostedAlpha = 0.62f
                                         )
+                                        .drawBehind {
+                                            if (highlightedMessageId == msg.id) {
+                                                drawRoundRect(
+                                                    brush = Brush.horizontalGradient(
+                                                        listOf(
+                                                            Color(0x55FDE68A),
+                                                            Color(0x48D8B4FE),
+                                                            Color.Transparent
+                                                        )
+                                                    ),
+                                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(26.dp.toPx(), 26.dp.toPx())
+                                                )
+                                            }
+                                        }
                                         .combinedClickable(
                                             interactionSource = botBubbleInteraction,
                                             indication = null,
@@ -3692,12 +3690,12 @@ fun ChatScreen(
                                         }
                                     }
 
-                                    // Narrative story text & timestamp inside the translucent bot glass bubble (lower top start so text never touches the top glass border!)
-                                    val cleanBotText = remember(displayText) { cleanCopyText(displayText) }
-                                    val isBotMsgAutoCollapsible = orderFromBottom >= 7 &&
-                                        !isThisStreaming &&
+                                    // Narrative story text & timestamp inside the translucent bot glass bubble (Last 5 Messages rule: > 5)
+                                    val cleanBotText = remember(msg.text) { cleanCopyText(msg.text) }
+                                    val isBotMsgAutoCollapsible = orderFromBottom > 5 &&
                                         (cleanBotText.length > 180 || cleanBotText.count { it == '\n' } >= 4)
                                     val isBotMsgCollapsed = isBotMsgAutoCollapsible && msg.id !in expandedOldMessageIds
+                                    val activeHighlightQuery = if (showSearchBar) localSearchQuery else ""
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -3711,22 +3709,13 @@ fun ChatScreen(
                                             ),
                                         verticalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text(
-                                            text = formatNarrativeText(displayText),
-                                            color = Color.White.copy(alpha = 0.97f),
-                                            fontSize = 15.sp,
-                                            lineHeight = 22.5.sp,
-                                            letterSpacing = 0.1.sp,
-                                            fontFamily = LiterarySerifFontFamily,
-                                            maxLines = if (isBotMsgCollapsed) 4 else Int.MAX_VALUE,
-                                            overflow = if (isBotMsgCollapsed) androidx.compose.ui.text.style.TextOverflow.Ellipsis else androidx.compose.ui.text.style.TextOverflow.Clip,
-                                            style = TextStyle(
-                                                shadow = Shadow(
-                                                    color = Color(0x88120524),
-                                                    offset = Offset(0f, 1f),
-                                                    blurRadius = 3.5f
-                                                )
-                                            )
+                                        IsolatedStreamingBotBubbleText(
+                                            messageId = msg.id,
+                                            persistedText = msg.text,
+                                            streamingMsgIdFlow = streamingMsgIdFlow,
+                                            streamingTextFlow = streamingTextFlow,
+                                            isCollapsed = isBotMsgCollapsed,
+                                            highlightQuery = activeHighlightQuery
                                         )
 
                                         if (isBotMsgAutoCollapsible) {
@@ -3778,7 +3767,16 @@ fun ChatScreen(
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
-                                                if (msg.reaction.isNotBlank()) {
+                                                androidx.compose.animation.AnimatedVisibility(
+                                                    visible = msg.reaction.isNotBlank(),
+                                                    enter = androidx.compose.animation.fadeIn(tween(150)) +
+                                                        androidx.compose.animation.scaleIn(
+                                                            initialScale = 0.55f,
+                                                            animationSpec = spring(dampingRatio = 0.52f, stiffness = Spring.StiffnessMedium)
+                                                        ),
+                                                    exit = androidx.compose.animation.fadeOut(tween(110)) +
+                                                        androidx.compose.animation.scaleOut(targetScale = 0.6f, animationSpec = tween(110))
+                                                ) {
                                                     Box(
                                                         modifier = Modifier
                                                             .clip(RoundedCornerShape(50))
@@ -3790,7 +3788,8 @@ fun ChatScreen(
                                                             ) {
                                                                 viewModel.setMessageReaction(msg.id, "")
                                                             }
-                                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                                            .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                            .testTag("ai_reaction_badge_${msg.id}"),
                                                         contentAlignment = Alignment.Center
                                                     ) {
                                                         Text(text = msg.reaction, fontSize = 13.sp)
@@ -3815,40 +3814,24 @@ fun ChatScreen(
                                                         )
                                                     }
                                                 }
-                                                if (isThisStreaming) {
-                                                    CosmicStreamingCaret(color = emotionAuraColor, size = 14.dp)
-                                                }
+                                                IsolatedStreamingCaret(
+                                                    messageId = msg.id,
+                                                    streamingMsgIdFlow = streamingMsgIdFlow,
+                                                    color = emotionAuraColor
+                                                )
                                             }
 
-                                            Row(
-                                                modifier = Modifier
-                                                    .clickable(
-                                                        interactionSource = remember { MutableInteractionSource() },
-                                                        indication = null
-                                                    ) {
-                                                        if (isSpeaking) onStopSpeaking() else onSpeakText?.invoke(msg.text)
-                                                    },
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = timeFormatted.ifBlank { "22:50" },
-                                                    color = Color(0xEBF8F5FF),
-                                                    fontSize = 11.5.sp,
-                                                    fontWeight = FontWeight.Normal,
-                                                    fontFamily = InterFontFamily
-                                                )
-                                                Spacer(modifier = Modifier.width(5.dp))
-                                                if (isSpeaking) {
-                                                    CosmicVoiceEqualizer(
-                                                        active = true,
-                                                        barCount = 4,
-                                                        color = Color(0xFFE879F9),
-                                                        height = 12.dp
-                                                    )
-                                                } else {
-                                                    DoubleCheckmarkIcon(tint = Color(0xEBFFFFFF))
-                                                }
-                                            }
+                                            IsolatedMessageTtsFooter(
+                                                messageId = msg.id,
+                                                messageText = msg.text,
+                                                timeFormatted = timeFormatted,
+                                                speakingMessageIdFlow = speakingMessageIdFlow,
+                                                onSpeakMessage = { id, text ->
+                                                    if (onSpeakMessage != null) onSpeakMessage(id, text)
+                                                    else onSpeakText?.invoke(text)
+                                                },
+                                                onStopSpeaking = onStopSpeaking
+                                            )
                                         }
                                     }
                                 }
@@ -4018,12 +4001,31 @@ fun ChatScreen(
                                                         showSecondaryAiActions = false
                                                         onRegenerate()
                                                     }
-                                                    BotGlassActionPill(label = if (isSpeaking) "⏹️ Durdur" else "🎙️ Sesli Oku") {
-                                                        if (isSpeaking) onStopSpeaking() else onSpeakText?.invoke(msg.text)
+                                                    val activeSpeakingIdForPill by speakingMessageIdFlow.collectAsState()
+                                                    val isThisPillSpeaking = activeSpeakingIdForPill == msg.id
+                                                    BotGlassActionPill(
+                                                        label = if (isThisPillSpeaking) "⏹️ Durdur" else "🎙️ Sesli Oku",
+                                                        isActive = isThisPillSpeaking
+                                                    ) {
+                                                        if (isThisPillSpeaking) {
+                                                            onStopSpeaking()
+                                                        } else {
+                                                            if (onSpeakMessage != null) onSpeakMessage(msg.id, msg.text)
+                                                            else onSpeakText?.invoke(msg.text)
+                                                        }
                                                     }
-                                                    BotGlassActionPill(label = if (msg.isStarred) "⭐ Yıldızı Kaldır" else "☆ Yıldızla") {
-                                                        if (!msg.isStarred) starBurstTrigger += 1
+                                                    BotGlassActionPill(
+                                                        label = if (msg.isStarred) "⭐ Yıldızı Kaldır" else "☆ Yıldızla",
+                                                        isActive = msg.isStarred
+                                                    ) {
+                                                        val willStar = !msg.isStarred
+                                                        if (willStar) starBurstTrigger += 1
                                                         viewModel.toggleMessageStar(msg.id)
+                                                        android.widget.Toast.makeText(
+                                                            context,
+                                                            if (willStar) "★ Mesaj yıldızlandı — AI hafızasında öncelikli tutulacak" else "Yıldız kaldırıldı",
+                                                            android.widget.Toast.LENGTH_SHORT
+                                                        ).show()
                                                     }
                                                     BotGlassActionPill(label = "⏪ Buraya Sar") {
                                                         rewindTargetMessageId = msg.id
@@ -4047,139 +4049,39 @@ fun ChatScreen(
                                     }
                                 }
 
-                                // 😊 Reaction Picker Popup (Translucent Glass Capsule)
-                                androidx.compose.animation.AnimatedVisibility(
+                                // 😊 Vertical Center-Anchored Bouncy Reaction Picker Popup (Translucent Glass Capsule)
+                                MorCamReactionPickerCapsule(
                                     visible = reactionPickerMessageId == msg.id,
-                                    enter = androidx.compose.animation.fadeIn(tween(150)) +
-                                        androidx.compose.animation.scaleIn(tween(150), transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f)),
-                                    exit = androidx.compose.animation.fadeOut(tween(100)) +
-                                        androidx.compose.animation.scaleOut(tween(100), transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 1f))
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .padding(start = 48.dp, top = 6.dp, bottom = 4.dp)
-                                            .morCamOuterGlow(cornerRadius = 22.dp, shadowAlpha = 0.34f, rimGlowAlpha = 0.34f, bottomFlareAlpha = 0.68f)
-                                            .clip(RoundedCornerShape(22.dp))
-                                            .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.72f)
-                                            .morCamGlassSurface(
-                                                baseSmokeColor = Color(0x28180830),
-                                                topRightFrostAlpha = 0.24f,
-                                                topLeftFrostAlpha = 0.16f,
-                                                topStarFrostAlpha = 0f,
-                                                bottomEdgeRefractionAlpha = 0.20f
-                                            )
-                                            .border(1.dp, Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFFD8B4FE))), RoundedCornerShape(22.dp))
-                                            .padding(horizontal = 10.dp, vertical = 8.dp)
-                                    ) {
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            reactionEmojis.forEach { emoji ->
-                                                val isSelected = msg.reaction == emoji
-                                                val emojiInteraction = remember { MutableInteractionSource() }
-                                                val emojiPressed by emojiInteraction.collectIsPressedAsState()
-                                                val emojiScale by animateFloatAsState(
-                                                    targetValue = when {
-                                                        isSelected -> 1.25f
-                                                        emojiPressed -> 0.85f
-                                                        else -> 1f
-                                                    },
-                                                    animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-                                                    label = "emojiScale_$emoji"
-                                                )
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(36.dp)
-                                                        .graphicsLayer { scaleX = emojiScale; scaleY = emojiScale }
-                                                        .clip(CircleShape)
-                                                        .background(
-                                                            if (isSelected)
-                                                                Brush.radialGradient(listOf(Color(0xFF9333EA), Color(0xFF4C1D95)))
-                                                            else
-                                                                Brush.radialGradient(listOf(Color(0x38A855F7), Color(0x10000000)))
-                                                        )
-                                                        .clickable(interactionSource = emojiInteraction, indication = null) {
-                                                            viewModel.setMessageReaction(msg.id, if (isSelected) "" else emoji)
-                                                            reactionPickerMessageId = null
-                                                        },
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(emoji, fontSize = 18.sp)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                    messageId = msg.id,
+                                    selectedReaction = msg.reaction,
+                                    reactionEmojis = reactionEmojis,
+                                    rootSize = rootSize,
+                                    blurredBgBitmap = blurredBgBitmap,
+                                    onSelectEmoji = { chosen ->
+                                        viewModel.setMessageReaction(msg.id, chosen)
+                                        reactionPickerMessageId = null
+                                    },
+                                    modifier = Modifier.padding(start = 48.dp, top = 6.dp, bottom = 4.dp)
+                                )
                             }
                         }
                     }
 
-                    // Sleek Aetheria crystal shimmer indicator with Cosmic Typing Wave
-                    if (isSending && streamingText.isNullOrBlank()) {
+                    // Isolated waiting shimmer item (hides cleanly when streamingMsgId becomes non-null)
+                    if (isSending) {
                         item(key = "aetheria_shimmer_indicator") {
-                            BoxWithConstraints(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .cosmicMessageEnter(messageKey = "shimmer_typing", isUser = false, animate = true)
-                                    .padding(top = 4.dp, bottom = 6.dp)
-                            ) {
-                                val tW = maxWidth
-                                val shimmerTransition = rememberInfiniteTransition(label = "aetheriaShimmerTrans")
-                                val shimmerProgress by shimmerTransition.animateFloat(
-                                    initialValue = 0f,
-                                    targetValue = 1f,
-                                    animationSpec = infiniteRepeatable(
-                                        animation = tween(1400, easing = FastOutSlowInEasing),
-                                        repeatMode = RepeatMode.Reverse
-                                    ),
-                                    label = "aetheriaShimmerBar"
-                                )
-                                Row(
-                                    modifier = Modifier
-                                        .padding(start = tW * (123f / 841f))
-                                        .height(38.dp)
-                                        .morCamOuterGlow(cornerRadius = 19.dp, shadowAlpha = 0.30f, rimGlowAlpha = 0.28f, bottomFlareAlpha = 0.50f)
-                                        .clip(RoundedCornerShape(50))
-                                        .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.70f)
-                                        .morCamGlassSurface(
-                                            baseSmokeColor = Color(0x48180832),
-                                            topRightFrostAlpha = 0.22f,
-                                            topLeftFrostAlpha = 0.16f,
-                                            topStarFrostAlpha = 0f,
-                                            bottomEdgeRefractionAlpha = 0.20f,
-                                            cornerRadius = 19.dp
-                                        )
-                                        .cosmicShimmerSweep(active = true, cornerRadius = 19.dp)
-                                        .border(
-                                            BorderStroke(
-                                                1.dp,
-                                                Brush.linearGradient(
-                                                    listOf(
-                                                        Color(0xFFE9D5FF).copy(alpha = 0.55f + 0.35f * shimmerProgress),
-                                                        Color(0xFFA855F7).copy(alpha = 0.45f),
-                                                        Color(0xFFD8B4FE).copy(alpha = 0.85f - 0.30f * shimmerProgress)
-                                                    )
-                                                )
-                                            ),
-                                            RoundedCornerShape(50)
-                                        )
-                                        .padding(horizontal = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    TypingDots(dotSize = 6.dp, dotColor = Color(0xFFE9D5FF))
-                                    Text(
-                                        text = "Yanıt hazırlanıyor",
-                                        color = Color(0xFFE9D5FF).copy(alpha = 0.88f),
-                                        fontSize = 12.sp,
-                                        fontFamily = LiterarySerifFontFamily
-                                    )
-                                }
-                            }
+                            IsolatedWaitingShimmerItem(
+                                isSending = isSending,
+                                streamingMsgIdFlow = streamingMsgIdFlow,
+                                rootSize = rootSize,
+                                blurredBgBitmap = blurredBgBitmap
+                            )
                         }
                     }
                 }
             }
 
-            // Show "En Aşağı İn" ONLY when the user has scrolled at least 4–5 messages above the bottom
+            // Show "En Aşağı İn" when user scrolls >= 3 messages above the bottom (aligned with spec)
             val showScrollToBottom = remember {
                 derivedStateOf {
                     if (!listState.canScrollForward) return@derivedStateOf false
@@ -4189,89 +4091,30 @@ fun ChatScreen(
 
                     val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
                     val itemsFromEnd = totalItems - 1 - lastVisibleItem.index
-                    itemsFromEnd >= 4
+                    itemsFromEnd >= 3
                 }
             }
 
-            AnimatedVisibility(
+            ChatScrollToBottomFab(
                 visible = showScrollToBottom.value,
+                rootSize = rootSize,
+                blurredBgBitmap = blurredBgBitmap,
+                onClick = {
+                    val totalCount = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (isSending) 1 else 0
+                    coroutineScope.launch {
+                        expandedOldMessageIds = emptySet()
+                        if (visibleMessageLimit > chatPageSize) {
+                            visibleMessageLimit = chatPageSize
+                            pendingSnapToBottomAfterCollapse = true
+                        } else if (totalCount > 0) {
+                            listState.animateScrollToItem(totalCount - 1)
+                        }
+                    }
+                },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(bottom = bottomInsetPadding + 10.dp, end = 14.dp),
-                enter = slideInVertically(CosmicMotionSpecs.snappyOrb()) { it / 2 } +
-                    scaleIn(CosmicMotionSpecs.snappyOrb(), initialScale = 0.82f) +
-                    fadeIn(tween(180)),
-                exit = slideOutVertically(tween(180)) { it / 2 } +
-                    scaleOut(tween(160), targetScale = 0.85f) +
-                    fadeOut(tween(140))
-            ) {
-                val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-                val totalCount = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (hasWaitingItem) 1 else 0
-                val scrollBtnInteraction = remember { MutableInteractionSource() }
-                Box(
-                    modifier = Modifier
-                        .cosmicFloatingLevitation(amplitudeDp = 2.5.dp, durationMs = 2200)
-                        .cosmicTapSpring(
-                            interactionSource = scrollBtnInteraction,
-                            pressedScale = 0.92f,
-                            cornerRadius = 22.dp
-                        )
-                        .morCamOuterGlow(cornerRadius = 22.dp, shadowAlpha = 0.32f, rimGlowAlpha = 0.28f, bottomFlareAlpha = 0.56f)
-                        .clip(RoundedCornerShape(50))
-                        .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.72f)
-                        .morCamGlassSurface(
-                            baseSmokeColor = Color(0x28180832),
-                            topRightFrostAlpha = 0.24f,
-                            topLeftFrostAlpha = 0.16f,
-                            topStarFrostAlpha = 0f,
-                            bottomEdgeRefractionAlpha = 0.20f
-                        )
-                        .border(
-                            BorderStroke(
-                                0.9.dp,
-                                Brush.linearGradient(
-                                    listOf(Color(0xE0F3E8FF), Color(0x66A855F7), Color(0xD8E9D5FF))
-                                )
-                            ),
-                            RoundedCornerShape(50)
-                        )
-                        .morCamTopAndBottomSpecular(cornerRadius = 22.dp, topSheenAlpha = 0.26f, bottomFlareAlpha = 0.82f)
-                        .clickable(
-                            interactionSource = scrollBtnInteraction,
-                            indication = null
-                        ) {
-                            coroutineScope.launch {
-                                expandedOldMessageIds = emptySet()
-                                if (visibleMessageLimit > chatPageSize) {
-                                    visibleMessageLimit = chatPageSize
-                                    pendingSnapToBottomAfterCollapse = true
-                                } else if (totalCount > 0) {
-                                    listState.animateScrollToItem(totalCount - 1)
-                                }
-                            }
-                        }
-                        .testTag("chat_scroll_to_bottom_button")
-                        .padding(horizontal = 14.dp, vertical = 8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.KeyboardArrowDown,
-                            contentDescription = "En aşağı in",
-                            tint = Color(0xFFFBF8FF),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "En Aşağı İn",
-                            color = Color(0xFFFBF8FF),
-                            fontSize = 11.8.sp,
-                            fontFamily = LiterarySerifFontFamily
-                        )
-                    }
-                }
-            }
+                    .padding(bottom = bottomInsetPadding + 10.dp, end = 14.dp)
+            )
         }
     }
 
@@ -4340,78 +4183,18 @@ fun ChatScreen(
         }
     }
 
-    // --- Canlı Neural Vault & Yaşanan Anı Otomatik Kayıt Bildirimi ---
+    // --- Modular Live Neural Vault & Yaşanan Anı Banner ---
     val memoryCommitNotice by viewModel.memoryCommitNotice.collectAsState()
     var showQuickNeuralVault by remember { mutableStateOf(false) }
 
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(top = 64.dp, start = 16.dp, end = 16.dp),
-        contentAlignment = Alignment.TopCenter
-    ) {
-        AnimatedVisibility(
-            visible = memoryCommitNotice != null && !showBotSettings && !showQuickNeuralVault,
-            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(tween(240)),
-            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(tween(200))
-        ) {
-            memoryCommitNotice?.let { notice ->
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(50))
-                        .background(
-                            Brush.horizontalGradient(
-                                if (notice.isLivingMemory) {
-                                    listOf(Color(0xE63B1470), Color(0xE66D28D9))
-                                } else {
-                                    listOf(Color(0xE6221042), Color(0xE64C1D95))
-                                }
-                            )
-                        )
-                        .border(
-                            width = 0.9.dp,
-                            brush = Brush.horizontalGradient(listOf(Color(0x99E9D5FF), Color(0x66A855F7))),
-                            shape = RoundedCornerShape(50)
-                        )
-                        .clickable {
-                            viewModel.dismissMemoryCommitNotice()
-                            showQuickNeuralVault = true
-                        }
-                        .padding(horizontal = 14.dp, vertical = 8.dp)
-                        .testTag("memory_commit_pill"),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = "Hafıza Güncellendi",
-                        tint = Color(0xFFFDE68A),
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                        Text(
-                            text = notice.title,
-                            color = Color(0xFFFAF5FF),
-                            fontFamily = LiterarySerifFontFamily,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = notice.subtitle,
-                            color = Color(0xFFE9D5FF),
-                            fontFamily = InterFontFamily,
-                            fontSize = 10.5.sp,
-                            maxLines = 1,
-                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
+    ChatMemoryCommitBanner(
+        notice = memoryCommitNotice,
+        visible = !showBotSettings && !showQuickNeuralVault,
+        onOpenVault = {
+            viewModel.dismissMemoryCommitNotice()
+            showQuickNeuralVault = true
         }
-    }
+    )
 
     if (showQuickNeuralVault) {
         com.example.ui.components.NeuralVaultModal(
@@ -4510,46 +4293,14 @@ fun ChatScreen(
         }
     }
 
-    if (rewindTargetMessageId != null) {
-        val targetId = rewindTargetMessageId!!
-        MorCamDialogShell(
-            onDismissRequest = { rewindTargetMessageId = null },
-            title = "Buradan Devam Et",
-            subtitle = "Zaman çizgisini bu mesaja geri sar",
-            icon = Icons.Default.History
-        ) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text(
-                    text = "Bu noktadan devam edersen sonraki mesajlar ve onlarla ilgili hafıza ile duygu değişimleri silinecek. Emin misin?",
-                    color = MorCamTokens.LavenderLight,
-                    fontFamily = LiterarySerifFontFamily,
-                    fontSize = 13.5.sp,
-                    lineHeight = 20.sp
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    MorCamCapsuleButton(
-                        text = "İptal",
-                        onClick = { rewindTargetMessageId = null },
-                        variant = MorCamButtonVariant.Secondary,
-                        modifier = Modifier.weight(1f)
-                    )
-                    MorCamCapsuleButton(
-                        text = "Evet, Devam Et",
-                        onClick = {
-                            val idToRewind = targetId
-                            rewindTargetMessageId = null
-                            onRewindToMessage?.invoke(idToRewind)
-                        },
-                        variant = MorCamButtonVariant.Destructive,
-                        modifier = Modifier.weight(1.25f)
-                    )
-                }
-            }
+    ChatRewindConfirmDialog(
+        targetMessageId = rewindTargetMessageId,
+        onDismiss = { rewindTargetMessageId = null },
+        onConfirmRewind = { idToRewind ->
+            rewindTargetMessageId = null
+            onRewindToMessage?.invoke(idToRewind)
         }
-    }
+    )
 
     if (showBotSettings && isBookMode) {
         BotSettingsModal(
@@ -4722,147 +4473,19 @@ fun ChatScreen(
         }
     }
 
-    // ✦ Starred Messages BottomSheet — 100% Mor Cam Lavender-Silver
+    // ✦ Modular Starred Messages BottomSheet (opened from Search Bar ⭐ pill or (+) RP drawer)
     if (showStarredSheet) {
-        LaunchedEffect(showStarredSheet) { viewModel.loadStarredMessages() }
-        MorCamBottomSheetShell(
-            onDismissRequest = { showStarredSheet = false },
-            title = "Yıldızlanan Mesajlar",
-            subtitle = "${starredMessages.size} mesaj kaydedildi",
-            icon = Icons.Default.Star
-        ) {
-            if (starredMessages.isEmpty()) {
-                MorCamGlassCard(
-                    cornerRadius = 20.dp,
-                    paddingHorizontal = 22.dp,
-                    paddingVertical = 28.dp
-                ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(CircleShape)
-                                .background(Brush.radialGradient(listOf(Color(0x888B5CF6), Color(0x443B1470))))
-                                .border(1.1.dp, MorCamTokens.RimGradient, CircleShape),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Canvas(modifier = Modifier.size(30.dp)) {
-                                drawMorCamFourPointStar(
-                                    center = Offset(size.width / 2f, size.height / 2f),
-                                    outerRadius = size.minDimension * 0.46f,
-                                    innerRadius = size.minDimension * 0.16f
-                                )
-                            }
-                        }
-                        Text(
-                            text = "Henüz yıldızlanan mesaj yok",
-                            fontFamily = LiterarySerifFontFamily,
-                            color = MorCamTokens.SilverLavenderBright,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Sohbetteki özel anları saklamak için mesajlara uzun basarak yıldızlayabilirsin.",
-                            fontFamily = InterFontFamily,
-                            color = MorCamTokens.LavenderMuted,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 460.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    items(starredMessages, key = { it.id }) { starred ->
-                        val isAi = starred.role == "assistant"
-                        MorCamGlassCard(
-                            cornerRadius = 18.dp,
-                            highlighted = !isAi,
-                            paddingHorizontal = 14.dp,
-                            paddingVertical = 12.dp
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    Brush.radialGradient(
-                                                        if (isAi) listOf(Color(0xAA7C3AED), Color(0x663B1470))
-                                                        else listOf(Color(0xAA9333EA), Color(0x664C1D95))
-                                                    )
-                                                )
-                                                .border(0.9.dp, MorCamTokens.RimGradient, CircleShape),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(
-                                                imageVector = if (isAi) Icons.Default.AutoAwesome else Icons.Default.Person,
-                                                contentDescription = null,
-                                                tint = MorCamTokens.SilverLavenderBright,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                        }
-                                        Text(
-                                            text = if (isAi) bot.aiName else (bot.userCharName.ifBlank { "Sen" }),
-                                            fontFamily = LiterarySerifFontFamily,
-                                            color = MorCamTokens.LavenderLight,
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.Default.Star,
-                                        contentDescription = null,
-                                        tint = MorCamTokens.LavenderSoft,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-
-                                MorCamDivider()
-
-                                Text(
-                                    text = starred.text.take(220) + if (starred.text.length > 220) "…" else "",
-                                    fontFamily = LiterarySerifFontFamily,
-                                    color = MorCamTokens.SilverLavenderBright,
-                                    fontSize = 13.sp,
-                                    lineHeight = 20.sp
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End
-                                ) {
-                                    MorCamChipPill(
-                                        label = "Yıldızı Kaldır",
-                                        selected = false,
-                                        icon = Icons.Default.Star,
-                                        onClick = { viewModel.toggleMessageStar(starred.id) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        ChatStarredMessagesSheet(
+            bot = bot,
+            starredMessages = starredMessages,
+            onLoadStarred = { viewModel.loadStarredMessages() },
+            onDismiss = { showStarredSheet = false },
+            onJumpToMessage = { targetMsgId ->
+                showStarredSheet = false
+                jumpToMessageById(targetMsgId)
+            },
+            onUnstarMessage = { msgId -> viewModel.toggleMessageStar(msgId) }
+        )
     }
 
     if (showQuickProfile) {

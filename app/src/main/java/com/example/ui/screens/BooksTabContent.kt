@@ -19,11 +19,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -363,12 +366,14 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
     val displayChapter = activeChapterNum
     val totalBooksCount = 1 + myBooks.size
 
+    val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+
     LazyColumn(
         state = lazyListState,
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
-        contentPadding = PaddingValues(top = 6.dp, bottom = 122.dp),
+        contentPadding = PaddingValues(top = 6.dp, bottom = 168.dp + navBottomPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // ── 1. TOP LUMINOUS QUOTE CAPSULE + SHARED MOR CAM SETTINGS BUTTON ────

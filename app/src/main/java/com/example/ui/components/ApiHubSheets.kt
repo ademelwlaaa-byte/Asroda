@@ -273,80 +273,18 @@ internal enum class GlobalOrbStyle {
     FOOTER_CHECK
 }
 
-private var cachedFrostedGlobalSettingsBackdrop: ImageBitmap? = null
-
 internal fun createFrostedGlobalSettingsBackdropBitmap(context: android.content.Context): ImageBitmap {
-    cachedFrostedGlobalSettingsBackdrop?.let { return it }
-    return try {
-        val opts = android.graphics.BitmapFactory.Options().apply {
-            inSampleSize = 2
-            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-        }
-        val raw = android.graphics.BitmapFactory.decodeResource(
-            context.resources,
-            R.drawable.img_global_settings_cosmic_bg,
-            opts
-        ) ?: return ImageBitmap(1, 1)
-
-        val w = 360
-        val h = ((raw.height.toFloat() / raw.width.toFloat().coerceAtLeast(1f)) * w).toInt().coerceIn(360, 1080)
-        val scaled = android.graphics.Bitmap.createScaledBitmap(raw, w, h, true)
-        if (raw !== scaled) raw.recycle()
-
-        val pixels = IntArray(w * h)
-        scaled.getPixels(pixels, 0, w, 0, 0, w, h)
-        val tmp = IntArray(w * h)
-        val radius = 4
-        val div = radius * 2 + 1
-
-        repeat(2) {
-            for (y in 0 until h) {
-                var rSum = 0; var gSum = 0; var bSum = 0
-                val rowOff = y * w
-                for (i in -radius..radius) {
-                    val c = pixels[rowOff + i.coerceIn(0, w - 1)]
-                    rSum += (c shr 16) and 0xFF
-                    gSum += (c shr 8) and 0xFF
-                    bSum += c and 0xFF
-                }
-                for (x in 0 until w) {
-                    tmp[rowOff + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val outIdx = (x - radius).coerceIn(0, w - 1)
-                    val inIdx = (x + radius + 1).coerceIn(0, w - 1)
-                    val cOut = pixels[rowOff + outIdx]
-                    val cIn = pixels[rowOff + inIdx]
-                    rSum += ((cIn shr 16) and 0xFF) - ((cOut shr 16) and 0xFF)
-                    gSum += ((cIn shr 8) and 0xFF) - ((cOut shr 8) and 0xFF)
-                    bSum += (cIn and 0xFF) - (cOut and 0xFF)
-                }
-            }
-            for (x in 0 until w) {
-                var rSum = 0; var gSum = 0; var bSum = 0
-                for (i in -radius..radius) {
-                    val c = tmp[i.coerceIn(0, h - 1) * w + x]
-                    rSum += (c shr 16) and 0xFF
-                    gSum += (c shr 8) and 0xFF
-                    bSum += c and 0xFF
-                }
-                for (y in 0 until h) {
-                    pixels[y * w + x] = (0xFF shl 24) or ((rSum / div) shl 16) or ((gSum / div) shl 8) or (bSum / div)
-                    val outIdx = (y - radius).coerceIn(0, h - 1)
-                    val inIdx = (y + radius + 1).coerceIn(0, h - 1)
-                    val cOut = tmp[outIdx * w + x]
-                    val cIn = tmp[inIdx * w + x]
-                    rSum += ((cIn shr 16) and 0xFF) - ((cOut shr 16) and 0xFF)
-                    gSum += ((cIn shr 8) and 0xFF) - ((cOut shr 8) and 0xFF)
-                    bSum += (cIn and 0xFF) - (cOut and 0xFF)
-                }
-            }
-        }
-        val blurred = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
-        blurred.setPixels(pixels, 0, w, 0, 0, w, h)
-        scaled.recycle()
-        blurred.asImageBitmap().also { cachedFrostedGlobalSettingsBackdrop = it }
-    } catch (_: Exception) {
-        ImageBitmap(1, 1)
-    }
+    return com.example.util.FrostedBackdropCache.getOrGenerateSync(
+        context = context,
+        key = "global_settings_cosmic_bg",
+        drawableResId = R.drawable.img_global_settings_cosmic_bg,
+        targetWidth = 360,
+        maxHeight = 1080,
+        blurRadius = 4,
+        blurPasses = 2,
+        violetShiftWarmPixels = false,
+        outputRgb565 = false
+    )
 }
 
 internal object GlobalMorCamColors {
@@ -1448,13 +1386,29 @@ internal fun CustomApiEditorDialog(
     blurredBg: ImageBitmap,
     onTestConnection: suspend (baseUrl: String, apiKey: String, model: String, apiFormat: String) -> EmochiRepository.ProviderTestResult,
     onFetchModels: suspend (baseUrl: String, apiKey: String) -> List<String>,
-    onSave: (label: String, baseUrl: String, apiKey: String, modelName: String, apiFormat: String, supportsTools: Boolean) -> Unit,
+    onSave: (
+        label: String,
+        baseUrl: String,
+        apiKey: String,
+        modelName: String,
+        apiFormat: String,
+        supportsTools: Boolean,
+        utilityModel: String,
+        detectedSmallModelsJson: String
+    ) -> Unit,
     onDismiss: () -> Unit
 ) {
     var label by remember(editingProvider?.id) { mutableStateOf(editingProvider?.label ?: "") }
     var baseUrl by remember(editingProvider?.id) { mutableStateOf(editingProvider?.baseUrl ?: "https://") }
     var apiKey by remember(editingProvider?.id) { mutableStateOf("") }
     var modelName by remember(editingProvider?.id) { mutableStateOf(editingProvider?.modelName ?: "") }
+    var utilityModel by remember(editingProvider?.id) { mutableStateOf(editingProvider?.utilityModel ?: "") }
+    var detectedSmallModels by remember(editingProvider?.id) {
+        mutableStateOf(
+            editingProvider?.detectedSmallModels?.let { EmochiRepository.parseDetectedSmallModels(it) }
+                ?: emptyList()
+        )
+    }
     var apiFormat by remember(editingProvider?.id) { mutableStateOf(editingProvider?.apiFormat ?: "openai") }
     var showKey by remember { mutableStateOf(false) }
     var isTesting by remember { mutableStateOf(false) }
@@ -1607,7 +1561,15 @@ internal fun CustomApiEditorDialog(
                                     .clickable(enabled = !isFetching && baseUrl.trim().length > 8) {
                                         scope.launch {
                                             isFetching = true
-                                            fetchedModels = onFetchModels(baseUrl.trim(), apiKey.trim())
+                                            val models = onFetchModels(baseUrl.trim(), apiKey.trim())
+                                            fetchedModels = models
+                                            if (models.isNotEmpty()) {
+                                                val candidates = EmochiRepository.detectSmallModelCandidates(models)
+                                                detectedSmallModels = candidates
+                                                if (utilityModel.isBlank() && candidates.isNotEmpty()) {
+                                                    utilityModel = candidates.first()
+                                                }
+                                            }
                                             isFetching = false
                                         }
                                     }
@@ -1665,6 +1627,49 @@ internal fun CustomApiEditorDialog(
                         }
                     }
 
+                    // Optional Utility (Fast/Cheap) Model for RAG, Memory Curator & Audits
+                    GlobalGlassInputField(
+                        value = utilityModel,
+                        onValueChange = { utilityModel = it },
+                        label = "Yardımcı (Hızlı/Ucuz) Model (İsteğe Bağlı)",
+                        placeholder = "Boşsa otomatik küçük model veya ana model kullanılır",
+                        modifier = Modifier.testTag("custom_api_utility_model_input")
+                    )
+
+                    if (detectedSmallModels.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Otomatik Algılanan Hızlı/Ucuz Modeller:",
+                                color = GlobalMorCamColors.MutedLavender,
+                                fontSize = 10.5.sp,
+                                fontFamily = InterFontFamily
+                            )
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                detectedSmallModels.take(6).forEach { sm ->
+                                    val selected = utilityModel.trim() == sm
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(if (selected) Color(0x9934D399) else Color(0x5515082A))
+                                            .border(
+                                                0.9.dp,
+                                                if (selected) Color(0xFFA7F3D0) else Color(0x556EE7B7),
+                                                RoundedCornerShape(10.dp)
+                                            )
+                                            .clickable { utilityModel = sm }
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(sm, color = GlobalMorCamColors.PearlText, fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     // Keystore encryption hint
                     Row(
                         modifier = Modifier
@@ -1714,13 +1719,16 @@ internal fun CustomApiEditorDialog(
                             text = if (isEditing) "Güncelle" else "Kaydet & Ekle",
                             enabled = canSave,
                             onClick = {
+                                val detectedJson = org.json.JSONArray(detectedSmallModels).toString()
                                 onSave(
                                     label.trim().ifBlank { modelName.trim() },
                                     baseUrl.trim(),
                                     apiKey.trim(),
                                     modelName.trim(),
                                     apiFormat,
-                                    testResult?.supportsFunctionCalling ?: true
+                                    testResult?.supportsFunctionCalling ?: true,
+                                    utilityModel.trim(),
+                                    detectedJson
                                 )
                             },
                             modifier = Modifier

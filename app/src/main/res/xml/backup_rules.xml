@@ -1,13 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
--->
+<?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <!-- Exclude sensitive encrypted/keystore preferences & local API credentials -->
+    <exclude domain="sharedpref" path="emochi_secure_prefs.xml" />
+    <exclude domain="sharedpref" path="androidx.security.crypto.master_key.xml" />
+    <exclude domain="sharedpref" path="emochi_keystore_prefs.xml" />
+
+    <!-- Exclude local autobackup snapshots and ephemeral caches/exports -->
+    <exclude domain="file" path="emochi_autobackup.json" />
+    <exclude domain="file" path="emochi_autobackup.json.tmp" />
+    <exclude domain="file" path="image_cache" />
+    <exclude domain="file" path="exports" />
+    <exclude domain="external" path="." />
 </full-backup-content>
