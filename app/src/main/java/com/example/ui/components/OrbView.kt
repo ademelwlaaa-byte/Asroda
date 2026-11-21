@@ -54,49 +54,63 @@ fun OrbView(
     size: Dp = 48.dp,
     modifier: Modifier = Modifier
 ) {
-    val infinite = rememberInfiniteTransition(label = "orb_$hue")
-
-    val rotationAngle by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(8000, easing = androidx.compose.animation.core.LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orbRotation"
+    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
+    val animatedHue by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = hue,
+        animationSpec = tween(420, easing = FastOutSlowInEasing),
+        label = "orbHueMorph"
     )
 
-    val pulseAlpha by infinite.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 0.95f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "orbPulse"
-    )
+    val rotationAngle: Float
+    val pulseAlpha: Float
+    val innerPulse: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infinite = rememberInfiniteTransition(label = "orb_ambient")
+        rotationAngle = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(8000, easing = androidx.compose.animation.core.LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "orbRotation"
+        ).value
+        pulseAlpha = infinite.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1800, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "orbPulse"
+        ).value
+        innerPulse = infinite.animateFloat(
+            initialValue = 0.70f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "innerPulse"
+        ).value
+    } else {
+        rotationAngle = 24f
+        pulseAlpha = 0.78f
+        innerPulse = 0.85f
+    }
 
-    val innerPulse by infinite.animateFloat(
-        initialValue = 0.70f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "innerPulse"
-    )
-
-    // Color palette from hue
-    val coreColor      = Color.hsl(hue, 0.90f, 0.78f)
-    val midColor       = Color.hsl(hue, 0.80f, 0.55f)
-    val outerColor     = Color.hsl(hue, 0.70f, 0.35f)
-    val darkEdge       = Color.hsl(hue, 0.60f, 0.12f)
-    val complementHue  = (hue + 180f) % 360f
+    val safeHue = ((animatedHue % 360f) + 360f) % 360f
+    // Color palette from animated hue
+    val coreColor      = Color.hsl(safeHue, 0.90f, 0.78f)
+    val midColor       = Color.hsl(safeHue, 0.80f, 0.55f)
+    val outerColor     = Color.hsl(safeHue, 0.70f, 0.35f)
+    val darkEdge       = Color.hsl(safeHue, 0.60f, 0.12f)
+    val complementHue  = (safeHue + 180f) % 360f
     val nebulaColor    = Color.hsl(complementHue, 0.75f, 0.60f, alpha = 0.35f)
-    val analogHue      = (hue + 60f) % 360f
+    val analogHue      = (safeHue + 60f) % 360f
     val swirl1         = Color.hsl(analogHue, 0.85f, 0.65f, alpha = 0.30f)
-    val ringColor      = Color.hsl(hue, 0.95f, 0.80f, alpha = 0.60f)
-    val ambientGlow    = Color.hsl(hue, 0.80f, 0.55f, alpha = 0.20f)
+    val ringColor      = Color.hsl(safeHue, 0.95f, 0.80f, alpha = 0.60f)
+    val ambientGlow    = Color.hsl(safeHue, 0.80f, 0.55f, alpha = 0.20f)
 
     Canvas(
         modifier = modifier

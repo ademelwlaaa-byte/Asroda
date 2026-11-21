@@ -562,6 +562,65 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         return totalMsgCount % 6 == 0 || sinceLastSummarization >= 12
     }
 
+    data class MemoryCommitNotice(
+        val id: Long = System.currentTimeMillis(),
+        val title: String,
+        val subtitle: String,
+        val isLivingMemory: Boolean
+    )
+
+    private val _memoryCommitNotice = MutableStateFlow<MemoryCommitNotice?>(null)
+    val memoryCommitNotice: StateFlow<MemoryCommitNotice?> = _memoryCommitNotice.asStateFlow()
+
+    fun dismissMemoryCommitNotice() {
+        _memoryCommitNotice.value = null
+    }
+
+    private fun schedulePostTurnMemoryExtraction(
+        bot: BotEntity,
+        allMsgs: List<MessageEntity>,
+        userText: String,
+        aiReply: String
+    ) {
+        if (bot.id.startsWith("book_") || bot.mode == "book") return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val summary = repository.extractAndCommitTurnMemories(
+                    bot = bot,
+                    recentMessages = allMsgs,
+                    latestUserMsg = userText,
+                    latestAiReply = aiReply
+                )
+                if (summary.hasAnyChange) {
+                    val notice = when {
+                        !summary.savedMemoryTitle.isNullOrBlank() && summary.savedFactsCount > 0 -> MemoryCommitNotice(
+                            title = "Yeni Anı & Neural Vault Güncellendi",
+                            subtitle = "${summary.savedMemoryPov ?: bot.aiName}'ın gözünden • +${summary.savedFactsCount} bilgi",
+                            isLivingMemory = true
+                        )
+                        !summary.savedMemoryTitle.isNullOrBlank() -> MemoryCommitNotice(
+                            title = "Yeni Anı: ${summary.savedMemoryTitle}",
+                            subtitle = "${summary.savedMemoryPov ?: bot.aiName}'ın gözünden işlendi",
+                            isLivingMemory = true
+                        )
+                        else -> MemoryCommitNotice(
+                            title = "Neural Vault Güncellendi",
+                            subtitle = "+${summary.savedFactsCount} kalıcı bilgi otomatik kaydedildi",
+                            isLivingMemory = false
+                        )
+                    }
+                    _memoryCommitNotice.value = notice
+                    kotlinx.coroutines.delay(4500L)
+                    if (_memoryCommitNotice.value?.id == notice.id) {
+                        _memoryCommitNotice.value = null
+                    }
+                }
+            } catch (_: Exception) {
+                // Silent background extraction — never interrupts chat flow
+            }
+        }
+    }
+
     private fun markSummarizationDone(botId: String, msgCount: Int) {
         lastSummarizationMsgCountMap[botId] = msgCount
     }
@@ -627,6 +686,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                     repository.saveBot(currentBot.copy(updatedAt = System.currentTimeMillis()))
 
                     val finalMsgs = currentMsgs + aiMsg
+                    schedulePostTurnMemoryExtraction(currentBot, finalMsgs, sanitizedText, replyText)
                     if (shouldRunSummarization(botId, finalMsgs.size)) {
                         repository.updateMemorySummaries(currentBot, finalMsgs)
                         markSummarizationDone(botId, finalMsgs.size)
@@ -690,6 +750,10 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                     repository.saveBot(currentBot.copy(updatedAt = now))
 
                     val finalMsgs = currentMsgs + aiMsg
+                    val lastUserText = currentMsgs.lastOrNull { it.role == "user" }?.text.orEmpty()
+                    if (lastUserText.isNotBlank()) {
+                        schedulePostTurnMemoryExtraction(currentBot, finalMsgs, lastUserText, replyText)
+                    }
                     if (shouldRunSummarization(botId, finalMsgs.size)) {
                         repository.updateMemorySummaries(currentBot, finalMsgs)
                         markSummarizationDone(botId, finalMsgs.size)
@@ -1062,7 +1126,10 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         stopSpeaking()
         _errorMessage.value = null
 
-        val targetId = if (preset.id.isNotBlank() && !preset.id.startsWith("preset_")) {
+        val targetId = if (
+            preset.id == "preset_aiden_mcu_cosmic" ||
+            (preset.id.isNotBlank() && !preset.id.startsWith("preset_"))
+        ) {
             preset.id
         } else {
             UUID.randomUUID().toString()

@@ -95,6 +95,10 @@ import com.example.ui.components.MorCamCircleIconButton
 import com.example.ui.components.MorCamGlassSlider
 import com.example.ui.theme.DisplaySerifFontFamily
 import android.widget.Toast
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.CosmicOrbLoader
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicShimmerSweep
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 import com.example.util.AvatarOptimizer
@@ -318,17 +322,22 @@ fun CreateBotWizardScreen(
         else -> true
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "wizardMorCamAnim")
-    val pulseGlowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.68f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "wizardPulseGlow"
-    )
-    val stepEasing = remember { CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f) }
+    val motionConfig = LocalCosmicMotionConfig.current
+    val pulseGlowAlpha = if (motionConfig.enableAmbientLoops) {
+        val infiniteTransition = rememberInfiniteTransition(label = "wizardMorCamAnim")
+        val animatedAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.68f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "wizardPulseGlow"
+        )
+        animatedAlpha
+    } else {
+        0.86f
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         // Unified Cosmic Wisteria App Background (harmonized across all app menus)
@@ -420,11 +429,10 @@ fun CreateBotWizardScreen(
             AnimatedContent(
                 targetState = stepIdx,
                 transitionSpec = {
-                    val dir = if (targetState > initialState) 1 else -1
-                    (slideInHorizontally(tween(340, easing = stepEasing)) { (it * 0.16f * dir).toInt() } +
-                        fadeIn(tween(300, easing = stepEasing))) togetherWith
-                    (slideOutHorizontally(tween(260, easing = stepEasing)) { (it * -0.12f * dir).toInt() } +
-                        fadeOut(tween(220, easing = stepEasing)))
+                    CosmicMotionSpecs.cosmicTabTransition(
+                        forward = targetState > initialState,
+                        config = motionConfig
+                    )
                 },
                 modifier = Modifier
                     .fillMaxSize()
@@ -846,7 +854,11 @@ fun CreateBotWizardScreen(
                             WizardFieldLabel(title = "Açılış Mesajı / Sahnesi", required = true)
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            Box(modifier = Modifier.fillMaxWidth()) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicShimmerSweep(active = isGeneratingOpening, cornerRadius = 18.dp)
+                            ) {
                                 WizardMorCamTextField(
                                     value = openingMessage,
                                     onValueChange = { if (it.length <= 1000) openingMessage = it },
@@ -933,7 +945,8 @@ fun CreateBotWizardScreen(
                             if (isAnalyzing) {
                                 WizardMorCamSectionCard(
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value
+                                    scrollSync = scrollState.value,
+                                    modifier = Modifier.cosmicShimmerSweep(active = true, cornerRadius = 22.dp)
                                 ) {
                                     Column(
                                         modifier = Modifier
@@ -941,7 +954,7 @@ fun CreateBotWizardScreen(
                                             .padding(vertical = 26.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
-                                        EmochiLoadingSpinner(size = 36.dp)
+                                        CosmicOrbLoader(size = 42.dp)
                                         Spacer(Modifier.height(14.dp))
                                         Text(
                                             text = "Yapay Zeka Karakterinizi Analiz Ediyor…",

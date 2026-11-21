@@ -56,8 +56,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.AnimatedContent
 import com.example.data.local.BotEntity
 import com.example.data.repository.KeyCharacter
+import com.example.ui.animation.CosmicAnimatedCounter
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.CosmicOrbLoader
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicStaggeredEnter
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
@@ -169,9 +175,9 @@ fun CharacterEmotionControlModal(
                         .border(0.8.dp, accentColor.copy(alpha = 0.65f), RoundedCornerShape(50))
                         .padding(horizontal = 9.dp, vertical = 2.dp)
                 ) {
-                    Text(
-                        text = "%$value",
-                        fontFamily = InterFontFamily,
+                    CosmicAnimatedCounter(
+                        count = value,
+                        prefix = "%",
                         color = MorCamTokens.SilverLavenderBright,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -245,7 +251,19 @@ fun CharacterEmotionControlModal(
 
             Spacer(Modifier.height(12.dp))
 
-            // Scrollable Content
+            val motionConfig = LocalCosmicMotionConfig.current
+            val sectionOrder = remember(sections) { sections.map { it.first } }
+
+            // Scrollable Content with Directional Cosmic Glide
+            AnimatedContent(
+                targetState = activeSection,
+                transitionSpec = {
+                    val fromIdx = sectionOrder.indexOf(initialState).coerceAtLeast(0)
+                    val toIdx = sectionOrder.indexOf(targetState).coerceAtLeast(0)
+                    CosmicMotionSpecs.cosmicTabTransition(forward = toIdx >= fromIdx, config = motionConfig)
+                },
+                label = "emotionStudioSection"
+            ) { secKey ->
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -253,7 +271,7 @@ fun CharacterEmotionControlModal(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                when (activeSection) {
+                when (secKey) {
                     "mood" -> {
                         MorCamSectionBox(
                             title = "Baskın Ruh Hali",
@@ -584,7 +602,7 @@ fun CharacterEmotionControlModal(
                         ) {
                             if (!historyLoaded) {
                                 Box(modifier = Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                                    EmochiLoadingSpinner(size = 28.dp, color = MorCamTokens.LavenderSoft)
+                                    CosmicOrbLoader(size = 38.dp)
                                 }
                             } else if (emotionHistory.isEmpty()) {
                                 Box(
@@ -769,6 +787,7 @@ fun CharacterEmotionControlModal(
                     }
                 }
             }
+            } // end AnimatedContent
 
             // Footer Actions
             Spacer(Modifier.height(14.dp))

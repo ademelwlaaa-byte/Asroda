@@ -51,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BotEntity
+import com.example.ui.animation.cosmicFloatingLevitation
+import com.example.ui.animation.cosmicStaggeredEnter
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 
@@ -120,6 +122,7 @@ fun NeuralVaultModal(
 
     val filteredMemories = memoriesList.filter { (key, cat, body) ->
         val matchesCategory = categoryFilter == "Tümü" ||
+            categoryFilter == "Sabit" ||
             cat.contains(categoryFilter, ignoreCase = true) ||
             (categoryFilter == "Bilgi (Core)" && (cat.contains("BİLGİ", ignoreCase = true) || cat.contains("CORE", ignoreCase = true)))
         val matchesSearch = searchQuery.isBlank() ||
@@ -130,7 +133,9 @@ fun NeuralVaultModal(
     }
 
     val filteredFacts = activeFacts.filter { fact ->
-        val matchesCategory = categoryFilter == "Tümü" || categoryFilter.contains("Bilgi", ignoreCase = true)
+        val matchesCategory = categoryFilter == "Tümü" ||
+            categoryFilter == "Otomatik Bilgiler" ||
+            categoryFilter.contains("Bilgi", ignoreCase = true)
         val matchesSearch = searchQuery.isBlank() ||
             fact.subject.contains(searchQuery, ignoreCase = true) ||
             fact.key.contains(searchQuery, ignoreCase = true) ||
@@ -140,9 +145,11 @@ fun NeuralVaultModal(
 
     val filteredEvents = activeEvents.filter { event ->
         val matchesCategory = categoryFilter == "Tümü" ||
+            categoryFilter == "Anılar" ||
             categoryFilter.contains("Biyografi", ignoreCase = true) ||
             categoryFilter.contains("İlişki", ignoreCase = true)
-        val matchesSearch = searchQuery.isBlank() || event.description.contains(searchQuery, ignoreCase = true)
+        val searchable = com.example.data.repository.LivingMemoryCodec.toSearchableText(event.description)
+        val matchesSearch = searchQuery.isBlank() || searchable.contains(searchQuery, ignoreCase = true)
         matchesCategory && matchesSearch
     }
 
@@ -151,7 +158,7 @@ fun NeuralVaultModal(
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Neural Vault • Bellek Mahzeni",
-        subtitle = "$totalSaved kayıt • Uzun dönemli hafıza & V4.0 Sync",
+        subtitle = "$totalSaved kayıt • Hibrit RAG & Çoklu Bakış Açılı Anılar",
         icon = Icons.Default.Memory,
         maxWidthFraction = 0.94f
     ) {
@@ -321,7 +328,7 @@ fun NeuralVaultModal(
             }
 
             // Category Filter Chips
-            val presetCategories = listOf("Tümü", "Bilgi (Core)", "Biyografi", "İlişki", "Dünya/Mekan")
+            val presetCategories = listOf("Tümü", "Anılar", "Otomatik Bilgiler", "Sabit", "İlişki", "Dünya/Mekan")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -361,7 +368,8 @@ fun NeuralVaultModal(
                 MorCamGlassCard(
                     cornerRadius = 16.dp,
                     paddingHorizontal = 16.dp,
-                    paddingVertical = 22.dp
+                    paddingVertical = 22.dp,
+                    modifier = Modifier.cosmicFloatingLevitation(amplitudeDp = 3.dp, durationMs = 2800)
                 ) {
                     Text(
                         text = "Henüz enjekte edilmiş veya öğrenilmiş bellek yok.",
@@ -374,8 +382,11 @@ fun NeuralVaultModal(
                 }
             } else {
                 // 1. Manual Injected Memories
-                filteredMemories.forEach { (keyTag, catTag, bodyText) ->
-                    MorCamGlassCard(cornerRadius = 16.dp) {
+                filteredMemories.forEachIndexed { idx, (keyTag, catTag, bodyText) ->
+                    MorCamGlassCard(
+                        cornerRadius = 16.dp,
+                        modifier = Modifier.cosmicStaggeredEnter(index = idx, key = "mem_${categoryFilter}_${keyTag}_$idx")
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -436,16 +447,19 @@ fun NeuralVaultModal(
                     }
                 }
 
-                // 2. Automatic Facts
-                filteredFacts.forEach { fact ->
-                    MorCamGlassCard(cornerRadius = 16.dp) {
+                // 2. Automatic Neural Vault Facts
+                filteredFacts.forEachIndexed { idx, fact ->
+                    MorCamGlassCard(
+                        cornerRadius = 16.dp,
+                        modifier = Modifier.cosmicStaggeredEnter(index = idx + filteredMemories.size, key = "fact_${categoryFilter}_${fact.id}")
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "${fact.subject}: ${fact.key}",
+                                text = "${fact.subject} • ${fact.key}",
                                 fontFamily = LiterarySerifFontFamily,
                                 color = MorCamTokens.SilverLavenderBright,
                                 fontSize = 13.sp,
@@ -455,12 +469,12 @@ fun NeuralVaultModal(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
-                                    .background(Color(0x557C3AED))
+                                    .background(if (fact.userCorrected) Color(0x55A855F7) else Color(0x557C3AED))
                                     .border(0.7.dp, MorCamTokens.RimGradient, RoundedCornerShape(50))
                                     .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "OTOMATİK BİLGİ",
+                                    text = if (fact.userCorrected) "★ SABİTLENDİ" else "AI OTOMATİK",
                                     fontFamily = InterFontFamily,
                                     color = MorCamTokens.SilverLavenderBright,
                                     fontSize = 9.5.sp,
@@ -499,19 +513,25 @@ fun NeuralVaultModal(
                     }
                 }
 
-                // 3. Automatic Events
-                filteredEvents.forEach { event ->
-                    MorCamGlassCard(cornerRadius = 16.dp) {
+                // 3. Multi-POV Living Memories ("Yaşanan Anılar")
+                filteredEvents.forEachIndexed { idx, event ->
+                    val living = remember(event.id, event.description) {
+                        com.example.data.repository.LivingMemoryCodec.parse(event.description, event.importanceScore)
+                    }
+                    MorCamGlassCard(
+                        cornerRadius = 16.dp,
+                        modifier = Modifier.cosmicStaggeredEnter(index = idx + filteredMemories.size + filteredFacts.size, key = "evt_${categoryFilter}_${event.id}")
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "Olay Kaydı #${event.id}",
-                                fontFamily = LiterarySerifFontFamily,
-                                color = MorCamTokens.SilverLavenderBright,
-                                fontSize = 13.sp,
+                                text = if (living.isStructured) "✦ ${living.povCharacter}'ın Gözünden" else "Yaşanan Anı #${event.id}",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFD8B4FE),
+                                fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.weight(1f)
                             )
@@ -523,7 +543,9 @@ fun NeuralVaultModal(
                                     .padding(horizontal = 8.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "OTOMATİK OLAY",
+                                    text = if (living.isStructured) {
+                                        "★ ${living.salience}/10" + if (living.emotionTag.isNotBlank()) " • ${living.emotionTag}" else ""
+                                    } else "ANI KAYDI",
                                     fontFamily = InterFontFamily,
                                     color = MorCamTokens.SilverLavenderBright,
                                     fontSize = 9.5.sp,
@@ -531,14 +553,44 @@ fun NeuralVaultModal(
                                 )
                             }
                         }
+                        if (living.isStructured && living.title.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(5.dp))
+                            Text(
+                                text = living.title,
+                                fontFamily = LiterarySerifFontFamily,
+                                color = MorCamTokens.SilverLavenderBright,
+                                fontSize = 13.8.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = event.description,
-                            fontFamily = InterFontFamily,
+                            text = living.narrative,
+                            fontFamily = LiterarySerifFontFamily,
                             color = MorCamTokens.LavenderLight,
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp
+                            fontSize = 12.2.sp,
+                            lineHeight = 17.5.sp
                         )
+                        if (living.innerThought.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0x2E6D28D9))
+                                    .border(0.7.dp, Color(0x66C4B5FD), RoundedCornerShape(10.dp))
+                                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                            ) {
+                                Text(
+                                    text = "💭 Söylenmemiş İç Düşünce: \"${living.innerThought}\"",
+                                    fontFamily = LiterarySerifFontFamily,
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                    color = Color(0xFFF3E8FF),
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 16.sp
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -643,22 +695,48 @@ fun NeuralVaultModal(
 
     if (editingEvent != null) {
         val event = editingEvent!!
-        var editDesc by remember(event) { mutableStateOf(event.description) }
+        val parsed = remember(event) {
+            com.example.data.repository.LivingMemoryCodec.parse(event.description, event.importanceScore)
+        }
+        var editPov by remember(event) { mutableStateOf(parsed.povCharacter.ifBlank { bot.aiName.ifBlank { "Karakter" } }) }
+        var editTitle by remember(event) { mutableStateOf(parsed.title.ifBlank { "Unutulmaz An" }) }
+        var editNarrative by remember(event) { mutableStateOf(parsed.narrative) }
+        var editInner by remember(event) { mutableStateOf(parsed.innerThought) }
 
         MorCamDialogShell(
             onDismissRequest = { editingEvent = null },
-            title = "Otomatik Olayı Düzenle",
-            subtitle = "Kaydedilen hikaye olayını güncelle",
+            title = "Yaşanan Anıyı Düzenle",
+            subtitle = "Anlatıcı bakış açısını, anıyı ve iç sesi güncelle",
             icon = Icons.Default.Edit
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Olay Açıklaması", fontFamily = LiterarySerifFontFamily, color = MorCamTokens.LavenderSoft, fontSize = 12.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Anlatıcı Karakter (POV)", fontFamily = LiterarySerifFontFamily, color = MorCamTokens.LavenderSoft, fontSize = 12.sp)
                 MorCamGlassTextField(
-                    value = editDesc,
-                    onValueChange = { editDesc = it },
-                    placeholder = "Olay detayını yazın...",
+                    value = editPov,
+                    onValueChange = { editPov = it },
+                    placeholder = "Örn: Natasha, Aiden..."
+                )
+                Text("Anı Başlığı", fontFamily = LiterarySerifFontFamily, color = MorCamTokens.LavenderSoft, fontSize = 12.sp)
+                MorCamGlassTextField(
+                    value = editTitle,
+                    onValueChange = { editTitle = it },
+                    placeholder = "Örn: Çatıda İlk Güven"
+                )
+                Text("Anı Anlatımı (Birinci Tekil Şahıs)", fontFamily = LiterarySerifFontFamily, color = MorCamTokens.LavenderSoft, fontSize = 12.sp)
+                MorCamGlassTextField(
+                    value = editNarrative,
+                    onValueChange = { editNarrative = it },
+                    placeholder = "Olayı yaşamış gibi anlat...",
                     singleLine = false,
-                    minHeight = 96.dp
+                    minHeight = 82.dp
+                )
+                Text("💭 Söylenmemiş İç Düşünce", fontFamily = LiterarySerifFontFamily, color = MorCamTokens.LavenderSoft, fontSize = 12.sp)
+                MorCamGlassTextField(
+                    value = editInner,
+                    onValueChange = { editInner = it },
+                    placeholder = "Dışa vurulmamış gizli hisler...",
+                    singleLine = false,
+                    minHeight = 62.dp
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -673,9 +751,21 @@ fun NeuralVaultModal(
                     MorCamCapsuleButton(
                         text = "Kaydet",
                         onClick = {
+                            val newEncoded = if (parsed.isStructured || editInner.isNotBlank() || editPov.isNotBlank()) {
+                                com.example.data.repository.LivingMemoryCodec.encode(
+                                    povCharacter = editPov.trim(),
+                                    title = editTitle.trim(),
+                                    emotionTag = parsed.emotionTag.ifBlank { "Derin Etki" },
+                                    salience = parsed.salience.coerceIn(7, 10),
+                                    narrative = editNarrative.trim(),
+                                    innerThought = editInner.trim()
+                                )
+                            } else {
+                                editNarrative.trim()
+                            }
                             viewModel?.updateMemoryEvent(
                                 event.copy(
-                                    description = editDesc.trim(),
+                                    description = newEncoded,
                                     timestamp = System.currentTimeMillis()
                                 )
                             )

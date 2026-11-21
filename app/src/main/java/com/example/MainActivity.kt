@@ -1,5 +1,6 @@
 package com.example
 
+import android.media.AudioManager
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
@@ -18,11 +19,18 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.ui.animation.CosmicMotionConfig
+import com.example.ui.animation.CosmicMotionPreferences
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.CosmicOrbLoader
+import com.example.ui.animation.LocalCosmicMotionConfig
 import com.example.ui.viewmodel.EmochiViewModel
 import com.example.ui.viewmodel.UiState
 import com.example.ui.screens.BotListScreen
@@ -37,6 +45,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        volumeControlStream = AudioManager.STREAM_MUSIC
+        CosmicMotionPreferences.init(applicationContext)
         enableEdgeToEdge()
         // Handle proactive notification deep link
         if (intent?.action == "com.example.OPEN_CHAT") {
@@ -46,20 +56,32 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
-            MyApplicationTheme {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = EmochiBackground
-                ) {
-                    EmochiAppMain(viewModel)
+            val motionMode by CosmicMotionPreferences.mode.collectAsStateWithLifecycle()
+            val motionConfig = remember(motionMode) { CosmicMotionConfig.from(motionMode) }
+            CompositionLocalProvider(LocalCosmicMotionConfig provides motionConfig) {
+                MyApplicationTheme {
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = EmochiBackground
+                    ) {
+                        EmochiAppMain(viewModel)
+                    }
                 }
             }
         }
     }
 }
 
+private fun uiStateDepth(state: UiState): Int = when (state) {
+    is UiState.Loading -> 0
+    is UiState.Menu -> 1
+    is UiState.SetupWizard -> 2
+    is UiState.Chat -> 2
+}
+
 @Composable
 fun EmochiAppMain(viewModel: EmochiViewModel) {
+    val motionConfig = LocalCosmicMotionConfig.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val botList by viewModel.botList.collectAsStateWithLifecycle()
     val userSettings by viewModel.userSettings.collectAsStateWithLifecycle()
@@ -78,15 +100,15 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
     AnimatedContent(
         targetState = uiState,
         transitionSpec = {
-            fadeIn(animationSpec = tween(280)) + slideInHorizontally { width -> width / 12 } togetherWith
-                    fadeOut(animationSpec = tween(220)) + slideOutHorizontally { width -> -width / 12 }
+            val forward = uiStateDepth(targetState) >= uiStateDepth(initialState)
+            CosmicMotionSpecs.cosmicPortalTransition(forward = forward, config = motionConfig)
         },
-        label = "SoftScreenTransition"
+        label = "CosmicPortalScreenTransition"
     ) { state ->
         when (state) {
             is UiState.Loading -> {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = EmochiPrimary)
+                    CosmicOrbLoader(size = 58.dp, label = "Evren hazırlanıyor...")
                 }
             }
 
@@ -138,7 +160,7 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
 
                 if (currentBot == null) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = EmochiPrimary)
+                        CosmicOrbLoader(size = 54.dp, label = "Sahne açılıyor...")
                     }
                 } else {
                     val keyChars = remember(currentBot.keyCharactersJson) {

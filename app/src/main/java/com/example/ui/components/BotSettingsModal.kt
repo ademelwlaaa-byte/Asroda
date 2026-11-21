@@ -7,9 +7,15 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicDialogEnter
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicTapSpring
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateDpAsState
@@ -707,13 +713,27 @@ fun BotSettingsModal(
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    val motionConfig = LocalCosmicMotionConfig.current
                     MorCamStarGlassCard(
                         rootSize = rootSize,
                         blurredBitmap = blurredBgBitmap,
                         minCardHeight = targetCardMinHeight,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .cosmicDialogEnter()
                     ) {
-                        when (activeTab) {
+                        AnimatedContent(
+                            targetState = activeTab,
+                            transitionSpec = {
+                                CosmicMotionSpecs.cosmicTabTransition(
+                                    forward = targetState >= initialState,
+                                    config = motionConfig
+                                )
+                            },
+                            label = "botSettingsTabContent"
+                        ) { tabIdx ->
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                        when (tabIdx) {
                             // ──────────────────────────────────────────────────────────
                             // TAB 0: SAHNE (Anlatım Akışı, İzinler & Görünüm)
                             // ──────────────────────────────────────────────────────────
@@ -1436,7 +1456,7 @@ fun BotSettingsModal(
 
                             Spacer(modifier = Modifier.height(10.dp))
 
-                            // 4 Clean Sub-Pills for Memory
+                            // 3 Clean Sub-Pills for Memory (Sabit, Hikaye, Anılar — Ek Not kaldırıldı)
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1444,8 +1464,7 @@ fun BotSettingsModal(
                                 listOf(
                                     0 to "Sabit",
                                     1 to "Hikaye",
-                                    2 to "Ek Not",
-                                    3 to "Anılar (${activeFacts.size + activeEvents.size})"
+                                    2 to "Anılar (${activeEvents.size})"
                                 ).forEach { (idx, title) ->
                                     MorCamChoicePill(
                                         label = title,
@@ -1479,65 +1498,115 @@ fun BotSettingsModal(
                                         maxLines = 8
                                     )
                                 }
-                                2 -> {
-                                    MorCamGlassTextField(
-                                        value = memoryNotes,
-                                        onValueChange = { memoryNotes = it },
-                                        label = "Ek Hafıza & İlişki Detayları",
-                                        placeholder = "Karakterin hatırlamasını istediğin özel sözler ve detaylar...",
-                                        minLines = 5,
-                                        maxLines = 8
-                                    )
-                                }
-                                3 -> {
-                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        if (activeFacts.isEmpty() && activeEvents.isEmpty()) {
-                                            Text(
-                                                text = "Sohbet ilerledikçe önemli anılar burada otomatik olarak birikir.",
-                                                fontFamily = LiterarySerifFontFamily,
-                                                fontStyle = FontStyle.Italic,
-                                                color = Color(0xFFD8B4FE),
-                                                fontSize = 12.sp
-                                            )
-                                        }
-                                        activeFacts.take(8).forEach { fact ->
+                                else -> {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        if (activeFacts.isNotEmpty()) {
                                             Box(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
                                                     .clip(RoundedCornerShape(10.dp))
-                                                    .background(Color(0x241A0B36))
-                                                    .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
+                                                    .background(Color(0x2A3B1470))
+                                                    .border(0.8.dp, Color(0x66C084FC), RoundedCornerShape(10.dp))
+                                                    .clickable { showNeuralVault = true }
                                                     .padding(horizontal = 10.dp, vertical = 7.dp)
                                             ) {
                                                 Text(
-                                                    text = "✦ ${fact.subject}: ${fact.key} → ${fact.value}",
-                                                    fontFamily = LiterarySerifFontFamily,
-                                                    color = Color(0xFFF3E8FF),
-                                                    fontSize = 11.8.sp
+                                                    text = "✦ Neural Vault'ta ${activeFacts.size} otomatik bilgi kayıtlı • Görmek için dokun ›",
+                                                    fontFamily = InterFontFamily,
+                                                    color = Color(0xFFE9D5FF),
+                                                    fontSize = 11.2.sp,
+                                                    fontWeight = FontWeight.Medium
                                                 )
                                             }
                                         }
-                                        activeEvents.take(6).forEach { ev ->
-                                            Box(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .clip(RoundedCornerShape(10.dp))
-                                                    .background(Color(0x241A0B36))
-                                                    .border(0.8.dp, Color(0x55A855F7), RoundedCornerShape(10.dp))
-                                                    .padding(horizontal = 10.dp, vertical = 7.dp)
-                                            ) {
-                                                Text(
-                                                    text = "✦ ${ev.description}",
-                                                    fontFamily = LiterarySerifFontFamily,
-                                                    color = Color(0xFFE9D5FF),
-                                                    fontSize = 11.8.sp
-                                                )
+
+                                        if (activeEvents.isEmpty()) {
+                                            Text(
+                                                text = "Sadece gerçekten unutulmaz, duygusal ağırlığı yüksek anlar karakterlerin gözünden ve gizli iç sesleriyle burada birikir.",
+                                                fontFamily = LiterarySerifFontFamily,
+                                                fontStyle = FontStyle.Italic,
+                                                color = Color(0xFFD8B4FE),
+                                                fontSize = 12.sp,
+                                                lineHeight = 17.sp
+                                            )
+                                        } else {
+                                            activeEvents.take(8).forEach { ev ->
+                                                val living = com.example.data.repository.LivingMemoryCodec.parse(ev.description, ev.importanceScore)
+                                                Column(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(Color(0x281A0B36))
+                                                        .border(0.85.dp, Color(0x66A855F7), RoundedCornerShape(12.dp))
+                                                        .padding(horizontal = 11.dp, vertical = 9.dp),
+                                                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                                                ) {
+                                                    if (living.isStructured) {
+                                                        Row(
+                                                            modifier = Modifier.fillMaxWidth(),
+                                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                                            verticalAlignment = Alignment.CenterVertically
+                                                        ) {
+                                                            Text(
+                                                                text = "✦ ${living.povCharacter}'ın Gözünden",
+                                                                fontFamily = InterFontFamily,
+                                                                color = Color(0xFFD8B4FE),
+                                                                fontSize = 10.5.sp,
+                                                                fontWeight = FontWeight.SemiBold
+                                                            )
+                                                            Text(
+                                                                text = "★ ${living.salience}/10" + if (living.emotionTag.isNotBlank()) " • ${living.emotionTag}" else "",
+                                                                fontFamily = InterFontFamily,
+                                                                color = Color(0xFFFDE68A),
+                                                                fontSize = 10.sp,
+                                                                fontWeight = FontWeight.Medium
+                                                            )
+                                                        }
+                                                        if (living.title.isNotBlank()) {
+                                                            Text(
+                                                                text = living.title,
+                                                                fontFamily = LiterarySerifFontFamily,
+                                                                color = Color(0xFFFAF5FF),
+                                                                fontSize = 12.8.sp,
+                                                                fontWeight = FontWeight.SemiBold
+                                                            )
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = living.narrative,
+                                                        fontFamily = LiterarySerifFontFamily,
+                                                        color = Color(0xFFEDE9FE),
+                                                        fontSize = 11.8.sp,
+                                                        lineHeight = 16.5.sp
+                                                    )
+                                                    if (living.innerThought.isNotBlank()) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxWidth()
+                                                                .clip(RoundedCornerShape(8.dp))
+                                                                .background(Color(0x286D28D9))
+                                                                .border(0.6.dp, Color(0x55C4B5FD), RoundedCornerShape(8.dp))
+                                                                .padding(horizontal = 9.dp, vertical = 6.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "💭 İç Ses: \"${living.innerThought}\"",
+                                                                fontFamily = LiterarySerifFontFamily,
+                                                                fontStyle = FontStyle.Italic,
+                                                                color = Color(0xFFE9D5FF),
+                                                                fontSize = 11.2.sp,
+                                                                lineHeight = 15.5.sp
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                        }
+                        } // end AnimatedContent
                     }
                 }
             }
@@ -1630,10 +1699,16 @@ fun BotSettingsModal(
                 }
 
                 // Center Frosted Glass Capsule ("✦  Değişiklikleri Kaydet  ✦")
+                val saveCapsuleInteraction = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(46.dp)
+                        .cosmicTapSpring(
+                            interactionSource = saveCapsuleInteraction,
+                            pressedScale = 0.955f,
+                            cornerRadius = 23.dp
+                        )
                         .morCamOuterGlow(cornerRadius = 23.dp, shadowAlpha = 0.38f, rimGlowAlpha = 0.30f, bottomFlareAlpha = 0.54f)
                         .clip(RoundedCornerShape(50))
                         .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.94f)
@@ -1645,6 +1720,7 @@ fun BotSettingsModal(
                             bottomEdgeRefractionAlpha = 0.22f,
                             cornerRadius = 23.dp
                         )
+                        .cosmicGlassSheen(cornerRadius = 23.dp, periodMs = 4900, maxAlpha = 0.16f)
                         .border(
                             BorderStroke(
                                 1.2.dp,
@@ -1655,7 +1731,10 @@ fun BotSettingsModal(
                             RoundedCornerShape(50)
                         )
                         .morCamTopAndBottomSpecular(cornerRadius = 23.dp)
-                        .clickable { saveAndDismiss() }
+                        .clickable(
+                            interactionSource = saveCapsuleInteraction,
+                            indication = null
+                        ) { saveAndDismiss() }
                         .padding(horizontal = 18.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -2410,9 +2489,15 @@ private fun MorCamBottomQuickCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val quickCardInteraction = remember { MutableInteractionSource() }
     Box(
         modifier = modifier
             .height(56.dp)
+            .cosmicTapSpring(
+                interactionSource = quickCardInteraction,
+                pressedScale = 0.94f,
+                cornerRadius = 16.dp
+            )
             .morCamOuterGlow(cornerRadius = 16.dp, shadowAlpha = 0.36f, rimGlowAlpha = 0.28f, bottomFlareAlpha = 0.44f)
             .clip(RoundedCornerShape(16.dp))
             .aetheriaBackdropBlur(rootSize, blurredBitmap, alpha = 0.94f)
@@ -2434,7 +2519,11 @@ private fun MorCamBottomQuickCard(
                 RoundedCornerShape(16.dp)
             )
             .morCamTopAndBottomSpecular(cornerRadius = 16.dp)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = quickCardInteraction,
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 7.dp, vertical = 7.dp),
         contentAlignment = Alignment.CenterStart
     ) {
@@ -2647,9 +2736,10 @@ private fun MorCamGlassToggleRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val motionConfig = LocalCosmicMotionConfig.current
     val thumbOffset by animateDpAsState(
         targetValue = if (checked) 20.dp else 2.dp,
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        animationSpec = if (motionConfig.enableMicroSprings) CosmicMotionSpecs.snappyOrb() else tween(140),
         label = "glassToggleThumb"
     )
     Row(

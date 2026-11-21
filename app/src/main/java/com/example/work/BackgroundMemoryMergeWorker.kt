@@ -86,17 +86,22 @@ class BackgroundMemoryMergeWorker(
             if (mergeCount >= MAX_MERGES_PER_RUN) break
             val ev1 = activeEvents[i]
             if (merged.contains(ev1.id)) continue
+            val parsed1 = com.example.data.repository.LivingMemoryCodec.parse(ev1.description, ev1.importanceScore)
+            // Preserve distinct curated Multi-POV Living Memories unless they are plain legacy notes
+            if (parsed1.isStructured) continue
 
-            val vec1 = repository.jsonToFloatArray(ev1.embedding)
-            if (vec1.isEmpty()) continue
+            val vec1 = repository.jsonToFloatArray(ev1.embedding).takeIf { it.isNotEmpty() }
+                ?: MemoryEngine.computeTurkishFeatureEmbedding(ev1.description)
 
             val similarGroup = mutableListOf<MemoryEventEntity>()
             for (j in (i + 1) until activeEvents.size) {
                 if (similarGroup.size >= MAX_GROUP_SIZE - 1) break
                 val ev2 = activeEvents[j]
                 if (merged.contains(ev2.id)) continue
-                val vec2 = repository.jsonToFloatArray(ev2.embedding)
-                if (vec2.isEmpty()) continue
+                val parsed2 = com.example.data.repository.LivingMemoryCodec.parse(ev2.description, ev2.importanceScore)
+                if (parsed2.isStructured) continue
+                val vec2 = repository.jsonToFloatArray(ev2.embedding).takeIf { it.size == vec1.size }
+                    ?: MemoryEngine.computeTurkishFeatureEmbedding(ev2.description)
                 val sim = MemoryEngine.cosineSimilarity(vec1, vec2)
                 if (sim >= MERGE_SIMILARITY_THRESHOLD) {
                     similarGroup.add(ev2)
@@ -111,7 +116,7 @@ class BackgroundMemoryMergeWorker(
 
             val maxImportance = group.maxOf { it.importanceScore }
             val sourceIds = group.map { it.id }.joinToString(",")
-            val vec = repository.computeEmbedding(mergedContent, null)
+            val vec = MemoryEngine.computeTurkishFeatureEmbedding(mergedContent)
             db.memoryEventDao().insertEvent(
                 MemoryEventEntity(
                     botId = botId,

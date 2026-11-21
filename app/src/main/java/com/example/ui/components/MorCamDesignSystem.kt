@@ -2,11 +2,22 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicDialogEnter
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicPopupEnter
+import com.example.ui.animation.cosmicTapSpring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -284,7 +295,8 @@ fun MorCamDialogShell(
         Box(
             modifier = Modifier
                 .fillMaxWidth(maxWidthFraction)
-                .padding(vertical = 14.dp),
+                .padding(vertical = 14.dp)
+                .cosmicDialogEnter(key = title),
             contentAlignment = Alignment.TopCenter
         ) {
             Box(
@@ -302,6 +314,7 @@ fun MorCamDialogShell(
                             )
                         )
                     )
+                    .cosmicGlassSheen(cornerRadius = 26.dp, periodMs = 6600, maxAlpha = 0.11f)
                     .border(BorderStroke(1.2.dp, MorCamTokens.RimGradient), RoundedCornerShape(26.dp))
             ) {
                 // Subtle internal silver-lavender top light refraction
@@ -393,19 +406,63 @@ fun MorCamDialogShell(
             }
 
             if (showTopStarCrest) {
-                Canvas(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .align(Alignment.TopCenter)
-                ) {
-                    drawMorCamFourPointStar(
-                        center = Offset(size.width / 2f, size.height / 2f),
-                        outerRadius = size.minDimension * 0.48f,
-                        innerRadius = size.minDimension * 0.16f
-                    )
-                }
+                MorCamAnimatedStarCrest(
+                    size = 22.dp,
+                    modifier = Modifier.align(Alignment.TopCenter)
+                )
             }
         }
+    }
+}
+
+@Composable
+internal fun MorCamAnimatedStarCrest(
+    size: Dp,
+    modifier: Modifier = Modifier,
+    baseGlowAlpha: Float = 0.55f
+) {
+    val motionConfig = LocalCosmicMotionConfig.current
+    val pulse: Float
+    val rotDeg: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infinite = rememberInfiniteTransition(label = "starCrestBreath")
+        pulse = infinite.animateFloat(
+            initialValue = 0.86f,
+            targetValue = 1.12f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "starPulse"
+        ).value
+        rotDeg = infinite.animateFloat(
+            initialValue = -7f,
+            targetValue = 7f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(3600, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "starTilt"
+        ).value
+    } else {
+        pulse = 1f
+        rotDeg = 0f
+    }
+    Canvas(
+        modifier = modifier
+            .size(size)
+            .graphicsLayer {
+                scaleX = pulse
+                scaleY = pulse
+                rotationZ = rotDeg
+            }
+    ) {
+        drawMorCamFourPointStar(
+            center = Offset(this.size.width / 2f, this.size.height / 2f),
+            outerRadius = this.size.minDimension * 0.48f,
+            innerRadius = this.size.minDimension * 0.16f,
+            glowAlpha = (baseGlowAlpha * pulse).coerceIn(0f, 0.9f)
+        )
     }
 }
 
@@ -572,12 +629,6 @@ fun MorCamCapsuleButton(
     testTag: String? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled) 0.97f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-        label = "morCamBtnScale"
-    )
     val shape = RoundedCornerShape(50)
     val fillBrush = when (variant) {
         MorCamButtonVariant.Primary -> MorCamTokens.PrimaryButtonFill
@@ -603,11 +654,14 @@ fun MorCamCapsuleButton(
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-                alpha = if (enabled) 1f else 0.48f
-            }
+            .graphicsLayer { alpha = if (enabled) 1f else 0.48f }
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                enabled = enabled,
+                pressedScale = 0.95f,
+                rippleColor = glowColor,
+                cornerRadius = 24.dp
+            )
             .morCamCosmicGlow(
                 cornerRadius = 24.dp,
                 glowColor = glowColor,
@@ -616,6 +670,12 @@ fun MorCamCapsuleButton(
             )
             .clip(shape)
             .background(fillBrush)
+            .cosmicGlassSheen(
+                enabled = enabled && variant == MorCamButtonVariant.Primary,
+                cornerRadius = 24.dp,
+                periodMs = 4600,
+                maxAlpha = 0.18f
+            )
             .border(BorderStroke(1.1.dp, borderBrush), shape)
             .clickable(
                 enabled = enabled,
@@ -664,12 +724,6 @@ fun MorCamCircleIconButton(
     testTag: String? = null
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.92f else 1f,
-        animationSpec = tween(100),
-        label = "circleBtnScale"
-    )
     val bgBrush = when {
         isDestructive -> Brush.radialGradient(listOf(Color(0x996B163A), Color(0xB83A0A20)))
         isActive -> Brush.radialGradient(listOf(Color(0xCC7C3AED), Color(0xB84C1D95)))
@@ -685,7 +739,12 @@ fun MorCamCircleIconButton(
     Box(
         modifier = modifier
             .size(size.coerceAtLeast(36.dp))
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                pressedScale = 0.89f,
+                rippleColor = if (isDestructive) MorCamTokens.DestructiveRimAccent else MorCamTokens.LavenderSoft,
+                cornerRadius = size / 2
+            )
             .clip(CircleShape)
             .background(bgBrush)
             .border(BorderStroke(1.dp, borderBrush), CircleShape)
@@ -719,12 +778,38 @@ fun MorCamGlassTextField(
     testTag: String? = null
 ) {
     var focused by remember { mutableStateOf(false) }
+    val motionConfig = LocalCosmicMotionConfig.current
     val shape = RoundedCornerShape(if (singleLine) 24.dp else 18.dp)
+    val borderWidth by animateDpAsState(
+        targetValue = if (focused) 1.45.dp else 0.95.dp,
+        animationSpec = if (motionConfig.enableMicroSprings) CosmicMotionSpecs.snappyOrb() else tween(120),
+        label = "fieldBorderWidth"
+    )
+    val iconScale by animateFloatAsState(
+        targetValue = if (focused && motionConfig.enableMicroSprings) 1.14f else 1f,
+        animationSpec = CosmicMotionSpecs.playfulSpark(),
+        label = "fieldIconBounce"
+    )
+    val focusGlowAlpha by animateFloatAsState(
+        targetValue = if (focused) 0.42f else 0f,
+        animationSpec = tween(220),
+        label = "fieldFocusGlow"
+    )
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = minHeight)
+            .then(
+                if (focusGlowAlpha > 0.01f) {
+                    Modifier.morCamCosmicGlow(
+                        cornerRadius = if (singleLine) 24.dp else 18.dp,
+                        glowColor = MorCamTokens.AmethystGlow,
+                        alpha = focusGlowAlpha,
+                        blurDp = 10.dp
+                    )
+                } else Modifier
+            )
             .clip(shape)
             .background(
                 Brush.verticalGradient(
@@ -733,7 +818,7 @@ fun MorCamGlassTextField(
             )
             .border(
                 BorderStroke(
-                    width = if (focused) 1.3.dp else 0.95.dp,
+                    width = borderWidth,
                     brush = if (focused) MorCamTokens.RimGradient else MorCamTokens.SubtleRimGradient
                 ),
                 shape = shape
@@ -753,6 +838,7 @@ fun MorCamGlassTextField(
                     tint = if (focused) MorCamTokens.LavenderLight else MorCamTokens.LavenderMuted,
                     modifier = Modifier
                         .padding(top = if (singleLine) 0.dp else 2.dp)
+                        .graphicsLayer { scaleX = iconScale; scaleY = iconScale }
                         .size(18.dp)
                 )
             }
@@ -816,14 +902,25 @@ fun MorCamOptionRow(
     }
     val contentTint = if (destructive) MorCamTokens.DestructiveText else MorCamTokens.SilverLavenderBright
 
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 50.dp)
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                pressedScale = 0.97f,
+                rippleColor = if (destructive) MorCamTokens.DestructiveRimAccent else MorCamTokens.LavenderSoft,
+                cornerRadius = 16.dp
+            )
             .clip(shape)
             .background(bgBrush)
             .border(BorderStroke(if (selected || destructive) 1.15.dp else 0.9.dp, borderBrush), shape)
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 14.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -994,10 +1091,23 @@ fun MorCamChipPill(
     modifier: Modifier = Modifier,
     icon: ImageVector? = null
 ) {
+    val motionConfig = LocalCosmicMotionConfig.current
+    val interactionSource = remember { MutableInteractionSource() }
+    val selectedScale by animateFloatAsState(
+        targetValue = if (selected && motionConfig.enableMicroSprings) 1.03f else 1f,
+        animationSpec = CosmicMotionSpecs.playfulSpark(),
+        label = "chipPopScale"
+    )
     val shape = RoundedCornerShape(50)
     Row(
         modifier = modifier
             .heightIn(min = 36.dp)
+            .graphicsLayer { scaleX = selectedScale; scaleY = selectedScale }
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                pressedScale = 0.94f,
+                cornerRadius = 18.dp
+            )
             .clip(shape)
             .background(
                 if (selected) MorCamTokens.PrimaryButtonFill
@@ -1010,7 +1120,11 @@ fun MorCamChipPill(
                 ),
                 shape
             )
-            .clickable(onClick = onClick)
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onClick
+            )
             .padding(horizontal = 12.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -1065,7 +1179,8 @@ fun MorCamPopupMenu(
         Box(
             modifier = Modifier
                 .widthIn(min = minWidth, max = 270.dp)
-                .padding(horizontal = 4.dp, vertical = 4.dp),
+                .padding(horizontal = 4.dp, vertical = 4.dp)
+                .cosmicPopupEnter(),
             contentAlignment = Alignment.TopCenter
         ) {
             Box(
@@ -1135,19 +1250,12 @@ fun MorCamPopupMenu(
                 }
             }
 
-            // Tiny 4-point silver-lavender starlight crest on top rim
-            Canvas(
-                modifier = Modifier
-                    .size(16.dp)
-                    .align(Alignment.TopCenter)
-            ) {
-                drawMorCamFourPointStar(
-                    center = Offset(size.width / 2f, size.height / 2f),
-                    outerRadius = size.minDimension * 0.46f,
-                    innerRadius = size.minDimension * 0.16f,
-                    glowAlpha = 0.45f
-                )
-            }
+            // Animated 4-point silver-lavender starlight crest on top rim
+            MorCamAnimatedStarCrest(
+                size = 16.dp,
+                baseGlowAlpha = 0.45f,
+                modifier = Modifier.align(Alignment.TopCenter)
+            )
         }
     }
 }

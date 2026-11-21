@@ -1602,7 +1602,392 @@ class EmochiRepository(
 
 
 
-    // --- Summary & Realtime Memory Split Writing ---
+    // --- 10/10 Automatic Neural Vault & Multi-POV Living Memory Engine ---
+
+    data class MemoryCommitSummary(
+        val savedFactsCount: Int = 0,
+        val savedMemoryPov: String? = null,
+        val savedMemoryTitle: String? = null
+    ) {
+        val hasAnyChange: Boolean get() = savedFactsCount > 0 || !savedMemoryTitle.isNullOrBlank()
+    }
+
+    /**
+     * Inserts or supersedes a structured fact in the Neural Vault with 256-dim Turkish embedding,
+     * subject+key / semantic deduplication, contradiction archival, and protection of user-edited facts.
+     */
+    suspend fun upsertNeuralVaultFact(
+        botId: String,
+        subject: String,
+        key: String,
+        value: String,
+        confidence: String = "certain",
+        isBotSaved: Boolean = true,
+        apiKey: String? = null
+    ): Boolean = withContext(Dispatchers.IO) {
+        val cleanSubject = subject.trim().take(48).ifBlank { "kullanıcı" }
+        val cleanKey = key.trim().take(48).ifBlank { MemoryEngine.inferFactKey(value) }
+        val cleanValue = value.trim().take(320)
+        if (cleanValue.length < 4) return@withContext false
+
+        val now = System.currentTimeMillis()
+        val combinedText = "$cleanSubject $cleanKey $cleanValue"
+        val embeddingVec = MemoryEngine.computeTurkishFeatureEmbedding(combinedText)
+        val embeddingJson = floatArrayToJson(embeddingVec)
+
+        val normSubject = TurkishTextAnalyzer.normalize(cleanSubject)
+        val normKey = TurkishTextAnalyzer.normalize(cleanKey)
+        val normValue = TurkishTextAnalyzer.normalize(cleanValue)
+
+        val activeFacts = try { memoryFactDao.getActiveFacts(botId) } catch (_: Exception) { emptyList() }
+
+        // Check same-subject facts for exact duplicates, user-corrected lock, or superseding updates
+        val sameSubjectFacts = activeFacts.filter {
+            val s = TurkishTextAnalyzer.normalize(it.subject)
+            s == normSubject || (s.length >= 3 && normSubject.length >= 3 && (s.contains(normSubject) || normSubject.contains(s)))
+        }
+
+        val toSupersede = mutableListOf<MemoryFactEntity>()
+        for (existing in sameSubjectFacts) {
+            val exKey = TurkishTextAnalyzer.normalize(existing.key)
+            val exVal = TurkishTextAnalyzer.normalize(existing.value)
+            val exVec = jsonToFloatArray(existing.embeddingJson).takeIf { it.size == embeddingVec.size }
+                ?: MemoryEngine.computeTurkishFeatureEmbedding("${existing.subject} ${existing.key} ${existing.value}")
+            val sim = cosineSimilarity(embeddingVec, exVec)
+            val keyMatches = exKey == normKey || TurkishTextAnalyzer.stemToken(exKey) == TurkishTextAnalyzer.stemToken(normKey)
+
+            // Exact or near-identical fact already stored -> refresh timestamp, no duplicate
+            if (exVal == normValue || (sim >= 0.90f && !isContradictingText(existing.value, cleanValue))) {
+                memoryFactDao.updateFact(
+                    existing.copy(
+                        lastConfirmedAt = now,
+                        embeddingJson = if (existing.embeddingJson.isBlank() || existing.embeddingJson == "[]") embeddingJson else existing.embeddingJson
+                    )
+                )
+                return@withContext false
+            }
+
+            // Never overwrite a fact manually edited/locked by the user
+            if (existing.userCorrected && (keyMatches || sim >= 0.80f)) {
+                return@withContext false
+            }
+
+            // Same subject + same key OR high semantic overlap/contradiction -> supersede old record
+            if (keyMatches || sim >= 0.84f || (sim >= 0.65f && isContradictingText(existing.value, cleanValue))) {
+                toSupersede.add(existing)
+            }
+        }
+
+        val factId = memoryFactDao.insertFact(
+            MemoryFactEntity(
+                id = 0L,
+                botId = botId,
+                subject = cleanSubject,
+                key = cleanKey,
+                value = cleanValue,
+                confidence = confidence,
+                lastConfirmedAt = now,
+                userCorrected = false,
+                supersededBy = null,
+                isBotSaved = isBotSaved,
+                embeddingJson = embeddingJson
+            )
+        )
+
+        for (oldFact in toSupersede) {
+            memoryFactDao.updateFact(oldFact.copy(supersededBy = factId))
+            try {
+                archivedMemoryDao.insertArchive(
+                    ArchivedMemoryEntity(
+                        botId = botId,
+                        originalMemoryId = oldFact.id,
+                        memoryType = "fact",
+                        content = "${oldFact.subject} / ${oldFact.key}: ${oldFact.value}",
+                        archivedReason = "superseded_by_fact_$factId"
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+
+        try {
+            extractAndSaveEntityRelations(botId, "$cleanSubject $cleanKey: $cleanValue")
+        } catch (_: Exception) {}
+
+        true
+    }
+
+    /**
+     * Commits a strictly vetted Multi-POV First-Person Living Memory ("Yaşanan Anı") with
+     * unspoken inner thoughts, copy-paste rejection, cooldown gating, and semantic deduplication.
+     */
+    suspend fun commitLivingMemory(
+        botId: String,
+        povCharacter: String,
+        title: String,
+        emotionTag: String,
+        salience: Int,
+        narrative: String,
+        innerThought: String,
+        rawChatTexts: List<String> = emptyList(),
+        storyDayIndex: Long = 1L,
+        storyCalendarDateStr: String = "",
+        isBotSaved: Boolean = true
+    ): Boolean = withContext(Dispatchers.IO) {
+        // Strict significance gate: only genuinely momentous events (>= 7/10) become Living Memories
+        if (salience < 7) return@withContext false
+        val cleanNarrative = narrative.trim()
+        val cleanInner = innerThought.trim()
+        if (cleanNarrative.length < 30) return@withContext false
+
+        // Reject lazy verbatim copy-paste of chat messages
+        if (rawChatTexts.isNotEmpty() && LivingMemoryCodec.isCopyPasteOfChat(cleanNarrative, rawChatTexts)) {
+            return@withContext false
+        }
+
+        val now = System.currentTimeMillis()
+        val activeEvents = try { memoryEventDao.getActiveEvents(botId) } catch (_: Exception) { emptyList() }
+
+        // Anti-spam cooldown: unless extraordinary (salience >= 9), avoid saving back-to-back within 90 seconds
+        val latestTimestamp = activeEvents.maxOfOrNull { it.timestamp } ?: 0L
+        if (latestTimestamp > 0L && (now - latestTimestamp) < 90_000L && salience < 9) {
+            return@withContext false
+        }
+
+        val encoded = LivingMemoryCodec.encode(
+            povCharacter = povCharacter,
+            title = title,
+            emotionTag = emotionTag,
+            salience = salience,
+            narrative = cleanNarrative,
+            innerThought = cleanInner
+        )
+        val searchable = LivingMemoryCodec.toSearchableText(encoded)
+        val embeddingVec = MemoryEngine.computeTurkishFeatureEmbedding(searchable)
+
+        // Semantic & lexical deduplication across ALL existing memories
+        for (existing in activeEvents) {
+            val exSearchable = LivingMemoryCodec.toSearchableText(existing.description)
+            val exVec = jsonToFloatArray(existing.embedding).takeIf { it.size == embeddingVec.size }
+                ?: MemoryEngine.computeTurkishFeatureEmbedding(exSearchable)
+            val sim = cosineSimilarity(embeddingVec, exVec)
+            val overlap = TurkishTextAnalyzer.stemOverlapRatio(searchable, exSearchable)
+            if (sim >= 0.78f || overlap >= 0.72f) {
+                return@withContext false
+            }
+        }
+
+        val importanceScore = (salience * 10).coerceIn(70, 100)
+        memoryEventDao.insertEvent(
+            MemoryEventEntity(
+                id = 0L,
+                botId = botId,
+                timestamp = now,
+                description = encoded,
+                importanceScore = importanceScore,
+                embedding = floatArrayToJson(embeddingVec),
+                supersededBy = null,
+                isBotSaved = isBotSaved,
+                realWorldTimestamp = now,
+                storyDayIndex = storyDayIndex,
+                storyCalendarDateStr = storyCalendarDateStr
+            )
+        )
+
+        val count = try { memoryEventDao.getEventCount(botId) } catch (_: Exception) { 0 }
+        if (count > 500) {
+            try { memoryEventDao.deleteOldestLowImportanceEvents(botId, count - 500) } catch (_: Exception) {}
+        }
+        true
+    }
+
+    /**
+     * Runs asynchronously after substantive chat turns to automatically:
+     * 1) Extract durable facts into Neural Vault (with smart conflict resolution & dedup)
+     * 2) Selectively craft a Multi-POV First-Person Living Memory (with unspoken inner thought!)
+     *    ONLY when the turn contains a genuinely significant turning point (salience >= 7/10).
+     */
+    suspend fun extractAndCommitTurnMemories(
+        bot: BotEntity,
+        recentMessages: List<MessageEntity>,
+        latestUserMsg: String,
+        latestAiReply: String
+    ): MemoryCommitSummary = withContext(Dispatchers.IO) {
+        if (bot.id.startsWith("book_") || bot.mode == "book") return@withContext MemoryCommitSummary()
+        if (!MemoryEngine.shouldExtractMemoriesForTurn(latestUserMsg, latestAiReply)) {
+            return@withContext MemoryCommitSummary()
+        }
+
+        val settings = getOrCreateSettings()
+        val userChar = bot.userCharName.ifBlank { "Kullanıcı" }
+        val aiChar = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName.ifBlank { bot.universeName }
+        val castMembers = try { getCastMembersForBot(bot.id) } catch (_: Exception) { emptyList() }
+        val knownCastNames = (listOf(userChar, aiChar) + castMembers.map { it.name })
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        val existingFacts = try { memoryFactDao.getActiveFacts(bot.id) } catch (_: Exception) { emptyList() }
+        val existingFactsPreview = existingFacts
+            .sortedByDescending { it.lastConfirmedAt }
+            .take(18)
+            .joinToString("\n") { "- (${it.subject}) ${it.key}: ${it.value}" }
+            .ifBlank { "(Henüz kayıtlı bilgi yok)" }
+
+        val recentContextBlock = recentMessages.takeLast(6).joinToString("\n") { m ->
+            val who = if (m.role == "user") userChar else aiChar
+            "$who: ${m.text.take(420)}"
+        }
+
+        val systemPrompt = """
+Sen bir Türkçe interaktif hikâye ve karakter psikolojisi için ÜST DÜZEY HAFIZA MİMARISIN.
+Görevin yalnızca GEÇERLİ JSON üretmektir (markdown, açıklama veya ek metin YAZMA).
+
+İki ayrı hafıza katmanını yönetirsin:
+1) "neural_facts" (Neural Vault — Kalıcı Olgular):
+   - Sadece gerçekten kalıcı, gelecekte hatırlanması gereken somut bilgileri çıkar (isim, gizli güç, verilen söz, ilişki değişimi, sır, korku, sevilen/sevilmeyen şey, yeni mekan, önemli eşya, geçmiş travma, plan/ittifak).
+   - Geçici anlık jestleri veya önemsiz lafları ASLA kaydetme. Zaten "MEVCUT NEURAL VAULT" listesinde birebir aynı olan bilgileri tekrarlama (sadece değiştiyse güncelle).
+   - "subject": Bilginin ait olduğu kişinin GERÇEK adı ($userChar, $aiChar veya sahnedeki yan karakter adı).
+   - "key": 1-3 kelimelik net Türkçe başlık (ör. "Gizli Sır", "Verilen Söz", "Güven Durumu", "Korkusu").
+   - "value": Kısa, net olgusal değer.
+
+2) "living_memory" (Yaşanan Anı — ÇOK SEÇİCİ!):
+   - Normal sohbet turlarının %80'inde KESİNLİKLE null döndür!
+   - YALNIZCA gerçekten unutulmaz, duygusal ağırlığı yüksek, ilişkiyi veya hikâyeyi kalıcı değiştiren bir dönüm noktası yaşandıysa (salience 7-10: büyük itiraf, ilk derin güven, ihanet, hayati kurtarma, sarsıcı sır, kutsal yemin, kırılma noktası, yoğun duygusal yakınlaşma) doldur!
+   - ASLA sohbette yazılan cümleleri kopyala-yapıştır yapma!
+   - "pov_character": Bu anıyı en derinden hisseden karakteri seç — BU KİŞİ $userChar (kullanıcının karakteri), $aiChar VEYA sahnedeki önemli bir yan karakter olabilir! Hangisinin iç dünyası bu anda en çok sarsıldıysa onun gözünden yaz.
+   - "narrative": 2-4 edebi cümle, BİRİNCİ TEKİL ŞAHIS ("Ben...") ağzıyla, o karakterin olayı bizzat yaşayıp sonradan hatırlıyormuş gibi anlattığı kişisel anı.
+   - "inner_thought": 1-2 cümle, MESAJDA HİÇ YAZILMAMIŞ VE DIŞA VURULMAMIŞ gizli iç düşünce / saklanan his / gerçek şüphe veya farkındalık.
+
+JSON ŞEMASI:
+{
+  "neural_facts": [
+    {"subject": "Karakter Adı", "key": "Kısa Başlık", "value": "Net bilgi", "confidence": "certain"}
+  ],
+  "living_memory": null
+}
+VEYA önemli bir anı varsa:
+{
+  "neural_facts": [...],
+  "living_memory": {
+    "pov_character": "Anlatıcı Karakter Adı",
+    "title": "2-5 kelimelik etkileyici başlık",
+    "emotion": "1-3 kelimelik duygu etiketi",
+    "salience": 8,
+    "narrative": "Birinci tekil şahısla yaşanmış anı anlatımı (asla kopyala-yapıştır değil)...",
+    "inner_thought": "Sohbette hiç dile getirilmemiş gizli iç düşünce..."
+  }
+}
+        """.trimIndent()
+
+        val userPrompt = """
+SAHNEDEKİ KARAKTERLER: ${knownCastNames.joinToString(", ")}
+
+MEVCUT NEURAL VAULT:
+$existingFactsPreview
+
+SON KONUŞMA BAĞLAMI:
+$recentContextBlock
+
+EN SON TUR (Bunu analiz et):
+$userChar: ${latestUserMsg.take(700)}
+$aiChar: ${latestAiReply.take(900)}
+        """.trimIndent()
+
+        val rawResponse = try {
+            callLlmForAudit(
+                settings = settings,
+                systemPrompt = systemPrompt,
+                userMessage = userPrompt,
+                botId = bot.id
+            )
+        } catch (_: Exception) {
+            ""
+        }
+
+        if (rawResponse.isBlank()) return@withContext MemoryCommitSummary()
+
+        val jsonObj = parseRobustJsonObject(rawResponse) ?: return@withContext MemoryCommitSummary()
+
+        var savedFacts = 0
+        val factsArr = jsonObj.optJSONArray("neural_facts")
+        if (factsArr != null) {
+            val limit = minOf(factsArr.length(), 4)
+            for (i in 0 until limit) {
+                val fObj = factsArr.optJSONObject(i) ?: continue
+                val subj = fObj.optString("subject", "").trim().ifBlank { userChar }
+                val k = fObj.optString("key", "").trim()
+                val v = fObj.optString("value", "").trim()
+                val conf = fObj.optString("confidence", "certain").trim().ifBlank { "certain" }
+                if (v.length >= 4) {
+                    val inserted = upsertNeuralVaultFact(
+                        botId = bot.id,
+                        subject = subj,
+                        key = k.ifBlank { MemoryEngine.inferFactKey(v) },
+                        value = v,
+                        confidence = conf,
+                        isBotSaved = true
+                    )
+                    if (inserted) savedFacts++
+                }
+            }
+        }
+
+        var savedMemoryPov: String? = null
+        var savedMemoryTitle: String? = null
+        val memObj = jsonObj.optJSONObject("living_memory")
+        if (memObj != null) {
+            val pov = memObj.optString("pov_character", "").trim().ifBlank { aiChar }
+            val title = memObj.optString("title", "").trim().ifBlank { "Unutulmaz An" }
+            val emotion = memObj.optString("emotion", "").trim().ifBlank { "Derin Etki" }
+            val salience = memObj.optInt("salience", 0)
+            val narrative = memObj.optString("narrative", "").trim()
+            val innerThought = memObj.optString("inner_thought", "").trim()
+
+            if (salience >= 7 && narrative.length >= 30 && innerThought.length >= 12) {
+                val committed = commitLivingMemory(
+                    botId = bot.id,
+                    povCharacter = pov,
+                    title = title,
+                    emotionTag = emotion,
+                    salience = salience,
+                    narrative = narrative,
+                    innerThought = innerThought,
+                    rawChatTexts = listOf(latestUserMsg, latestAiReply),
+                    storyDayIndex = bot.storyDayCounter,
+                    storyCalendarDateStr = bot.storyCalendarDate,
+                    isBotSaved = true
+                )
+                if (committed) {
+                    savedMemoryPov = pov
+                    savedMemoryTitle = title
+                }
+            }
+        }
+
+        MemoryCommitSummary(
+            savedFactsCount = savedFacts,
+            savedMemoryPov = savedMemoryPov,
+            savedMemoryTitle = savedMemoryTitle
+        )
+    }
+
+    private fun parseRobustJsonObject(raw: String): org.json.JSONObject? {
+        val cleaned = raw
+            .replace(Regex("""```json\s*""", RegexOption.IGNORE_CASE), "")
+            .replace("```", "")
+            .trim()
+        val firstBrace = cleaned.indexOf('{')
+        val lastBrace = cleaned.lastIndexOf('}')
+        if (firstBrace < 0 || lastBrace <= firstBrace) return null
+        val candidate = cleaned.substring(firstBrace, lastBrace + 1)
+        return try {
+            org.json.JSONObject(candidate)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    // --- Summary & Long-Term Checkpoint Archival (NEVER pollutes Living Memories with raw chat!) ---
 
     private suspend fun saveMemoryFragmentsFromSummary(
         botId: String,
@@ -1610,106 +1995,60 @@ class EmochiRepository(
         hafizaText: String,
         apiKey: String? = null
     ) {
-        val now = System.currentTimeMillis()
-        val currentStoryDay = botDao.getBotById(botId)?.storyDayCounter ?: 1L
+        val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
+        val defaultSubject = bot?.userCharName?.ifBlank { "kullanıcı" } ?: "kullanıcı"
 
-        // Process FACTS
+        // 1. Durable facts go through the deduplicated, embedded Neural Vault upsert pipeline
         hafizaText.lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
             val clean = line.removePrefix("-").removePrefix("*").removePrefix("•").trim()
-            if (clean.isNotBlank()) {
+            if (clean.length >= 6 && !clean.startsWith("[")) {
                 val parts = clean.split(":", limit = 2)
-                val key = if (parts.size == 2) parts[0].trim() else "genel"
+                val key = if (parts.size == 2) parts[0].trim() else MemoryEngine.inferFactKey(clean)
                 val value = if (parts.size == 2) parts[1].trim() else clean
-
+                val subject = MemoryEngine.inferFactSubject(value, defaultSubject)
                 val confidence = if (clean.contains("(çıkarım)") || clean.contains("(tahmin)")) "inferred" else "certain"
 
-                val existing = memoryFactDao.searchFacts(botId, key)
-                val factId = memoryFactDao.insertFact(
-                    MemoryFactEntity(
+                upsertNeuralVaultFact(
+                    botId = botId,
+                    subject = subject,
+                    key = key,
+                    value = value,
+                    confidence = confidence,
+                    isBotSaved = true,
+                    apiKey = apiKey
+                )
+            }
+        }
+
+        // 2. Scene progression bullets become searchable Long-Term Scene Checkpoints (NOT raw Anılar!)
+        val cleanSceneSummary = MemoryEngine.buildConciseCheckpointSummary(
+            checkpointNumber = (try { memoryCheckpointDao.getMaxCheckpointNumber(botId) } catch (_: Exception) { 0 } ?: 0) + 1,
+            recapEvents = durumText,
+            recapEmotions = hafizaText
+        )
+        if (cleanSceneSummary.length >= 24) {
+            try {
+                val nextNum = (memoryCheckpointDao.getMaxCheckpointNumber(botId) ?: 0) + 1
+                val msgCount = try { messageDao.getMessageCountForBot(botId) } catch (_: Exception) { 0 }
+                val cpVec = MemoryEngine.computeTurkishFeatureEmbedding(cleanSceneSummary)
+                memoryCheckpointDao.insertCheckpoint(
+                    MemoryCheckpointEntity(
+                        id = 0L,
                         botId = botId,
-                        subject = "kullanıcı",
-                        key = key,
-                        value = value,
-                        confidence = confidence,
-                        lastConfirmedAt = now
+                        checkpointNumber = nextNum,
+                        messageRangeStart = (msgCount - 20).coerceAtLeast(1),
+                        messageRangeEnd = msgCount.coerceAtLeast(1),
+                        summaryText = cleanSceneSummary,
+                        embedding = floatArrayToJson(cpVec),
+                        timestamp = System.currentTimeMillis(),
+                        isTemporary = false
                     )
                 )
-
-                existing.filter { !it.userCorrected && it.id != factId }.forEach { oldFact ->
-                    memoryFactDao.updateFact(oldFact.copy(supersededBy = factId))
-                    try {
-                        archivedMemoryDao.insertArchive(
-                            ArchivedMemoryEntity(
-                                botId = botId,
-                                originalMemoryId = oldFact.id,
-                                memoryType = "fact",
-                                content = "${oldFact.subject} / ${oldFact.key}: ${oldFact.value}",
-                                archivedReason = "superseded_by_fact_$factId"
-                            )
-                        )
-                    } catch (_: Exception) {}
-                }
-
-                // Knowledge Graph: check and save relation if present in fact line
-                try {
-                    extractAndSaveEntityRelations(botId, clean)
-                } catch (_: Exception) {}
-            }
-        }
-
-        // Process EVENTS
-        durumText.lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
-            val clean = line.removePrefix("-").removePrefix("*").removePrefix("•").trim()
-            if (clean.isNotBlank()) {
-                val importance = when {
-                    clean.contains("itiraf") || clean.contains("sır") || clean.contains("söz") || clean.contains("kavga") -> 90
-                    clean.contains("seviyor") || clean.contains("tehlike") -> 75
-                    else -> 50
-                }
-
-                val embeddingVec = computeEmbedding(clean, apiKey)
-                val newEvent = MemoryEventEntity(
-                    botId = botId,
-                    timestamp = now,
-                    description = clean,
-                    importanceScore = importance,
-                    embedding = floatArrayToJson(embeddingVec),
-                    storyDayIndex = currentStoryDay
-                )
-
-                val eventId = memoryEventDao.insertEvent(newEvent)
-
-                val activeEvents = memoryEventDao.getActiveEvents(botId)
-                activeEvents.filter { it.id != eventId }.forEach { oldEv ->
-                    val oldVec = jsonToFloatArray(oldEv.embedding)
-                    val sim = cosineSimilarity(embeddingVec, oldVec)
-                    if (sim > 0.85f && isContradictingText(clean, oldEv.description)) {
-                        memoryEventDao.updateEvent(oldEv.copy(supersededBy = eventId))
-                        try {
-                            archivedMemoryDao.insertArchive(
-                                ArchivedMemoryEntity(
-                                    botId = botId,
-                                    originalMemoryId = oldEv.id,
-                                    memoryType = "event",
-                                    content = oldEv.description,
-                                    archivedReason = "superseded_by_event_$eventId"
-                                )
-                            )
-                        } catch (_: Exception) {}
-                    }
-                }
-            }
-        }
-
-        // Keep max 500 active events
-        val count = memoryEventDao.getEventCount(botId)
-        if (count > 500) {
-            memoryEventDao.deleteOldestLowImportanceEvents(botId, count - 500)
+            } catch (_: Exception) {}
         }
     }
 
     private fun isContradictingText(t1: String, t2: String): Boolean {
-        // MemoryEngine'in daha kapsamlı versiyonuna yönlendir
         return MemoryEngine.isContradictingText(t1, t2)
     }
 
@@ -3156,6 +3495,8 @@ class EmochiRepository(
         return count
     }
 
+    private val lastSummarizedMessageCount = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     private suspend fun prepareContextAndSummarizeIfNeeded(
         bot: BotEntity,
         messages: List<MessageEntity>,
@@ -3177,22 +3518,26 @@ class EmochiRepository(
         val currentSysPrompt = buildSystemPrompt(bot, getOrCreateSettings(), relevantFragments = relevantFragments)
         val currentTokens = estimateTotalTokens(currentSysPrompt, activeMessages)
 
-        val isCriticallyFull = (currentTokens > maxBudgetTokens * 0.9) || (messages.size > 50)
-        val exceedsTriggerThreshold = messages.size > 22
+        val keepCount = 12
+        val alreadySummarized = (lastSummarizedMessageCount[bot.id] ?: 0).coerceIn(0, messages.size)
+        val unsummarizedOverflow = (messages.size - keepCount - alreadySummarized).coerceAtLeast(0)
+        val isCriticallyFull = ((currentTokens > maxBudgetTokens * 0.9) || (unsummarizedOverflow >= 24)) && unsummarizedOverflow >= 8
+        val exceedsTriggerThreshold = unsummarizedOverflow >= 12
 
         if (isCriticallyFull) {
-            // Emergency synchronous summarization when context is >90% full or message count is very large
-            val keepCount = 12
-            val olderMessages = messages.dropLast(keepCount)
+            // Summarize only the newly overflowed older slice into memory notes/fragments
+            // WITHOUT EVER deleting messages from Room database.
+            val endExclusive = (messages.size - keepCount).coerceAtLeast(alreadySummarized)
+            val olderSlice = messages.subList(alreadySummarized, endExclusive)
             val recentMessages = messages.takeLast(keepCount)
 
-            if (olderMessages.isNotEmpty()) {
-                val updatedBot = summarizeAndArchiveOlderMessages(bot, olderMessages)
+            if (olderSlice.isNotEmpty()) {
+                val updatedBot = summarizeAndArchiveOlderMessages(bot, olderSlice)
+                lastSummarizedMessageCount[bot.id] = endExclusive
                 botDao.setNeedsSummarization(bot.id, false)
                 return Pair(updatedBot, recentMessages)
             }
         } else if (exceedsTriggerThreshold) {
-            // Mark needsSummarization flag for WorkManager background execution instead of blocking synchronously
             if (!bot.needsSummarization) {
                 botDao.setNeedsSummarization(bot.id, true)
             }
@@ -3264,18 +3609,34 @@ class EmochiRepository(
             summarizationSucceeded = false
         }
 
-        // 2. Yerel Kırpma / Arşivleme Fallback (AI Bağlantısı veya Key Olmadığında)
+        // 2. Yerel Sahne Checkpoint Arşivi Fallback (AI Bağlantısı veya Key Olmadığında — asla Anılar'a ham sohbet kopyalamaz!)
         if (!summarizationSucceeded) {
             try {
-                val localSummaryHeader = "[Önceki Konuşma Arşivi]"
-                val sampleOldMsgs = olderMessages.takeLast(8).joinToString("\n") { m ->
+                val localSummaryHeader = "[Önceki Sahne Arşivi]"
+                val sampleOldMsgs = olderMessages.takeLast(6).joinToString("\n") { m ->
                     val sender = if (m.role == "user") userLabel else aiName
-                    val snippet = if (m.text.length > 80) m.text.take(80) + "..." else m.text
+                    val snippet = if (m.text.length > 90) m.text.take(90) + "..." else m.text
                     "- $sender: $snippet"
                 }
                 val fallbackStorySnippet = "$localSummaryHeader\n$sampleOldMsgs"
 
-                saveMemoryFragmentsFromSummary(bot.id, fallbackStorySnippet, "")
+                val nextNum = (try { memoryCheckpointDao.getMaxCheckpointNumber(bot.id) } catch (_: Exception) { 0 } ?: 0) + 1
+                val cpVec = MemoryEngine.computeTurkishFeatureEmbedding(fallbackStorySnippet)
+                try {
+                    memoryCheckpointDao.insertCheckpoint(
+                        MemoryCheckpointEntity(
+                            id = 0L,
+                            botId = bot.id,
+                            checkpointNumber = nextNum,
+                            messageRangeStart = 1,
+                            messageRangeEnd = olderMessages.size,
+                            summaryText = "Sahne #$nextNum (Yerel Arşiv): ${olderMessages.takeLast(4).joinToString(" | ") { it.text.take(70) }}",
+                            embedding = floatArrayToJson(cpVec),
+                            timestamp = System.currentTimeMillis(),
+                            isTemporary = true
+                        )
+                    )
+                } catch (_: Exception) {}
 
                 val combinedStory = listOf(bot.storyNotes, fallbackStorySnippet).filter { it.isNotBlank() }
                     .joinToString("\n").lines().takeLast(25).joinToString("\n")
@@ -3292,14 +3653,9 @@ class EmochiRepository(
             }
         }
 
-        // 3. Eski Mesajları Veritabanından Temizleme
-        if (summarizationSucceeded) {
-            db.withTransaction {
-                for (m in olderMessages) {
-                    messageDao.deleteMessageById(m.id)
-                }
-            }
-        }
+        // 3. Eski mesajlar veritabanında KALICI olarak korunur (asla silinmez!).
+        // Sohbet ekranı performans için son 20 mesajı gösterir ve yukarı çıkıldığında
+        // 20'şer mesajlık "Daha Fazla Mesaj Göster" butonuyla tüm geçmişi eksiksiz sunar.
 
         return updatedBot
     }
@@ -5724,25 +6080,28 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             sb.appendLine("\n[GÜNCEL HİKAYE DURUMU VE SAHNE NOTLARI]")
             sb.appendLine(bot.storyNotes.trim())
         }
-        if (bot.memoryNotes.isNotBlank()) {
-            sb.appendLine("\n[UZUN SÜRELİ HAFIZA ÖZETLERİ]")
-            sb.appendLine(bot.memoryNotes.trim())
-        }
         if (relevantFacts.isNotEmpty()) {
-            sb.appendLine("\n[BİLİNEN OLGULAR]")
-            relevantFacts.take(10).forEach { f ->
-                sb.appendLine("- (${f.subject}) ${f.key}: ${f.value}")
+            sb.appendLine("\n[NEURAL VAULT — KESİN HAFIZA KAYITLARI (ASLA ÇELİŞME)]")
+            relevantFacts.take(15).forEach { f ->
+                val pinMark = if (f.userCorrected) "★ " else ""
+                sb.appendLine("- $pinMark(${f.subject}) [${f.key}]: ${f.value}")
             }
         }
         if (relevantEvents.isNotEmpty()) {
-            sb.appendLine("\n[ÖNEMLİ GEÇMİŞ OLAYLAR]")
-            relevantEvents.take(8).forEach { ev ->
-                sb.appendLine("- ${ev.description}")
+            sb.appendLine("\n[YAŞANAN ANILAR — KARAKTERLERİN GÖZÜNDEN VE SÖYLENMEMİŞ İÇ SESLERİ]")
+            relevantEvents.take(10).forEach { ev ->
+                sb.appendLine(LivingMemoryCodec.formatForPrompt(ev, bot.storyDayCounter))
+            }
+        }
+        if (recentCheckpoints.isNotEmpty()) {
+            sb.appendLine("\n[GEÇMİŞ SAHNE ZİNCİRİ (UZUN DÖNEM HAFIZA)]")
+            recentCheckpoints.take(4).forEach { cp ->
+                sb.appendLine("- ${cp.summaryText}")
             }
         }
         if (relevantFragments.isNotEmpty()) {
-            sb.appendLine("\n[İLGİLİ HAFIZA KESİTLERİ]")
-            relevantFragments.take(6).forEach { frag ->
+            sb.appendLine("\n[İLGİLİ GEÇMİŞ HAFIZA KESİTLERİ]")
+            relevantFragments.take(5).forEach { frag ->
                 sb.appendLine("- ${frag.content}")
             }
         }
@@ -5761,7 +6120,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             sb.appendLine("\n[ZAMAN ATLAMASI NOTU]: $decayNote")
         }
 
-        // BÖLÜM 2 & BÖLÜM 3: ROMAN KARAKTERİ PSİKOLOJİSİ, VAAZ YASAĞI VE BİRLEŞTİRİLMİŞ ANLATIM MOTORU KURALLARI
+        // BÖLÜM 2 & BÖLÜM 3: ROMAN KARAKTERİ PSİKOLOJİSİ, HAFIZA SÜREKLİLİĞİ VE ANLATIM MOTORU KURALLARI
         val effectiveLength = if (bot.customLength.isBlank() || bot.customLength == "default") {
             settings.responseLength.ifBlank { "standard" }
         } else {
@@ -5808,6 +6167,11 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         }
         sb.appendLine("6. KULLANICI YERİNE KONUŞMA VE EYLEM YAZMA YASAĞI (No Godmodding):")
         sb.appendLine("   - ASLA '$userTitle' (kullanıcı) adına konuşma, onun yerine karar verme veya onun ne yaptığını/hissettiğini yazma. Yalnızca '$aiTitle' karakterinin (ve gerekiyorsa yan karakterlerin) tepkisini yazıp hamleyi '$userTitle' karakterine bırak.")
+        sb.appendLine("7. HAFIZA SÜREKLİLİĞİ VE İÇ SES DERİNLİĞİ:")
+        sb.appendLine("   - Yukarıdaki NEURAL VAULT kayıtlarıyla ASLA çelişme; bu bilgileri karakterin doğal hafızası olarak benimse.")
+        sb.appendLine("   - YAŞANAN ANILAR ve karakterlerin söylenmemiş iç düşünceleri sahnenin alt metnini besler; robotik özet gibi sıralamak yerine karakterin ses tonuna, tereddüdüne, bakışına ve satır arası tepkilerine doğalca yansıt.")
+        sb.appendLine("8. TEKRAR YASAĞI VE CANLI SAHNE RİTMİ:")
+        sb.appendLine("   - Önceki yanıtlarındaki aynı açılış cümlelerini, aynı klişe jestleri veya kalıp tepkileri tekrarlama. Her yanıt sahneyi psikolojik veya dramatik olarak bir adım ileri taşısın ve doğal, akıcı Türkçe ile yazılsın.")
 
         // BÖLÜM 1: EN SONA OTOMATİK KURGUSAL EVREN BİLDİRİMİ (AI-ONLY CONTEXT INJECTION)
         sb.appendLine()
@@ -5850,19 +6214,27 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         val effectiveModel = getEffectiveModelForProvider(settings)
         val (updatedBot, contextMessages) = prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
 
-        val lastUserText = contextMessages.lastOrNull { it.role == "user" }?.text.orEmpty()
-        val relevantFragments = getRelevantMemoryFragments(updatedBot, lastUserText)
-        val activeFacts = try { memoryFactDao.getActiveFacts(updatedBot.id) } catch (_: Exception) { emptyList() }
-        val activeEvents = try { memoryEventDao.getActiveEvents(updatedBot.id) } catch (_: Exception) { emptyList() }
         val castMembers = try { getCastMembersForBot(updatedBot.id) } catch (_: Exception) { emptyList() }
+        val activeCastNames = (listOf(updatedBot.userCharName, updatedBot.aiName, updatedBot.universeName) +
+            castMembers.map { it.name }).filter { it.isNotBlank() }.distinct()
+
+        // 10/10 Unlimited Multi-Source Turkish Hybrid RAG Retrieval
+        val ragBundle = managers.memoryRetrievalManager.retrieveHybridContext(
+            bot = updatedBot,
+            recentMessages = contextMessages,
+            activeCastNames = activeCastNames,
+            apiKey = getBuildConfigKey(),
+            maxTokens = MemoryEngine.MAX_MEMORY_PROMPT_TOKENS
+        )
 
         val sysPrompt = buildSystemPrompt(
             bot = updatedBot,
             settings = settings,
             includeStyleGuide = true,
-            relevantFragments = relevantFragments,
-            relevantEvents = activeEvents,
-            relevantFacts = activeFacts,
+            relevantFragments = ragBundle.fragments,
+            relevantEvents = ragBundle.events,
+            relevantFacts = ragBundle.facts,
+            recentCheckpoints = ragBundle.checkpoints,
             castMembers = castMembers,
             lastMessageTimestamp = contextMessages.lastOrNull()?.timestamp ?: 0L,
             totalMessageCount = messages.size
@@ -5880,42 +6252,57 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         if (response.toolCalls.isNotEmpty()) {
             try {
                 for (tc in response.toolCalls) {
-                    val content = tc.arguments["content"]?.toString()?.trim().orEmpty()
-                    val category = tc.arguments["category"]?.toString()?.trim().orEmpty()
-                    val subject = tc.arguments["subject"]?.toString()?.trim().orEmpty().ifBlank { "kullanıcı" }
-                    if (tc.name == "save_memory" && content.isNotBlank()) {
-                        if (category.equals("event", ignoreCase = true)) {
-                            memoryEventDao.insertEvent(
-                                MemoryEventEntity(
-                                    id = 0L,
-                                    botId = updatedBot.id,
-                                    timestamp = System.currentTimeMillis(),
-                                    description = content,
-                                    importanceScore = 7,
-                                    embedding = "[]",
-                                    supersededBy = null,
-                                    isBotSaved = true,
-                                    realWorldTimestamp = System.currentTimeMillis(),
-                                    storyDayIndex = updatedBot.storyDayCounter,
-                                    storyCalendarDateStr = updatedBot.storyCalendarDate
-                                )
-                            )
-                        } else {
-                            memoryFactDao.insertFact(
-                                MemoryFactEntity(
-                                    id = 0L,
+                    when (tc.name) {
+                        "save_memory" -> {
+                            val content = tc.arguments["content"]?.toString()?.trim().orEmpty()
+                            val category = tc.arguments["category"]?.toString()?.trim().orEmpty()
+                            val importance = tc.arguments["importance"]?.toString()?.trim()?.toIntOrNull() ?: 6
+                            val subject = tc.arguments["subject"]?.toString()?.trim().orEmpty()
+                                .ifBlank { MemoryEngine.inferFactSubject(content, updatedBot.userCharName.ifBlank { "kullanıcı" }) }
+
+                            if (content.isNotBlank() && importance >= 5) {
+                                // Tool calls route cleanly into Neural Vault Facts with 256-dim embeddings & dedup
+                                // (Living Multi-POV Memories are strictly curated by the dedicated post-turn extractor!)
+                                val key = if (category.equals("event", ignoreCase = true)) {
+                                    "Önemli Gelişme"
+                                } else {
+                                    MemoryEngine.inferFactKey(content)
+                                }
+                                upsertNeuralVaultFact(
                                     botId = updatedBot.id,
                                     subject = subject,
-                                    key = "bilgi",
+                                    key = key,
                                     value = content,
-                                    confidence = "HIGH",
-                                    lastConfirmedAt = System.currentTimeMillis(),
-                                    userCorrected = false,
-                                    supersededBy = null,
-                                    isBotSaved = true,
-                                    embeddingJson = "[]"
+                                    confidence = if (importance >= 7) "certain" else "inferred",
+                                    isBotSaved = true
                                 )
-                            )
+                            }
+                        }
+                        "update_memory" -> {
+                            val memId = tc.arguments["memoryId"]?.toString()?.trim()?.toLongOrNull()
+                            val newContent = tc.arguments["newContent"]?.toString()?.trim().orEmpty()
+                            if (memId != null && newContent.isNotBlank()) {
+                                val existingFact = memoryFactDao.getActiveFacts(updatedBot.id).firstOrNull { it.id == memId }
+                                if (existingFact != null && !existingFact.userCorrected) {
+                                    val freshVec = MemoryEngine.computeTurkishFeatureEmbedding("${existingFact.subject} ${existingFact.key} $newContent")
+                                    memoryFactDao.updateFact(
+                                        existingFact.copy(
+                                            value = newContent,
+                                            lastConfirmedAt = System.currentTimeMillis(),
+                                            embeddingJson = floatArrayToJson(freshVec)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        "delete_memory" -> {
+                            val memId = tc.arguments["memoryId"]?.toString()?.trim()?.toLongOrNull()
+                            if (memId != null) {
+                                val existingFact = memoryFactDao.getActiveFacts(updatedBot.id).firstOrNull { it.id == memId }
+                                if (existingFact != null && !existingFact.userCorrected) {
+                                    memoryFactDao.deleteFact(memId)
+                                }
+                            }
                         }
                     }
                 }

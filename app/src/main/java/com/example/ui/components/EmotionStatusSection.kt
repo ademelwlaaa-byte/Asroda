@@ -1,8 +1,17 @@
 package com.example.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.ui.graphics.graphicsLayer
+import com.example.ui.animation.CosmicAnimatedCounter
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.cosmicStaggeredEnter
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -647,6 +656,11 @@ fun EmotionStatusSection(
                     )
                 }
             }
+            val chevronRot by animateFloatAsState(
+                targetValue = if (showTimeline) 180f else 0f,
+                animationSpec = CosmicMotionSpecs.snappyOrb(),
+                label = "timelineChevronRot"
+            )
             Box(
                 modifier = Modifier
                     .size(30.dp)
@@ -656,15 +670,22 @@ fun EmotionStatusSection(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = if (showTimeline) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    imageVector = Icons.Default.KeyboardArrowDown,
                     contentDescription = "Aç/Kapat",
                     tint = MorCamTokens.LavenderLight,
-                    modifier = Modifier.size(18.dp)
+                    modifier = Modifier
+                        .size(18.dp)
+                        .graphicsLayer { rotationZ = chevronRot }
                 )
             }
         }
 
-        if (showTimeline) {
+        AnimatedVisibility(
+            visible = showTimeline,
+            enter = expandVertically(CosmicMotionSpecs.velvetGlass()) + fadeIn(tween(220)),
+            exit = shrinkVertically(tween(180)) + fadeOut(tween(140))
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
             Spacer(modifier = Modifier.height(8.dp))
             if (affectionEvents.isEmpty()) {
                 Box(
@@ -752,6 +773,7 @@ fun EmotionStatusSection(
                     }
                 }
             }
+            }
         }
     }
 }
@@ -791,9 +813,8 @@ private fun EmotionBarItem(
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(label, fontFamily = InterFontFamily, color = MorCamTokens.LavenderLight, fontSize = 11.5.sp)
             }
-            Text(
-                text = "$value",
-                fontFamily = InterFontFamily,
+            CosmicAnimatedCounter(
+                count = value,
                 color = colorLight,
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Bold

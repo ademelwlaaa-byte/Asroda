@@ -7,9 +7,24 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import com.example.ui.animation.CosmicAnimatedCounter
+import com.example.ui.animation.CosmicMotionPreferences
+import com.example.ui.animation.CosmicMotionPreviewStrip
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.MotionIntensityMode
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicStaggeredEnter
+import com.example.ui.animation.cosmicTapSpring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -155,6 +170,9 @@ fun GlobalSettingsModal(
     val modalRootPosState = remember { mutableStateOf(Offset.Zero) }
     val rootSize = modalRootSizeState.value
     val blurredBg = remember(context) { createFrostedGlobalSettingsBackdropBitmap(context) }
+    val refPlates = remember(context) { loadGlobalSettingsRefPlates(context) }
+    val motionConfig = LocalCosmicMotionConfig.current
+    val currentMotionMode by CosmicMotionPreferences.mode.collectAsState()
 
     val customProviders by viewModel.customProviders.collectAsState()
 
@@ -528,16 +546,6 @@ fun GlobalSettingsModal(
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
-        // Ultra-subtle atmospheric vignette that preserves vivid cosmic nebula glow
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(Color(0x1E070214), Color(0x0E0E0422), Color(0x2E050110))
-                    )
-                )
-        )
 
         Column(
             modifier = Modifier
@@ -546,19 +554,20 @@ fun GlobalSettingsModal(
                 .navigationBarsPadding()
                 .imePadding()
         ) {
-                // ── 1. SYMMETRICAL MOR NEON HEADER ──
+                // ── 1. SYMMETRICAL MOR NEON HEADER (EXACT REFERENCE PLATES) ──
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                        .padding(horizontal = 14.dp, vertical = 5.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
                     GlobalGlassIconOrb(
                         rootSize = rootSize,
                         blurredBg = blurredBg,
                         onClick = onDismiss,
                         size = 44.dp,
+                        orbStyle = GlobalOrbStyle.HEADER_LEFT,
                         modifier = Modifier.testTag("global_settings_back_button")
                     ) {
                         Icon(
@@ -569,43 +578,28 @@ fun GlobalSettingsModal(
                         )
                     }
 
-                    // Center dark smoked Mor Neon glass capsule
+                    // Center Mor Neon glass capsule (exact reference plate + subtle glass sheen)
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(52.dp)
-                            .morNeonDoubleHalo(
-                                cornerRadius = 26.dp,
-                                outerColor = Color(0xFF7C3AED),
-                                midColor = Color(0xFFA855F7),
-                                coreColor = Color(0xFFE9D5FF),
-                                intensity = 0.56f,
-                                outerBlur = 10.dp,
-                                midBlur = 4.dp
+                            .height(50.dp)
+                            .drawRefPlate(
+                                bitmap = refPlates.headerPill,
+                                bleedFracX = 0.039f,
+                                bleedFracY = 0.220f
                             )
-                            .clip(RoundedCornerShape(50))
-                            .aetheriaBackdropBlur(rootSize, blurredBg, alpha = 0.55f)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color(0xC41A0836), Color(0xD80E041F), Color(0xCC15072C))
-                                )
-                            )
-                            .morNeonGlassFlares(
-                                cornerRadius = 26.dp,
-                                topAlpha = 0.50f,
-                                bottomAlpha = 0.36f,
-                                innerBevelAlpha = 0.22f,
-                                topXFraction = 0.26f,
-                                bottomXFraction = 0.74f
-                            )
-                            .border(BorderStroke(1.3.dp, GlobalMorCamColors.RimGradient), RoundedCornerShape(50)),
+                            .cosmicGlassSheen(
+                                cornerRadius = 25.dp,
+                                periodMs = 6200,
+                                maxAlpha = 0.14f
+                            ),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text(
                                 text = "Genel Ayarlar",
                                 color = Color.White,
-                                fontSize = 19.sp,
+                                fontSize = 18.5.sp,
                                 fontWeight = FontWeight.Normal,
                                 fontFamily = DisplaySerifFontFamily,
                                 maxLines = 1,
@@ -623,21 +617,21 @@ fun GlobalSettingsModal(
                             ) {
                                 Text(
                                     text = "✦",
-                                    color = Color(0xFFD8B4FE),
-                                    fontSize = 10.sp
+                                    color = Color(0xFFE9D5FF),
+                                    fontSize = 9.5.sp
                                 )
                                 Text(
                                     text = "API & Sistem Merkezi",
                                     color = GlobalMorCamColors.LavenderSubtext,
-                                    fontSize = 11.sp,
-                                    letterSpacing = 0.3.sp,
+                                    fontSize = 10.8.sp,
+                                    letterSpacing = 0.25.sp,
                                     fontFamily = InterFontFamily,
                                     maxLines = 1
                                 )
                                 Text(
                                     text = "✦",
-                                    color = Color(0xFFD8B4FE),
-                                    fontSize = 10.sp
+                                    color = Color(0xFFE9D5FF),
+                                    fontSize = 9.5.sp
                                 )
                             }
                         }
@@ -648,6 +642,7 @@ fun GlobalSettingsModal(
                         blurredBg = blurredBg,
                         onClick = { showFallbackLogModal = true },
                         size = 44.dp,
+                        orbStyle = GlobalOrbStyle.HEADER_RIGHT,
                         modifier = Modifier.testTag("global_settings_logs_button")
                     ) {
                         Icon(
@@ -659,66 +654,40 @@ fun GlobalSettingsModal(
                     }
                 }
 
-                // ── 2. FOUR NEON GLASS PILL TABS WITH ICONS ──
+                // ── 2. FOUR NEON GLASS PILL TABS (EXACT REFERENCE PLATES) ──
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 14.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     val tabs = listOf(
-                        Triple("API", Icons.Default.Bolt, 0.84f),
+                        Triple("API", Icons.Default.Bolt, 0.88f),
                         Triple("Sohbet", Icons.Default.ChatBubble, 1.00f),
-                        Triple("Ses & Dil", Icons.Default.GraphicEq, 1.18f),
+                        Triple("Ses & Dil", Icons.Default.GraphicEq, 1.14f),
                         Triple("Sistem", Icons.Default.Settings, 0.98f)
                     )
                     tabs.forEachIndexed { index, (label, tabIcon, tabWeight) ->
                         val selected = activeTab == index
-                        val tabShape = RoundedCornerShape(50)
+                        val tabInteraction = remember { MutableInteractionSource() }
                         Box(
                             modifier = Modifier
                                 .weight(tabWeight)
                                 .height(38.dp)
-                                .then(
-                                    if (selected) {
-                                        Modifier.morNeonDoubleHalo(
-                                            cornerRadius = 19.dp,
-                                            outerColor = Color(0xFF8B5CF6),
-                                            midColor = Color(0xFFC084FC),
-                                            coreColor = Color(0xFFF3E8FF),
-                                            intensity = 0.88f,
-                                            outerBlur = 11.dp,
-                                            midBlur = 5.dp
-                                        )
-                                    } else Modifier
+                                .cosmicTapSpring(
+                                    interactionSource = tabInteraction,
+                                    pressedScale = 0.93f,
+                                    cornerRadius = 19.dp
                                 )
-                                .clip(tabShape)
-                                .aetheriaBackdropBlur(rootSize, blurredBg, alpha = if (selected) 0.35f else 0.50f)
-                                .background(
-                                    if (selected) Brush.verticalGradient(
-                                        listOf(Color(0xEE7C3AED), Color(0xF25B21B6), Color(0xEE6D28D9))
-                                    ) else Brush.verticalGradient(
-                                        listOf(Color(0xC814062A), Color(0xDA0B0318))
-                                    )
+                                .drawRefPlate(
+                                    bitmap = if (selected) refPlates.tabActive else refPlates.tabInactive,
+                                    bleedFracX = if (selected) 0.123f else 0.110f,
+                                    bleedFracY = if (selected) 0.270f else 0.243f
                                 )
-                                .then(
-                                    if (selected) {
-                                        Modifier.morNeonGlassFlares(
-                                            cornerRadius = 19.dp,
-                                            topAlpha = 0.65f,
-                                            bottomAlpha = 0.45f,
-                                            innerBevelAlpha = 0.35f,
-                                            topXFraction = 0.30f,
-                                            bottomXFraction = 0.72f
-                                        )
-                                    } else Modifier
-                                )
-                                .border(
-                                    width = if (selected) 1.5.dp else 1.dp,
-                                    brush = if (selected) GlobalMorCamColors.ActiveRimGradient else GlobalMorCamColors.SubtleTabRimGradient,
-                                    shape = tabShape
-                                )
-                                .clickable { activeTab = index }
+                                .clickable(
+                                    interactionSource = tabInteraction,
+                                    indication = null
+                                ) { activeTab = index }
                                 .testTag("global_settings_tab_$index")
                                 .padding(horizontal = 4.dp),
                             contentAlignment = Alignment.Center
@@ -730,12 +699,12 @@ fun GlobalSettingsModal(
                                 Icon(
                                     imageVector = tabIcon,
                                     contentDescription = null,
-                                    tint = if (selected) Color.White else Color(0xFFA855F7),
+                                    tint = if (selected) Color.White else Color(0xFFB784FF),
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Text(
                                     text = label,
-                                    color = if (selected) Color.White else Color(0xFFD8CCF0),
+                                    color = if (selected) Color.White else Color(0xFFDFD5F5),
                                     fontSize = 11.5.sp,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                     fontFamily = InterFontFamily,
@@ -748,16 +717,28 @@ fun GlobalSettingsModal(
                     }
                 }
 
-                // ── 3. TAB CONTENT AREA (INNER PADDING SO OUTER NEON HALOS NEVER CLIP) ──
-                Column(
+                // ── 3. TAB CONTENT AREA (DIRECTIONAL COSMIC TAB GLIDE) ──
+                AnimatedContent(
+                    targetState = activeTab,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .weight(1f),
+                    transitionSpec = {
+                        CosmicMotionSpecs.cosmicTabTransition(
+                            forward = targetState >= initialState,
+                            config = motionConfig
+                        )
+                    },
+                    label = "globalSettingsTabContent"
+                ) { tabIdx ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
                         .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp, vertical = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(9.dp)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    when (activeTab) {
+                    when (tabIdx) {
                         // ═══════════════════════════════════════════════════════
                         // TAB 0: STREAMLINED MOR NEON API HUB (5 SEPARATE CARDS)
                         // ═══════════════════════════════════════════════════════
@@ -767,10 +748,11 @@ fun GlobalSettingsModal(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
                                 highlighted = prioritizeFreeKeyless,
-                                topFlareFraction = 0.18f,
-                                bottomFlareFraction = 0.74f,
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 11.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                flipHorizontal = false,
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 0, key = "gs_tab0_0")
                             ) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -788,13 +770,13 @@ fun GlobalSettingsModal(
                                             Icon(
                                                 imageVector = Icons.Default.Bolt,
                                                 contentDescription = null,
-                                                tint = if (prioritizeFreeKeyless) GlobalMorCamColors.SoftEmerald else Color(0xFFA855F7),
-                                                modifier = Modifier.size(18.dp)
+                                                tint = if (prioritizeFreeKeyless) GlobalMorCamColors.SoftEmerald else Color(0xFFB784FF),
+                                                modifier = Modifier.size(17.dp)
                                             )
                                             Text(
                                                 text = "Öncelik: Free API'siz",
                                                 color = Color.White,
-                                                fontSize = 15.sp,
+                                                fontSize = 14.5.sp,
                                                 fontWeight = FontWeight.SemiBold,
                                                 fontFamily = InterFontFamily
                                             )
@@ -805,8 +787,8 @@ fun GlobalSettingsModal(
                                             else
                                                 "Kapalı — Önce aşağıdaki ekli API'ların (#1'den başlayarak) kullanılır; gerekirse Free API'siz yedek olur.",
                                             color = GlobalMorCamColors.LavenderSubtext,
-                                            fontSize = 11.5.sp,
-                                            lineHeight = 15.5.sp,
+                                            fontSize = 11.2.sp,
+                                            lineHeight = 14.8.sp,
                                             fontFamily = InterFontFamily
                                         )
                                     }
@@ -823,14 +805,16 @@ fun GlobalSettingsModal(
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
-                                topFlareFraction = 0.30f,
-                                bottomFlareFraction = 0.84f,
+                                flipHorizontal = false,
                                 contentPadding = PaddingValues(0.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 1, key = "gs_tab0_1")
                             ) {
                                 ApiHubEntryRow(
+                                    refPlates = refPlates,
                                     icon = Icons.Default.Search,
-                                    iconAccent = Color(0xFFD8B4FE),
+                                    iconAccent = Color(0xFFF3E8FF),
                                     title = "API Sağlayıcı Ara & Ekle",
                                     subtitle = "${ApiProviderCatalog.catalogProviders.size}+ servis • Gemini, OpenAI, Claude, DeepSeek, Groq, OpenRouter...",
                                     badgeText = "Katalog",
@@ -843,14 +827,16 @@ fun GlobalSettingsModal(
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
-                                topFlareFraction = 0.72f,
-                                bottomFlareFraction = 0.22f,
+                                flipHorizontal = true,
                                 contentPadding = PaddingValues(0.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 2, key = "gs_tab0_2")
                             ) {
                                 ApiHubEntryRow(
+                                    refPlates = refPlates,
                                     icon = Icons.Default.Code,
-                                    iconAccent = Color(0xFFD8B4FE),
+                                    iconAccent = Color(0xFFF3E8FF),
                                     title = "Özel (Custom) API",
                                     subtitle = "OpenAI veya Anthropic uyumlu kendi sunucu adresini ekle.",
                                     badgeText = "URL",
@@ -866,18 +852,22 @@ fun GlobalSettingsModal(
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
-                                topFlareFraction = 0.18f,
-                                bottomFlareFraction = 0.70f,
+                                flipHorizontal = false,
                                 contentPadding = PaddingValues(0.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 3, key = "gs_tab0_3")
                             ) {
                                 ApiHubEntryRow(
+                                    refPlates = refPlates,
                                     icon = Icons.Default.AutoAwesome,
                                     iconAccent = GlobalMorCamColors.SoftEmerald,
                                     title = "Free API'siz Sağlayıcılar",
                                     subtitle = "Pollinations, LLM7, OVH AI — anahtar gerektirmez.",
                                     badgeText = "$activeFreeCount Aktif",
-                                    badgeTint = if (activeFreeCount > 0) GlobalMorCamColors.SoftEmerald else GlobalMorCamColors.MutedLavender,
+                                    badgeCount = activeFreeCount,
+                                    badgeCountSuffix = " Aktif",
+                                    badgeTint = if (activeFreeCount > 0) Color(0xFF4ADE80) else GlobalMorCamColors.MutedLavender,
                                     onClick = { showFreeKeylessSheet = true },
                                     modifier = Modifier.testTag("free_keyless_entry_button")
                                 )
@@ -887,11 +877,11 @@ fun GlobalSettingsModal(
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
-                                topFlareFraction = 0.68f,
-                                bottomFlareFraction = 0.26f,
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 11.dp),
+                                flipHorizontal = false,
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 4, key = "gs_tab0_4")
                                     .animateContentSize()
                             ) {
                                 Row(
@@ -901,7 +891,7 @@ fun GlobalSettingsModal(
                                 ) {
                                     Column(
                                         modifier = Modifier.weight(1f),
-                                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        verticalArrangement = Arrangement.spacedBy(2.dp)
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
@@ -910,8 +900,8 @@ fun GlobalSettingsModal(
                                             Icon(
                                                 imageVector = Icons.Default.Sync,
                                                 contentDescription = null,
-                                                tint = Color(0xFFA855F7),
-                                                modifier = Modifier.size(18.dp)
+                                                tint = Color(0xFFB784FF),
+                                                modifier = Modifier.size(17.dp)
                                             )
                                             Text(
                                                 text = "Ekli API'ler & Öncelik Sırası",
@@ -927,7 +917,7 @@ fun GlobalSettingsModal(
                                             else
                                                 "En üstteki (#1) ilk tercihtir; oklarla sırayı değiştir.",
                                             color = GlobalMorCamColors.LavenderSubtext,
-                                            fontSize = 11.5.sp,
+                                            fontSize = 11.2.sp,
                                             fontFamily = InterFontFamily
                                         )
                                     }
@@ -935,46 +925,50 @@ fun GlobalSettingsModal(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(10.dp))
-                                            .background(Color(0xCC260E4A))
-                                            .border(1.dp, Color(0xAA9333EA), RoundedCornerShape(10.dp))
+                                            .background(
+                                                Brush.verticalGradient(
+                                                    listOf(Color(0xCC351763), Color(0xCC1E0B3D))
+                                                )
+                                            )
+                                            .border(1.dp, Color(0xBB9F7AEA), RoundedCornerShape(10.dp))
                                             .padding(horizontal = 10.dp, vertical = 5.dp)
                                     ) {
-                                        Text(
-                                            text = "${activeApiItems.size} Ekli",
-                                            color = Color(0xFFEDE9FE),
+                                        CosmicAnimatedCounter(
+                                            count = activeApiItems.size,
+                                            suffix = " Ekli",
+                                            color = Color(0xFFF3E8FF),
                                             fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Medium,
-                                            fontFamily = InterFontFamily
+                                            fontWeight = FontWeight.Medium
                                         )
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(9.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
 
                                 if (activeApiItems.isEmpty()) {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(14.dp))
-                                            .background(Color(0xCC0A0218))
+                                            .background(Color(0xD6090216))
                                             .border(
-                                                BorderStroke(1.dp, Color(0x787C3AED)),
+                                                BorderStroke(1.dp, Color(0x887C3AED)),
                                                 RoundedCornerShape(14.dp)
                                             )
-                                            .padding(horizontal = 14.dp, vertical = 11.dp),
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Column(
                                             horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.spacedBy(5.dp)
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             Box(
                                                 modifier = Modifier
-                                                    .size(30.dp)
+                                                    .size(28.dp)
                                                     .clip(CircleShape)
                                                     .background(
                                                         Brush.radialGradient(
-                                                            listOf(Color(0x559333EA), Color.Transparent)
+                                                            listOf(Color(0x66A855F7), Color.Transparent)
                                                         )
                                                     ),
                                                 contentAlignment = Alignment.Center
@@ -983,15 +977,15 @@ fun GlobalSettingsModal(
                                                     imageVector = Icons.Default.Key,
                                                     contentDescription = null,
                                                     tint = Color(0xFFC084FC),
-                                                    modifier = Modifier.size(20.dp)
+                                                    modifier = Modifier.size(19.dp)
                                                 )
                                             }
                                             Text(
                                                 text = "Kendi API anahtarını eklemek için yukarıdan\n\"API Sağlayıcı Ara & Ekle\" seçeneğine dokun.",
                                                 color = Color(0xFFD8CCF0),
-                                                fontSize = 11.5.sp,
+                                                fontSize = 11.2.sp,
                                                 textAlign = TextAlign.Center,
-                                                lineHeight = 16.sp,
+                                                lineHeight = 15.sp,
                                                 fontFamily = InterFontFamily
                                             )
                                         }
@@ -1288,7 +1282,12 @@ fun GlobalSettingsModal(
                                     )
                                 }
 
-                                if (enableTts) {
+                                AnimatedVisibility(
+                                    visible = enableTts,
+                                    enter = expandVertically(CosmicMotionSpecs.velvetGlass()) + fadeIn(tween(220)),
+                                    exit = shrinkVertically(tween(190)) + fadeOut(tween(150))
+                                ) {
+                                    Column {
                                     Spacer(modifier = Modifier.height(14.dp))
                                     Text(
                                         text = "Okuma Hızı: ${"%.2f".format(ttsSpeed)}x",
@@ -1410,6 +1409,7 @@ fun GlobalSettingsModal(
                                             }
                                         }
                                     }
+                                    }
                                 }
                             }
 
@@ -1505,11 +1505,117 @@ fun GlobalSettingsModal(
                         3 -> {
                             val totalTokens = settings.totalPromptTokens + settings.totalCandidateTokens
 
+                            // Cosmic Motion & Animation Intensity Control Card
+                            GlobalGlassCard(
+                                rootSize = rootSize,
+                                blurredBg = blurredBg,
+                                highlighted = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 0, key = "gs_tab3_0")
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.AutoAwesome,
+                                        contentDescription = null,
+                                        tint = Color(0xFFD8B4FE),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Kozmik Hareket & Animasyonlar",
+                                            color = GlobalMorCamColors.PearlText,
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = "Yay fiziği, cam parıltısı ve yıldız tozu yoğunluğunu seç.",
+                                            color = GlobalMorCamColors.LavenderSubtext,
+                                            fontSize = 11.2.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    MotionIntensityMode.entries.forEach { mode ->
+                                        val selected = currentMotionMode == mode
+                                        val pillInteraction = remember { MutableInteractionSource() }
+                                        val pillShape = RoundedCornerShape(50)
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .heightIn(min = 42.dp)
+                                                .cosmicTapSpring(
+                                                    interactionSource = pillInteraction,
+                                                    pressedScale = 0.94f,
+                                                    cornerRadius = 21.dp
+                                                )
+                                                .then(
+                                                    if (selected) {
+                                                        Modifier.morCamCosmicGlow(
+                                                            cornerRadius = 50.dp,
+                                                            glowColor = Color(0xFFB366FF),
+                                                            alpha = 0.52f,
+                                                            blurDp = 12.dp
+                                                        )
+                                                    } else Modifier
+                                                )
+                                                .clip(pillShape)
+                                                .background(
+                                                    brush = if (selected) {
+                                                        Brush.verticalGradient(listOf(Color(0xEE8B5CF6), Color(0xEE5B21B6)))
+                                                    } else {
+                                                        Brush.verticalGradient(listOf(Color(0x88241145), Color(0x88120726)))
+                                                    }
+                                                )
+                                                .border(
+                                                    width = if (selected) 1.35.dp else 1.dp,
+                                                    brush = if (selected) {
+                                                        Brush.linearGradient(listOf(Color(0xFFFDF7FF), Color(0xFFD8B4FE), Color(0xFF9333EA)))
+                                                    } else {
+                                                        Brush.linearGradient(listOf(Color(0x88D8B4FE), Color(0x448B5CF6)))
+                                                    },
+                                                    shape = pillShape
+                                                )
+                                                .clickable(
+                                                    interactionSource = pillInteraction,
+                                                    indication = null
+                                                ) {
+                                                    CosmicMotionPreferences.setMode(context, mode)
+                                                }
+                                                .testTag("motion_mode_${mode.key}"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = mode.label,
+                                                color = if (selected) Color.White else GlobalMorCamColors.LavenderSubtext,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                                fontFamily = InterFontFamily,
+                                                maxLines = 1
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(10.dp))
+                                CosmicMotionPreviewStrip(mode = currentMotionMode)
+                            }
+
                             // Token stats card
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicStaggeredEnter(index = 1, key = "gs_tab3_1")
                             ) {
                                 Text(
                                     text = "Token Kullanım Özeti",
@@ -1685,8 +1791,9 @@ fun GlobalSettingsModal(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 ApiHubEntryRow(
+                                    refPlates = refPlates,
                                     icon = Icons.Default.SystemUpdate,
-                                    iconAccent = GlobalMorCamColors.BrightViolet,
+                                    iconAccent = Color(0xFFF3E8FF),
                                     title = "Sürüm & Güncellemeler",
                                     subtitle = "Mevcut sürümü ve APK güncellemelerini denetle",
                                     badgeText = "v1.5",
@@ -1696,12 +1803,14 @@ fun GlobalSettingsModal(
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
+                                flipHorizontal = true,
                                 contentPadding = PaddingValues(0.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 ApiHubEntryRow(
+                                    refPlates = refPlates,
                                     icon = Icons.Default.Tune,
-                                    iconAccent = GlobalMorCamColors.LavenderSubtext,
+                                    iconAccent = Color(0xFFF3E8FF),
                                     title = "Özellikler & Deneysel Ayarlar",
                                     subtitle = "Gelişmiş hafıza, duygu ve motor anahtarları",
                                     badgeText = "Panel",
@@ -1713,12 +1822,13 @@ fun GlobalSettingsModal(
 
                     Spacer(modifier = Modifier.height(6.dp))
                 }
+                } // end AnimatedContent
 
-                // ── 4. FLOATING MOR NEON FOOTER (✕ | Değişiklikleri Kaydet ✦ | ✓) ──
+                // ── 4. FLOATING MOR NEON FOOTER (EXACT REFERENCE PLATES) ──
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
@@ -1727,6 +1837,7 @@ fun GlobalSettingsModal(
                         blurredBg = blurredBg,
                         onClick = onDismiss,
                         size = 46.dp,
+                        orbStyle = GlobalOrbStyle.FOOTER_CLOSE,
                         modifier = Modifier.testTag("global_settings_cancel_button")
                     ) {
                         Icon(
@@ -1738,43 +1849,25 @@ fun GlobalSettingsModal(
                     }
 
                     val saveInteraction = remember { MutableInteractionSource() }
-                    val savePressed by saveInteraction.collectIsPressedAsState()
-                    val saveScale by animateFloatAsState(
-                        targetValue = if (savePressed) 0.965f else 1f,
-                        animationSpec = tween(100),
-                        label = "savePillScale"
-                    )
-                    val saveShape = RoundedCornerShape(50)
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
-                            .graphicsLayer { scaleX = saveScale; scaleY = saveScale }
-                            .morNeonDoubleHalo(
-                                cornerRadius = 24.dp,
-                                outerColor = Color(0xFF7C3AED),
-                                midColor = Color(0xFFA855F7),
-                                coreColor = Color(0xFFE9D5FF),
-                                intensity = 0.68f,
-                                outerBlur = 11.dp,
-                                midBlur = 5.dp
+                            .height(46.dp)
+                            .cosmicTapSpring(
+                                interactionSource = saveInteraction,
+                                pressedScale = 0.955f,
+                                cornerRadius = 23.dp
                             )
-                            .clip(saveShape)
-                            .aetheriaBackdropBlur(rootSize, blurredBg, alpha = 0.50f)
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(Color(0xD42A1054), Color(0xDC160730), Color(0xD42E125E))
-                                )
+                            .drawRefPlate(
+                                bitmap = refPlates.footerSave,
+                                bleedFracX = 0.042f,
+                                bleedFracY = 0.227f
                             )
-                            .morNeonGlassFlares(
-                                cornerRadius = 24.dp,
-                                topAlpha = 0.55f,
-                                bottomAlpha = 0.42f,
-                                innerBevelAlpha = 0.28f,
-                                topXFraction = 0.26f,
-                                bottomXFraction = 0.74f
+                            .cosmicGlassSheen(
+                                cornerRadius = 23.dp,
+                                periodMs = 4800,
+                                maxAlpha = 0.16f
                             )
-                            .border(BorderStroke(1.4.dp, GlobalMorCamColors.ActiveRimGradient), saveShape)
                             .clickable(
                                 interactionSource = saveInteraction,
                                 indication = null
@@ -1808,7 +1901,7 @@ fun GlobalSettingsModal(
                         blurredBg = blurredBg,
                         onClick = { persistAndClose() },
                         size = 46.dp,
-                        highlighted = true,
+                        orbStyle = GlobalOrbStyle.FOOTER_CHECK,
                         modifier = Modifier.testTag("global_settings_save_orb")
                     ) {
                         Icon(
@@ -2061,6 +2154,7 @@ fun GlobalSettingsModal(
 
 @Composable
 private fun ApiHubEntryRow(
+    refPlates: GlobalSettingsRefPlates,
     icon: ImageVector,
     iconAccent: Color,
     title: String,
@@ -2068,22 +2162,22 @@ private fun ApiHubEntryRow(
     badgeText: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    badgeTint: Color = Color(0xFFF3E8FF)
+    badgeTint: Color = Color(0xFFF3E8FF),
+    badgeCount: Int? = null,
+    badgeCountSuffix: String = ""
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.98f else 1f,
-        animationSpec = tween(90),
-        label = "apiEntryScale"
-    )
-    val isEmerald = iconAccent == GlobalMorCamColors.SoftEmerald || badgeTint == GlobalMorCamColors.SoftEmerald
+    val isEmerald = iconAccent == GlobalMorCamColors.SoftEmerald || badgeTint == Color(0xFF4ADE80) || badgeTint == GlobalMorCamColors.SoftEmerald
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 60.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .heightIn(min = 62.dp)
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                pressedScale = 0.975f,
+                cornerRadius = 18.dp
+            )
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -2095,30 +2189,23 @@ private fun ApiHubEntryRow(
     ) {
         Box(
             modifier = Modifier
-                .size(42.dp)
-                .clip(RoundedCornerShape(12.dp))
-                .background(
-                    if (isEmerald) {
-                        Brush.verticalGradient(listOf(Color(0xCC0D3B3D), Color(0xCC072427)))
-                    } else {
-                        Brush.verticalGradient(listOf(Color(0xCC29114E), Color(0xCC180833)))
-                    }
-                )
-                .border(
-                    BorderStroke(
-                        1.dp,
-                        if (isEmerald) Color(0xAA14B8A6) else Color(0x889333EA)
-                    ),
-                    RoundedCornerShape(12.dp)
+                .size(39.dp)
+                .drawRefPlate(
+                    bitmap = if (isEmerald) refPlates.iconEmerald else refPlates.iconPurple,
+                    bleedFracX = 0.140f,
+                    bleedFracY = 0.140f
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = iconAccent,
-                modifier = Modifier.size(21.dp)
-            )
+            // iconEmerald already contains the exact reference glowing mint 3-sparkle glyph
+            if (!isEmerald) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconAccent,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
 
         Column(
@@ -2128,7 +2215,7 @@ private fun ApiHubEntryRow(
             Text(
                 text = title,
                 color = Color.White,
-                fontSize = 14.5.sp,
+                fontSize = 14.3.sp,
                 fontWeight = FontWeight.SemiBold,
                 fontFamily = InterFontFamily,
                 maxLines = 1,
@@ -2137,8 +2224,8 @@ private fun ApiHubEntryRow(
             Text(
                 text = subtitle,
                 color = GlobalMorCamColors.LavenderSubtext,
-                fontSize = 11.2.sp,
-                lineHeight = 14.5.sp,
+                fontSize = 11.sp,
+                lineHeight = 14.2.sp,
                 fontFamily = InterFontFamily,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
@@ -2147,33 +2234,39 @@ private fun ApiHubEntryRow(
 
         Box(
             modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .background(
-                    if (isEmerald) Color(0xCC083335) else Color(0xCC2A1052)
+                .heightIn(min = 28.dp)
+                .drawRefPlate(
+                    bitmap = if (isEmerald) refPlates.badgeEmerald else refPlates.badgePurple,
+                    bleedFracX = 0.075f,
+                    bleedFracY = 0.182f
                 )
-                .border(
-                    BorderStroke(
-                        1.dp,
-                        if (isEmerald) GlobalMorCamColors.EmeraldRim
-                        else Color(0xAA9333EA)
-                    ),
-                    RoundedCornerShape(50)
-                )
-                .padding(horizontal = 11.dp, vertical = 5.dp)
+                .padding(horizontal = 12.dp, vertical = 5.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = badgeText,
-                color = badgeTint,
-                fontSize = 11.5.sp,
-                fontWeight = FontWeight.Medium,
-                fontFamily = InterFontFamily
-            )
+            if (badgeCount != null) {
+                CosmicAnimatedCounter(
+                    count = badgeCount,
+                    suffix = badgeCountSuffix,
+                    color = badgeTint,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            } else {
+                Text(
+                    text = badgeText,
+                    color = badgeTint,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium,
+                    fontFamily = InterFontFamily,
+                    maxLines = 1
+                )
+            }
         }
 
         Icon(
             imageVector = Icons.Default.ChevronRight,
             contentDescription = null,
-            tint = Color(0xFFD8B4FE),
+            tint = Color(0xFFE9D5FF),
             modifier = Modifier.size(18.dp)
         )
     }

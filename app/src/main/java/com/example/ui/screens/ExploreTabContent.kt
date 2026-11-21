@@ -171,6 +171,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import com.example.ui.animation.LocalCosmicMotionConfig
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -573,96 +574,116 @@ fun ExploreTabContent(
         }
     }
 
-    // ── BÖLÜM 1 & 2: Master Infinite Transitions (60 FPS) ────────────────────────
-    val infinite = rememberInfiniteTransition(label = "templatesMasterInfinite")
+    // ── BÖLÜM 1 & 2: Master Infinite Transitions (60 FPS, gated by MotionIntensityMode) ──
+    val motionConfig = LocalCosmicMotionConfig.current
+    val cardLevitateProgress: Float
+    val playTrianglePulse: Float
+    val outerOrbitDeg: Float
+    val innerOrbitDeg: Float
+    val flarePulse: Float
+    val borderBeamDeg: Float
+    val neonBreath: Float
+    val radarPulse: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infinite = rememberInfiniteTransition(label = "templatesMasterInfinite")
 
-    // 1.1: 3D Play Card Levitation (-4dp <-> +4dp) & 3D Tilt (-3deg <-> +2deg, 4.5s)
-    val cardLevitateProgress by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "cardLevitateProgress"
-    )
+        // 1.1: 3D Play Card Levitation (-4dp <-> +4dp) & 3D Tilt (-3deg <-> +2deg, 4.5s)
+        cardLevitateProgress = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(4500, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "cardLevitateProgress"
+        ).value
 
-    // 1.1b: Center Play (▶) Triangle Breathing Scale (0.96 <-> 1.05) & Neon Drop-Shadow
-    val playTrianglePulse by infinite.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.05f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "playTrianglePulse"
-    )
+        // 1.1b: Center Play (▶) Triangle Breathing Scale (0.96 <-> 1.05) & Neon Drop-Shadow
+        playTrianglePulse = infinite.animateFloat(
+            initialValue = 0.96f,
+            targetValue = 1.05f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "playTrianglePulse"
+        ).value
 
-    // 1.2a: Outer Orbital Ring Clockwise Rotation (0deg -> 360deg, 14s linear)
-    val outerOrbitDeg by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(14000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "outerOrbitDeg"
-    )
+        // 1.2a: Outer Orbital Ring Clockwise Rotation (0deg -> 360deg, 14s linear)
+        outerOrbitDeg = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(14000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "outerOrbitDeg"
+        ).value
 
-    // 1.2b: Inner Energy Ring & Cross Arcs Counter-Clockwise Rotation (360deg -> 0deg, 18s linear)
-    val innerOrbitDeg by infinite.animateFloat(
-        initialValue = 360f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(18000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "innerOrbitDeg"
-    )
+        // 1.2b: Inner Energy Ring & Cross Arcs Counter-Clockwise Rotation (360deg -> 0deg, 18s linear)
+        innerOrbitDeg = infinite.animateFloat(
+            initialValue = 360f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(18000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "innerOrbitDeg"
+        ).value
 
-    // 1.3a: Orbiting Star Lens Flares (scale 0.6 <-> 1.3, opacity 0.4 <-> 1.0)
-    val flarePulse by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "flarePulse"
-    )
+        // 1.3a: Orbiting Star Lens Flares (scale 0.6 <-> 1.3, opacity 0.4 <-> 1.0)
+        flarePulse = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "flarePulse"
+        ).value
 
-    // 2.1: Border Beam / Shimmer Sweep around Mor Cam Cards
-    val borderBeamDeg by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(5200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "borderBeamDeg"
-    )
+        // 2.1: Border Beam / Shimmer Sweep around Mor Cam Cards
+        borderBeamDeg = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(5200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "borderBeamDeg"
+        ).value
 
-    // 2.2: Breathing Neon Glow (3s ease-in-out infinite) for Stories script, ⚡ bolt, and 🔥 flame
-    val neonBreath by infinite.animateFloat(
-        initialValue = 0.65f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "neonBreath"
-    )
+        // 2.2: Breathing Neon Glow (3s ease-in-out infinite) for Stories script, ⚡ bolt, and 🔥 flame
+        neonBreath = infinite.animateFloat(
+            initialValue = 0.65f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(3000, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "neonBreath"
+        ).value
 
-    // 2.4: Live Radar Pulse for Status Spheres (Aria, Eldoria, Tokyo)
-    val radarPulse by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "radarPulse"
-    )
+        // 2.4: Live Radar Pulse for Status Spheres (Aria, Eldoria, Tokyo)
+        radarPulse = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1900, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "radarPulse"
+        ).value
+    } else {
+        cardLevitateProgress = 0.5f
+        playTrianglePulse = 1.0f
+        outerOrbitDeg = 0f
+        innerOrbitDeg = 0f
+        flarePulse = 0.5f
+        borderBeamDeg = 45f
+        neonBreath = 0.85f
+        radarPulse = 0.35f
+    }
 
     // Track filter switches for BÖLÜM 3.2 Staggered Cascade Animation
     var cascadeTrigger by remember { mutableStateOf(0) }

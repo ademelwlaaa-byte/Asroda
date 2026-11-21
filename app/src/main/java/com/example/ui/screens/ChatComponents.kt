@@ -146,6 +146,7 @@ import com.example.ui.components.MoodColors
 import com.example.ui.components.OrbView
 import com.example.ui.components.TypingDots
 import com.example.ui.components.customTextFieldColors
+import com.example.ui.animation.LocalCosmicMotionConfig
 import com.example.ui.theme.EmochiError
 import com.example.ui.theme.EmochiSurface
 
@@ -162,28 +163,36 @@ fun CosmicParticleBackground(
     accentColor: Color,
     modifier: Modifier = Modifier
 ) {
-    val infiniteTransition = rememberInfiniteTransition(label = "CosmicParticleDrift")
+    val motionConfig = LocalCosmicMotionConfig.current
 
-    // Rule 2: Soft radial glow breath loop (scale 0.9 -> 1.05 -> 1.0, 4.5s FastOutSlowIn)
-    val glowScale by infiniteTransition.animateFloat(
-        initialValue = 0.92f,
-        targetValue = 1.06f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(4200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "GlowPulse"
-    )
-
-    val animProgress by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(45000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "DriftAnim"
-    )
+    val glowScale: Float
+    val animProgress: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infiniteTransition = rememberInfiniteTransition(label = "CosmicParticleDrift")
+        val gScale by infiniteTransition.animateFloat(
+            initialValue = 0.92f,
+            targetValue = 1.06f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(4200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "GlowPulse"
+        )
+        val drift by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(45000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "DriftAnim"
+        )
+        glowScale = gScale
+        animProgress = drift
+    } else {
+        glowScale = 1.0f
+        animProgress = 0f
+    }
 
     val particles = remember {
         List(35) {
@@ -219,19 +228,23 @@ fun CosmicParticleBackground(
         )
 
         // 2. Drifting Star Dust / Cosmic Energy Particles Canvas
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val width = size.width
-            val height = size.height
+        if (motionConfig.enableParticles) {
+            val activeCount = (particles.size * motionConfig.particleScale).toInt().coerceIn(8, particles.size)
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val width = size.width
+                val height = size.height
 
-            particles.forEach { p ->
-                val currentY = ((p.yRatio - animProgress * p.speed * 0.35f) % 1f + 1f) % 1f
-                val currentX = (p.xRatio + kotlin.math.sin((animProgress * 6.28318f + p.yRatio * 12f).toDouble()).toFloat() * 0.04f) % 1f
+                for (i in 0 until activeCount) {
+                    val p = particles[i]
+                    val currentY = ((p.yRatio - animProgress * p.speed * 0.35f) % 1f + 1f) % 1f
+                    val currentX = (p.xRatio + kotlin.math.sin((animProgress * 6.28318f + p.yRatio * 12f).toDouble()).toFloat() * 0.04f) % 1f
 
-                drawCircle(
-                    color = accentColor.copy(alpha = p.baseAlpha),
-                    radius = p.radius.dp.toPx(),
-                    center = Offset(currentX * width, currentY * height)
-                )
+                    drawCircle(
+                        color = accentColor.copy(alpha = p.baseAlpha),
+                        radius = p.radius.dp.toPx(),
+                        center = Offset(currentX * width, currentY * height)
+                    )
+                }
             }
         }
 

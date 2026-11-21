@@ -66,6 +66,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.CosmicSparkleBurst
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicPopOnTrigger
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
@@ -165,8 +169,8 @@ internal fun WizardMorCamHeader(
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
     val backScale by animateFloatAsState(
-        targetValue = if (backPressed) 0.91f else 1f,
-        animationSpec = tween(90),
+        targetValue = if (backPressed) 0.90f else 1f,
+        animationSpec = CosmicMotionSpecs.snappyOrb(),
         label = "wizardBackScale"
     )
 
@@ -305,6 +309,7 @@ internal fun WizardMorCamHeader(
             Box(
                 modifier = Modifier
                     .size(46.dp)
+                    .cosmicPopOnTrigger(triggerKey = stepIdx, peakScale = 1.14f)
                     .wizardMorCamGlow(cornerRadius = 23.dp, alpha = 0.36f * glowAlpha, blurDp = 9.dp)
                     .clip(CircleShape)
                     .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.76f, scrollSync = scrollSync)
@@ -344,10 +349,16 @@ internal fun WizardMorCamHeader(
             repeat(totalSteps) { idx ->
                 val isActive = idx == stepIdx
                 val isDone = idx < stepIdx
+                val segScaleY by animateFloatAsState(
+                    targetValue = if (isActive) 1.25f else 1f,
+                    animationSpec = CosmicMotionSpecs.snappyOrb(),
+                    label = "wizardSegScale_$idx"
+                )
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(5.5.dp)
+                        .graphicsLayer { scaleY = segScaleY }
                         .then(
                             if (isActive) {
                                 Modifier.wizardMorCamGlow(
@@ -401,11 +412,19 @@ internal fun WizardMorCamBottomDock(
 ) {
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
-    val backScale by animateFloatAsState(if (backPressed) 0.96f else 1f, tween(90), label = "dockBackScale")
+    val backScale by animateFloatAsState(
+        targetValue = if (backPressed) 0.94f else 1f,
+        animationSpec = CosmicMotionSpecs.snappyOrb(),
+        label = "dockBackScale"
+    )
 
     val nextInteraction = remember { MutableInteractionSource() }
     val nextPressed by nextInteraction.collectIsPressedAsState()
-    val nextScale by animateFloatAsState(if (nextPressed && canNext) 0.96f else 1f, tween(90), label = "dockNextScale")
+    val nextScale by animateFloatAsState(
+        targetValue = if (nextPressed && canNext) 0.94f else 1f,
+        animationSpec = CosmicMotionSpecs.snappyOrb(),
+        label = "dockNextScale"
+    )
 
     Box(
         modifier = Modifier
@@ -491,6 +510,7 @@ internal fun WizardMorCamBottomDock(
                         } else Modifier
                     )
                     .clip(RoundedCornerShape(50))
+                    .cosmicGlassSheen(cornerRadius = 26.dp, enabled = canNext, periodMs = 3600)
                     .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.68f, scrollSync = scrollSync)
                     .background(
                         if (canNext) {
@@ -665,9 +685,10 @@ internal fun WizardMorCamChoiceCard(
     val cardShape = RoundedCornerShape(24.dp)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    var selectBurst by remember { mutableStateOf(0) }
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.975f else 1f,
-        animationSpec = tween(100),
+        targetValue = if (pressed) 0.968f else 1f,
+        animationSpec = CosmicMotionSpecs.snappyOrb(),
         label = "choiceCardScale"
     )
 
@@ -712,7 +733,10 @@ internal fun WizardMorCamChoiceCard(
                     cornerRadius = CornerRadius(24.dp.toPx(), 24.dp.toPx())
                 )
             }
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+            .clickable(interactionSource = interaction, indication = null) {
+                if (!isSelected) selectBurst++
+                onClick()
+            }
             .then(if (testTag.isNotEmpty()) Modifier.testTag(testTag) else Modifier)
     ) {
         Row(
@@ -793,19 +817,33 @@ internal fun WizardMorCamChoiceCard(
                 Box(
                     modifier = Modifier
                         .size(28.dp)
-                        .clip(CircleShape)
-                        .background(
-                            Brush.verticalGradient(listOf(Color(0xFFC084FC), Color(0xFF7C3AED)))
-                        )
-                        .border(1.dp, Color(0xF0F5EEFF), CircleShape),
+                        .cosmicPopOnTrigger(triggerKey = selectBurst, peakScale = 1.24f),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "Seçili",
-                        tint = Color.White,
-                        modifier = Modifier.size(16.dp)
+                    CosmicSparkleBurst(
+                        triggerKey = selectBurst,
+                        modifier = Modifier.size(38.dp),
+                        accentColor = Color(0xFFF3E8FF),
+                        secondaryColor = Color(0xFFC084FC),
+                        particleCount = 10
                     )
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.verticalGradient(listOf(Color(0xFFC084FC), Color(0xFF7C3AED)))
+                            )
+                            .border(1.dp, Color(0xF0F5EEFF), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Seçili",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             } else {
                 Icon(

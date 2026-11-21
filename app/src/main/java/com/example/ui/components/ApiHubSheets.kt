@@ -35,7 +35,16 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicDialogEnter
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicStaggeredEnter
+import com.example.ui.animation.cosmicTapSpring
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -88,9 +97,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.drawscope.scale
+import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
@@ -110,6 +122,156 @@ import kotlinx.coroutines.launch
 // ═══════════════════════════════════════════════════════════════════════════════
 // SHARED MOR NEON COSMIC GLASS PRIMITIVES FOR GLOBAL SETTINGS & API HUB
 // ═══════════════════════════════════════════════════════════════════════════════
+
+internal data class GlobalSettingsRefPlates(
+    val orbLeft: ImageBitmap?,
+    val headerPill: ImageBitmap?,
+    val orbRight: ImageBitmap?,
+    val tabActive: ImageBitmap?,
+    val tabInactive: ImageBitmap?,
+    val cardTop: ImageBitmap?,
+    val cardMid: ImageBitmap?,
+    val cardBottom: ImageBitmap?,
+    val iconPurple: ImageBitmap?,
+    val iconEmerald: ImageBitmap?,
+    val badgePurple: ImageBitmap?,
+    val badgeEmerald: ImageBitmap?,
+    val footerClose: ImageBitmap?,
+    val footerSave: ImageBitmap?,
+    val footerCheck: ImageBitmap?
+)
+
+private var cachedGlobalSettingsRefPlates: GlobalSettingsRefPlates? = null
+
+private fun decodeRefPlate(res: android.content.res.Resources, resId: Int): ImageBitmap? {
+    return try {
+        val opts = android.graphics.BitmapFactory.Options().apply {
+            inScaled = false
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+        }
+        android.graphics.BitmapFactory.decodeResource(res, resId, opts)?.asImageBitmap()
+    } catch (_: Exception) {
+        null
+    }
+}
+
+internal fun loadGlobalSettingsRefPlates(context: android.content.Context): GlobalSettingsRefPlates {
+    cachedGlobalSettingsRefPlates?.let { return it }
+    val res = context.resources
+    return GlobalSettingsRefPlates(
+        orbLeft = decodeRefPlate(res, R.drawable.img_gs_ref_orb_left),
+        headerPill = decodeRefPlate(res, R.drawable.img_gs_ref_header_pill),
+        orbRight = decodeRefPlate(res, R.drawable.img_gs_ref_orb_right),
+        tabActive = decodeRefPlate(res, R.drawable.img_gs_ref_tab_active),
+        tabInactive = decodeRefPlate(res, R.drawable.img_gs_ref_tab_inactive),
+        cardTop = decodeRefPlate(res, R.drawable.img_gs_ref_card_top),
+        cardMid = decodeRefPlate(res, R.drawable.img_gs_ref_card_mid),
+        cardBottom = decodeRefPlate(res, R.drawable.img_gs_ref_card_bottom),
+        iconPurple = decodeRefPlate(res, R.drawable.img_gs_ref_icon_purple),
+        iconEmerald = decodeRefPlate(res, R.drawable.img_gs_ref_icon_emerald),
+        badgePurple = decodeRefPlate(res, R.drawable.img_gs_ref_badge_purple),
+        badgeEmerald = decodeRefPlate(res, R.drawable.img_gs_ref_badge_emerald),
+        footerClose = decodeRefPlate(res, R.drawable.img_gs_ref_footer_close),
+        footerSave = decodeRefPlate(res, R.drawable.img_gs_ref_footer_save),
+        footerCheck = decodeRefPlate(res, R.drawable.img_gs_ref_footer_check)
+    ).also { cachedGlobalSettingsRefPlates = it }
+}
+
+/**
+ * Draws a pre-sliced transparent RGBA neon glass plate behind a composable,
+ * expanding past logical bounds by [bleedFracX] / [bleedFracY] so outer neon glows
+ * and starlight flares render with zero clipping and zero layout shift.
+ */
+internal fun Modifier.drawRefPlate(
+    bitmap: ImageBitmap?,
+    bleedFracX: Float,
+    bleedFracY: Float,
+    flipHorizontal: Boolean = false
+): Modifier = this.drawBehind {
+    val bmp = bitmap ?: return@drawBehind
+    val w = size.width
+    val h = size.height
+    if (w <= 1f || h <= 1f) return@drawBehind
+    val bx = (w * bleedFracX).roundToInt()
+    val by = (h * bleedFracY).roundToInt()
+    val dstOffset = IntOffset(-bx, -by)
+    val dstSize = IntSize((w.roundToInt() + bx * 2).coerceAtLeast(1), (h.roundToInt() + by * 2).coerceAtLeast(1))
+    if (flipHorizontal) {
+        scale(scaleX = -1f, scaleY = 1f, pivot = Offset(w / 2f, h / 2f)) {
+            drawImage(image = bmp, dstOffset = dstOffset, dstSize = dstSize)
+        }
+    } else {
+        drawImage(image = bmp, dstOffset = dstOffset, dstSize = dstSize)
+    }
+}
+
+/**
+ * Draws a 3-slice (top cap + stretchable mid + bottom cap) reference neon glass card frame
+ * with exact proportional outer-glow bleed and seamless joints at any height.
+ */
+internal fun Modifier.drawRefCard3Slice(
+    top: ImageBitmap?,
+    mid: ImageBitmap?,
+    bottom: ImageBitmap?,
+    flipHorizontal: Boolean = false
+): Modifier = this.drawBehind {
+    val tBmp = top ?: return@drawBehind
+    val mBmp = mid ?: return@drawBehind
+    val bBmp = bottom ?: return@drawBehind
+    val w = size.width
+    val h = size.height
+    if (w <= 2f || h <= 2f) return@drawBehind
+
+    // Reference card metrics: logical width 717px, bleed 20px each side (total 757px),
+    // top inner cap 58px (bitmap height 78px), bottom inner cap 67px (bitmap height 87px).
+    val scaleXRef = w / 717f
+    val bleedX = (20f * scaleXRef).roundToInt()
+    val drawW = (w.roundToInt() + bleedX * 2).coerceAtLeast(1)
+
+    val rawTopInH = 58f * scaleXRef
+    val rawBotInH = 67f * scaleXRef
+    val capFactor = if (h < rawTopInH + rawBotInH) (h / (rawTopInH + rawBotInH)).coerceIn(0.25f, 1f) else 1f
+    val bleedY = (20f * scaleXRef * capFactor).roundToInt()
+    val topInH = (rawTopInH * capFactor).roundToInt().coerceAtLeast(1)
+    val botInH = (rawBotInH * capFactor).roundToInt().coerceAtLeast(1)
+    val intH = h.roundToInt()
+    val midH = intH - topInH - botInH
+
+    val drawBlock: androidx.compose.ui.graphics.drawscope.DrawScope.() -> Unit = {
+        drawImage(
+            image = tBmp,
+            dstOffset = IntOffset(-bleedX, -bleedY),
+            dstSize = IntSize(drawW, bleedY + topInH)
+        )
+        if (midH > 0) {
+            drawImage(
+                image = mBmp,
+                dstOffset = IntOffset(-bleedX, topInH - 1),
+                dstSize = IntSize(drawW, midH + 2)
+            )
+        }
+        drawImage(
+            image = bBmp,
+            dstOffset = IntOffset(-bleedX, intH - botInH),
+            dstSize = IntSize(drawW, botInH + bleedY)
+        )
+    }
+
+    if (flipHorizontal) {
+        scale(scaleX = -1f, scaleY = 1f, pivot = Offset(w / 2f, h / 2f)) {
+            drawBlock()
+        }
+    } else {
+        drawBlock()
+    }
+}
+
+internal enum class GlobalOrbStyle {
+    HEADER_LEFT,
+    HEADER_RIGHT,
+    FOOTER_CLOSE,
+    FOOTER_CHECK
+}
 
 private var cachedFrostedGlobalSettingsBackdrop: ImageBitmap? = null
 
@@ -228,8 +390,7 @@ internal object GlobalMorCamColors {
 }
 
 /**
- * Draws a sleek, tight, pure electric-violet neon outer halo around glass cards,
- * active tabs, and orbs — rich deep purple glow without milky white or pink fog.
+ * Draws a sleek, tight, pure electric-violet neon outer halo around switches & small controls.
  */
 internal fun Modifier.morNeonDoubleHalo(
     cornerRadius: Dp,
@@ -249,12 +410,11 @@ internal fun Modifier.morNeonDoubleHalo(
     drawIntoCanvas { canvas ->
         val native = canvas.nativeCanvas
 
-        // Layer 1: Tight deep-violet neon glow hugging the rim
         val outerPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 3.2.dp.toPx()
+            strokeWidth = 3.0.dp.toPx()
             color = android.graphics.Color.argb(
-                (0.50f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
+                (0.48f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
                 (outerColor.red * 255).toInt(),
                 (outerColor.green * 255).toInt(),
                 (outerColor.blue * 255).toInt()
@@ -266,12 +426,11 @@ internal fun Modifier.morNeonDoubleHalo(
         }
         native.drawRoundRect(0f, 0f, w, h, cr, cr, outerPaint)
 
-        // Layer 2: Crisp electric-purple inner neon edge bloom
         val midPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 1.6.dp.toPx()
+            strokeWidth = 1.5.dp.toPx()
             color = android.graphics.Color.argb(
-                (0.58f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
+                (0.55f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
                 (midColor.red * 255).toInt(),
                 (midColor.green * 255).toInt(),
                 (midColor.blue * 255).toInt()
@@ -282,118 +441,6 @@ internal fun Modifier.morNeonDoubleHalo(
             )
         }
         native.drawRoundRect(0f, 0f, w, h, cr, cr, midPaint)
-
-        // Optional Layer 3 only for strongly highlighted elements (active tab / save pill)
-        if (clamped > 0.72f) {
-            val coreAlpha = ((clamped - 0.72f) * 1.4f).coerceIn(0f, 0.55f)
-            val corePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 1.1.dp.toPx()
-                color = android.graphics.Color.argb(
-                    (coreAlpha * 255).toInt(),
-                    (coreColor.red * 255).toInt(),
-                    (coreColor.green * 255).toInt(),
-                    (coreColor.blue * 255).toInt()
-                )
-                maskFilter = android.graphics.BlurMaskFilter(
-                    2.2.dp.toPx(),
-                    android.graphics.BlurMaskFilter.Blur.NORMAL
-                )
-            }
-            native.drawRoundRect(0f, 0f, w, h, cr, cr, corePaint)
-        }
-    }
-}
-
-/**
- * Draws a subtle deep-violet inner glass bevel and razor-thin specular border glints
- * along the 1.5dp rim (ZERO cloudy white radial blobs inside the card body).
- */
-internal fun Modifier.morNeonGlassFlares(
-    cornerRadius: Dp = 20.dp,
-    topAlpha: Float = 0.52f,
-    bottomAlpha: Float = 0.36f,
-    innerBevelAlpha: Float = 0.22f,
-    topXFraction: Float = 0.26f,
-    bottomXFraction: Float = 0.78f
-): Modifier = this.drawWithContent {
-    val w = size.width
-    val h = size.height
-    if (w > 2f && h > 2f && innerBevelAlpha > 0.01f) {
-        val cr = cornerRadius.toPx().coerceAtMost(minOf(w, h) / 2f)
-        drawIntoCanvas { canvas ->
-            val innerBevel = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 3.2.dp.toPx()
-                color = android.graphics.Color.argb(
-                    (innerBevelAlpha.coerceIn(0f, 1f) * 255).toInt(),
-                    139,
-                    92,
-                    246
-                )
-                maskFilter = android.graphics.BlurMaskFilter(
-                    5.5.dp.toPx(),
-                    android.graphics.BlurMaskFilter.Blur.NORMAL
-                )
-            }
-            canvas.nativeCanvas.drawRoundRect(0f, 0f, w, h, cr, cr, innerBevel)
-        }
-    }
-
-    drawContent()
-
-    if (w > 2f && h > 2f) {
-        // Razor-thin specular highlight right ON the top border edge
-        if (topAlpha > 0.01f) {
-            val tx = w * topXFraction
-            val halfLen = (w * 0.16f).coerceIn(22.dp.toPx(), 64.dp.toPx())
-            val startX = (tx - halfLen).coerceAtLeast(cornerRadius.toPx() * 0.5f)
-            val endX = (tx + halfLen).coerceAtMost(w - cornerRadius.toPx() * 0.5f)
-            if (endX > startX) {
-                drawLine(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xFFD8B4FE).copy(alpha = (topAlpha * 0.75f).coerceIn(0f, 1f)),
-                            Color(0xFFFDF7FF).copy(alpha = topAlpha.coerceIn(0f, 1f)),
-                            Color(0xFFD8B4FE).copy(alpha = (topAlpha * 0.75f).coerceIn(0f, 1f)),
-                            Color.Transparent
-                        ),
-                        startX = startX,
-                        endX = endX
-                    ),
-                    start = Offset(startX, 0.8.dp.toPx()),
-                    end = Offset(endX, 0.8.dp.toPx()),
-                    strokeWidth = 1.7.dp.toPx()
-                )
-            }
-        }
-
-        // Razor-thin subtle highlight right ON the bottom border edge
-        if (bottomAlpha > 0.01f) {
-            val bx = w * bottomXFraction
-            val halfLen = (w * 0.14f).coerceIn(20.dp.toPx(), 54.dp.toPx())
-            val startX = (bx - halfLen).coerceAtLeast(cornerRadius.toPx() * 0.5f)
-            val endX = (bx + halfLen).coerceAtMost(w - cornerRadius.toPx() * 0.5f)
-            if (endX > startX) {
-                drawLine(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xFFC084FC).copy(alpha = (bottomAlpha * 0.70f).coerceIn(0f, 1f)),
-                            Color(0xFFF3E8FF).copy(alpha = bottomAlpha.coerceIn(0f, 1f)),
-                            Color(0xFFC084FC).copy(alpha = (bottomAlpha * 0.70f).coerceIn(0f, 1f)),
-                            Color.Transparent
-                        ),
-                        startX = startX,
-                        endX = endX
-                    ),
-                    start = Offset(startX, h - 0.8.dp.toPx()),
-                    end = Offset(endX, h - 0.8.dp.toPx()),
-                    strokeWidth = 1.5.dp.toPx()
-                )
-            }
-        }
     }
 }
 
@@ -402,50 +449,33 @@ internal fun GlobalGlassCard(
     rootSize: IntSize,
     blurredBg: ImageBitmap,
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 20.dp,
+    cornerRadius: Dp = 18.dp,
     highlighted: Boolean = false,
+    flipHorizontal: Boolean = false,
     topFlareFraction: Float = 0.26f,
     bottomFlareFraction: Float = 0.78f,
     contentPadding: PaddingValues = PaddingValues(horizontal = 14.dp, vertical = 11.dp),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(cornerRadius)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val plates = remember(context) { loadGlobalSettingsRefPlates(context) }
     Column(
         modifier = modifier
-            .morNeonDoubleHalo(
-                cornerRadius = cornerRadius,
-                outerColor = if (highlighted) Color(0xFF9333EA) else Color(0xFF7C3AED),
-                midColor = if (highlighted) Color(0xFFC084FC) else Color(0xFF9333EA),
-                coreColor = Color(0xFFE9D5FF),
-                intensity = if (highlighted) 0.72f else 0.50f,
-                outerBlur = if (highlighted) 12.dp else 9.dp,
-                midBlur = if (highlighted) 5.dp else 4.dp
+            .drawRefCard3Slice(
+                top = plates.cardTop,
+                mid = plates.cardMid,
+                bottom = plates.cardBottom,
+                flipHorizontal = flipHorizontal
             )
-            .clip(shape)
-            .aetheriaBackdropBlur(rootSize, blurredBg, alpha = 0.60f)
-            .background(
-                Brush.verticalGradient(
-                    if (highlighted) {
-                        listOf(Color(0xB8210B45), Color(0xCC13062B), Color(0xC21B093A))
-                    } else {
-                        listOf(Color(0xBA17082E), Color(0xCF0E0420), Color(0xC4140728))
-                    }
-                )
-            )
-            .morNeonGlassFlares(
-                cornerRadius = cornerRadius,
-                topAlpha = if (highlighted) 0.62f else 0.48f,
-                bottomAlpha = if (highlighted) 0.45f else 0.34f,
-                innerBevelAlpha = if (highlighted) 0.28f else 0.20f,
-                topXFraction = topFlareFraction,
-                bottomXFraction = bottomFlareFraction
-            )
-            .border(
-                BorderStroke(
-                    width = if (highlighted) 1.4.dp else 1.25.dp,
-                    brush = if (highlighted) GlobalMorCamColors.ActiveRimGradient else GlobalMorCamColors.RimGradient
-                ),
-                shape
+            .then(
+                if (highlighted) {
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            listOf(Color(0x286D28D9), Color(0x163B0764), Color(0x246D28D9))
+                        ),
+                        RoundedCornerShape(cornerRadius)
+                    )
+                } else Modifier
             )
             .padding(contentPadding),
         content = content
@@ -460,47 +490,32 @@ internal fun GlobalGlassIconOrb(
     modifier: Modifier = Modifier,
     size: Dp = 44.dp,
     highlighted: Boolean = false,
+    orbStyle: GlobalOrbStyle? = null,
     content: @Composable () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val plates = remember(context) { loadGlobalSettingsRefPlates(context) }
+    val resolvedStyle = orbStyle ?: if (highlighted) GlobalOrbStyle.FOOTER_CHECK else GlobalOrbStyle.HEADER_LEFT
+    val (plateBmp, bleedFrac) = when (resolvedStyle) {
+        GlobalOrbStyle.HEADER_LEFT -> plates.orbLeft to 0.220f
+        GlobalOrbStyle.HEADER_RIGHT -> plates.orbRight to 0.217f
+        GlobalOrbStyle.FOOTER_CLOSE -> plates.footerClose to 0.196f
+        GlobalOrbStyle.FOOTER_CHECK -> plates.footerCheck to 0.191f
+    }
+
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.91f else 1f,
-        animationSpec = tween(100),
-        label = "orbScale"
-    )
     Box(
         modifier = modifier
             .size(size)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .morNeonDoubleHalo(
-                cornerRadius = size / 2,
-                outerColor = if (highlighted) Color(0xFF9333EA) else Color(0xFF7C3AED),
-                midColor = if (highlighted) Color(0xFFC084FC) else Color(0xFF9333EA),
-                coreColor = Color(0xFFE9D5FF),
-                intensity = if (highlighted) 0.78f else 0.46f,
-                outerBlur = if (highlighted) 11.dp else 8.dp,
-                midBlur = if (highlighted) 5.dp else 3.5.dp
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                pressedScale = 0.90f,
+                cornerRadius = size / 2
             )
-            .clip(CircleShape)
-            .aetheriaBackdropBlur(rootSize, blurredBg, alpha = 0.55f)
-            .background(
-                if (highlighted) {
-                    Brush.radialGradient(
-                        listOf(Color(0xEE6D28D9), Color(0xEE4C1D95), Color(0xEE2B0B5E))
-                    )
-                } else {
-                    Brush.radialGradient(
-                        listOf(Color(0xC81D0A3B), Color(0xDA0D041E))
-                    )
-                }
-            )
-            .border(
-                BorderStroke(
-                    width = if (highlighted) 1.45.dp else 1.25.dp,
-                    brush = if (highlighted) GlobalMorCamColors.ActiveRimGradient else GlobalMorCamColors.RimGradient
-                ),
-                CircleShape
+            .drawRefPlate(
+                bitmap = plateBmp,
+                bleedFracX = bleedFrac,
+                bleedFracY = bleedFrac
             )
             .clickable(
                 interactionSource = interactionSource,
@@ -519,9 +534,23 @@ internal fun GlobalMorCamSwitch(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val motionConfig = LocalCosmicMotionConfig.current
+    var isStretching by remember { mutableStateOf(false) }
+    LaunchedEffect(checked) {
+        if (motionConfig.enableMicroSprings) {
+            isStretching = true
+            delay(135)
+            isStretching = false
+        }
+    }
+    val thumbWidth by animateDpAsState(
+        targetValue = if (isStretching) 26.dp else 22.dp,
+        animationSpec = if (motionConfig.enableMicroSprings) CosmicMotionSpecs.snappyOrb() else tween(110),
+        label = "morCamSwitchThumbW"
+    )
     val thumbOffset by animateDpAsState(
-        targetValue = if (checked) 25.dp else 3.dp,
-        animationSpec = tween(180),
+        targetValue = if (checked) (25.dp - (thumbWidth - 22.dp)) else 3.dp,
+        animationSpec = if (motionConfig.enableMicroSprings) CosmicMotionSpecs.snappyOrb() else tween(140),
         label = "morCamSwitchOffset"
     )
     val borderColor by animateColorAsState(
@@ -568,9 +597,9 @@ internal fun GlobalMorCamSwitch(
     ) {
         Box(
             modifier = Modifier
-                .padding(start = thumbOffset)
-                .size(22.dp)
-                .clip(CircleShape)
+                .padding(start = thumbOffset.coerceAtLeast(3.dp))
+                .size(width = thumbWidth, height = 22.dp)
+                .clip(RoundedCornerShape(11.dp))
                 .background(
                     Brush.radialGradient(
                         if (checked) listOf(Color(0xFFFFFFFF), Color(0xFFF8F4FF))
@@ -670,17 +699,16 @@ internal fun GlobalGlassPrimaryButton(
     loading: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled && !loading) 0.96f else 1f,
-        animationSpec = tween(100),
-        label = "primaryBtnScale"
-    )
     val shape = RoundedCornerShape(50)
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                enabled = enabled && !loading,
+                pressedScale = 0.95f,
+                cornerRadius = 24.dp
+            )
             .then(
                 if (enabled) Modifier.morCamCosmicGlow(
                     cornerRadius = 24.dp,
@@ -696,6 +724,7 @@ internal fun GlobalGlassPrimaryButton(
                     else listOf(Color(0x553B245E), Color(0x552E1A4D))
                 )
             )
+            .cosmicGlassSheen(enabled = enabled && !loading, cornerRadius = 24.dp, periodMs = 4600, maxAlpha = 0.17f)
             .border(
                 BorderStroke(
                     width = 1.2.dp,
@@ -741,17 +770,16 @@ internal fun GlobalGlassSecondaryButton(
     loading: Boolean = false
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed && enabled && !loading) 0.96f else 1f,
-        animationSpec = tween(100),
-        label = "secondaryBtnScale"
-    )
     val shape = RoundedCornerShape(50)
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .cosmicTapSpring(
+                interactionSource = interactionSource,
+                enabled = enabled && !loading,
+                pressedScale = 0.95f,
+                cornerRadius = 24.dp
+            )
             .clip(shape)
             .background(
                 Brush.horizontalGradient(listOf(Color(0x701B0B38), Color(0x78120628)))
@@ -816,7 +844,13 @@ private fun FullScreenMorCamSheetContainer(
                     )
                 )
         )
-        content()
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .cosmicDialogEnter()
+        ) {
+            content()
+        }
     }
 }
 
@@ -960,7 +994,7 @@ internal fun ApiCatalogSearchDialog(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 16.dp)
             ) {
-                items(filteredProviders, key = { it.id }) { spec ->
+                itemsIndexed(filteredProviders, key = { _, it -> it.id }) { index, spec ->
                     val isAlreadyAdded = (spec.builtinSlot != null && spec.builtinSlot in configuredBuiltinSlots) ||
                         configuredCustomUrls.any { it.equals(spec.baseUrl.trimEnd('/'), ignoreCase = true) }
 
@@ -972,6 +1006,7 @@ internal fun ApiCatalogSearchDialog(
                         contentPadding = PaddingValues(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .cosmicStaggeredEnter(index = index, key = "${selectedCategory.name}_${spec.id}")
                             .clickable { onSelectProvider(spec) }
                             .testTag("catalog_item_${spec.id}")
                     ) {

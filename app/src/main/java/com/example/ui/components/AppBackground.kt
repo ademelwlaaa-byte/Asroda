@@ -144,21 +144,24 @@ fun AppBackground(
         list
     }
 
-    // 8 subtle micro purple/lilac light particles (Floating Ambient Particles)
+    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
+
+    // 14 subtle micro purple/lilac light particles (scaled by motion intensity)
     val floatingDust = remember {
         val rand = Random(108)
         val palette = listOf(
             Color(0xFFD8B4FE),
             Color(0xFFC084FC),
-            Color(0xFFA855F7)
+            Color(0xFFA855F7),
+            Color(0xFFF3E8FF)
         )
-        List(8) { i ->
+        List(14) { i ->
             FloatingCosmicDust(
-                xRatio = 0.08f + rand.nextFloat() * 0.84f,
+                xRatio = 0.06f + rand.nextFloat() * 0.88f,
                 initialYRatio = rand.nextFloat(),
-                radiusDp = 0.9f + rand.nextFloat() * 1.1f,
-                riseSpeed = 0.10f + rand.nextFloat() * 0.14f,
-                swayAmp = 0.010f + rand.nextFloat() * 0.016f,
+                radiusDp = 0.9f + rand.nextFloat() * 1.25f,
+                riseSpeed = 0.09f + rand.nextFloat() * 0.14f,
+                swayAmp = 0.010f + rand.nextFloat() * 0.018f,
                 phase = rand.nextFloat() * (2f * PI.toFloat()),
                 color = palette[i % palette.size]
             )
@@ -175,37 +178,54 @@ fun AppBackground(
         )
     }
 
-    val infinite = rememberInfiniteTransition(label = "bg")
-
-    val auroraTime by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 2f * PI.toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(18000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "auroraTime"
-    )
-
-    val twinkleTime by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 2f * PI.toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(4200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "twinkleTime"
-    )
-
-    val dustRiseProgress by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(22000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "dustRiseProgress"
-    )
+    val auroraTime: Float
+    val twinkleTime: Float
+    val dustRiseProgress: Float
+    val shootingStarPhase: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infinite = rememberInfiniteTransition(label = "bg")
+        auroraTime = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 2f * PI.toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(18000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "auroraTime"
+        ).value
+        twinkleTime = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 2f * PI.toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(4200, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "twinkleTime"
+        ).value
+        dustRiseProgress = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(22000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "dustRiseProgress"
+        ).value
+        shootingStarPhase = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(11500, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "shootingStarPhase"
+        ).value
+    } else {
+        auroraTime = 0.8f
+        twinkleTime = 1.2f
+        dustRiseProgress = 0f
+        shootingStarPhase = 0.9f
+    }
 
     Box(
         modifier = modifier
@@ -227,7 +247,7 @@ fun AppBackground(
                         scaleX = cosmicScale
                         scaleY = cosmicScale
                     }
-                    .then(if (cosmicBlurDp > 0.2.dp) Modifier.blur(cosmicBlurDp) else Modifier)
+                    .then(if (cosmicBlurDp > 0.2.dp && motionConfig.enableMicroSprings) Modifier.blur(cosmicBlurDp) else Modifier)
             )
         }
 
@@ -246,11 +266,11 @@ fun AppBackground(
                         scaleX = templatesScale
                         scaleY = templatesScale
                     }
-                    .then(if (templatesBlurDp > 0.2.dp) Modifier.blur(templatesBlurDp) else Modifier)
+                    .then(if (templatesBlurDp > 0.2.dp && motionConfig.enableMicroSprings) Modifier.blur(templatesBlurDp) else Modifier)
             )
         }
 
-        // Layer C: Ambient Particles & Starfield
+        // Layer C: Ambient Particles, Starfield & Delicate Shooting Stardust Glint
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
@@ -281,7 +301,13 @@ fun AppBackground(
                     )
                 }
 
-                stars.forEach { star ->
+                val starLimit = when (motionConfig.mode) {
+                    com.example.ui.animation.MotionIntensityMode.FULL -> stars.size
+                    com.example.ui.animation.MotionIntensityMode.BALANCED -> (stars.size * 0.78f).toInt()
+                    com.example.ui.animation.MotionIntensityMode.REDUCED -> (stars.size * 0.45f).toInt()
+                }
+                for (si in 0 until starLimit.coerceAtMost(stars.size)) {
+                    val star = stars[si]
                     val sx = star.xRatio * w
                     val sy = star.yRatio * h
                     val twinkle = 0.5f + 0.5f * sin(twinkleTime * star.twinkleSpeed + star.phaseOffset)
@@ -300,47 +326,81 @@ fun AppBackground(
                         center = Offset(sx, sy)
                     )
                 }
+
+                // Delicate diagonal shooting stardust streak across the upper cosmos
+                if (motionConfig.enableParticles && shootingStarPhase < 0.09f) {
+                    val t = shootingStarPhase / 0.09f
+                    val streakFade = sin(t * PI.toFloat()).coerceIn(0f, 1f) * cosmicProgress
+                    val headX = w * (0.14f + t * 0.62f)
+                    val headY = h * (0.07f + t * 0.16f)
+                    val tailX = headX - w * 0.16f
+                    val tailY = headY - h * 0.042f
+                    drawLine(
+                        brush = Brush.linearGradient(
+                            colors = listOf(
+                                Color.Transparent,
+                                Color(0xFFD8B4FE).copy(alpha = 0.42f * streakFade),
+                                Color.White.copy(alpha = 0.78f * streakFade)
+                            ),
+                            start = Offset(tailX, tailY),
+                            end = Offset(headX, headY)
+                        ),
+                        start = Offset(tailX, tailY),
+                        end = Offset(headX, headY),
+                        strokeWidth = 1.6.dp.toPx()
+                    )
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.85f * streakFade),
+                        radius = 2.0.dp.toPx(),
+                        center = Offset(headX, headY)
+                    )
+                }
             }
 
-            // Subtle Rising Micro Purple/Lilac Cosmic Dust Particles
-            val dustVisibility = 0.25f + 0.45f * templatesProgress
-            floatingDust.forEach { mote ->
-                val rawY = (mote.initialYRatio - dustRiseProgress * mote.riseSpeed * 3.5f)
-                val wrappedY = ((rawY % 1f) + 1f) % 1f
-                val swayX = sin(twinkleTime * 0.8f + mote.phase) * mote.swayAmp
-                val px = ((mote.xRatio + swayX).coerceIn(0.02f, 0.98f)) * w
-                val py = wrappedY * h
-
-                // Fade near very top/bottom edges
-                val edgeFade = when {
-                    wrappedY < 0.08f -> wrappedY / 0.08f
-                    wrappedY > 0.92f -> (1f - wrappedY) / 0.08f
-                    else -> 1f
+            // Rising Micro Purple/Lilac Cosmic Dust Particles
+            if (motionConfig.enableParticles) {
+                val dustCount = when (motionConfig.mode) {
+                    com.example.ui.animation.MotionIntensityMode.FULL -> floatingDust.size
+                    com.example.ui.animation.MotionIntensityMode.BALANCED -> 9
+                    com.example.ui.animation.MotionIntensityMode.REDUCED -> 0
                 }
-                val pulse = 0.35f + 0.65f * (0.5f + 0.5f * sin(twinkleTime * 1.3f + mote.phase))
-                val moteAlpha = (pulse * edgeFade * dustVisibility * 0.32f).coerceIn(0f, 1f)
-                val rPx = mote.radiusDp.dp.toPx()
+                val dustVisibility = (0.30f + 0.45f * templatesProgress) * motionConfig.particleScale.coerceAtMost(1.15f)
+                for (di in 0 until dustCount) {
+                    val mote = floatingDust[di]
+                    val rawY = (mote.initialYRatio - dustRiseProgress * mote.riseSpeed * 3.5f)
+                    val wrappedY = ((rawY % 1f) + 1f) % 1f
+                    val swayX = sin(twinkleTime * 0.8f + mote.phase) * mote.swayAmp
+                    val px = ((mote.xRatio + swayX).coerceIn(0.02f, 0.98f)) * w
+                    val py = wrappedY * h
 
-                // Soft outer lilac halo
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            mote.color.copy(alpha = moteAlpha * 0.45f),
-                            mote.color.copy(alpha = moteAlpha * 0.12f),
-                            Color.Transparent
+                    val edgeFade = when {
+                        wrappedY < 0.08f -> wrappedY / 0.08f
+                        wrappedY > 0.92f -> (1f - wrappedY) / 0.08f
+                        else -> 1f
+                    }
+                    val pulse = 0.35f + 0.65f * (0.5f + 0.5f * sin(twinkleTime * 1.3f + mote.phase))
+                    val moteAlpha = (pulse * edgeFade * dustVisibility * 0.34f).coerceIn(0f, 1f)
+                    val rPx = mote.radiusDp.dp.toPx()
+
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                mote.color.copy(alpha = moteAlpha * 0.48f),
+                                mote.color.copy(alpha = moteAlpha * 0.14f),
+                                Color.Transparent
+                            ),
+                            center = Offset(px, py),
+                            radius = rPx * 2.5f
                         ),
-                        center = Offset(px, py),
-                        radius = rPx * 2.4f
-                    ),
-                    radius = rPx * 2.4f,
-                    center = Offset(px, py)
-                )
-                // Soft lavender core
-                drawCircle(
-                    color = Color(0xFFE9D5FF).copy(alpha = moteAlpha * 0.55f),
-                    radius = rPx * 0.65f,
-                    center = Offset(px, py)
-                )
+                        radius = rPx * 2.5f,
+                        center = Offset(px, py)
+                    )
+                    drawCircle(
+                        color = Color(0xFFE9D5FF).copy(alpha = moteAlpha * 0.60f),
+                        radius = rPx * 0.68f,
+                        center = Offset(px, py)
+                    )
+                }
             }
         }
     }

@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,11 +45,14 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import com.example.book.BookStateRepository
+import com.example.book.CosmicDriftBookRegistry
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -89,6 +93,10 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.data.local.BotEntity
 import com.example.data.local.UserSettingsEntity
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicStaggeredEnter
+import com.example.ui.animation.cosmicTapSpring
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
@@ -271,9 +279,21 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
         )
     }
 
-    val isBookExisting = remember(botList) {
-        botList.any { it.id == "preset_aiden_mcu_cosmic" }
+    val existingCosmicBook = remember(botList) {
+        botList.firstOrNull { CosmicDriftBookRegistry.supportsDeterministicEngine(it) }
     }
+    val isBookExisting = existingCosmicBook != null
+
+    val cosmicBookState by remember {
+        BookStateRepository.stateFlow(context, CosmicDriftBookRegistry.BOOK_ID)
+    }.collectAsState()
+    val totalChaptersCount = CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS
+    val completedChaptersCount = cosmicBookState.completedChapters.size
+    val activeChapterNum = cosmicBookState.activeChapter.coerceIn(1, totalChaptersCount)
+    val hasStartedCosmicBook = completedChaptersCount > 0 ||
+        cosmicBookState.activeChapter > 1 ||
+        cosmicBookState.currentChapterDecisions.isNotEmpty() ||
+        cosmicBookState.savedScrollIndex > 0
 
     var showChapterModal by remember { mutableStateOf(false) }
 
@@ -283,12 +303,19 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
             bookTitle = if (isEnglish) "Cosmic Drift | MCU Universe" else "Kozmik Sürükleniş | MCU Evreni",
             userSettings = userSettings,
             onDismiss = { showChapterModal = false },
-            onSelectChapter = { _, _ ->
+            onSelectChapter = { chapterIndex, _ ->
                 showChapterModal = false
-                if (!isBookExisting) {
+                BookStateRepository.jumpToChapter(
+                    context = context,
+                    chapterNumber = chapterIndex,
+                    forceRestartIfSame = chapterIndex != cosmicBookState.activeChapter || cosmicBookState.isChapterCompleted,
+                    bookId = CosmicDriftBookRegistry.BOOK_ID
+                )
+                if (existingCosmicBook != null) {
+                    onOpenBot(existingCosmicBook.id)
+                } else {
                     onImportPresetBot(presetMcuBook)
                 }
-                onOpenBot("preset_aiden_mcu_cosmic")
             }
         )
     }
@@ -296,36 +323,44 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
     val myBooks = remember(botList) {
         botList.filter {
             (it.mode == "book" ||
-             it.id == "preset_aiden_mcu_cosmic" ||
              it.id.startsWith("book_") ||
              it.aiPersonality.contains("KİTAP MODU") ||
              it.scenario.contains("KİTAP MODU")) &&
-            it.id != "preset_aiden_mcu_cosmic"
+            !CosmicDriftBookRegistry.supportsDeterministicEngine(it)
         }
     }
 
-    val booksInfinite = rememberInfiniteTransition(label = "booksCosmicAnim")
-    val orbitDeg by booksInfinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(24000, easing = LinearEasing)),
-        label = "booksOrbit"
-    )
-    val featuredGlow by booksInfinite.animateFloat(
-        initialValue = 0.62f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse),
-        label = "booksGlow"
-    )
-    val starTwinkle by booksInfinite.animateFloat(
-        initialValue = 0.45f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Reverse),
-        label = "booksStar"
-    )
+    val motionConfig = LocalCosmicMotionConfig.current
+    val orbitDeg: Float
+    val featuredGlow: Float
+    val starTwinkle: Float
+    if (motionConfig.enableAmbientLoops) {
+        val booksInfinite = rememberInfiniteTransition(label = "booksCosmicAnim")
+        orbitDeg = booksInfinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(tween(24000, easing = LinearEasing)),
+            label = "booksOrbit"
+        ).value
+        featuredGlow = booksInfinite.animateFloat(
+            initialValue = 0.62f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse),
+            label = "booksGlow"
+        ).value
+        starTwinkle = booksInfinite.animateFloat(
+            initialValue = 0.45f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Reverse),
+            label = "booksStar"
+        ).value
+    } else {
+        orbitDeg = 0f
+        featuredGlow = 0.85f
+        starTwinkle = 0.82f
+    }
 
-    val unlockedChapter = remember { ChapterProgressManager.getUnlockedChapter(context, "preset_aiden_mcu_cosmic") }
-    val displayChapter = unlockedChapter.coerceAtLeast(1)
+    val displayChapter = activeChapterNum
     val totalBooksCount = 1 + myBooks.size
 
     LazyColumn(
@@ -599,6 +634,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                             blurDp = 18.dp
                         )
                         .clip(cardShape)
+                        .cosmicGlassSheen(cornerRadius = 28.dp, periodMs = 4800)
                         .templatesBackdropBlur(
                             blurredBitmap = resolvedBackdrop,
                             alpha = 0.80f,
@@ -849,8 +885,11 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                             }
 
                             Text(
-                                text = if (isEnglish) "•  6 Chapters  •  ~45 min  •  180+ Choices"
-                                else "•  6 Bölüm  •  ~45 dk  •  180+ Seçim",
+                                text = if (isEnglish) {
+                                    "•  $totalChaptersCount Chapters  •  ~${CosmicDriftBookRegistry.totalEstimatedMinutes} min  •  ${CosmicDriftBookRegistry.totalChoiceBranches} Branches"
+                                } else {
+                                    "•  $totalChaptersCount Bölüm  •  ~${CosmicDriftBookRegistry.totalEstimatedMinutes} dk  •  ${CosmicDriftBookRegistry.totalChoiceBranches} Dal"
+                                },
                                 fontFamily = InterFontFamily,
                                 color = Color(0xFFD9C9F5),
                                 fontSize = 12.sp,
@@ -912,17 +951,30 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                     fontWeight = FontWeight.Normal
                                 )
                                 Text(
-                                    text = if (isEnglish) "Chapter $displayChapter / 6" else "Bölüm $displayChapter / 6",
+                                    text = if (isEnglish) {
+                                        "Chapter $displayChapter / $totalChaptersCount  •  $completedChaptersCount Done"
+                                    } else {
+                                        "Bölüm $displayChapter / $totalChaptersCount  •  $completedChaptersCount Bitti"
+                                    },
                                     fontFamily = LiterarySerifFontFamily,
                                     color = Color(0xFFF3E8FF),
-                                    fontSize = 14.5.sp,
+                                    fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium
                                 )
                             }
 
                             Spacer(modifier = Modifier.height(8.dp))
 
-                            val progressFraction = (displayChapter.coerceIn(1, 6)) / 6f
+                            val activeChapterMeta = remember(displayChapter) {
+                                CosmicDriftBookRegistry.chapterMeta(displayChapter)
+                            }
+                            val inChapterRatio = if (activeChapterNum !in cosmicBookState.completedChapters) {
+                                (cosmicBookState.currentChapterDecisions.size.toFloat() /
+                                    activeChapterMeta.decisionCount.coerceAtLeast(1))
+                                    .coerceIn(0f, 0.92f)
+                            } else 0f
+                            val progressFraction = ((completedChaptersCount + inChapterRatio) / totalChaptersCount.toFloat())
+                                .coerceIn(if (hasStartedCosmicBook) 0.05f else 0.0f, 1f)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -935,27 +987,29 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                         shape = RoundedCornerShape(50)
                                     )
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth(progressFraction)
-                                        .fillMaxHeight()
-                                        .booksCosmicOuterGlow(
-                                            cornerRadius = 5.dp,
-                                            glowColor = Color(0xFFD8B4FE),
-                                            alpha = 0.72f * featuredGlow,
-                                            blurDp = 5.dp
-                                        )
-                                        .clip(RoundedCornerShape(50))
-                                        .background(
-                                            Brush.horizontalGradient(
-                                                colors = listOf(
-                                                    Color(0xFFF3E8FF),
-                                                    Color(0xFFD8B4FE),
-                                                    Color(0xFFA855F7)
+                                if (progressFraction > 0.005f) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(progressFraction)
+                                            .fillMaxHeight()
+                                            .booksCosmicOuterGlow(
+                                                cornerRadius = 5.dp,
+                                                glowColor = Color(0xFFD8B4FE),
+                                                alpha = 0.72f * featuredGlow,
+                                                blurDp = 5.dp
+                                            )
+                                            .clip(RoundedCornerShape(50))
+                                            .background(
+                                                Brush.horizontalGradient(
+                                                    colors = listOf(
+                                                        Color(0xFFF3E8FF),
+                                                        Color(0xFFD8B4FE),
+                                                        Color(0xFFA855F7)
+                                                    )
                                                 )
                                             )
-                                        )
-                                )
+                                    )
+                                }
                             }
                         }
 
@@ -1002,7 +1056,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                 CastEmblemOrb(
                                     ringColor = Color(0xFF34D399),
                                     innerTint = Color(0xFF064E3B),
-                                    contentDescription = "Sam Wilson"
+                                    contentDescription = "Clint Barton"
                                 ) { drawEmeraldMaskEmblem() }
                                 CastEmblemOrb(
                                     ringColor = Color(0xFFFBBF24),
@@ -1015,6 +1069,22 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                         glowColor = Color(0xFFFBBF24)
                                     )
                                 }
+                                CastEmblemOrb(
+                                    ringColor = Color(0xFF4ADE80),
+                                    innerTint = Color(0xFF052E16),
+                                    contentDescription = "Bruce Banner"
+                                ) { drawMysticOrbEmblem() }
+                                CastEmblemOrb(
+                                    ringColor = Color(0xFF38BDF8),
+                                    innerTint = Color(0xFF0C4A6E),
+                                    contentDescription = "Thor Odinson"
+                                ) {
+                                    drawLightningBolt(
+                                        topColor = Color(0xFFE0F2FE),
+                                        bottomColor = Color(0xFF0284C7),
+                                        glowColor = Color(0xFF38BDF8)
+                                    )
+                                }
                             }
                         }
 
@@ -1024,10 +1094,12 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         val mainBtnScale = remember { Animatable(1f) }
                         val mainBtnScope = rememberCoroutineScope()
                         val ctaLabel = when {
-                            displayChapter >= 7 -> if (isEnglish) "Chapter 8 Soon" else "Bölüm 8 Yakında"
-                            displayChapter >= 6 -> if (isEnglish) "Ch. 7: Dark Mirror" else "Bölüm 7: Karanlık Ayna"
-                            displayChapter > 1  -> if (isEnglish) "Continue · Ch. $displayChapter" else "Devam Et · Bölüm $displayChapter"
-                            else                -> if (isEnglish) "Start Book" else "Kitaba Başla"
+                            completedChaptersCount >= totalChaptersCount ->
+                                if (isEnglish) "All 7 Done · Chapter 8 Soon" else "7 Bölüm Bitti · Bölüm 8 Yakında"
+                            hasStartedCosmicBook ->
+                                if (isEnglish) "Continue · Ch. $displayChapter" else "Devam Et · Bölüm $displayChapter"
+                            else ->
+                                if (isEnglish) "Start Book" else "Kitaba Başla"
                         }
 
                         Box(
@@ -1045,6 +1117,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                     blurDp = 12.dp
                                 )
                                 .clip(RoundedCornerShape(50))
+                                .cosmicGlassSheen(cornerRadius = 27.dp, periodMs = 3400)
                                 .templatesBackdropBlur(
                                     blurredBitmap = resolvedBackdrop,
                                     alpha = 0.65f,
@@ -1106,13 +1179,18 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                         mainBtnScale.animateTo(0.965f, tween(80))
                                         mainBtnScale.animateTo(1f, tween(130))
                                     }
-                                    val progress = ChapterProgressManager.getUnlockedChapter(context, "preset_aiden_mcu_cosmic")
-                                    if (progress == 0 && !isBookExisting) {
-                                        ChapterProgressManager.saveUnlockedChapter(context, "preset_aiden_mcu_cosmic", 1)
-                                        onImportPresetBot(presetMcuBook)
-                                        onOpenBot("preset_aiden_mcu_cosmic")
+                                    if (!hasStartedCosmicBook) {
+                                        BookStateRepository.jumpToChapter(
+                                            context = context,
+                                            chapterNumber = 1,
+                                            forceRestartIfSame = false,
+                                            bookId = CosmicDriftBookRegistry.BOOK_ID
+                                        )
+                                    }
+                                    if (existingCosmicBook != null) {
+                                        onOpenBot(existingCosmicBook.id)
                                     } else {
-                                        showChapterModal = true
+                                        onImportPresetBot(presetMcuBook)
                                     }
                                 }
                                 .testTag("start_featured_book_button")
@@ -1296,9 +1374,8 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 }
             }
 
-            items(myBooks, key = { it.id }) { bookBot ->
-                val itemScale = remember { Animatable(1f) }
-                val itemScope = rememberCoroutineScope()
+            itemsIndexed(myBooks, key = { _, it -> it.id }) { idx, bookBot ->
+                val itemInteraction = remember { MutableInteractionSource() }
                 val hashColor = remember(bookBot.id) {
                     val colors = listOf(
                         Color(0xFFA855F7), Color(0xFF60A5FA), Color(0xFF34D399),
@@ -1310,7 +1387,12 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .graphicsLayer { scaleX = itemScale.value; scaleY = itemScale.value }
+                        .cosmicStaggeredEnter(index = idx, key = bookBot.id)
+                        .cosmicTapSpring(
+                            interactionSource = itemInteraction,
+                            pressedScale = 0.972f,
+                            cornerRadius = 20.dp
+                        )
                         .clip(RoundedCornerShape(20.dp))
                         .templatesBackdropBlur(
                             blurredBitmap = resolvedBackdrop,
@@ -1331,12 +1413,8 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         )
                         .clickable(
                             indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
+                            interactionSource = itemInteraction
                         ) {
-                            itemScope.launch {
-                                itemScale.animateTo(0.97f, tween(80))
-                                itemScale.animateTo(1f, tween(120))
-                            }
                             onOpenBot(bookBot.id)
                         }
                         .testTag("user_book_card_${bookBot.id}")
@@ -1916,6 +1994,16 @@ object ChapterProgressManager {
             prefs.edit().putInt("progress_$botId", chapterNumber).apply()
         }
     }
+
+    fun setExactCompletedChapter(context: android.content.Context, botId: String, completedChapter: Int) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("progress_$botId", completedChapter.coerceAtLeast(0)).apply()
+    }
+
+    fun resetProgress(context: android.content.Context, botId: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        prefs.edit().putInt("progress_$botId", 0).apply()
+    }
 }
 
 private data class BookChapterInfo(
@@ -1936,7 +2024,12 @@ fun ChapterSelectionModal(
 ) {
     val context = LocalContext.current
     val isEnglish = userSettings?.appLanguage == "en"
-    val progress = remember { ChapterProgressManager.getUnlockedChapter(context, botId) }
+    val bookState by remember(botId) {
+        BookStateRepository.stateFlow(context, CosmicDriftBookRegistry.BOOK_ID)
+    }.collectAsState()
+    val completedSet = bookState.completedChapters
+    val progress = bookState.highestCompletedChapter
+    val activeChapter = bookState.activeChapter
 
     val chapters = remember(isEnglish) {
         listOf(
@@ -2149,23 +2242,28 @@ fun ChapterSelectionModal(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            repeat(6) { i ->
+                            repeat(7) { i ->
+                                val chapterIdx = i + 1
+                                val dotCompleted = chapterIdx in completedSet
+                                val dotActive = chapterIdx == activeChapter
                                 Box(
                                     modifier = Modifier
-                                        .size(if (i < progress) 8.dp else 6.dp)
+                                        .size(if (dotCompleted || dotActive) 8.dp else 6.dp)
                                         .clip(CircleShape)
-                                        .background(if (i < progress) Color(0xFF34D399) else Color(0x55C4B5FD))
+                                        .background(
+                                            when {
+                                                dotCompleted -> Color(0xFF34D399)
+                                                dotActive -> Color(0xFFC084FC)
+                                                else -> Color(0x55C4B5FD)
+                                            }
+                                        )
                                 )
                             }
                         }
                         Text(
                             text = when {
-                                progress >= 6 -> if (isEnglish) "Chapter 6 Completed" else "Bölüm 6 Tamamlandı"
-                                progress >= 5 -> if (isEnglish) "Ch. 5 Done • Ch. 6 Open" else "Bölüm 5 Tamamlandı • Bölüm 6 Açık"
-                                progress >= 4 -> if (isEnglish) "Ch. 4 Done • Ch. 5 Open" else "Bölüm 4 Tamamlandı • Bölüm 5 Açık"
-                                progress >= 3 -> if (isEnglish) "Ch. 3 Done • Ch. 4 Open" else "Bölüm 3 Tamamlandı • Bölüm 4 Açık"
-                                progress >= 2 -> if (isEnglish) "Ch. 2 Done • Ch. 3 Open" else "Bölüm 2 Tamamlandı • Bölüm 3 Açık"
-                                progress >= 1 -> if (isEnglish) "Ch. 1 Done • Ch. 2 Open" else "Bölüm 1 Tamamlandı • Bölüm 2 Açık"
+                                completedSet.size >= 7 -> if (isEnglish) "All 7 Chapters Completed ✦" else "7 / 7 Bölüm Tamamlandı ✦"
+                                progress >= 1 -> if (isEnglish) "${completedSet.size}/7 Done • Ch. ${(progress + 1).coerceAtMost(7)} Open" else "${completedSet.size}/7 Bitti • Bölüm ${(progress + 1).coerceAtMost(7)} Açık"
                                 else -> if (isEnglish) "Not Started • Chapter 1 Open" else "Henüz Başlanmadı • Bölüm 1 Açık"
                             },
                             fontFamily = InterFontFamily,
@@ -2198,12 +2296,12 @@ fun ChapterSelectionModal(
                         Color(0xFFC084FC), // 7
                         Color(0xFF94A3B8)  // 8
                     )
-                    val chapterDurations = listOf("~6 dk", "~7 dk", "~8 dk", "~8 dk", "~7 dk", "~9 dk", "~11 dk", "—")
+                    val chapterDurations = CosmicDriftBookRegistry.chapters.map { "~${it.estimatedMinutes} dk" } + "—"
 
                     chapters.forEach { item ->
-                        val isUnlocked = item.index <= (progress + 1) && item.index <= 7
-                        val isCompleted = item.index <= progress
-                        val isCurrent = (progress + 1) == item.index || (progress >= 6 && item.index == 6)
+                        val isCompleted = item.index in completedSet
+                        val isUnlocked = (item.index <= (progress + 1) || isCompleted || item.index == activeChapter) && item.index <= 7
+                        val isCurrent = item.index == activeChapter && item.index <= 7
                         val isComingSoon = item.index == 8
                         val bandColor = chapterBandColors.getOrElse(item.index - 1) { Color(0xFFA855F7) }
                         val duration = chapterDurations.getOrElse(item.index - 1) { "—" }

@@ -179,6 +179,11 @@ import com.example.ui.theme.EmochiBorder
 import com.example.ui.theme.EmochiCard
 import com.example.ui.theme.EmochiError
 import com.example.ui.theme.EmochiPrimary
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicFloatingLevitation
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicTapSpring
 import com.example.ui.theme.EmochiSurface
 import com.example.ui.theme.EmochiTextMuted
 import com.example.ui.theme.EmochiTextPrimary
@@ -245,23 +250,33 @@ fun BotListScreen(
             containerColor = Color.Transparent,
             contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         bottomBar = {
-            // Infinite transitions for live neon glow, center orb pulse, and specular shimmer
-            val navInfinite = rememberInfiniteTransition(label = "navInfinite")
-            val centerPulseScale by navInfinite.animateFloat(
-                initialValue = 0.96f, targetValue = 1.08f,
-                animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                label = "centerPulse"
-            )
-            val centerPulseAlpha by navInfinite.animateFloat(
-                initialValue = 0.55f, targetValue = 0.95f,
-                animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                label = "centerPulseAlpha"
-            )
-            val orbRingRot by navInfinite.animateFloat(
-                initialValue = 0f, targetValue = 360f,
-                animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
-                label = "orbRingRot"
-            )
+            val motionConfig = LocalCosmicMotionConfig.current
+            // Infinite transitions for live neon glow, center orb pulse, and specular shimmer (gated by MotionIntensityMode)
+            val centerPulseScale: Float
+            val centerPulseAlpha: Float
+            val orbRingRot: Float
+            if (motionConfig.enableAmbientLoops) {
+                val navInfinite = rememberInfiniteTransition(label = "navInfinite")
+                centerPulseScale = navInfinite.animateFloat(
+                    initialValue = 0.96f, targetValue = 1.08f,
+                    animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "centerPulse"
+                ).value
+                centerPulseAlpha = navInfinite.animateFloat(
+                    initialValue = 0.55f, targetValue = 0.95f,
+                    animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                    label = "centerPulseAlpha"
+                ).value
+                orbRingRot = navInfinite.animateFloat(
+                    initialValue = 0f, targetValue = 360f,
+                    animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
+                    label = "orbRingRot"
+                ).value
+            } else {
+                centerPulseScale = 1f
+                centerPulseAlpha = 0.80f
+                orbRingRot = 0f
+            }
 
             data class NavTab(val key: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String)
             val tabs = listOf(
@@ -400,12 +415,10 @@ fun BotListScreen(
                             isSelected: Boolean,
                             modifier: Modifier = Modifier
                         ) {
+                            val tabInteraction = remember { MutableInteractionSource() }
                             val iconScale by animateFloatAsState(
-                                targetValue = if (isSelected) 1.07f else 1.0f,
-                                animationSpec = androidx.compose.animation.core.spring(
-                                    dampingRatio = 0.62f,
-                                    stiffness = 380f
-                                ),
+                                targetValue = if (isSelected) 1.08f else 1.0f,
+                                animationSpec = CosmicMotionSpecs.snappyOrb(),
                                 label = "navTabScale_${tab.key}"
                             )
                             val activeGlowAlpha by animateFloatAsState(
@@ -417,6 +430,11 @@ fun BotListScreen(
                             Box(
                                 modifier = modifier
                                     .fillMaxHeight()
+                                    .cosmicTapSpring(
+                                        interactionSource = tabInteraction,
+                                        pressedScale = 0.92f,
+                                        cornerRadius = 24.dp
+                                    )
                                     .clip(RoundedCornerShape(24.dp))
                                     .drawBehind {
                                         if (activeGlowAlpha > 0.01f) {
@@ -453,7 +471,7 @@ fun BotListScreen(
                                     }
                                     .clickable(
                                         indication = null,
-                                        interactionSource = remember { MutableInteractionSource() }
+                                        interactionSource = tabInteraction
                                     ) {
                                         if (activeTab == tab.key) {
                                             coroutineScope.launch { listStates[tab.key]?.animateScrollToItem(0) }
@@ -795,9 +813,15 @@ fun BotListScreen(
                         contentAlignment = Alignment.Center
                     ) {
                         // Inner glowing crystal amethyst sphere (#2) with '+' and 'Oluştur'
+                        val createOrbInteraction = remember { MutableInteractionSource() }
                         Box(
                             modifier = Modifier
                                 .size(68.dp)
+                                .cosmicTapSpring(
+                                    interactionSource = createOrbInteraction,
+                                    pressedScale = 0.90f,
+                                    cornerRadius = 34.dp
+                                )
                                 .clip(CircleShape)
                                 .background(
                                     Brush.radialGradient(
@@ -849,7 +873,10 @@ fun BotListScreen(
                                     ),
                                     CircleShape
                                 )
-                                .clickable { onNewBot() }
+                                .clickable(
+                                    interactionSource = createOrbInteraction,
+                                    indication = null
+                                ) { onNewBot() }
                                 .testTag("create_new_bot_button"),
                             contentAlignment = Alignment.Center
                         ) {
@@ -887,17 +914,13 @@ fun BotListScreen(
                 .statusBarsPadding()
         ) {
             val tabOrder = listOf("discover", "chats", "templates", "books")
-            val tabCubicEasing = remember { androidx.compose.animation.core.CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f) }
+            val homeMotionConfig = LocalCosmicMotionConfig.current
             AnimatedContent(
                 targetState = activeTab,
                 transitionSpec = {
                     val fromIdx = tabOrder.indexOf(initialState)
-                    val toIdx   = tabOrder.indexOf(targetState)
-                    val dir     = if (toIdx > fromIdx) 1 else -1
-                    (slideInHorizontally(tween(460, easing = tabCubicEasing)) { (it * 0.22f * dir).toInt() } +
-                        fadeIn(tween(460, easing = tabCubicEasing))) togetherWith
-                    (slideOutHorizontally(tween(380, easing = tabCubicEasing)) { (it * -0.18f * dir).toInt() } +
-                        fadeOut(tween(320, easing = tabCubicEasing)))
+                    val toIdx = tabOrder.indexOf(targetState)
+                    CosmicMotionSpecs.cosmicTabTransition(forward = toIdx > fromIdx, config = homeMotionConfig)
                 },
                 modifier = Modifier
                     .weight(1f)
@@ -1044,34 +1067,44 @@ fun TopHeader(
         createFrostedGothicManorBitmap(context, R.drawable.img_botlist_gothic_wisteria_bg)
     }
 
-    val infinite = rememberInfiniteTransition(label = "header")
-    val settingsOrbitRot by infinite.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(11000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "settingsOrbitRot"
-    )
-    val waveAngle by infinite.animateFloat(
-        initialValue = -6f,
-        targetValue = 10f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "waveAngle"
-    )
-    val starPulse by infinite.animateFloat(
-        initialValue = 0.72f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "starPulse"
-    )
+    val headerMotionConfig = LocalCosmicMotionConfig.current
+    val settingsOrbitRot: Float
+    val waveAngle: Float
+    val starPulse: Float
+    if (headerMotionConfig.enableAmbientLoops) {
+        val infinite = rememberInfiniteTransition(label = "header")
+        settingsOrbitRot = infinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(11000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "settingsOrbitRot"
+        ).value
+        waveAngle = infinite.animateFloat(
+            initialValue = -6f,
+            targetValue = 10f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "waveAngle"
+        ).value
+        starPulse = infinite.animateFloat(
+            initialValue = 0.72f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "starPulse"
+        ).value
+    } else {
+        settingsOrbitRot = 0f
+        waveAngle = 0f
+        starPulse = 0.88f
+    }
 
     val titleText = when (activeTab) {
         "templates" -> "Şablonlar"
@@ -1873,7 +1906,9 @@ fun ChatsTabContent(
                         verticalArrangement = Arrangement.spacedBy(12.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        OrbView(hue = 275f, size = 58.dp)
+                        Box(modifier = Modifier.cosmicFloatingLevitation(amplitudeDp = 4.dp, durationMs = 2800)) {
+                            OrbView(hue = 275f, size = 58.dp)
+                        }
                         Text(
                             text = "Henüz hiç karakter yok",
                             fontFamily = LiterarySerifFontFamily,
@@ -1925,7 +1960,9 @@ fun ChatsTabContent(
                             imageVector = Icons.Default.Search,
                             contentDescription = null,
                             tint = Color(0xFFD8B4FE),
-                            modifier = Modifier.size(26.dp)
+                            modifier = Modifier
+                                .size(26.dp)
+                                .cosmicFloatingLevitation(amplitudeDp = 3.dp, durationMs = 2600)
                         )
                         Text(
                             text = if (sortMode == "favorites_only") {
@@ -1956,7 +1993,7 @@ fun ChatsTabContent(
                 }
             }
         } else {
-            items(filteredBots, key = { it.id }) { bot ->
+            itemsIndexed(filteredBots, key = { _, it -> it.id }) { idx, bot ->
                 BotCardItem(
                     bot = bot,
                     confirmDeleteId = confirmDeleteId,
@@ -1968,7 +2005,8 @@ fun ChatsTabContent(
                     isFavorite = favoriteBotIds.contains(bot.id),
                     onToggleFavorite = { toggleFavorite(bot.id) },
                     frostedBackdrop = resolvedBackdrop,
-                    scrollSync = scrollSync
+                    scrollSync = scrollSync,
+                    staggerIndex = idx
                 )
             }
         }
@@ -1980,8 +2018,8 @@ fun ChatsTabContent(
                 val ctaInteraction = remember { MutableInteractionSource() }
                 val ctaPressed by ctaInteraction.collectIsPressedAsState()
                 val ctaScale by animateFloatAsState(
-                    targetValue = if (ctaPressed) 0.975f else 1f,
-                    animationSpec = tween(110, easing = FastOutSlowInEasing),
+                    targetValue = if (ctaPressed) 0.972f else 1f,
+                    animationSpec = CosmicMotionSpecs.snappyOrb(),
                     label = "ctaBannerScale"
                 )
                 Box(
@@ -2009,6 +2047,7 @@ fun ChatsTabContent(
                             }
                         }
                         .clip(ctaShape)
+                        .cosmicGlassSheen(cornerRadius = 30.dp, periodMs = 4400)
                         .templatesBackdropBlur(
                             blurredBitmap = resolvedBackdrop,
                             alpha = 0.78f,

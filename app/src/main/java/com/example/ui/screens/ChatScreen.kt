@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.collectAsState
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -61,6 +62,21 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.tween
+import com.example.ui.animation.CosmicConfettiOverlay
+import com.example.ui.animation.CosmicFloatingDeltaPop
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.CosmicSparkleBurst
+import com.example.ui.animation.CosmicStreamingCaret
+import com.example.ui.animation.CosmicVoiceEqualizer
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicBorderBreathing
+import com.example.ui.animation.cosmicFloatingLevitation
+import com.example.ui.animation.cosmicGlassSheen
+import com.example.ui.animation.cosmicMessageEnter
+import com.example.ui.animation.cosmicPopOnTrigger
+import com.example.ui.animation.cosmicShakeOnTrigger
+import com.example.ui.animation.cosmicShimmerSweep
+import com.example.ui.animation.cosmicTapSpring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -106,6 +122,7 @@ import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
@@ -1950,6 +1967,49 @@ fun ChatScreen(
         messages.filter { it.text.isNotBlank() && !it.id.contains("_ref_msg_") }
     }
 
+    // 20-message windowed pagination (all older messages stay permanently saved in Room)
+    // + auto-collapse for messages 7+ from the bottom (resets automatically when back at bottom)
+    val chatPageSize = 20
+    var visibleMessageLimit by remember(bot.id) { mutableIntStateOf(chatPageSize) }
+    var expandedOldMessageIds by remember(bot.id) { mutableStateOf(emptySet<String>()) }
+    var pendingPrependAnchorIndex by remember(bot.id) { mutableStateOf<Int?>(null) }
+    var pendingSnapToBottomAfterCollapse by remember(bot.id) { mutableStateOf(false) }
+
+    val hiddenOlderCount = (rawValidMessages.size - visibleMessageLimit).coerceAtLeast(0)
+    val paginatedValidMessages = remember(rawValidMessages, visibleMessageLimit) {
+        if (rawValidMessages.size > visibleMessageLimit) {
+            rawValidMessages.takeLast(visibleMessageLimit)
+        } else {
+            rawValidMessages
+        }
+    }
+    val hasLoadOlderHeader = hiddenOlderCount > 0
+
+    // Preserve exact viewport anchor when loading 20 older messages above the current top
+    LaunchedEffect(pendingPrependAnchorIndex, paginatedValidMessages.size) {
+        val anchorIdx = pendingPrependAnchorIndex ?: return@LaunchedEffect
+        try {
+            val clamped = anchorIdx.coerceIn(0, (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
+            listState.scrollToItem(clamped)
+        } catch (_: Exception) {
+        }
+        pendingPrependAnchorIndex = null
+    }
+
+    // Snap cleanly to the newest message after collapsing extra loaded 20-message batches at bottom
+    LaunchedEffect(pendingSnapToBottomAfterCollapse, paginatedValidMessages.size) {
+        if (!pendingSnapToBottomAfterCollapse) return@LaunchedEffect
+        val hasWaitingItem = isSending && streamingText.isNullOrBlank()
+        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (hasWaitingItem) 1 else 0
+        if (totalItems > 0) {
+            try {
+                listState.scrollToItem(totalItems - 1)
+            } catch (_: Exception) {
+            }
+        }
+        pendingSnapToBottomAfterCollapse = false
+    }
+
     // Close message action pills and reaction picker automatically if the active message scrolls off-screen
     val visibleItemKeys by remember {
         derivedStateOf {
@@ -1970,6 +2030,41 @@ fun ChatScreen(
         }
     }
 
+    // Detect when user reaches the very bottom so older expanded messages & extra 20-message pages auto-close
+    val isChatAtBottom by remember {
+        derivedStateOf {
+            val layoutInfo = listState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            if (totalItems == 0) true
+            else if (!listState.canScrollForward) true
+            else {
+                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
+                val itemsFromEnd = totalItems - 1 - lastVisible.index
+                if (itemsFromEnd > 0) false
+                else {
+                    val contentEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
+                    val itemBottom = lastVisible.offset + lastVisible.size
+                    (itemBottom - contentEnd) <= 80
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(isChatAtBottom, listState.isScrollInProgress, visibleMessageLimit, expandedOldMessageIds.size) {
+        if (isChatAtBottom && !listState.isScrollInProgress) {
+            delay(180)
+            if (isChatAtBottom && !listState.isScrollInProgress) {
+                if (expandedOldMessageIds.isNotEmpty()) {
+                    expandedOldMessageIds = emptySet()
+                }
+                if (visibleMessageLimit > chatPageSize) {
+                    visibleMessageLimit = chatPageSize
+                    pendingSnapToBottomAfterCollapse = true
+                }
+            }
+        }
+    }
+
     LaunchedEffect(bot.id, rawValidMessages.isEmpty()) {
         if (rawValidMessages.isEmpty() && !isSending && bot.mode != "book") {
             onEnsureOpeningMessage()
@@ -1979,7 +2074,7 @@ fun ChatScreen(
     // Scroll to bottom on new messages or streaming updates
     LaunchedEffect(rawValidMessages.size, isSending, streamingText) {
         val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-        val totalItems = rawValidMessages.size + if (hasWaitingItem) 1 else 0
+        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (hasWaitingItem) 1 else 0
         if (totalItems > 0) {
             try {
                 listState.animateScrollToItem(totalItems - 1)
@@ -1993,41 +2088,59 @@ fun ChatScreen(
         displayName.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "A"
     }
 
-    // --- Rich Animations Setup ---
-    val infiniteTransition = rememberInfiniteTransition(label = "chatScreenAnimations")
+    // --- Rich Cosmic Motion Pack Setup ---
+    val motionConfig = LocalCosmicMotionConfig.current
+    val initialMessageIds = remember(bot.id) { rawValidMessages.map { it.id }.toSet() }
+    var sendBurstTrigger by remember(bot.id) { mutableIntStateOf(0) }
+    var copiedMsgId by remember { mutableStateOf<String?>(null) }
 
-    // 1. Breathing Glow Alpha Pulse (0.35f to 0.90f)
-    val pulseGlowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.35f,
-        targetValue = 0.90f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseGlowAlpha"
-    )
+    LaunchedEffect(copiedMsgId) {
+        if (copiedMsgId != null) {
+            delay(1500)
+            copiedMsgId = null
+        }
+    }
 
-    // 2. Tactile Pulse Scale (0.96f to 1.04f)
-    val pulseScale by infiniteTransition.animateFloat(
-        initialValue = 0.96f,
-        targetValue = 1.04f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseScale"
-    )
-
-    // 3. Rotating Sweep Angle for Neon Borders (0f to 360f)
-    val sweepRotateAngle by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(7000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "sweepRotateAngle"
-    )
+    val pulseGlowAlpha: Float
+    val pulseScale: Float
+    val sweepRotateAngle: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infiniteTransition = rememberInfiniteTransition(label = "chatScreenAnimations")
+        val pAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.35f,
+            targetValue = 0.90f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1800, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseGlowAlpha"
+        )
+        val pScale by infiniteTransition.animateFloat(
+            initialValue = 0.96f,
+            targetValue = 1.04f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1200, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pulseScale"
+        )
+        val sAngle by infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(7000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "sweepRotateAngle"
+        )
+        pulseGlowAlpha = pAlpha
+        pulseScale = pScale
+        sweepRotateAngle = sAngle
+    } else {
+        pulseGlowAlpha = 0.62f
+        pulseScale = 1.0f
+        sweepRotateAngle = 0f
+    }
 
     // Mood detection based on last AI text
     val lastAiText = rawValidMessages.lastOrNull { it.role == "assistant" }?.text ?: ""
@@ -2046,6 +2159,34 @@ fun ChatScreen(
     val hue = MoodColors.getMoodHue(detectedMood)
     val emotionState = remember(bot.emotionState) { com.example.data.local.EmotionState.fromJson(bot.emotionState) }
     val realMoodDisplay = "${emotionState.getMoodEmoji()} ${emotionState.mood.replaceFirstChar { it.uppercase() }}"
+
+    // Smooth animated mood aura color + live floating affection delta badge
+    val emotionAuraColor by animateColorAsState(
+        targetValue = when (detectedMood) {
+            "joy" -> Color(0xFFFDE047)
+            "warm" -> Color(0xFFF472B6)
+            "sad" -> Color(0xFF818CF8)
+            "tense" -> Color(0xFFFB7185)
+            "curious" -> Color(0xFF38BDF8)
+            else -> Color(0xFFC084FC)
+        },
+        animationSpec = tween(700),
+        label = "emotionAuraColor"
+    )
+    var lastObservedAffection by remember(bot.id) { mutableIntStateOf(emotionState.affection) }
+    var affectionDeltaText by remember(bot.id) { mutableStateOf<String?>(null) }
+    var affectionDeltaTrigger by remember(bot.id) { mutableIntStateOf(0) }
+    var affectionDeltaPositive by remember(bot.id) { mutableStateOf(true) }
+
+    LaunchedEffect(emotionState.affection) {
+        val diff = emotionState.affection - lastObservedAffection
+        if (diff != 0) {
+            affectionDeltaPositive = diff > 0
+            affectionDeltaText = if (diff > 0) "+$diff Sevgi ✦" else "$diff Sevgi"
+            affectionDeltaTrigger += 1
+            lastObservedAffection = emotionState.affection
+        }
+    }
 
     val lastAiIndex = rawValidMessages.indexOfLast { it.role == "assistant" }
 
@@ -2076,7 +2217,7 @@ fun ChatScreen(
     val blurredBgBitmap = remember(context) { createFrostedWisteriaBackdropBitmap(context) }
     val refGlassBitmaps = remember(context) { loadAetheriaRefGlassBitmaps(context) }
     val headerTitle = displayName
-    val validMessages = rawValidMessages
+    val validMessages = paginatedValidMessages
 
     androidx.compose.runtime.CompositionLocalProvider(
         LocalAetheriaRootPos provides rootPosState,
@@ -2101,7 +2242,7 @@ fun ChatScreen(
                 val activeId = reactionPickerMessageId ?: expandedMenuMessageId ?: expandedUserMenuMessageId
                 if (activeId == null) {
                     val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-                    val totalItems = rawValidMessages.size + if (hasWaitingItem) 1 else 0
+                    val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (hasWaitingItem) 1 else 0
                     if (totalItems > 0) {
                         kotlinx.coroutines.delay(90)
                         try {
@@ -2241,11 +2382,24 @@ fun ChatScreen(
                                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                                         modifier = Modifier
                                             .size(headerW * (54f / 841f))
-                                            .clip(CircleShape),
+                                            .clip(CircleShape)
+                                            .border(
+                                                1.35.dp,
+                                                emotionAuraColor.copy(alpha = 0.45f + 0.35f * pulseGlowAlpha),
+                                                CircleShape
+                                            ),
                                         fallback = fallbackInitial
                                     )
                                 } else {
                                     fallbackInitial()
+                                }
+                                if (affectionDeltaTrigger > 0) {
+                                    CosmicFloatingDeltaPop(
+                                        deltaText = affectionDeltaText,
+                                        triggerKey = affectionDeltaTrigger,
+                                        color = if (affectionDeltaPositive) Color(0xFF4ADE80) else Color(0xFFF472B6),
+                                        modifier = Modifier.align(Alignment.TopCenter)
+                                    )
                                 }
                             }
 
@@ -2428,11 +2582,11 @@ fun ChatScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Default.VolumeUp,
-                                            contentDescription = null,
-                                            tint = MorCamTokens.LavenderLight,
-                                            modifier = Modifier.size(16.dp)
+                                        CosmicVoiceEqualizer(
+                                            active = isSpeaking,
+                                            barCount = 5,
+                                            color = MorCamTokens.LavenderLight,
+                                            height = 15.dp
                                         )
                                         Text(
                                             text = "Sesli okunuyor...",
@@ -2712,26 +2866,45 @@ fun ChatScreen(
                                     }
                             )
 
-                            // 6.4 Sağ Gönder (➤) Butonu at x = 695..825/841 — Does nothing when input is blank!
+                            // 6.4 Sağ Gönder (➤) Butonu at x = 695..825/841 — Cosmic spring pop + sparkle launch burst!
                             val canSendNow = !isSending && inputText.trim().isNotEmpty()
+                            val sendInteraction = remember { MutableInteractionSource() }
                             Box(
                                 modifier = Modifier
                                     .offset(x = barW * (695f / 841f), y = barH * (12f / 138f))
                                     .size(width = barW * (130f / 841f), height = barH * (114f / 138f))
+                                    .cosmicTapSpring(
+                                        interactionSource = sendInteraction,
+                                        enabled = canSendNow,
+                                        pressedScale = 0.88f,
+                                        cornerRadius = 40.dp
+                                    )
+                                    .cosmicPopOnTrigger(triggerKey = sendBurstTrigger, peakScale = 1.15f)
                                     .clip(CircleShape)
                                     .clickable(
                                         enabled = canSendNow,
-                                        interactionSource = remember { MutableInteractionSource() },
+                                        interactionSource = sendInteraction,
                                         indication = null
                                     ) {
                                         val text = inputText.trim()
                                         if (text.isNotBlank() && !isSending) {
+                                            sendBurstTrigger += 1
                                             inputText = ""
                                             onSendMessage(text)
                                         }
                                     }
-                                    .testTag("send_message_button")
-                            )
+                                    .testTag("send_message_button"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CosmicSparkleBurst(
+                                    triggerKey = sendBurstTrigger,
+                                    accentColor = Color(0xFFE9D5FF),
+                                    secondaryColor = Color(0xFFA855F7),
+                                    particleCount = 10,
+                                    maxRadius = 30.dp,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
                         }
                     }
                 }
@@ -2744,7 +2917,7 @@ fun ChatScreen(
         LaunchedEffect(bottomInsetPadding, isImeVisible) {
             if (isImeVisible) {
                 val hasWaitingItem = isSending && streamingText.isNullOrBlank()
-                val totalItems = rawValidMessages.size + if (hasWaitingItem) 1 else 0
+                val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (hasWaitingItem) 1 else 0
                 if (totalItems > 0) {
                     try {
                         listState.scrollToItem(totalItems - 1)
@@ -2773,6 +2946,7 @@ fun ChatScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .cosmicShakeOnTrigger(err)
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                                 .clip(RoundedCornerShape(14.dp))
                                 .background(
@@ -2908,8 +3082,80 @@ fun ChatScreen(
                         },
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (hasLoadOlderHeader) {
+                        item(key = "load_older_messages_header") {
+                            val nextBatchCount = minOf(chatPageSize, hiddenOlderCount)
+                            val loadMoreInteraction = remember { MutableInteractionSource() }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .cosmicTapSpring(loadMoreInteraction, pressedScale = 0.95f)
+                                        .morCamOuterGlow(cornerRadius = 22.dp, shadowAlpha = 0.28f, rimGlowAlpha = 0.24f, bottomFlareAlpha = 0.42f)
+                                        .clip(RoundedCornerShape(50))
+                                        .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.70f)
+                                        .morCamGlassSurface(
+                                            baseSmokeColor = Color(0x421A0A38),
+                                            topRightFrostAlpha = 0.22f,
+                                            topLeftFrostAlpha = 0.16f,
+                                            topStarFrostAlpha = 0f,
+                                            bottomEdgeRefractionAlpha = 0.18f
+                                        )
+                                        .border(
+                                            BorderStroke(
+                                                0.95.dp,
+                                                Brush.linearGradient(
+                                                    listOf(Color(0xD8F3E8FF), Color(0x66A855F7), Color(0xCCE9D5FF))
+                                                )
+                                            ),
+                                            RoundedCornerShape(50)
+                                        )
+                                        .clickable(
+                                            interactionSource = loadMoreInteraction,
+                                            indication = null
+                                        ) {
+                                            val willStillHaveHeader = (hiddenOlderCount - nextBatchCount) > 0
+                                            visibleMessageLimit += chatPageSize
+                                            pendingPrependAnchorIndex = nextBatchCount + if (willStillHaveHeader) 1 else 0
+                                        }
+                                        .padding(horizontal = 16.dp, vertical = 9.dp)
+                                        .testTag("chat_load_older_messages_button"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.History,
+                                        contentDescription = "Eski Mesajları Göster",
+                                        tint = Color(0xFFE9D5FF),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Column(horizontalAlignment = Alignment.Start) {
+                                        Text(
+                                            text = "Daha Fazla Mesaj Göster (+$nextBatchCount)",
+                                            color = Color(0xFFFBF8FF),
+                                            fontSize = 12.2.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = "$hiddenOlderCount eski mesaj sistemde kayıtlı",
+                                            color = Color(0xCCDDD6FE),
+                                            fontSize = 10.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     itemsIndexed(validMessages, key = { _, msg -> msg.id }) { index, msg ->
                         val isUser = msg.role == "user"
+                        val orderFromBottom = validMessages.size - index
 
                         val timeFormatted = remember(msg.timestamp) {
                             if (msg.timestamp > 0L) {
@@ -3012,9 +3258,11 @@ fun ChatScreen(
                                     (isSending && index == validMessages.lastIndex && !streamingText.isNullOrBlank())
                             }
 
+                            val isFreshUserMsg = msg.id !in initialMessageIds
                             BoxWithConstraints(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .cosmicMessageEnter(messageKey = msg.id, isUser = true, animate = isFreshUserMsg)
                                     .graphicsLayer {
                                         scaleX = userScale
                                         scaleY = userScale
@@ -3048,9 +3296,14 @@ fun ChatScreen(
                                     )
                             ) {
                                 val uW = maxWidth
+                                val cleanUserText = remember(msg.text) { cleanCopyText(msg.text) }
+                                val isUserMsgAutoCollapsible = orderFromBottom >= 7 &&
+                                    (cleanUserText.length > 180 || cleanUserText.count { it == '\n' } >= 4)
+                                val isUserMsgCollapsed = isUserMsgAutoCollapsible && msg.id !in expandedOldMessageIds
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing))
                                         .heightIn(min = uW * (108f / 841f))
                                         .padding(
                                             start = uW * (204f / 841f),
@@ -3060,12 +3313,14 @@ fun ChatScreen(
                                         )
                                 ) {
                                     Text(
-                                        text = formatNarrativeText(cleanCopyText(msg.text)),
+                                        text = formatNarrativeText(cleanUserText),
                                         color = Color.White.copy(alpha = 0.97f),
                                         fontSize = 15.sp,
                                         lineHeight = 22.5.sp,
                                         letterSpacing = 0.1.sp,
                                         fontFamily = LiterarySerifFontFamily,
+                                        maxLines = if (isUserMsgCollapsed) 4 else Int.MAX_VALUE,
+                                        overflow = if (isUserMsgCollapsed) androidx.compose.ui.text.style.TextOverflow.Ellipsis else androidx.compose.ui.text.style.TextOverflow.Clip,
                                         style = TextStyle(
                                             shadow = Shadow(
                                                 color = Color(0x88120524),
@@ -3074,6 +3329,43 @@ fun ChatScreen(
                                             )
                                         )
                                     )
+                                    if (isUserMsgAutoCollapsible) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Row(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color(0x5226104C))
+                                                .border(0.8.dp, Color(0x88D8B4FE), RoundedCornerShape(50))
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null
+                                                ) {
+                                                    expandedOldMessageIds = if (isUserMsgCollapsed) {
+                                                        expandedOldMessageIds + msg.id
+                                                    } else {
+                                                        expandedOldMessageIds - msg.id
+                                                    }
+                                                }
+                                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                                .testTag("chat_expand_msg_${msg.id}"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isUserMsgCollapsed) "Daha Fazla Göster" else "Daha Az Göster",
+                                                color = Color(0xFFF3E8FF),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Icon(
+                                                imageVector = if (isUserMsgCollapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                                contentDescription = if (isUserMsgCollapsed) "Daha Fazla Göster" else "Daha Az Göster",
+                                                tint = Color(0xFFE9D5FF),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -3140,9 +3432,15 @@ fun ChatScreen(
                                             isActive: Boolean = false,
                                             onClick: () -> Unit
                                         ) {
+                                            val pillInteraction = remember { MutableInteractionSource() }
                                             Row(
                                                 modifier = Modifier
                                                     .height(40.dp)
+                                                    .cosmicTapSpring(
+                                                        interactionSource = pillInteraction,
+                                                        pressedScale = 0.93f,
+                                                        cornerRadius = 20.dp
+                                                    )
                                                     .morCamOuterGlow(cornerRadius = 20.dp, shadowAlpha = 0.34f, rimGlowAlpha = 0.24f, bottomFlareAlpha = 0.42f)
                                                     .clip(RoundedCornerShape(50))
                                                     .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.85f)
@@ -3172,7 +3470,10 @@ fun ChatScreen(
                                                         RoundedCornerShape(50)
                                                     )
                                                     .morCamTopAndBottomSpecular(cornerRadius = 20.dp, topSheenAlpha = 0.22f, bottomFlareAlpha = 0.44f)
-                                                    .clickable { onClick() }
+                                                    .clickable(
+                                                        interactionSource = pillInteraction,
+                                                        indication = null
+                                                    ) { onClick() }
                                                     .padding(start = if (iconType != null) 7.dp else 14.dp, end = 16.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -3189,9 +3490,14 @@ fun ChatScreen(
                                             }
                                         }
 
-                                        UserGlassActionPill(iconType = "copy", label = "Kopyala") {
+                                        UserGlassActionPill(
+                                            iconType = "copy",
+                                            label = if (copiedMsgId == msg.id) "Kopyalandı ✓" else "Kopyala",
+                                            isActive = copiedMsgId == msg.id
+                                        ) {
                                             val cleanText = cleanCopyText(msg.text)
                                             clipboardManager.setText(AnnotatedString(cleanText))
+                                            copiedMsgId = msg.id
                                             android.widget.Toast.makeText(context, "Kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
                                         }
 
@@ -3248,21 +3554,8 @@ fun ChatScreen(
                             // ── SECTION 3.2: SOL HİZALI BOT / HİKAYE MESAJ BALONLARI (3-SLICE AUTHENTIC REFERENCE PLATE + TRANSLUCENT FROSTED GLASS) ──
                             val isThisStreaming = streamingMsgId == msg.id
                             val displayText = if (isThisStreaming && streamingText != null) streamingText else msg.text
-
-                            val cursorInfinite = rememberInfiniteTransition(label = "cursor_${msg.id}")
-                            val cursorAlpha by if (isThisStreaming) {
-                                cursorInfinite.animateFloat(
-                                    initialValue = 1f, targetValue = 0f,
-                                    animationSpec = infiniteRepeatable(tween(500), RepeatMode.Reverse),
-                                    label = "cursorBlink"
-                                )
-                            } else {
-                                cursorInfinite.animateFloat(
-                                    initialValue = 0f, targetValue = 0f,
-                                    animationSpec = infiniteRepeatable(tween(1000), RepeatMode.Restart),
-                                    label = "cursorOff"
-                                )
-                            }
+                            val isFreshBotMsg = msg.id !in initialMessageIds
+                            var starBurstTrigger by remember(msg.id) { mutableIntStateOf(0) }
 
                             val botBubbleInteraction = remember { MutableInteractionSource() }
                             val isBotBubblePressed by botBubbleInteraction.collectIsPressedAsState()
@@ -3293,11 +3586,21 @@ fun ChatScreen(
                             val bBot = refGlassBitmaps.botBottom
 
                             Column(
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .cosmicMessageEnter(messageKey = msg.id, isUser = false, animate = isFreshBotMsg)
                             ) {
                                 BoxWithConstraints(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .cosmicBorderBreathing(
+                                            enabled = isThisStreaming,
+                                            cornerRadius = 24.dp,
+                                            glowColor = emotionAuraColor,
+                                            minAlpha = 0.14f,
+                                            maxAlpha = 0.45f,
+                                            periodMs = 1700
+                                        )
                                         .graphicsLayer {
                                             scaleX = botBubbleScale
                                             scaleY = botBubbleScale
@@ -3390,9 +3693,15 @@ fun ChatScreen(
                                     }
 
                                     // Narrative story text & timestamp inside the translucent bot glass bubble (lower top start so text never touches the top glass border!)
+                                    val cleanBotText = remember(displayText) { cleanCopyText(displayText) }
+                                    val isBotMsgAutoCollapsible = orderFromBottom >= 7 &&
+                                        !isThisStreaming &&
+                                        (cleanBotText.length > 180 || cleanBotText.count { it == '\n' } >= 4)
+                                    val isBotMsgCollapsed = isBotMsgAutoCollapsible && msg.id !in expandedOldMessageIds
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
+                                            .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing))
                                             .heightIn(min = bW * (180f / 841f))
                                             .padding(
                                                 start = bW * (156f / 841f),
@@ -3403,12 +3712,14 @@ fun ChatScreen(
                                         verticalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text(
-                                            text = formatNarrativeText(displayText + if (isThisStreaming && cursorAlpha > 0.5f) "▌" else ""),
+                                            text = formatNarrativeText(displayText),
                                             color = Color.White.copy(alpha = 0.97f),
                                             fontSize = 15.sp,
                                             lineHeight = 22.5.sp,
                                             letterSpacing = 0.1.sp,
                                             fontFamily = LiterarySerifFontFamily,
+                                            maxLines = if (isBotMsgCollapsed) 4 else Int.MAX_VALUE,
+                                            overflow = if (isBotMsgCollapsed) androidx.compose.ui.text.style.TextOverflow.Ellipsis else androidx.compose.ui.text.style.TextOverflow.Clip,
                                             style = TextStyle(
                                                 shadow = Shadow(
                                                     color = Color(0x88120524),
@@ -3418,6 +3729,44 @@ fun ChatScreen(
                                             )
                                         )
 
+                                        if (isBotMsgAutoCollapsible) {
+                                            Spacer(modifier = Modifier.height(7.dp))
+                                            Row(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(Color(0x5226104C))
+                                                    .border(0.85.dp, Color(0x88D8B4FE), RoundedCornerShape(50))
+                                                    .clickable(
+                                                        interactionSource = remember { MutableInteractionSource() },
+                                                        indication = null
+                                                    ) {
+                                                        expandedOldMessageIds = if (isBotMsgCollapsed) {
+                                                            expandedOldMessageIds + msg.id
+                                                        } else {
+                                                            expandedOldMessageIds - msg.id
+                                                        }
+                                                    }
+                                                    .padding(horizontal = 11.dp, vertical = 4.5.dp)
+                                                    .testTag("chat_expand_msg_${msg.id}"),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isBotMsgCollapsed) "Daha Fazla Göster" else "Daha Az Göster",
+                                                    color = Color(0xFFF3E8FF),
+                                                    fontSize = 11.2.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                                Icon(
+                                                    imageVector = if (isBotMsgCollapsed) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowUp,
+                                                    contentDescription = if (isBotMsgCollapsed) "Daha Fazla Göster" else "Daha Az Göster",
+                                                    tint = Color(0xFFE9D5FF),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+
                                         Spacer(modifier = Modifier.height(6.dp))
 
                                         Row(
@@ -3425,25 +3774,50 @@ fun ChatScreen(
                                             horizontalArrangement = Arrangement.SpaceBetween,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            if (msg.reaction.isNotBlank()) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(50))
-                                                        .background(Color(0x553B1568))
-                                                        .border(0.9.dp, Color(0xBBE9D5FF), RoundedCornerShape(50))
-                                                        .clickable(
-                                                            interactionSource = remember { MutableInteractionSource() },
-                                                            indication = null
-                                                        ) {
-                                                            viewModel.setMessageReaction(msg.id, "")
-                                                        }
-                                                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(text = msg.reaction, fontSize = 13.sp)
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                if (msg.reaction.isNotBlank()) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(50))
+                                                            .background(Color(0x553B1568))
+                                                            .border(0.9.dp, Color(0xBBE9D5FF), RoundedCornerShape(50))
+                                                            .clickable(
+                                                                interactionSource = remember { MutableInteractionSource() },
+                                                                indication = null
+                                                            ) {
+                                                                viewModel.setMessageReaction(msg.id, "")
+                                                            }
+                                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                                        contentAlignment = Alignment.Center
+                                                    ) {
+                                                        Text(text = msg.reaction, fontSize = 13.sp)
+                                                    }
                                                 }
-                                            } else {
-                                                Spacer(modifier = Modifier.width(1.dp))
+                                                if (msg.isStarred || starBurstTrigger > 0) {
+                                                    Box(contentAlignment = Alignment.Center) {
+                                                        if (msg.isStarred) {
+                                                            Text(
+                                                                text = "⭐",
+                                                                fontSize = 12.sp,
+                                                                modifier = Modifier.cosmicPopOnTrigger(starBurstTrigger, peakScale = 1.35f)
+                                                            )
+                                                        }
+                                                        CosmicSparkleBurst(
+                                                            triggerKey = starBurstTrigger,
+                                                            accentColor = Color(0xFFFDE68A),
+                                                            secondaryColor = Color(0xFFD8B4FE),
+                                                            particleCount = 8,
+                                                            maxRadius = 20.dp,
+                                                            modifier = Modifier.size(28.dp)
+                                                        )
+                                                    }
+                                                }
+                                                if (isThisStreaming) {
+                                                    CosmicStreamingCaret(color = emotionAuraColor, size = 14.dp)
+                                                }
                                             }
 
                                             Row(
@@ -3463,12 +3837,13 @@ fun ChatScreen(
                                                     fontWeight = FontWeight.Normal,
                                                     fontFamily = InterFontFamily
                                                 )
-                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Spacer(modifier = Modifier.width(5.dp))
                                                 if (isSpeaking) {
-                                                    Text(
-                                                        text = "🔊",
+                                                    CosmicVoiceEqualizer(
+                                                        active = true,
+                                                        barCount = 4,
                                                         color = Color(0xFFE879F9),
-                                                        fontSize = 11.5.sp
+                                                        height = 12.dp
                                                     )
                                                 } else {
                                                     DoubleCheckmarkIcon(tint = Color(0xEBFFFFFF))
@@ -3503,9 +3878,16 @@ fun ChatScreen(
                                             pillModifier: Modifier = Modifier,
                                             onClick: () -> Unit
                                         ) {
+                                            val pillInteraction = remember { MutableInteractionSource() }
                                             Row(
                                                 modifier = pillModifier
                                                     .height(38.dp)
+                                                    .cosmicTapSpring(
+                                                        interactionSource = pillInteraction,
+                                                        enabled = enabled,
+                                                        pressedScale = 0.93f,
+                                                        cornerRadius = 19.dp
+                                                    )
                                                     .morCamOuterGlow(cornerRadius = 19.dp, shadowAlpha = 0.34f, rimGlowAlpha = 0.24f, bottomFlareAlpha = 0.42f)
                                                     .clip(RoundedCornerShape(50))
                                                     .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.82f)
@@ -3537,7 +3919,11 @@ fun ChatScreen(
                                                         RoundedCornerShape(50)
                                                     )
                                                     .morCamTopAndBottomSpecular(cornerRadius = 19.dp, topSheenAlpha = 0.24f, bottomFlareAlpha = 0.46f)
-                                                    .clickable(enabled = enabled) { onClick() }
+                                                    .clickable(
+                                                        enabled = enabled,
+                                                        interactionSource = pillInteraction,
+                                                        indication = null
+                                                    ) { onClick() }
                                                     .padding(start = if (iconType != null) 6.dp else 12.dp, end = 11.dp),
                                                 verticalAlignment = Alignment.CenterVertically,
                                                 horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally)
@@ -3589,11 +3975,13 @@ fun ChatScreen(
                                         ) {
                                             BotGlassActionPill(
                                                 iconType = "copy",
-                                                label = "Kopyala",
+                                                label = if (copiedMsgId == msg.id) "Kopyalandı ✓" else "Kopyala",
+                                                isActive = copiedMsgId == msg.id,
                                                 pillModifier = if (!showSecondaryAiActions) Modifier.weight(1.06f) else Modifier
                                             ) {
                                                 val cleanText = cleanCopyText(msg.text)
                                                 clipboardManager.setText(AnnotatedString(cleanText))
+                                                copiedMsgId = msg.id
                                                 android.widget.Toast.makeText(context, "Kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
                                             }
                                             BotGlassActionPill(
@@ -3634,6 +4022,7 @@ fun ChatScreen(
                                                         if (isSpeaking) onStopSpeaking() else onSpeakText?.invoke(msg.text)
                                                     }
                                                     BotGlassActionPill(label = if (msg.isStarred) "⭐ Yıldızı Kaldır" else "☆ Yıldızla") {
+                                                        if (!msg.isStarred) starBurstTrigger += 1
                                                         viewModel.toggleMessageStar(msg.id)
                                                     }
                                                     BotGlassActionPill(label = "⏪ Buraya Sar") {
@@ -3723,16 +4112,18 @@ fun ChatScreen(
                         }
                     }
 
-                    // Sleek Aetheria crystal shimmer indicator (shown only before streaming text begins — no 3 bouncing dots, no "hikâyeyi dokuyor" text, no squished sigil!)
+                    // Sleek Aetheria crystal shimmer indicator with Cosmic Typing Wave
                     if (isSending && streamingText.isNullOrBlank()) {
                         item(key = "aetheria_shimmer_indicator") {
                             BoxWithConstraints(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .cosmicMessageEnter(messageKey = "shimmer_typing", isUser = false, animate = true)
                                     .padding(top = 4.dp, bottom = 6.dp)
                             ) {
                                 val tW = maxWidth
-                                val shimmerProgress by infiniteTransition.animateFloat(
+                                val shimmerTransition = rememberInfiniteTransition(label = "aetheriaShimmerTrans")
+                                val shimmerProgress by shimmerTransition.animateFloat(
                                     initialValue = 0f,
                                     targetValue = 1f,
                                     animationSpec = infiniteRepeatable(
@@ -3756,6 +4147,7 @@ fun ChatScreen(
                                             bottomEdgeRefractionAlpha = 0.20f,
                                             cornerRadius = 19.dp
                                         )
+                                        .cosmicShimmerSweep(active = true, cornerRadius = 19.dp)
                                         .border(
                                             BorderStroke(
                                                 1.dp,
@@ -3773,36 +4165,7 @@ fun ChatScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
-                                    Text(
-                                        text = "✦",
-                                        color = Color(0xFFE9D5FF),
-                                        fontSize = 13.sp,
-                                        modifier = Modifier.graphicsLayer {
-                                            rotationZ = sweepRotateAngle
-                                            scaleX = pulseScale
-                                            scaleY = pulseScale
-                                        }
-                                    )
-                                    // Smooth luminous crystal progress bar instead of bouncing 3 dots
-                                    Box(
-                                        modifier = Modifier
-                                            .width(68.dp)
-                                            .height(4.dp)
-                                            .clip(RoundedCornerShape(50))
-                                            .background(Color(0x443B1568))
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxHeight()
-                                                .fillMaxWidth(0.35f + 0.65f * shimmerProgress)
-                                                .clip(RoundedCornerShape(50))
-                                                .background(
-                                                    Brush.horizontalGradient(
-                                                        listOf(Color(0xFF9333EA), Color(0xFFE9D5FF), Color(0xFFC084FC))
-                                                    )
-                                                )
-                                        )
-                                    }
+                                    TypingDots(dotSize = 6.dp, dotColor = Color(0xFFE9D5FF))
                                     Text(
                                         text = "Yanıt hazırlanıyor",
                                         color = Color(0xFFE9D5FF).copy(alpha = 0.88f),
@@ -3816,6 +4179,7 @@ fun ChatScreen(
                 }
             }
 
+            // Show "En Aşağı İn" ONLY when the user has scrolled at least 4–5 messages above the bottom
             val showScrollToBottom = remember {
                 derivedStateOf {
                     if (!listState.canScrollForward) return@derivedStateOf false
@@ -3825,72 +4189,86 @@ fun ChatScreen(
 
                     val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
                     val itemsFromEnd = totalItems - 1 - lastVisibleItem.index
-
-                    if (itemsFromEnd >= 1) {
-                        true
-                    } else {
-                        val contentEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
-                        val itemBottom = lastVisibleItem.offset + lastVisibleItem.size
-                        (itemBottom - contentEnd) > 350
-                    }
+                    itemsFromEnd >= 4
                 }
             }
 
-            if (showScrollToBottom.value) {
-                val totalCount = messages.size + if (isSending) 1 else 0
+            AnimatedVisibility(
+                visible = showScrollToBottom.value,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = bottomInsetPadding + 10.dp, end = 14.dp),
+                enter = slideInVertically(CosmicMotionSpecs.snappyOrb()) { it / 2 } +
+                    scaleIn(CosmicMotionSpecs.snappyOrb(), initialScale = 0.82f) +
+                    fadeIn(tween(180)),
+                exit = slideOutVertically(tween(180)) { it / 2 } +
+                    scaleOut(tween(160), targetScale = 0.85f) +
+                    fadeOut(tween(140))
+            ) {
+                val hasWaitingItem = isSending && streamingText.isNullOrBlank()
+                val totalCount = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (hasWaitingItem) 1 else 0
+                val scrollBtnInteraction = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(bottom = bottomInsetPadding + 10.dp, end = 14.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .morCamOuterGlow(cornerRadius = 22.dp, shadowAlpha = 0.32f, rimGlowAlpha = 0.28f, bottomFlareAlpha = 0.56f)
-                            .clip(RoundedCornerShape(50))
-                            .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.72f)
-                            .morCamGlassSurface(
-                                baseSmokeColor = Color(0x28180832),
-                                topRightFrostAlpha = 0.24f,
-                                topLeftFrostAlpha = 0.16f,
-                                topStarFrostAlpha = 0f,
-                                bottomEdgeRefractionAlpha = 0.20f
-                            )
-                            .border(
-                                BorderStroke(
-                                    0.9.dp,
-                                    Brush.linearGradient(
-                                        listOf(Color(0xE0F3E8FF), Color(0x66A855F7), Color(0xD8E9D5FF))
-                                    )
-                                ),
-                                RoundedCornerShape(50)
-                            )
-                            .morCamTopAndBottomSpecular(cornerRadius = 22.dp, topSheenAlpha = 0.26f, bottomFlareAlpha = 0.82f)
-                            .clickable {
-                                coroutineScope.launch {
-                                    if (totalCount > 0) {
-                                        listState.animateScrollToItem(totalCount - 1)
-                                    }
+                        .cosmicFloatingLevitation(amplitudeDp = 2.5.dp, durationMs = 2200)
+                        .cosmicTapSpring(
+                            interactionSource = scrollBtnInteraction,
+                            pressedScale = 0.92f,
+                            cornerRadius = 22.dp
+                        )
+                        .morCamOuterGlow(cornerRadius = 22.dp, shadowAlpha = 0.32f, rimGlowAlpha = 0.28f, bottomFlareAlpha = 0.56f)
+                        .clip(RoundedCornerShape(50))
+                        .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.72f)
+                        .morCamGlassSurface(
+                            baseSmokeColor = Color(0x28180832),
+                            topRightFrostAlpha = 0.24f,
+                            topLeftFrostAlpha = 0.16f,
+                            topStarFrostAlpha = 0f,
+                            bottomEdgeRefractionAlpha = 0.20f
+                        )
+                        .border(
+                            BorderStroke(
+                                0.9.dp,
+                                Brush.linearGradient(
+                                    listOf(Color(0xE0F3E8FF), Color(0x66A855F7), Color(0xD8E9D5FF))
+                                )
+                            ),
+                            RoundedCornerShape(50)
+                        )
+                        .morCamTopAndBottomSpecular(cornerRadius = 22.dp, topSheenAlpha = 0.26f, bottomFlareAlpha = 0.82f)
+                        .clickable(
+                            interactionSource = scrollBtnInteraction,
+                            indication = null
+                        ) {
+                            coroutineScope.launch {
+                                expandedOldMessageIds = emptySet()
+                                if (visibleMessageLimit > chatPageSize) {
+                                    visibleMessageLimit = chatPageSize
+                                    pendingSnapToBottomAfterCollapse = true
+                                } else if (totalCount > 0) {
+                                    listState.animateScrollToItem(totalCount - 1)
                                 }
                             }
-                            .padding(horizontal = 14.dp, vertical = 8.dp)
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.KeyboardArrowDown,
-                                contentDescription = "En aşağı in",
-                                tint = Color(0xFFFBF8FF),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Text(
-                                text = "En Aşağı İn",
-                                color = Color(0xFFFBF8FF),
-                                fontSize = 11.8.sp,
-                                fontFamily = LiterarySerifFontFamily
-                            )
                         }
+                        .testTag("chat_scroll_to_bottom_button")
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.KeyboardArrowDown,
+                            contentDescription = "En aşağı in",
+                            tint = Color(0xFFFBF8FF),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "En Aşağı İn",
+                            color = Color(0xFFFBF8FF),
+                            fontSize = 11.8.sp,
+                            fontFamily = LiterarySerifFontFamily
+                        )
                     }
                 }
             }
@@ -3960,6 +4338,88 @@ fun ChatScreen(
                 )
             }
         }
+    }
+
+    // --- Canlı Neural Vault & Yaşanan Anı Otomatik Kayıt Bildirimi ---
+    val memoryCommitNotice by viewModel.memoryCommitNotice.collectAsState()
+    var showQuickNeuralVault by remember { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(top = 64.dp, start = 16.dp, end = 16.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        AnimatedVisibility(
+            visible = memoryCommitNotice != null && !showBotSettings && !showQuickNeuralVault,
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(tween(240)),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(tween(200))
+        ) {
+            memoryCommitNotice?.let { notice ->
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            Brush.horizontalGradient(
+                                if (notice.isLivingMemory) {
+                                    listOf(Color(0xE63B1470), Color(0xE66D28D9))
+                                } else {
+                                    listOf(Color(0xE6221042), Color(0xE64C1D95))
+                                }
+                            )
+                        )
+                        .border(
+                            width = 0.9.dp,
+                            brush = Brush.horizontalGradient(listOf(Color(0x99E9D5FF), Color(0x66A855F7))),
+                            shape = RoundedCornerShape(50)
+                        )
+                        .clickable {
+                            viewModel.dismissMemoryCommitNotice()
+                            showQuickNeuralVault = true
+                        }
+                        .padding(horizontal = 14.dp, vertical = 8.dp)
+                        .testTag("memory_commit_pill"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = "Hafıza Güncellendi",
+                        tint = Color(0xFFFDE68A),
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                        Text(
+                            text = notice.title,
+                            color = Color(0xFFFAF5FF),
+                            fontFamily = LiterarySerifFontFamily,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = notice.subtitle,
+                            color = Color(0xFFE9D5FF),
+                            fontFamily = InterFontFamily,
+                            fontSize = 10.5.sp,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showQuickNeuralVault) {
+        com.example.ui.components.NeuralVaultModal(
+            bot = bot,
+            viewModel = viewModel,
+            onDismiss = { showQuickNeuralVault = false },
+            onSaveMemory = { updatedBot -> onSaveBotProfile(updatedBot, keyCharacters) }
+        )
     }
 
     // --- 3.2: Pending Cast Member Banner (non-blocking, sohbet akışını kesmez) ---
@@ -4158,6 +4618,11 @@ fun ChatScreen(
                 }
             }
 
+            CosmicConfettiOverlay(
+                triggerKey = milestone,
+                modifier = Modifier.fillMaxSize()
+            )
+
             Box(
                 modifier = Modifier
                     .fillMaxWidth(0.86f)
@@ -4179,6 +4644,7 @@ fun ChatScreen(
                                 )
                             )
                         )
+                        .cosmicGlassSheen(cornerRadius = 28.dp, periodMs = 3600, maxAlpha = 0.22f)
                         .border(BorderStroke(1.3.dp, MorCamTokens.RimGradient), RoundedCornerShape(28.dp))
                         .padding(horizontal = 28.dp, vertical = 28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -4434,19 +4900,22 @@ fun parseBookChoiceOptions(rawText: String): List<BookChoiceOption> {
 
     for (line in lines) {
         val trimmed = line.trim()
-        if (trimmed.startsWith("🔀")) {
+        if (trimmed.startsWith("🔀") || trimmed.contains("SEÇİM", ignoreCase = true)) {
             inChoiceSection = true
             continue
         }
 
-        val isChoice = trimmed.startsWith("1️⃣") || trimmed.startsWith("2️⃣") || trimmed.startsWith("3️⃣") ||
-                trimmed.startsWith("4️⃣") || trimmed.startsWith("5️⃣") || trimmed.startsWith("6️⃣") ||
-                trimmed.matches(Regex("^[1-9][0-9]*[\\.\\)]\\s*.*")) ||
-                (inChoiceSection && (trimmed.startsWith("-") || trimmed.startsWith("•") || trimmed.startsWith("*")))
+        val normalized = trimmed.removePrefix("**").removeSuffix("**").trim()
+        val isChoice = normalized.startsWith("1️⃣") || normalized.startsWith("2️⃣") || normalized.startsWith("3️⃣") ||
+                normalized.startsWith("4️⃣") || normalized.startsWith("5️⃣") || normalized.startsWith("6️⃣") ||
+                normalized.matches(Regex("^\\*{0,2}[1-9][0-9]*[\\.\\)]\\*{0,2}\\s+.*")) ||
+                normalized.matches(Regex("^\\*{0,2}[A-Da-d][\\.\\)]\\*{0,2}\\s+.*")) ||
+                (inChoiceSection && (normalized.startsWith("-") || normalized.startsWith("•") || normalized.startsWith("* ")))
 
         if (isChoice) {
-            val choiceText = trimmed
-                .replace(Regex("^(1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|\\d+[\\.\\)]|[-•*])\\s*"), "")
+            val choiceText = normalized
+                .replace(Regex("^\\*{0,2}(1️⃣|2️⃣|3️⃣|4️⃣|5️⃣|6️⃣|\\d+[\\.\\)]|[A-Da-d][\\.\\)]|[-•*])\\*{0,2}\\s*"), "")
+                .replace("**", "")
                 .trim()
             if (choiceText.length >= 2) {
                 result.add(BookChoiceOption(choiceText, trimmed))

@@ -93,6 +93,10 @@ import com.example.data.local.BotEntity
 import com.example.ui.components.BotAvatarImage
 import com.example.ui.components.MoodColors
 import com.example.ui.components.OrbView
+import com.example.ui.animation.CosmicMotionSpecs
+import com.example.ui.animation.CosmicSparkleBurst
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.cosmicStaggeredEnter
 import com.example.ui.theme.EmochiError
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
@@ -109,8 +113,10 @@ fun BotCardItem(
     isFavorite: Boolean = false,
     onToggleFavorite: (() -> Unit)? = null,
     frostedBackdrop: ImageBitmap? = null,
-    scrollSync: Int = 0
+    scrollSync: Int = 0,
+    staggerIndex: Int = 0
 ) {
+    val motionConfig = LocalCosmicMotionConfig.current
     val isUniverse = bot.mode == "universe"
     val displayName = when {
         bot.id == "starter_aetheria" || bot.universeName.startsWith("Aetheria: Neon", ignoreCase = true) -> "Aetheria"
@@ -122,32 +128,38 @@ fun BotCardItem(
 
     var isMenuExpanded by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var favoriteBurstTrigger by remember { mutableStateOf(0) }
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     val cardScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.978f else 1f,
-        animationSpec = tween(120, easing = FastOutSlowInEasing),
+        targetValue = if (isPressed && motionConfig.enableMicroSprings) 0.972f else 1f,
+        animationSpec = CosmicMotionSpecs.snappyOrb(),
         label = "cardPressScale"
     )
 
     val starScale by animateFloatAsState(
-        targetValue = if (isFavorite) 1.12f else 1f,
-        animationSpec = spring(dampingRatio = 0.45f, stiffness = 420f),
+        targetValue = if (isFavorite) 1.15f else 1f,
+        animationSpec = CosmicMotionSpecs.playfulSpark(),
         label = "favoriteStarScale"
     )
 
     val animOffset = remember(bot.id) { (bot.id.hashCode().and(0xFF)) / 255f }
-    val infiniteTransition = rememberInfiniteTransition(label = "cardAnim_${bot.id}")
-    val cardGlowAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.72f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2600 + (animOffset * 600).toInt(), easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "cardGlowAlpha"
-    )
+    val cardGlowAlpha = if (motionConfig.enableAmbientLoops) {
+        val infiniteTransition = rememberInfiniteTransition(label = "cardAnim_${bot.id}")
+        val animatedAlpha by infiniteTransition.animateFloat(
+            initialValue = 0.72f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(2600 + (animOffset * 600).toInt(), easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "cardGlowAlpha"
+        )
+        animatedAlpha
+    } else {
+        0.88f
+    }
 
     val context = LocalContext.current
     val resolvedBackdrop = frostedBackdrop ?: remember(context) {
@@ -191,6 +203,7 @@ fun BotCardItem(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .cosmicStaggeredEnter(index = staggerIndex, key = bot.id)
             .graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale
@@ -539,7 +552,7 @@ fun BotCardItem(
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        // Interactive Favorite Star (Harmonized Luminous Amethyst-Lavender)
+                        // Interactive Favorite Star (Harmonized Luminous Amethyst-Lavender + Sparkle Burst)
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
@@ -548,10 +561,20 @@ fun BotCardItem(
                                     enabled = onToggleFavorite != null,
                                     indication = null,
                                     interactionSource = remember { MutableInteractionSource() }
-                                ) { onToggleFavorite?.invoke() }
+                                ) {
+                                    if (!isFavorite) favoriteBurstTrigger++
+                                    onToggleFavorite?.invoke()
+                                }
                                 .testTag("favorite_bot_${bot.id}"),
                             contentAlignment = Alignment.Center
                         ) {
+                            CosmicSparkleBurst(
+                                triggerKey = favoriteBurstTrigger,
+                                modifier = Modifier.size(34.dp),
+                                accentColor = Color(0xFFF3E8FF),
+                                secondaryColor = Color(0xFFC084FC),
+                                particleCount = 10
+                            )
                             Icon(
                                 imageVector = if (isFavorite) Icons.Default.Star else Icons.Default.StarBorder,
                                 contentDescription = if (isFavorite) "Favorilerden çıkar" else "Favorilere ekle",
@@ -700,8 +723,8 @@ fun BotCardItem(
                     val playInteraction = remember { MutableInteractionSource() }
                     val playPressed by playInteraction.collectIsPressedAsState()
                     val playScale by animateFloatAsState(
-                        targetValue = if (playPressed) 0.90f else 1f,
-                        animationSpec = tween(90, easing = FastOutSlowInEasing),
+                        targetValue = if (playPressed && motionConfig.enableMicroSprings) 0.88f else 1f,
+                        animationSpec = CosmicMotionSpecs.snappyOrb(),
                         label = "playOrbScale"
                     )
 
