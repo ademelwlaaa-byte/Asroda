@@ -43,7 +43,249 @@ import androidx.compose.ui.unit.sp
 import com.example.ui.animation.CosmicMotionSpecs
 import com.example.ui.animation.cosmicFloatingLevitation
 import com.example.ui.animation.cosmicTapSpring
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
+import com.example.ui.animation.CosmicSparkleBurst
+import com.example.ui.animation.cosmicPopOnTrigger
 import com.example.ui.theme.LiterarySerifFontFamily
+
+/**
+ * Modular 1:1 Mor Cam Bottom Input Dock containing:
+ * - (+) RP & Sahne Araçları Drawer
+ * - 3 Quick-Suggestion Glass Cards Plate (Sahneyi Derinleştir / Ne Yapmalıyım? / Düzenle)
+ * - Translucent Glass Input Bar Plate ((+), BasicTextField, 📎 Background Picker, ➤ Send Burst)
+ */
+@Composable
+internal fun ChatBottomInputDock(
+    inputText: String,
+    isSending: Boolean,
+    canEditLastMessage: Boolean,
+    showPlusToolkit: Boolean,
+    sendBurstTrigger: Int,
+    rootSize: IntSize,
+    blurredBgBitmap: ImageBitmap,
+    refGlassBitmaps: AetheriaRefGlassBitmaps,
+    onInputTextChange: (String) -> Unit,
+    onTogglePlusToolkit: () -> Unit,
+    onDismissPlusToolkit: () -> Unit,
+    onOpenStarredSheet: () -> Unit,
+    onContinueScene: () -> Unit,
+    onSendMessage: (String) -> Unit,
+    onEditLastMessage: () -> Unit,
+    onOpenBackgroundPicker: () -> Unit,
+    onTriggerSendBurst: () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
+                .padding(top = 4.dp, bottom = 4.dp)
+        ) {
+            ChatPlusToolkitDrawer(
+                visible = showPlusToolkit,
+                isSending = isSending,
+                inputText = inputText,
+                rootSize = rootSize,
+                blurredBgBitmap = blurredBgBitmap,
+                onDismiss = onDismissPlusToolkit,
+                onOpenStarredSheet = onOpenStarredSheet,
+                onContinueScene = onContinueScene,
+                onSendPrompt = onSendMessage,
+                onUpdateInputText = onInputTextChange
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(841f / 138f)
+            ) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    if (refGlassBitmaps.quickCards.width > 1) {
+                        drawImage(
+                            image = refGlassBitmaps.quickCards,
+                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                            dstSize = IntSize(
+                                kotlin.math.round(size.width).toInt().coerceAtLeast(1),
+                                kotlin.math.round(size.height).toInt().coerceAtLeast(1)
+                            ),
+                            filterQuality = FilterQuality.High
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxSize()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.36f)
+                            .clickable(
+                                enabled = !isSending,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                onSendMessage("Mevcut sahneyi kesmeden ortam atmosferini, karakterin iç sesini ve duygusal gerilimi edebi olarak derinleştir.")
+                            }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.33f)
+                            .clickable(
+                                enabled = !isSending,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                onSendMessage("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
+                            }
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.31f)
+                            .clickable(
+                                enabled = canEditLastMessage,
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onEditLastMessage
+                            )
+                    )
+                }
+            }
+
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(841f / 138f)
+            ) {
+                val barW = maxWidth
+                val barH = maxHeight
+
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    if (refGlassBitmaps.inputBarNoText.width > 1) {
+                        drawImage(
+                            image = refGlassBitmaps.inputBarNoText,
+                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                            dstSize = IntSize(
+                                kotlin.math.round(size.width).toInt().coerceAtLeast(1),
+                                kotlin.math.round(size.height).toInt().coerceAtLeast(1)
+                            ),
+                            filterQuality = FilterQuality.High
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .offset(x = barW * (22f / 841f), y = barH * (16f / 138f))
+                        .size(width = barW * (124f / 841f), height = barH * (106f / 138f))
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onTogglePlusToolkit
+                        )
+                )
+
+                Box(
+                    modifier = Modifier
+                        .offset(x = barW * (178f / 841f), y = barH * (26f / 138f))
+                        .size(width = barW * (402f / 841f), height = barH * (86f / 138f)),
+                    contentAlignment = Alignment.CenterStart
+                ) {
+                    if (inputText.isEmpty()) {
+                        Text(
+                            text = "Bir mesaj yazın...",
+                            color = Color(0xFFE9D5FF).copy(alpha = 0.85f),
+                            fontSize = 15.sp,
+                            fontFamily = LiterarySerifFontFamily
+                        )
+                    }
+                    BasicTextField(
+                        value = inputText,
+                        onValueChange = onInputTextChange,
+                        textStyle = TextStyle(
+                            color = Color.White,
+                            fontSize = 15.5.sp,
+                            fontFamily = LiterarySerifFontFamily
+                        ),
+                        cursorBrush = SolidColor(Color(0xFFE9D5FF)),
+                        maxLines = 2,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("chat_input_field")
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .offset(x = barW * (586f / 841f), y = barH * (24f / 138f))
+                        .size(width = barW * (88f / 841f), height = barH * (90f / 138f))
+                        .clip(CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = onOpenBackgroundPicker
+                        )
+                )
+
+                val canSendNow = !isSending && inputText.trim().isNotEmpty()
+                val sendInteraction = remember { MutableInteractionSource() }
+                Box(
+                    modifier = Modifier
+                        .offset(x = barW * (695f / 841f), y = barH * (12f / 138f))
+                        .size(width = barW * (130f / 841f), height = barH * (114f / 138f))
+                        .cosmicTapSpring(
+                            interactionSource = sendInteraction,
+                            enabled = canSendNow,
+                            pressedScale = 0.88f,
+                            cornerRadius = 40.dp
+                        )
+                        .cosmicPopOnTrigger(triggerKey = sendBurstTrigger, peakScale = 1.15f)
+                        .clip(CircleShape)
+                        .clickable(
+                            enabled = canSendNow,
+                            interactionSource = sendInteraction,
+                            indication = null
+                        ) {
+                            val text = inputText.trim()
+                            if (text.isNotBlank() && !isSending) {
+                                onTriggerSendBurst()
+                                onInputTextChange("")
+                                onSendMessage(text)
+                            }
+                        }
+                        .testTag("send_message_button"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CosmicSparkleBurst(
+                        triggerKey = sendBurstTrigger,
+                        accentColor = Color(0xFFE9D5FF),
+                        secondaryColor = Color(0xFFA855F7),
+                        particleCount = 10,
+                        maxRadius = 30.dp,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+        }
+    }
+}
 
 /**
  * Interactive (+) RP & Sahne Araçları Drawer — includes direct ⭐ Yıldızlananlar shortcut

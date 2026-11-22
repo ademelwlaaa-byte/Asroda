@@ -76,35 +76,48 @@ fun CosmicOrbLoader(
     secondaryColor: Color = Color(0xFF7C3AED),
     label: String? = null
 ) {
-    val config = LocalCosmicMotionConfig.current
-    val infinite = rememberInfiniteTransition(label = "cosmicOrbLoader")
-    val outerAngle by infinite.animateFloat(
+    val policy = LocalCosmicMotionPolicy.current
+    val animate = policy.shouldAnimateContinuously
+    val outerAngle = rememberCosmicPhase(
+        durationMs = 2200,
         initialValue = 0f,
-        targetValue = if (config.mode == MotionIntensityMode.REDUCED) 0f else 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "outerOrbit"
+        targetValue = 360f,
+        staticValue = 35f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "cosmicOrbOuter",
+        enabled = animate
     )
-    val innerAngle by infinite.animateFloat(
+    val innerAngle = rememberCosmicPhase(
+        durationMs = 1500,
         initialValue = 360f,
-        targetValue = if (config.mode == MotionIntensityMode.REDUCED) 360f else 0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "innerOrbit"
+        targetValue = 0f,
+        staticValue = 210f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "cosmicOrbInner",
+        enabled = animate
     )
-    val pulse by infinite.animateFloat(
+    val pulse = rememberCosmicPhase(
+        durationMs = 1050,
         initialValue = 0.72f,
         targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1050, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "corePulse"
+        staticValue = 0.88f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cosmicOrbPulse",
+        enabled = animate
     )
+
+    val outerSweepColors = remember(primaryColor, secondaryColor) {
+        listOf(Color.Transparent, secondaryColor.copy(alpha = 0.35f), primaryColor, Color(0xFFF5EEFF))
+    }
+    val innerSweepColors = remember(primaryColor) {
+        listOf(Color.Transparent, Color(0xFFE9D5FF).copy(alpha = 0.85f), primaryColor.copy(alpha = 0.65f))
+    }
+    val coreColors = remember(primaryColor, secondaryColor) {
+        listOf(Color.White, primaryColor, secondaryColor)
+    }
 
     Column(
         modifier = modifier,
@@ -133,15 +146,7 @@ fun CosmicOrbLoader(
             // Outer orbiting neon arc
             rotate(outerAngle, pivot = center) {
                 drawArc(
-                    brush = Brush.sweepGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            secondaryColor.copy(alpha = 0.35f),
-                            primaryColor,
-                            Color(0xFFF5EEFF)
-                        ),
-                        center = center
-                    ),
+                    brush = Brush.sweepGradient(colors = outerSweepColors, center = center),
                     startAngle = 0f,
                     sweepAngle = 250f,
                     useCenter = false,
@@ -149,7 +154,6 @@ fun CosmicOrbLoader(
                     size = Size(r * 1.68f, r * 1.68f),
                     style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
                 )
-                // Orbiting star tip
                 val tipRad = Math.toRadians(250.0)
                 val tip = Offset(
                     center.x + cos(tipRad).toFloat() * r * 0.84f,
@@ -161,14 +165,7 @@ fun CosmicOrbLoader(
             // Inner counter-orbiting ring
             rotate(innerAngle, pivot = center) {
                 drawArc(
-                    brush = Brush.sweepGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xFFE9D5FF).copy(alpha = 0.85f),
-                            primaryColor.copy(alpha = 0.65f)
-                        ),
-                        center = center
-                    ),
+                    brush = Brush.sweepGradient(colors = innerSweepColors, center = center),
                     startAngle = 40f,
                     sweepAngle = 190f,
                     useCenter = false,
@@ -181,11 +178,7 @@ fun CosmicOrbLoader(
             // Luminous breathing core
             val coreR = r * 0.24f * (0.90f + 0.14f * pulse)
             drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color.White, primaryColor, secondaryColor),
-                    center = center,
-                    radius = coreR
-                ),
+                brush = Brush.radialGradient(colors = coreColors, center = center, radius = coreR),
                 radius = coreR,
                 center = center
             )
@@ -357,18 +350,23 @@ fun CosmicVoiceEqualizer(
     height: Dp = 16.dp
 ) {
     val config = LocalCosmicMotionConfig.current
+    val policy = LocalCosmicMotionPolicy.current
     if (!active) return
 
-    val infinite = rememberInfiniteTransition(label = "cosmicVoiceEq")
-    val wavePhase by infinite.animateFloat(
+    val animate = policy.shouldAnimateContinuously && config.mode != MotionIntensityMode.REDUCED
+    val wavePhase = rememberCosmicPhase(
+        durationMs = 860,
         initialValue = 0f,
         targetValue = (2f * PI).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (config.mode == MotionIntensityMode.REDUCED) 1600 else 860, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "eqPhase"
+        staticValue = 1.2f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "cosmicVoiceEq",
+        enabled = animate
     )
+    val barBrush = remember(color) {
+        Brush.verticalGradient(listOf(Color.White, color, Color(0xFF9333EA)))
+    }
 
     Canvas(
         modifier = modifier
@@ -378,7 +376,7 @@ fun CosmicVoiceEqualizer(
         val barW = 2.4.dp.toPx()
         val gap = (size.width - barW * barCount) / (barCount - 1).coerceAtLeast(1)
         for (i in 0 until barCount) {
-            val weight = if (config.mode == MotionIntensityMode.REDUCED) {
+            val weight = if (!animate) {
                 0.45f + (i % 2) * 0.25f
             } else {
                 0.26f + 0.74f * (0.5f + 0.5f * sin(wavePhase + i * 1.05f))
@@ -387,9 +385,7 @@ fun CosmicVoiceEqualizer(
             val x = i * (barW + gap)
             val y = (size.height - barH) / 2f
             drawRoundRect(
-                brush = Brush.verticalGradient(
-                    listOf(Color.White, color, Color(0xFF9333EA))
-                ),
+                brush = barBrush,
                 topLeft = Offset(x, y),
                 size = Size(barW, barH),
                 cornerRadius = CornerRadius(barW / 2f, barW / 2f)
@@ -502,16 +498,16 @@ fun CosmicStreamingCaret(
     color: Color = Color(0xFFD8B4FE),
     size: Dp = 14.dp
 ) {
-    val config = LocalCosmicMotionConfig.current
-    val infinite = rememberInfiniteTransition(label = "streamingCaret")
-    val pulse by infinite.animateFloat(
+    val policy = LocalCosmicMotionPolicy.current
+    val pulse = rememberCosmicPhase(
+        durationMs = 650,
         initialValue = 0.45f,
         targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(if (config.mode == MotionIntensityMode.REDUCED) 1200 else 650, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "caretPulse"
+        staticValue = 0.85f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "streamingCaret",
+        enabled = policy.shouldAnimateContinuously
     )
     Canvas(modifier = modifier.size(size)) {
         val center = Offset(this.size.width / 2f, this.size.height / 2f)
@@ -622,25 +618,36 @@ fun CosmicMotionPreviewStrip(
     modifier: Modifier = Modifier
 ) {
     val previewConfig = remember(mode) { CosmicMotionConfig.from(mode) }
-    val infinite = rememberInfiniteTransition(label = "motionPreview")
-    val phase by infinite.animateFloat(
+    val policy = LocalCosmicMotionPolicy.current
+    val allowPreviewAnim = policy.shouldAnimateContinuously && previewConfig.enableAmbientLoops
+    val phase = rememberCosmicPhase(
+        durationMs = 3200,
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "previewPhase"
+        staticValue = 0.35f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "motionPreviewPhase",
+        enabled = allowPreviewAnim
     )
-    val bounce by infinite.animateFloat(
+    val bounce = rememberCosmicPhase(
+        durationMs = 1400,
         initialValue = -1f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "previewBounce"
+        staticValue = 0f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "motionPreviewBounce",
+        enabled = allowPreviewAnim
     )
+    val orbCoreColors = remember { listOf(Color.White, Color(0xFFC084FC), Color(0xFF6D28D9)) }
+    val sheenColors = remember(mode) {
+        listOf(
+            Color.Transparent,
+            Color(0xFFF3E8FF).copy(alpha = if (mode == MotionIntensityMode.FULL) 0.22f else 0.14f),
+            Color.Transparent
+        )
+    }
 
     val dustSeeds = remember {
         val rand = Random(77)
@@ -682,25 +689,17 @@ fun CosmicMotionPreviewStrip(
                 val sheenX = (phase * 1.5f - 0.25f) * w
                 drawRect(
                     brush = Brush.linearGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color(0xFFF3E8FF).copy(alpha = if (mode == MotionIntensityMode.FULL) 0.22f else 0.14f),
-                            Color.Transparent
-                        ),
+                        colors = sheenColors,
                         start = Offset(sheenX - w * 0.18f, 0f),
                         end = Offset(sheenX + w * 0.18f, h)
                     )
                 )
             }
             // Preview orbiting orb on the right
-            val orbCenter = Offset(w - 22.dp.toPx(), h / 2f + if (previewConfig.enableAmbientLoops) bounce * 4.dp.toPx() else 0f)
+            val orbCenter = Offset(w - 22.dp.toPx(), h / 2f + if (allowPreviewAnim) bounce * 4.dp.toPx() else 0f)
             val orbR = 11.dp.toPx()
             drawCircle(
-                brush = Brush.radialGradient(
-                    listOf(Color.White, Color(0xFFC084FC), Color(0xFF6D28D9)),
-                    center = orbCenter,
-                    radius = orbR
-                ),
+                brush = Brush.radialGradient(orbCoreColors, center = orbCenter, radius = orbR),
                 radius = orbR,
                 center = orbCenter
             )
@@ -733,19 +732,20 @@ fun CosmicMotionPreviewStrip(
     }
 }
 
+private val reusableMiniStarPath = Path()
+
 internal fun DrawScope.drawMiniStar(
     center: Offset,
     outerR: Float,
     color: Color
 ) {
     val innerR = outerR * 0.34f
-    val path = Path().apply {
-        moveTo(center.x, center.y - outerR)
-        quadraticTo(center.x + innerR * 0.45f, center.y - innerR * 0.45f, center.x + outerR, center.y)
-        quadraticTo(center.x + innerR * 0.45f, center.y + innerR * 0.45f, center.x, center.y + outerR)
-        quadraticTo(center.x - innerR * 0.45f, center.y + innerR * 0.45f, center.x - outerR, center.y)
-        quadraticTo(center.x - innerR * 0.45f, center.y - innerR * 0.45f, center.x, center.y - outerR)
-        close()
-    }
-    drawPath(path = path, color = color)
+    reusableMiniStarPath.reset()
+    reusableMiniStarPath.moveTo(center.x, center.y - outerR)
+    reusableMiniStarPath.quadraticTo(center.x + innerR * 0.45f, center.y - innerR * 0.45f, center.x + outerR, center.y)
+    reusableMiniStarPath.quadraticTo(center.x + innerR * 0.45f, center.y + innerR * 0.45f, center.x, center.y + outerR)
+    reusableMiniStarPath.quadraticTo(center.x - innerR * 0.45f, center.y + innerR * 0.45f, center.x - outerR, center.y)
+    reusableMiniStarPath.quadraticTo(center.x - innerR * 0.45f, center.y - innerR * 0.45f, center.x, center.y - outerR)
+    reusableMiniStarPath.close()
+    drawPath(path = reusableMiniStarPath, color = color)
 }

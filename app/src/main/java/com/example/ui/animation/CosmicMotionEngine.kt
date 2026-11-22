@@ -1,9 +1,12 @@
 package com.example.ui.animation
 
 import android.content.Context
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -130,11 +133,122 @@ data class CosmicMotionConfig(
                 particleScale = 0f
             )
         }
+
+        /**
+         * Resolves the effective [CosmicMotionConfig] combining the user's selected [MotionIntensityMode]
+         * with the live [MotionPolicy] (foreground lifecycle + Reduce Motion + system battery/animator settings).
+         */
+        fun effective(
+            mode: MotionIntensityMode,
+            policy: MotionPolicy
+        ): CosmicMotionConfig {
+            if (policy.shouldUseQuickTransitions) {
+                return from(MotionIntensityMode.REDUCED)
+            }
+            val base = from(mode)
+            return if (!policy.isAppInForeground) {
+                base.copy(
+                    enableAmbientLoops = false,
+                    enableGlassSheen = false,
+                    enableParticles = false
+                )
+            } else {
+                base
+            }
+        }
     }
+}
+
+/**
+ * System #7: Centralized lifecycle, accessibility & battery-aware motion policy.
+ * Combines user Reduce Motion toggle, Android system animator scale (== 0f),
+ * PowerManager battery saver mode, and Activity foreground state (ON_START / ON_STOP).
+ */
+data class MotionPolicy(
+    val reduceMotion: Boolean = false,
+    val isAppInForeground: Boolean = true,
+    val isPowerSaveMode: Boolean = false,
+    val isSystemAnimatorDisabled: Boolean = false
+) {
+    /** True ONLY when the app is visible on screen and no motion-reduction/power-save condition is active. */
+    val shouldAnimateContinuously: Boolean
+        get() = isAppInForeground && !reduceMotion && !isPowerSaveMode && !isSystemAnimatorDisabled
+
+    /** True when transitions should stay short/gentle (<= 150ms) instead of expressive springs. */
+    val shouldUseQuickTransitions: Boolean
+        get() = reduceMotion || isPowerSaveMode || isSystemAnimatorDisabled
+
+    companion object {
+        fun fromContext(
+            context: Context,
+            reduceMotion: Boolean,
+            isAppInForeground: Boolean
+        ): MotionPolicy {
+            val animatorDisabled = try {
+                Settings.Global.getFloat(
+                    context.contentResolver,
+                    Settings.Global.ANIMATOR_DURATION_SCALE,
+                    1f
+                ) == 0f
+            } catch (_: Exception) {
+                false
+            }
+            val powerSave = try {
+                val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+                pm?.isPowerSaveMode == true
+            } catch (_: Exception) {
+                false
+            }
+            return MotionPolicy(
+                reduceMotion = reduceMotion,
+                isAppInForeground = isAppInForeground,
+                isPowerSaveMode = powerSave,
+                isSystemAnimatorDisabled = animatorDisabled
+            )
+        }
+    }
+}
+
+val LocalCosmicMotionPolicy = compositionLocalOf {
+    MotionPolicy()
 }
 
 val LocalCosmicMotionConfig = compositionLocalOf {
     CosmicMotionConfig.from(MotionIntensityMode.BALANCED)
+}
+
+/**
+ * Single lifecycle- and policy-aware phase driver for continuous cosmic effects.
+ * Returns a fixed [staticValue] (0 FPS, 0% GPU) whenever the app is in background,
+ * Reduce Motion is enabled, or battery saver / system animator scale disables motion.
+ */
+@Composable
+fun rememberCosmicPhase(
+    durationMs: Int,
+    initialValue: Float = 0f,
+    targetValue: Float = 1f,
+    staticValue: Float = initialValue,
+    repeatMode: RepeatMode = RepeatMode.Restart,
+    easing: Easing = LinearEasing,
+    label: String = "cosmicPhase",
+    enabled: Boolean = true
+): Float {
+    val policy = LocalCosmicMotionPolicy.current
+    val config = LocalCosmicMotionConfig.current
+    if (!enabled || !policy.shouldAnimateContinuously || !config.enableAmbientLoops) {
+        return staticValue
+    }
+    val infinite = rememberInfiniteTransition(label = label)
+    val value by infinite.animateFloat(
+        initialValue = initialValue,
+        targetValue = targetValue,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMs.coerceAtLeast(16), easing = easing),
+            repeatMode = repeatMode
+        ),
+        label = "${label}_val"
+    )
+    return value
 }
 
 /**
@@ -321,20 +435,29 @@ fun Modifier.cosmicGlassSheen(
     maxAlpha: Float = 0.16f
 ): Modifier = composed {
     val config = LocalCosmicMotionConfig.current
-    if (!enabled || !config.enableGlassSheen) return@composed this
+    val policy = LocalCosmicMotionPolicy.current
+    if (!enabled || !config.enableGlassSheen || !policy.shouldAnimateContinuously) return@composed this
 
-    val infinite = rememberInfiniteTransition(label = "cosmicGlassSheen")
-    val phase by infinite.animateFloat(
+    val phase = rememberCosmicPhase(
+        durationMs = periodMs,
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(periodMs, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "sheenPhase"
+        staticValue = 1f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "cosmicGlassSheen"
     )
 
     val effectiveAlpha = if (config.mode == MotionIntensityMode.FULL) maxAlpha else maxAlpha * 0.72f
+    val sheenColors = remember(sheenColor, effectiveAlpha) {
+        listOf(
+            Color.Transparent,
+            sheenColor.copy(alpha = effectiveAlpha * 0.45f),
+            sheenColor.copy(alpha = effectiveAlpha),
+            sheenColor.copy(alpha = effectiveAlpha * 0.45f),
+            Color.Transparent
+        )
+    }
 
     this.drawWithContent {
         drawContent()
@@ -346,13 +469,7 @@ fun Modifier.cosmicGlassSheen(
             val cr = cornerRadius.toPx().coerceAtMost(size.minDimension / 2f)
             drawRoundRect(
                 brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        sheenColor.copy(alpha = effectiveAlpha * 0.45f),
-                        sheenColor.copy(alpha = effectiveAlpha),
-                        sheenColor.copy(alpha = effectiveAlpha * 0.45f),
-                        Color.Transparent
-                    ),
+                    colors = sheenColors,
                     start = Offset(startX, 0f),
                     end = Offset(startX + bandW, size.height)
                 ),
@@ -374,17 +491,17 @@ fun Modifier.cosmicBorderBreathing(
     periodMs: Int = 2400
 ): Modifier = composed {
     val config = LocalCosmicMotionConfig.current
-    if (!enabled || !config.enableAmbientLoops) return@composed this
+    val policy = LocalCosmicMotionPolicy.current
+    if (!enabled || !config.enableAmbientLoops || !policy.shouldAnimateContinuously) return@composed this
 
-    val infinite = rememberInfiniteTransition(label = "cosmicBorderBreath")
-    val alpha by infinite.animateFloat(
+    val alpha = rememberCosmicPhase(
+        durationMs = periodMs,
         initialValue = minAlpha,
         targetValue = if (config.mode == MotionIntensityMode.FULL) maxAlpha else maxAlpha * 0.78f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(periodMs, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "borderBreathAlpha"
+        staticValue = (minAlpha + maxAlpha) * 0.5f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cosmicBorderBreath"
     )
 
     this.drawWithContent {
@@ -555,17 +672,17 @@ fun Modifier.cosmicFloatingLevitation(
     durationMs: Int = 2600
 ): Modifier = composed {
     val config = LocalCosmicMotionConfig.current
-    if (!config.enableAmbientLoops) return@composed this
+    val policy = LocalCosmicMotionPolicy.current
+    if (!config.enableAmbientLoops || !policy.shouldAnimateContinuously) return@composed this
 
-    val infinite = rememberInfiniteTransition(label = "cosmicFloat")
-    val dy by infinite.animateFloat(
+    val dy = rememberCosmicPhase(
+        durationMs = durationMs,
         initialValue = -1f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMs, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "cosmicFloatDy"
+        staticValue = 0f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cosmicFloat"
     )
     this.graphicsLayer {
         translationY = dy * amplitudeDp.toPx()
@@ -581,21 +698,27 @@ fun Modifier.cosmicShimmerSweep(
     shimmerColor: Color = Color(0xFFD8B4FE)
 ): Modifier = composed {
     val config = LocalCosmicMotionConfig.current
-    if (!active) return@composed this
+    val policy = LocalCosmicMotionPolicy.current
+    if (!active || !policy.shouldAnimateContinuously) return@composed this
 
-    val infinite = rememberInfiniteTransition(label = "cosmicShimmerSweep")
-    val progress by infinite.animateFloat(
+    val progress = rememberCosmicPhase(
+        durationMs = if (config.mode == MotionIntensityMode.REDUCED) 2200 else 1350,
         initialValue = -0.4f,
         targetValue = 1.4f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(
-                durationMillis = if (config.mode == MotionIntensityMode.REDUCED) 2200 else 1350,
-                easing = LinearEasing
-            ),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmerSweepProg"
+        staticValue = 0.5f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "cosmicShimmerSweep"
     )
+    val shimmerColors = remember(shimmerColor) {
+        listOf(
+            Color.Transparent,
+            shimmerColor.copy(alpha = 0.16f),
+            Color.White.copy(alpha = 0.24f),
+            shimmerColor.copy(alpha = 0.16f),
+            Color.Transparent
+        )
+    }
 
     this.drawWithContent {
         drawContent()
@@ -604,13 +727,7 @@ fun Modifier.cosmicShimmerSweep(
         val x = progress * size.width
         drawRoundRect(
             brush = Brush.linearGradient(
-                colors = listOf(
-                    Color.Transparent,
-                    shimmerColor.copy(alpha = 0.16f),
-                    Color.White.copy(alpha = 0.24f),
-                    shimmerColor.copy(alpha = 0.16f),
-                    Color.Transparent
-                ),
+                colors = shimmerColors,
                 start = Offset(x - band, 0f),
                 end = Offset(x + band, size.height)
             ),

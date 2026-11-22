@@ -53,7 +53,263 @@ import com.example.ui.components.MorCamGlassTextField
 import com.example.ui.components.MorCamTokens
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.runtime.remember
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.FilterQuality
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import com.example.data.local.BotEntity
+import com.example.ui.animation.CosmicFloatingDeltaPop
+import com.example.ui.theme.DisplaySerifFontFamily
 import kotlinx.coroutines.flow.StateFlow
+
+/**
+ * Modular 1:1 Mor Cam Chat Top Bar combining the translucent glass header plate,
+ * sigil/avatar medallion with floating affection delta pop, 4 aligned touch targets,
+ * live Search Bar + Yıldızlı pill, and isolated TTS status banner.
+ */
+@Composable
+internal fun ChatHeaderTopBar(
+    bot: BotEntity,
+    headerTitle: String,
+    avatarInitial: String,
+    emotionAuraColor: Color,
+    pulseGlowAlpha: Float,
+    affectionDeltaTrigger: Int,
+    affectionDeltaText: String?,
+    affectionDeltaPositive: Boolean,
+    refGlassBitmaps: AetheriaRefGlassBitmaps,
+    showSearchBar: Boolean,
+    localSearchQuery: String,
+    matchCount: Int,
+    activeMatchIndex: Int,
+    starredCount: Int,
+    speakingMessageIdFlow: StateFlow<String?>,
+    isImeVisible: Boolean,
+    rootSize: IntSize,
+    blurredBgBitmap: ImageBitmap,
+    onBackClick: () -> Unit,
+    onQuickProfileClick: () -> Unit,
+    onToggleSearch: () -> Unit,
+    onSettingsClick: () -> Unit,
+    onQueryChange: (String) -> Unit,
+    onClearQuery: () -> Unit,
+    onPrevMatch: () -> Unit,
+    onNextMatch: () -> Unit,
+    onOpenStarredSheet: () -> Unit,
+    onStopSpeaking: () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(top = 4.dp, bottom = 6.dp)
+                .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing)),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(841f / 136f)
+            ) {
+                val headerW = maxWidth
+                val headerH = maxHeight
+
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    if (refGlassBitmaps.headerNoLetter.width > 1) {
+                        drawImage(
+                            image = refGlassBitmaps.headerNoLetter,
+                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                            dstSize = IntSize(
+                                kotlin.math.round(size.width).toInt().coerceAtLeast(1),
+                                kotlin.math.round(size.height).toInt().coerceAtLeast(1)
+                            ),
+                            filterQuality = FilterQuality.High
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .offset(
+                            x = headerW * (145f / 841f),
+                            y = headerH * (30f / 136f)
+                        )
+                        .size(
+                            width = headerW * (72f / 841f),
+                            height = headerH * (76f / 136f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    val fallbackInitial: @Composable () -> Unit = {
+                        Text(
+                            text = avatarInitial,
+                            fontSize = 23.sp,
+                            fontFamily = DisplaySerifFontFamily,
+                            fontWeight = FontWeight.Normal,
+                            style = TextStyle(
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.White,
+                                        Color(0xFFF3E8FF),
+                                        Color(0xFFD8B4FE)
+                                    )
+                                ),
+                                shadow = Shadow(
+                                    color = Color(0xCCA855F7),
+                                    offset = Offset(0f, 0f),
+                                    blurRadius = 10f
+                                )
+                            )
+                        )
+                    }
+                    if (bot.avatarUrl.isNotBlank()) {
+                        com.example.ui.components.BotAvatarImage(
+                            avatarUrl = bot.avatarUrl,
+                            contentDescription = headerTitle,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier
+                                .size(headerW * (54f / 841f))
+                                .clip(CircleShape)
+                                .border(
+                                    1.35.dp,
+                                    emotionAuraColor.copy(alpha = 0.45f + 0.35f * pulseGlowAlpha),
+                                    CircleShape
+                                ),
+                            fallback = fallbackInitial
+                        )
+                    } else {
+                        fallbackInitial()
+                    }
+                    if (affectionDeltaTrigger > 0) {
+                        CosmicFloatingDeltaPop(
+                            deltaText = affectionDeltaText,
+                            triggerKey = affectionDeltaTrigger,
+                            color = if (affectionDeltaPositive) Color(0xFF4ADE80) else Color(0xFFF472B6),
+                            modifier = Modifier.align(Alignment.TopCenter)
+                        )
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .offset(
+                            x = headerW * (248f / 841f),
+                            y = headerH * (24f / 136f)
+                        )
+                        .size(
+                            width = headerW * (360f / 841f),
+                            height = headerH * (46f / 136f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = headerTitle,
+                        color = Color(0xFFFBF8FF),
+                        fontSize = if (headerTitle.length > 20) 14.5.sp else 15.5.sp,
+                        fontWeight = FontWeight.Normal,
+                        fontFamily = LiterarySerifFontFamily,
+                        letterSpacing = 0.1.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        style = TextStyle(
+                            shadow = Shadow(
+                                color = Color(0xCC120524),
+                                offset = Offset(0f, 1.5f),
+                                blurRadius = 6f
+                            )
+                        )
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.145f)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onBackClick
+                            )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.595f)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onQuickProfileClick
+                            )
+                            .testTag("chat_header_quick_profile_button")
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.125f)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onToggleSearch
+                            )
+                            .testTag("chat_search_toggle_button")
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .weight(0.135f)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                                onClick = onSettingsClick
+                            )
+                            .testTag("bot_settings_button")
+                    )
+                }
+            }
+
+            ChatSearchBarAndNavigation(
+                visible = showSearchBar,
+                localSearchQuery = localSearchQuery,
+                matchCount = matchCount,
+                activeMatchIndex = activeMatchIndex,
+                starredCount = starredCount,
+                rootSize = rootSize,
+                blurredBgBitmap = blurredBgBitmap,
+                onQueryChange = onQueryChange,
+                onClearQuery = onClearQuery,
+                onPrevMatch = onPrevMatch,
+                onNextMatch = onNextMatch,
+                onOpenStarredSheet = onOpenStarredSheet
+            )
+
+            ChatSpeakingStatusBanner(
+                speakingMessageIdFlow = speakingMessageIdFlow,
+                isImeVisible = isImeVisible,
+                rootSize = rootSize,
+                blurredBgBitmap = blurredBgBitmap,
+                onStopSpeaking = onStopSpeaking
+            )
+        }
+    }
+}
 
 /**
  * Modular Mor Cam Search Bar with:

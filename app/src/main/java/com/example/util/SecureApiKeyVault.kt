@@ -121,16 +121,27 @@ object SecureApiKeyVault {
         backupApiKey = decrypt(settings.backupApiKey)
     )
 
+    val SENSITIVE_HTTP_HEADERS: Set<String> = setOf(
+        "Authorization",
+        "x-api-key",
+        "api-key",
+        "x-goog-api-key",
+        "Cookie",
+        "Set-Cookie"
+    )
+
     private val SECRET_LOG_PATTERNS = listOf(
         Regex("""\bAIza[0-9A-Za-z\-_]{20,}"""),
         Regex("""\bsk-(?:ant-|or-|proj-)?[0-9A-Za-z\-_]{16,}"""),
         Regex("""\bgsk_[0-9A-Za-z\-_]{16,}"""),
         Regex("""\bnvapi-[0-9A-Za-z\-_]{16,}"""),
-        Regex("""(?i)([?&]key=)[^&\s]+"""),
-        Regex("""(?i)(Bearer\s+)[0-9A-Za-z\-_.]{12,}""")
+        Regex("""\bxai-[0-9A-Za-z\-_]{16,}"""),
+        Regex("""(?i)([?&](?:api_)?key=)[^&\s]+"""),
+        Regex("""(?i)(Bearer\s+)[0-9A-Za-z\-_.]{8,}"""),
+        Regex("""(?i)((?:Authorization|x-api-key|api-key|x-goog-api-key)\s*[:=]\s*)[^\r\n,;]+""")
     )
 
-    /** Scrubs API keys / bearer tokens before writing any message into fallback or error logs. */
+    /** Scrubs API keys, sensitive auth headers, and bearer tokens before any log write. */
     fun redactSecrets(raw: String): String {
         if (raw.isBlank()) return raw
         var out = raw
@@ -138,8 +149,44 @@ object SecureApiKeyVault {
         out = SECRET_LOG_PATTERNS[1].replace(out, "[REDACTED_API_KEY]")
         out = SECRET_LOG_PATTERNS[2].replace(out, "[REDACTED_GROQ_KEY]")
         out = SECRET_LOG_PATTERNS[3].replace(out, "[REDACTED_NVIDIA_KEY]")
-        out = SECRET_LOG_PATTERNS[4].replace(out, "$1[REDACTED]")
+        out = SECRET_LOG_PATTERNS[4].replace(out, "[REDACTED_XAI_KEY]")
         out = SECRET_LOG_PATTERNS[5].replace(out, "$1[REDACTED]")
+        out = SECRET_LOG_PATTERNS[6].replace(out, "$1[REDACTED]")
+        out = SECRET_LOG_PATTERNS[7].replace(out, "$1[REDACTED]")
         return out
+    }
+
+    /**
+     * Release-safe OkHttp logging interceptor:
+     * - Strictly Level.NONE in Release (!isDebug)
+     * - Level.BASIC at most in Debug (never logs raw bodies/prompts/messages)
+     * - Always redacts Authorization, x-api-key, x-goog-api-key, and Cookie headers
+     */
+    fun createSafeHttpLoggingInterceptor(
+        isDebug: Boolean = com.example.BuildConfig.DEBUG
+    ): okhttp3.logging.HttpLoggingInterceptor {
+        val logger = okhttp3.logging.HttpLoggingInterceptor.Logger { message ->
+            if (isDebug) {
+                Log.d("EmochiHttp", redactSecrets(message))
+            }
+        }
+        return okhttp3.logging.HttpLoggingInterceptor(logger).apply {
+            SENSITIVE_HTTP_HEADERS.forEach { header -> redactHeader(header) }
+            level = if (isDebug) {
+                okhttp3.logging.HttpLoggingInterceptor.Level.BASIC
+            } else {
+                okhttp3.logging.HttpLoggingInterceptor.Level.NONE
+            }
+        }
+    }
+
+    /** Safe debug logger: strict no-op in Release builds and always redacts secrets in Debug. */
+    fun safeDebugLog(
+        tag: String,
+        message: String,
+        isDebug: Boolean = com.example.BuildConfig.DEBUG
+    ) {
+        if (!isDebug) return
+        Log.d(tag, redactSecrets(message))
     }
 }

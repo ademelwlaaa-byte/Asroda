@@ -140,7 +140,9 @@ class EmochiApplication : Application(), ImageLoaderFactory {
                         return cleanBuilder.post(newBody).build()
                     }
                 } catch (e: Exception) {
-                    Log.w("EmochiApp", "Temperature policy body parse skipped: ${e.message}")
+                    if (BuildConfig.DEBUG) {
+                        Log.w("EmochiApp", "Temperature policy body parse skipped: ${com.example.util.SecureApiKeyVault.redactSecrets(e.message.orEmpty())}")
+                    }
                 }
             }
             return cleanBuilder.build()
@@ -165,6 +167,11 @@ class EmochiApplication : Application(), ImageLoaderFactory {
         }
 
         val installedTemperatureInterceptor: Interceptor = createTemperatureInterceptor()
+
+        fun createReleaseSafeHttpLogger(
+            isDebug: Boolean = BuildConfig.DEBUG
+        ): okhttp3.logging.HttpLoggingInterceptor =
+            com.example.util.SecureApiKeyVault.createSafeHttpLoggingInterceptor(isDebug)
     }
 
     override fun onCreate() {

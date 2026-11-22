@@ -929,6 +929,13 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ): BookReadState {
         val appCtx = context.applicationContext
+        lastSavedScroll.remove(bookId)
+        appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove("state_$bookId")
+            .remove("scroll_idx_$bookId")
+            .remove("scroll_off_$bookId")
+            .apply()
         val fresh = createInitialState(bookId, chapterNumber = 1)
         ChapterProgressManager.resetProgress(appCtx, bookId)
         persistAndEmit(appCtx, bookId, fresh)
@@ -994,13 +1001,9 @@ object BookStateRepository {
     }
 
     private fun persistAndEmit(context: Context, bookId: String, state: BookReadState) {
-        saveToPrefs(context, bookId, state)
+        // Atomic single-editor persistence of state JSON + exact scroll keys (zero desync on crash)
+        saveToPrefsAtomic(context, bookId, state)
         lastSavedScroll[bookId] = state.savedScrollIndex to state.savedScrollOffset
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putInt("scroll_idx_$bookId", state.savedScrollIndex)
-            .putInt("scroll_off_$bookId", state.savedScrollOffset)
-            .apply()
         ChapterProgressManager.setExactCompletedChapter(context, bookId, state.highestCompletedChapter)
         val flow = flows[bookId]
         if (flow != null) {
@@ -1011,7 +1014,7 @@ object BookStateRepository {
     }
 
     // ── JSON Serialization ──────────────────────────────────────────────────
-    private fun saveToPrefs(context: Context, bookId: String, state: BookReadState) {
+    private fun saveToPrefsAtomic(context: Context, bookId: String, state: BookReadState) {
         try {
             val root = JSONObject().apply {
                 put("bookId", state.bookId)
@@ -1080,6 +1083,8 @@ object BookStateRepository {
             context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putString("state_$bookId", root.toString())
+                .putInt("scroll_idx_$bookId", state.savedScrollIndex)
+                .putInt("scroll_off_$bookId", state.savedScrollOffset)
                 .apply()
         } catch (e: Exception) {
             android.util.Log.e("BookStateRepository", "Failed saving book state", e)

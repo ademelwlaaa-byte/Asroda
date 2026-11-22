@@ -596,6 +596,7 @@ fun BotQuickProfileSheet(
     keyCharacters: List<KeyCharacter>,
     characterEmotions: List<com.example.data.local.CharacterEmotionEntity> = emptyList(),
     affectionEvents: List<com.example.data.local.AffectionEventEntity> = emptyList(),
+    milestones: List<com.example.data.local.MilestoneEntity> = emptyList(),
     onDismiss: () -> Unit,
     onSaveBot: (BotEntity) -> Unit,
     onOpenFullSettings: () -> Unit,
@@ -678,6 +679,10 @@ fun BotQuickProfileSheet(
                 bot = bot,
                 characterEmotions = characterEmotions,
                 affectionEvents = affectionEvents
+            )
+
+            com.example.ui.screens.StoryMilestoneTimelineCard(
+                milestones = milestones
             )
 
             // Pinned Memory Quick Editor

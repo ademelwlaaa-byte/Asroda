@@ -112,6 +112,7 @@ import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 import com.example.util.BookAudioController
+import com.example.util.BookChoiceParser
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -293,8 +294,7 @@ fun BookReaderView(
 
     DisposableEffect(Unit) {
         onDispose {
-            // Preserve any active 2-second menu transition fade-out already in progress
-            BookAudioController.stopIfNotAlreadyFading(fadeOutMs = 2000L)
+            BookAudioController.stopAndRelease()
         }
     }
 
@@ -446,13 +446,13 @@ fun BookReaderView(
             }
     }
 
-    // Pause chapter-end soundtrack automatically when app is backgrounded (ON_STOP) and resume on ON_START
+    // Pause chapter-end soundtrack smoothly on background (ON_PAUSE 250ms fade) and resume on ON_RESUME (300ms fade) if not manually muted
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> BookAudioController.pauseForBackground()
-                Lifecycle.Event.ON_START -> BookAudioController.resumeFromBackground()
+                Lifecycle.Event.ON_PAUSE -> BookAudioController.pauseForBackground(fadeOutMs = 250L)
+                Lifecycle.Event.ON_RESUME -> BookAudioController.resumeFromBackground(fadeInMs = 300L)
                 else -> {}
             }
         }
@@ -521,7 +521,7 @@ fun BookReaderView(
     }
     val customAiChoices = remember(lastAssistantMsg?.text, useDeterministicEngine) {
         if (!useDeterministicEngine && lastAssistantMsg != null) {
-            parseBookChoiceOptions(lastAssistantMsg.text)
+            BookChoiceParser.parseAiBookChoices(lastAssistantMsg.text)
         } else {
             emptyList()
         }
@@ -1478,12 +1478,12 @@ private fun CosmicChoicePulseOverlay(
 @Composable
 private fun CustomAiBookCanvas(
     messages: List<MessageEntity>,
-    choices: List<BookChoiceOption>,
+    choices: List<BookChoiceParser.ParsedBookChoice>,
     isSending: Boolean,
     errorMessage: String?,
     fontSizeSp: Float,
     glowPulse: Float,
-    onSelectChoice: (BookChoiceOption) -> Unit,
+    onSelectChoice: (BookChoiceParser.ParsedBookChoice) -> Unit,
     onSendCustomText: (String) -> Unit,
     onClearError: () -> Unit
 ) {
@@ -1587,34 +1587,84 @@ private fun CustomAiBookCanvas(
                         )
                         choices.forEachIndexed { idx, opt ->
                             val interaction = remember(opt.rawLine) { MutableInteractionSource() }
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .cosmicTapSpring(interaction, pressedScale = 0.97f)
+                                    .cosmicTapSpring(interaction, pressedScale = if (opt.isLocked) 1f else 0.97f)
                                     .clip(RoundedCornerShape(15.dp))
-                                    .background(Color(0x88281354))
-                                    .border(1.dp, Color(0x99D8B4FE), RoundedCornerShape(15.dp))
-                                    .clickable(interactionSource = interaction, indication = null) {
+                                    .background(if (opt.isLocked) Color(0x661C152B) else Color(0x88281354))
+                                    .border(
+                                        1.dp,
+                                        if (opt.isLocked) Color(0x6694A3B8) else Color(0x99D8B4FE),
+                                        RoundedCornerShape(15.dp)
+                                    )
+                                    .clickable(
+                                        enabled = !opt.isLocked,
+                                        interactionSource = interaction,
+                                        indication = null
+                                    ) {
                                         onSelectChoice(opt)
                                     }
                                     .padding(horizontal = 13.dp, vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
                             ) {
-                                Text(
-                                    text = "${idx + 1}. ",
-                                    fontFamily = DisplaySerifFontFamily,
-                                    color = Color(0xFFD8B4FE),
-                                    fontSize = 14.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = formatLiteraryParagraph(opt.text),
-                                    fontFamily = LiterarySerifFontFamily,
-                                    color = Color(0xFFFAF6FF),
-                                    fontSize = 14.5.sp,
-                                    lineHeight = 20.sp,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = if (opt.isLocked) "🔒 " else "${idx + 1}. ",
+                                        fontFamily = DisplaySerifFontFamily,
+                                        color = if (opt.isLocked) Color(0xFF94A3B8) else Color(0xFFD8B4FE),
+                                        fontSize = 14.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = formatLiteraryParagraph(opt.displayText),
+                                        fontFamily = LiterarySerifFontFamily,
+                                        color = if (opt.isLocked) Color(0x99CBD5E1) else Color(0xFFFAF6FF),
+                                        fontSize = 14.5.sp,
+                                        lineHeight = 20.sp,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                if (opt.badges.isNotEmpty()) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        opt.badges.take(3).forEach { badge ->
+                                            val tint = when (badge.kind) {
+                                                BookChoiceParser.ChoiceBadgeKind.RISK -> Color(0xFFF43F5E)
+                                                BookChoiceParser.ChoiceBadgeKind.SECRET -> Color(0xFFC084FC)
+                                                BookChoiceParser.ChoiceBadgeKind.RELATIONSHIP -> Color(0xFFF472B6)
+                                                BookChoiceParser.ChoiceBadgeKind.BRANCH -> Color(0xFFFDE047)
+                                                BookChoiceParser.ChoiceBadgeKind.LOCKED -> Color(0xFF94A3B8)
+                                                BookChoiceParser.ChoiceBadgeKind.TONE -> Color(0xFFD8B4FE)
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(tint.copy(alpha = 0.18f))
+                                                    .border(0.7.dp, tint.copy(alpha = 0.55f), RoundedCornerShape(50))
+                                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = badge.label,
+                                                    fontFamily = InterFontFamily,
+                                                    color = tint,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                                if (opt.isLocked && !opt.lockReason.isNullOrBlank()) {
+                                    Text(
+                                        text = "Koşul: ${opt.lockReason}",
+                                        fontFamily = InterFontFamily,
+                                        color = Color(0xFFFCA5A5),
+                                        fontSize = 11.sp
+                                    )
+                                }
                             }
                         }
                     }

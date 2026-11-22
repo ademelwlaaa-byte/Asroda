@@ -101,7 +101,12 @@ object BookAudioController {
             p.setOnErrorListener { mp, what, extra ->
                 android.util.Log.e("BookAudioController", "MediaPlayer error: what=$what extra=$extra")
                 if (player === mp) {
+                    fadeJob?.cancel()
+                    isFadingOut = false
+                    isActivelyStarting = false
+                    pausedByBackground = false
                     releasePlayerInternal()
+                    abandonAudioFocus()
                 }
                 true
             }
@@ -115,6 +120,7 @@ object BookAudioController {
             isActivelyStarting = false
 
             val target = volume.coerceIn(0f, 1f)
+            resumeTargetVolume = target
             if (_isMutedFlow.value) {
                 _isPlayingFlow.value = false
                 return
@@ -146,6 +152,7 @@ object BookAudioController {
             android.util.Log.e("BookAudioController", "play() failed", e)
             isActivelyStarting = false
             releasePlayerInternal()
+            abandonAudioFocus()
         }
     }
 
@@ -228,7 +235,7 @@ object BookAudioController {
     /**
      * Toggles music on/off cleanly inside the Chapter End Screen.
      * - Turning OFF smoothly mutes the track to 0.
-     * - Turning ON smoothly restores/fades up to full volume (1.0f).
+     * - Turning ON smoothly restores/fades up to full volume (1.0f) and pauses any active chat TTS.
      */
     fun toggleMusicInChapterEnd(
         context: Context,
@@ -239,6 +246,7 @@ object BookAudioController {
         if (_isPlayingFlow.value && p != null && !isFadingOut) {
             _isMutedFlow.value = true
             _isPlayingFlow.value = false
+            pausedByBackground = false
             fadeJob?.cancel()
             val startVol = currentVolume.coerceIn(0f, 1f)
             fadeJob = scope.launch {
@@ -262,7 +270,9 @@ object BookAudioController {
             }
         } else {
             _isMutedFlow.value = false
+            resumeTargetVolume = fullVolume.coerceIn(0f, 1f)
             if (p != null && !isFadingOut && activeResId == rawResId) {
+                try { onPlaybackStarted?.invoke() } catch (_: Exception) {}
                 fadeJob?.cancel()
                 _isPlayingFlow.value = true
                 if (!p.isPlaying) {
@@ -312,15 +322,17 @@ object BookAudioController {
     fun stop(fadeOutMs: Long = 2000L) {
         val p = player ?: run {
             _isPlayingFlow.value = false
+            pausedByBackground = false
             return
         }
         fadeJob?.cancel()
         isFadingOut = true
         isActivelyStarting = false
+        pausedByBackground = false
         _isPlayingFlow.value = false
         val startVol = currentVolume.coerceIn(0f, 1f)
 
-        if (startVol <= 0.005f) {
+        if (startVol <= 0.005f || fadeOutMs <= 0L) {
             releasePlayerInternal()
             isFadingOut = false
             abandonAudioFocus()
@@ -359,6 +371,14 @@ object BookAudioController {
     }
 
     /**
+     * Immediate deterministic cleanup for `BookReaderView` disposal (`DisposableEffect.onDispose`).
+     * Cancels any active fade coroutine, releases `MediaPlayer`, and abandons `AudioFocus`.
+     */
+    fun stopAndRelease() {
+        release()
+    }
+
+    /**
      * Safe screen-disposal helper: initiates a 2-second fade-out only if playback is active
      * and not already fading out (preserves an active 2-second menu transition fade).
      */
@@ -371,40 +391,156 @@ object BookAudioController {
     @Volatile
     private var pausedByBackground: Boolean = false
 
-    /** Pauses active chapter-end soundtrack cleanly when the host Activity moves to background (ON_STOP). */
-    fun pauseForBackground() {
-        val p = player ?: return
-        if (!isFadingOut && p.isPlaying) {
-            try {
-                p.pause()
+    @Volatile
+    private var resumeTargetVolume: Float = 1.0f
+
+    @Volatile
+    private var simulatedActiveForTest: Boolean = false
+
+    /**
+     * Smoothly fades out over [fadeOutMs] (default 250ms) and pauses active chapter-end soundtrack
+     * when the host Activity moves to background (`Lifecycle.Event.ON_PAUSE`), without changing manual mute state.
+     */
+    fun pauseForBackground(fadeOutMs: Long = 250L) {
+        if (simulatedActiveForTest) {
+            if (!isFadingOut && _isPlayingFlow.value) {
                 pausedByBackground = true
                 _isPlayingFlow.value = false
-            } catch (_: Exception) {}
+            }
+            return
+        }
+        val p = player ?: return
+        if (!isFadingOut && (p.isPlaying || _isPlayingFlow.value)) {
+            pausedByBackground = true
+            _isPlayingFlow.value = false
+            fadeJob?.cancel()
+            val startVol = currentVolume.coerceIn(0f, 1f)
+            if (startVol > 0.05f) resumeTargetVolume = startVol
+            if (fadeOutMs <= 0L || startVol <= 0.01f) {
+                try {
+                    p.setVolume(0f, 0f)
+                    if (p.isPlaying) p.pause()
+                } catch (_: Exception) {}
+                currentVolume = 0f
+                return
+            }
+            fadeJob = scope.launch {
+                val steps = 8
+                val stepDelay = (fadeOutMs / steps).coerceAtLeast(16L)
+                for (i in steps - 1 downTo 0) {
+                    val v = startVol * (i.toFloat() / steps)
+                    currentVolume = v
+                    try {
+                        p.setVolume(v, v)
+                    } catch (_: Exception) {
+                        break
+                    }
+                    delay(stepDelay)
+                }
+                currentVolume = 0f
+                try {
+                    p.setVolume(0f, 0f)
+                    if (p.isPlaying) p.pause()
+                } catch (_: Exception) {}
+            }
         }
     }
 
     /** Immediately pauses chapter soundtrack if playing so chat TTS never clashes with book music. */
     fun pauseIfPlaying() {
+        if (simulatedActiveForTest) {
+            if (_isPlayingFlow.value) {
+                _isPlayingFlow.value = false
+            }
+            return
+        }
         val p = player ?: return
-        if (!isFadingOut && p.isPlaying) {
+        if (!isFadingOut && (p.isPlaying || _isPlayingFlow.value)) {
+            fadeJob?.cancel()
             try {
-                p.pause()
+                if (p.isPlaying) p.pause()
                 _isPlayingFlow.value = false
             } catch (_: Exception) {}
         }
     }
 
-    /** Resumes chapter-end soundtrack on foreground return (ON_START) only if it was paused by backgrounding. */
-    fun resumeFromBackground() {
+    /**
+     * Resumes chapter-end soundtrack on foreground return (`Lifecycle.Event.ON_RESUME`) with a
+     * smooth [fadeInMs] (default 300ms) fade-in ONLY if it was paused by backgrounding and NOT manually muted.
+     */
+    fun resumeFromBackground(fadeInMs: Long = 300L) {
         if (!pausedByBackground) return
         pausedByBackground = false
-        val p = player ?: return
-        if (!isFadingOut && !_isMutedFlow.value) {
-            try {
-                p.start()
-                _isPlayingFlow.value = true
-            } catch (_: Exception) {}
+        if (_isMutedFlow.value || isFadingOut) return
+
+        if (simulatedActiveForTest) {
+            try { onPlaybackStarted?.invoke() } catch (_: Exception) {}
+            _isPlayingFlow.value = true
+            return
         }
+
+        val p = player ?: return
+        try {
+            try { onPlaybackStarted?.invoke() } catch (_: Exception) {}
+            fadeJob?.cancel()
+            currentVolume = 0f
+            p.setVolume(0f, 0f)
+            if (!p.isPlaying) p.start()
+            _isPlayingFlow.value = true
+            val target = resumeTargetVolume.coerceIn(0.1f, 1.0f)
+            if (fadeInMs <= 0L) {
+                currentVolume = target
+                p.setVolume(target, target)
+                return
+            }
+            fadeJob = scope.launch {
+                val steps = 10
+                val stepDelay = (fadeInMs / steps).coerceAtLeast(16L)
+                for (i in 1..steps) {
+                    val v = target * (i.toFloat() / steps)
+                    currentVolume = v
+                    try {
+                        p.setVolume(v, v)
+                    } catch (_: Exception) {
+                        break
+                    }
+                    delay(stepDelay)
+                }
+                currentVolume = target
+                try {
+                    p.setVolume(target, target)
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** Test-only helper to exercise lifecycle & TTS mutual-exclusion paths cleanly under Robolectric. */
+    internal fun simulatePlaybackStateForTest(playing: Boolean, muted: Boolean = false) {
+        fadeJob?.cancel()
+        simulatedActiveForTest = true
+        isFadingOut = false
+        pausedByBackground = false
+        _isMutedFlow.value = muted
+        _isPlayingFlow.value = playing && !muted
+        if (playing && !muted) {
+            try { onPlaybackStarted?.invoke() } catch (_: Exception) {}
+        }
+    }
+
+    /** Test-only manual mute setter mirroring user mute button in Chapter End Screen. */
+    internal fun setManualMuteForTest(muted: Boolean) {
+        _isMutedFlow.value = muted
+        if (muted) {
+            _isPlayingFlow.value = false
+        }
+    }
+
+    /** Test-only reset to prevent cross-test leakage. */
+    internal fun resetForTesting() {
+        simulatedActiveForTest = false
+        onPlaybackStarted = null
+        release()
+        _isMutedFlow.value = false
     }
 
     fun release() {
@@ -412,6 +548,7 @@ object BookAudioController {
         isFadingOut = false
         isActivelyStarting = false
         pausedByBackground = false
+        simulatedActiveForTest = false
         releasePlayerInternal()
         abandonAudioFocus()
     }

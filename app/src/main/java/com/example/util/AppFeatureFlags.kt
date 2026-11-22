@@ -30,6 +30,8 @@ object AppFeatureFlags {
     const val KEY_TTS_READ_ACTIONS               = "tts_read_actions"
     const val KEY_TTS_AUTO_READ_REPLIES          = "tts_auto_read_replies"
     const val KEY_TTS_EMOTIONAL_PROSODY          = "tts_emotional_prosody"
+    const val KEY_REDUCE_MOTION                  = "reduce_motion"
+    const val KEY_MICRO_AI_CAST_SENTIMENT        = "micro_ai_cast_sentiment"
 
     // ─── String / Set Tercihleri ──────────────────────────────────────────────
     const val KEY_TTS_ENGINE_MODE                = "tts_engine_mode"
@@ -53,9 +55,11 @@ object AppFeatureFlags {
         KEY_TOKEN_COUNTER         to true,
         KEY_REFUSAL_AUTO_FALLBACK to true,
         KEY_STRICT_API_TIMEOUT    to true,
-        KEY_TTS_READ_ACTIONS      to false,
-        KEY_TTS_AUTO_READ_REPLIES to false,
-        KEY_TTS_EMOTIONAL_PROSODY to true,
+        KEY_TTS_READ_ACTIONS          to false,
+        KEY_TTS_AUTO_READ_REPLIES     to false,
+        KEY_TTS_EMOTIONAL_PROSODY     to true,
+        KEY_REDUCE_MOTION             to false,
+        KEY_MICRO_AI_CAST_SENTIMENT   to true,
     )
 
     private var prefs: SharedPreferences? = null
@@ -74,28 +78,32 @@ object AppFeatureFlags {
     private val _tokenCounter        = MutableStateFlow(true)
     private val _refusalAutoFallback = MutableStateFlow(true)
     private val _strictApiTimeout    = MutableStateFlow(true)
-    private val _ttsReadActions      = MutableStateFlow(false)
-    private val _ttsAutoReadReplies  = MutableStateFlow(false)
-    private val _ttsEmotionalProsody = MutableStateFlow(true)
-    private val _ttsEngineMode       = MutableStateFlow(TTS_ENGINE_NEURAL)
-    private val _ttsNeuralVoice      = MutableStateFlow(DEFAULT_NEURAL_VOICE)
-    private val _aiUtilityModels     = MutableStateFlow<Map<String, String>>(emptyMap())
+    private val _ttsReadActions       = MutableStateFlow(false)
+    private val _ttsAutoReadReplies   = MutableStateFlow(false)
+    private val _ttsEmotionalProsody  = MutableStateFlow(true)
+    private val _reduceMotion         = MutableStateFlow(false)
+    private val _microAiCastSentiment = MutableStateFlow(true)
+    private val _ttsEngineMode        = MutableStateFlow(TTS_ENGINE_NEURAL)
+    private val _ttsNeuralVoice       = MutableStateFlow(DEFAULT_NEURAL_VOICE)
+    private val _aiUtilityModels      = MutableStateFlow<Map<String, String>>(emptyMap())
 
-    val sseStreaming:        StateFlow<Boolean> = _sseStreaming.asStateFlow()
-    val memoryTimeline:      StateFlow<Boolean> = _memoryTimeline.asStateFlow()
-    val routineNotif:        StateFlow<Boolean> = _routineNotif.asStateFlow()
-    val sceneImage:          StateFlow<Boolean> = _sceneImage.asStateFlow()
-    val dynamicDifficulty:   StateFlow<Boolean> = _dynamicDifficulty.asStateFlow()
-    val multiBotScene:       StateFlow<Boolean> = _multiBotScene.asStateFlow()
-    val tokenCounter:        StateFlow<Boolean> = _tokenCounter.asStateFlow()
-    val refusalAutoFallback: StateFlow<Boolean> = _refusalAutoFallback.asStateFlow()
-    val strictApiTimeout:    StateFlow<Boolean> = _strictApiTimeout.asStateFlow()
-    val ttsReadActions:      StateFlow<Boolean> = _ttsReadActions.asStateFlow()
-    val ttsAutoReadReplies:  StateFlow<Boolean> = _ttsAutoReadReplies.asStateFlow()
-    val ttsEmotionalProsody: StateFlow<Boolean> = _ttsEmotionalProsody.asStateFlow()
-    val ttsEngineMode:       StateFlow<String>  = _ttsEngineMode.asStateFlow()
-    val ttsNeuralVoice:      StateFlow<String>  = _ttsNeuralVoice.asStateFlow()
-    val aiUtilityModels:     StateFlow<Map<String, String>> = _aiUtilityModels.asStateFlow()
+    val sseStreaming:         StateFlow<Boolean> = _sseStreaming.asStateFlow()
+    val memoryTimeline:       StateFlow<Boolean> = _memoryTimeline.asStateFlow()
+    val routineNotif:         StateFlow<Boolean> = _routineNotif.asStateFlow()
+    val sceneImage:           StateFlow<Boolean> = _sceneImage.asStateFlow()
+    val dynamicDifficulty:    StateFlow<Boolean> = _dynamicDifficulty.asStateFlow()
+    val multiBotScene:        StateFlow<Boolean> = _multiBotScene.asStateFlow()
+    val tokenCounter:         StateFlow<Boolean> = _tokenCounter.asStateFlow()
+    val refusalAutoFallback:  StateFlow<Boolean> = _refusalAutoFallback.asStateFlow()
+    val strictApiTimeout:     StateFlow<Boolean> = _strictApiTimeout.asStateFlow()
+    val ttsReadActions:       StateFlow<Boolean> = _ttsReadActions.asStateFlow()
+    val ttsAutoReadReplies:   StateFlow<Boolean> = _ttsAutoReadReplies.asStateFlow()
+    val ttsEmotionalProsody:  StateFlow<Boolean> = _ttsEmotionalProsody.asStateFlow()
+    val reduceMotion:         StateFlow<Boolean> = _reduceMotion.asStateFlow()
+    val microAiCastSentiment: StateFlow<Boolean> = _microAiCastSentiment.asStateFlow()
+    val ttsEngineMode:        StateFlow<String>  = _ttsEngineMode.asStateFlow()
+    val ttsNeuralVoice:       StateFlow<String>  = _ttsNeuralVoice.asStateFlow()
+    val aiUtilityModels:      StateFlow<Map<String, String>> = _aiUtilityModels.asStateFlow()
 
     fun init(context: Context) {
         prefs = context.applicationContext
@@ -116,9 +124,11 @@ object AppFeatureFlags {
     val isTokenCounterEnabled:        Boolean get() = get(KEY_TOKEN_COUNTER)
     val isRefusalAutoFallbackEnabled: Boolean get() = get(KEY_REFUSAL_AUTO_FALLBACK)
     val isStrictApiTimeoutEnabled:    Boolean get() = get(KEY_STRICT_API_TIMEOUT)
-    val isTtsReadActionsEnabled:      Boolean get() = get(KEY_TTS_READ_ACTIONS)
-    val isTtsAutoReadRepliesEnabled:  Boolean get() = get(KEY_TTS_AUTO_READ_REPLIES)
-    val isTtsEmotionalProsodyEnabled: Boolean get() = get(KEY_TTS_EMOTIONAL_PROSODY)
+    val isTtsReadActionsEnabled:       Boolean get() = get(KEY_TTS_READ_ACTIONS)
+    val isTtsAutoReadRepliesEnabled:   Boolean get() = get(KEY_TTS_AUTO_READ_REPLIES)
+    val isTtsEmotionalProsodyEnabled:  Boolean get() = get(KEY_TTS_EMOTIONAL_PROSODY)
+    val isReduceMotionEnabled:         Boolean get() = get(KEY_REDUCE_MOTION)
+    val isMicroAiCastSentimentEnabled: Boolean get() = get(KEY_MICRO_AI_CAST_SENTIMENT)
 
     fun getTtsEngineMode(): String =
         getString(KEY_TTS_ENGINE_MODE, TTS_ENGINE_NEURAL).let {
@@ -129,18 +139,20 @@ object AppFeatureFlags {
         getString(KEY_TTS_NEURAL_VOICE, DEFAULT_NEURAL_VOICE).ifBlank { DEFAULT_NEURAL_VOICE }
 
     // ─── Yazma ───────────────────────────────────────────────────────────────
-    fun setSseStreaming(v: Boolean)        { set(KEY_SSE_STREAMING, v);         _sseStreaming.value = v }
-    fun setMemoryTimeline(v: Boolean)      { set(KEY_MEMORY_TIMELINE, v);       _memoryTimeline.value = v }
-    fun setRoutineNotif(v: Boolean)        { set(KEY_ROUTINE_NOTIF, v);         _routineNotif.value = v }
-    fun setSceneImage(v: Boolean)          { set(KEY_SCENE_IMAGE, v);           _sceneImage.value = v }
-    fun setDynamicDifficulty(v: Boolean)   { set(KEY_DYNAMIC_DIFFICULTY, v);    _dynamicDifficulty.value = v }
-    fun setMultiBotScene(v: Boolean)       { set(KEY_MULTI_BOT_SCENE, v);       _multiBotScene.value = v }
-    fun setTokenCounter(v: Boolean)        { set(KEY_TOKEN_COUNTER, v);         _tokenCounter.value = v }
-    fun setRefusalAutoFallback(v: Boolean) { set(KEY_REFUSAL_AUTO_FALLBACK, v); _refusalAutoFallback.value = v }
-    fun setStrictApiTimeout(v: Boolean)    { set(KEY_STRICT_API_TIMEOUT, v);    _strictApiTimeout.value = v }
-    fun setTtsReadActions(v: Boolean)      { set(KEY_TTS_READ_ACTIONS, v);      _ttsReadActions.value = v }
-    fun setTtsAutoReadReplies(v: Boolean)  { set(KEY_TTS_AUTO_READ_REPLIES, v); _ttsAutoReadReplies.value = v }
-    fun setTtsEmotionalProsody(v: Boolean) { set(KEY_TTS_EMOTIONAL_PROSODY, v); _ttsEmotionalProsody.value = v }
+    fun setSseStreaming(v: Boolean)         { set(KEY_SSE_STREAMING, v);           _sseStreaming.value = v }
+    fun setMemoryTimeline(v: Boolean)       { set(KEY_MEMORY_TIMELINE, v);         _memoryTimeline.value = v }
+    fun setRoutineNotif(v: Boolean)         { set(KEY_ROUTINE_NOTIF, v);           _routineNotif.value = v }
+    fun setSceneImage(v: Boolean)           { set(KEY_SCENE_IMAGE, v);             _sceneImage.value = v }
+    fun setDynamicDifficulty(v: Boolean)    { set(KEY_DYNAMIC_DIFFICULTY, v);      _dynamicDifficulty.value = v }
+    fun setMultiBotScene(v: Boolean)        { set(KEY_MULTI_BOT_SCENE, v);         _multiBotScene.value = v }
+    fun setTokenCounter(v: Boolean)         { set(KEY_TOKEN_COUNTER, v);           _tokenCounter.value = v }
+    fun setRefusalAutoFallback(v: Boolean)  { set(KEY_REFUSAL_AUTO_FALLBACK, v);   _refusalAutoFallback.value = v }
+    fun setStrictApiTimeout(v: Boolean)     { set(KEY_STRICT_API_TIMEOUT, v);      _strictApiTimeout.value = v }
+    fun setTtsReadActions(v: Boolean)       { set(KEY_TTS_READ_ACTIONS, v);        _ttsReadActions.value = v }
+    fun setTtsAutoReadReplies(v: Boolean)   { set(KEY_TTS_AUTO_READ_REPLIES, v);   _ttsAutoReadReplies.value = v }
+    fun setTtsEmotionalProsody(v: Boolean)  { set(KEY_TTS_EMOTIONAL_PROSODY, v);   _ttsEmotionalProsody.value = v }
+    fun setReduceMotion(v: Boolean)         { set(KEY_REDUCE_MOTION, v);           _reduceMotion.value = v }
+    fun setMicroAiCastSentiment(v: Boolean) { set(KEY_MICRO_AI_CAST_SENTIMENT, v); _microAiCastSentiment.value = v }
 
     fun setTtsEngineMode(mode: String) {
         val normalized = if (mode == TTS_ENGINE_DEVICE) TTS_ENGINE_DEVICE else TTS_ENGINE_NEURAL
@@ -239,6 +251,20 @@ object AppFeatureFlags {
             setter = ::setStrictApiTimeout
         ),
         ToggleSpec(
+            KEY_MICRO_AI_CAST_SENTIMENT,
+            "Ufak AI Kadro & Duygu Analizi",
+            "Yan karakter algılama ve gizli kullanıcı alt metni analizini hızlı yardımcı AI modeliyle güçlendirir (çevrimdışıysa yerel motora düşer).",
+            getter = { isMicroAiCastSentimentEnabled },
+            setter = ::setMicroAiCastSentiment
+        ),
+        ToggleSpec(
+            KEY_REDUCE_MOTION,
+            "Hareketi Azalt & Pil Tasarrufu",
+            "Kozmik parçacık ve yörünge animasyonlarını sadeleştirerek pil tüketimini azaltır.",
+            getter = { isReduceMotionEnabled },
+            setter = ::setReduceMotion
+        ),
+        ToggleSpec(
             KEY_TTS_EMOTIONAL_PROSODY,
             "TTS: Duygusal Tonlama (Prosodi)",
             "Karakterin o anki duygusuna (üzgün, öfkeli, romantik, heyecanlı) ve noktalama işaretlerine göre ses tonunu, hızını ve nefes aralarını otomatik ayarlar.",
@@ -330,11 +356,13 @@ object AppFeatureFlags {
         _tokenCounter.value        = get(KEY_TOKEN_COUNTER)
         _refusalAutoFallback.value = get(KEY_REFUSAL_AUTO_FALLBACK)
         _strictApiTimeout.value    = get(KEY_STRICT_API_TIMEOUT)
-        _ttsReadActions.value      = get(KEY_TTS_READ_ACTIONS)
-        _ttsAutoReadReplies.value  = get(KEY_TTS_AUTO_READ_REPLIES)
-        _ttsEmotionalProsody.value = get(KEY_TTS_EMOTIONAL_PROSODY)
-        _ttsEngineMode.value       = getTtsEngineMode()
-        _ttsNeuralVoice.value      = getTtsNeuralVoice()
+        _ttsReadActions.value       = get(KEY_TTS_READ_ACTIONS)
+        _ttsAutoReadReplies.value   = get(KEY_TTS_AUTO_READ_REPLIES)
+        _ttsEmotionalProsody.value  = get(KEY_TTS_EMOTIONAL_PROSODY)
+        _reduceMotion.value         = get(KEY_REDUCE_MOTION)
+        _microAiCastSentiment.value = get(KEY_MICRO_AI_CAST_SENTIMENT)
+        _ttsEngineMode.value        = getTtsEngineMode()
+        _ttsNeuralVoice.value       = getTtsNeuralVoice()
 
         val sp = prefs
         if (sp != null) {

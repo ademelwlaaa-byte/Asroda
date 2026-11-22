@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -2121,6 +2122,70 @@ fun GlobalSettingsModal(
                                 }
                                 Spacer(modifier = Modifier.height(10.dp))
                                 CosmicMotionPreviewStrip(mode = currentMotionMode)
+                                Spacer(modifier = Modifier.height(14.dp))
+
+                                val reduceMotionEnabled by com.example.util.AppFeatureFlags.reduceMotion.collectAsStateWithLifecycle()
+                                val microAiCastSentimentEnabled by com.example.util.AppFeatureFlags.microAiCastSentiment.collectAsStateWithLifecycle()
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("reduce_motion_switch"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                        Text(
+                                            text = "Hareketi Azalt & Pil Tasarrufu",
+                                            color = GlobalMorCamColors.PearlText,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = "Kozmik parçacık ve yörünge animasyonlarını sadeleştirerek pil tüketimini azaltır.",
+                                            color = GlobalMorCamColors.LavenderSubtext,
+                                            fontSize = 11.sp,
+                                            lineHeight = 14.5.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                    GlobalMorCamSwitch(
+                                        checked = reduceMotionEnabled,
+                                        onCheckedChange = { com.example.util.AppFeatureFlags.setReduceMotion(it) }
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(12.dp))
+
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("micro_ai_cast_sentiment_switch"),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                        Text(
+                                            text = "Ufak AI Kadro & Duygu Analizi",
+                                            color = GlobalMorCamColors.PearlText,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = "Edebi yan karakter çıkarımı ve gizli kullanıcı alt metni için hızlı yardımcı modeli kullanır (çevrimdışı yerel fallback).",
+                                            color = GlobalMorCamColors.LavenderSubtext,
+                                            fontSize = 11.sp,
+                                            lineHeight = 14.5.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                    GlobalMorCamSwitch(
+                                        checked = microAiCastSentimentEnabled,
+                                        onCheckedChange = { com.example.util.AppFeatureFlags.setMicroAiCastSentiment(it) }
+                                    )
+                                }
                             }
 
                             // Token stats card

@@ -19,8 +19,9 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -67,7 +68,6 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -387,9 +387,18 @@ private fun LiveActionCinemaMotionCanvas(
     }
 
     Box(modifier = modifier.clip(RoundedCornerShape(0.dp))) {
-        // Layer 1: High-Res Photorealistic Live-Action Movie Frame with Refined Bounded 2.5D Motion (No Over-Zoom!)
-        Image(
-            painter = painterResource(id = sceneBackdropRes(sceneId)),
+        // Layer 1: High-Res Photorealistic Live-Action Movie Frame loaded via Coil RGB_565 (OOM-safe, zero Size.ORIGINAL)
+        val canvasContext = LocalContext.current
+        val backdropRes = remember(sceneId) { sceneBackdropRes(sceneId) }
+        val backdropRequest = remember(canvasContext, backdropRes) {
+            ImageRequest.Builder(canvasContext)
+                .data(backdropRes)
+                .allowRgb565(true)
+                .crossfade(300)
+                .build()
+        }
+        AsyncImage(
+            model = backdropRequest,
             contentDescription = sceneId,
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -583,9 +592,16 @@ private fun LiveActionFullscreenCinemaDialog(
                     )
                 }
         ) {
-            // Subtle ambient theater aura backdrop (dimmed, never competing with the main 16:9 frame)
-            Image(
-                painter = painterResource(id = sceneBackdropRes(sceneId)),
+            // Subtle ambient theater aura backdrop (dimmed, Coil RGB_565 decoded)
+            val auraRequest = remember(context, sceneId) {
+                ImageRequest.Builder(context)
+                    .data(sceneBackdropRes(sceneId))
+                    .allowRgb565(true)
+                    .crossfade(300)
+                    .build()
+            }
+            AsyncImage(
+                model = auraRequest,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
@@ -1068,8 +1084,15 @@ fun TwinAidenPostCreditsDialog(
                     }
                     1 -> {
                         // CUT 1: Apocalyptic Ruined Parallel Manhattan + Broken Captain America Shield + Two Moons!
-                        Image(
-                            painter = painterResource(id = R.drawable.img_postcredits_ruined_nyc),
+                        val ruinedReq = remember(context) {
+                            ImageRequest.Builder(context)
+                                .data(R.drawable.img_postcredits_ruined_nyc)
+                                .allowRgb565(true)
+                                .crossfade(300)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = ruinedReq,
                             contentDescription = "Yıkılmış Paralel Manhattan",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -1083,8 +1106,15 @@ fun TwinAidenPostCreditsDialog(
                     }
                     2, 3 -> {
                         // CUT 2 & 3: Battle-Scarred Glowing-Blue-Eyed Twin Aiden Reaching Through the Rift!
-                        Image(
-                            painter = painterResource(id = R.drawable.img_postcredits_twin_aiden),
+                        val twinReq = remember(context) {
+                            ImageRequest.Builder(context)
+                                .data(R.drawable.img_postcredits_twin_aiden)
+                                .allowRgb565(true)
+                                .crossfade(300)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = twinReq,
                             contentDescription = "Yara İzli İkiz Aiden",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -1098,8 +1128,15 @@ fun TwinAidenPostCreditsDialog(
                     }
                     else -> {
                         // CUT 4: Season 2 Dark Blue Rift Title Backdrop
-                        Image(
-                            painter = painterResource(id = R.drawable.img_postcredits_ruined_nyc),
+                        val s2Req = remember(context) {
+                            ImageRequest.Builder(context)
+                                .data(R.drawable.img_postcredits_ruined_nyc)
+                                .allowRgb565(true)
+                                .crossfade(300)
+                                .build()
+                        }
+                        AsyncImage(
+                            model = s2Req,
                             contentDescription = "2. Sezon",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -1494,8 +1531,15 @@ fun Season2ArchitectPostCreditsDialog(
                 .background(Color(0xFF020309))
         ) {
             if (cutIndex >= 1) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_postcredits_ruined_nyc),
+                val sokoviaReq = remember(context) {
+                    ImageRequest.Builder(context)
+                        .data(R.drawable.img_postcredits_ruined_nyc)
+                        .allowRgb565(true)
+                        .crossfade(300)
+                        .build()
+                }
+                AsyncImage(
+                    model = sokoviaReq,
                     contentDescription = "Sokovia Enkazı",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier

@@ -139,6 +139,29 @@ object BookContentPackManager {
         cancelRequested = true
     }
 
+    /**
+     * Resolves an installed external pack directory if healthy (exists & non-empty), or cleans up
+     * broken entries and gracefully falls back to built-in content with a clear Turkish status message.
+     */
+    fun resolvePackOrFallbackToBuiltIn(context: Context, packId: String): Pair<File?, String?> {
+        ensureLoaded(context)
+        val appCtx = context.applicationContext
+        val safeId = sanitizePackId(packId)
+        val dir = File(packsRootDir(appCtx), safeId)
+        if (dir.exists() && dir.isDirectory && countFiles(dir) > 0) {
+            return dir to null
+        }
+        if (dir.exists()) {
+            try { dir.deleteRecursively() } catch (_: Throwable) {}
+        }
+        val cleaned = _installedPacks.value.filterNot { it.id == packId || it.id == safeId }
+        if (cleaned.size != _installedPacks.value.size) {
+            _installedPacks.value = cleaned
+            persistInstalled(appCtx, cleaned)
+        }
+        return null to "Harici içerik paketi bulunamadı veya bozuk; yerleşik hikâye paketiyle devam ediliyor."
+    }
+
     fun getInstalledStoryVersion(context: Context, bookId: String = CosmicDriftBookRegistry.BOOK_ID): Int {
         return context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -469,36 +492,45 @@ object BookContentPackManager {
         val canonicalRoot = targetDir.canonicalPath + File.separator
         var extractedFiles = 0
 
-        ZipInputStream(BufferedInputStream(rawZipStream)).use { zis ->
-            val buf = ByteArray(16 * 1024)
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (cancelRequested) throw CancellationException("İptal edildi.")
-                val outFile = File(targetDir, entry.name)
-                if (!outFile.canonicalPath.startsWith(canonicalRoot)) {
-                    throw SecurityException("Güvensiz ZIP yolu engellendi: ${entry.name}")
-                }
-                if (entry.isDirectory) {
-                    outFile.mkdirs()
-                } else {
-                    outFile.parentFile?.mkdirs()
-                    FileOutputStream(outFile).use { fos ->
-                        while (true) {
-                            val r = zis.read(buf)
-                            if (r <= 0) break
-                            fos.write(buf, 0, r)
-                        }
+        try {
+            ZipInputStream(BufferedInputStream(rawZipStream)).use { zis ->
+                val buf = ByteArray(16 * 1024)
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    if (cancelRequested) throw CancellationException("İptal edildi.")
+                    val outFile = File(targetDir, entry.name)
+                    if (!outFile.canonicalPath.startsWith(canonicalRoot)) {
+                        throw SecurityException("Güvensiz ZIP yolu engellendi: ${entry.name}")
                     }
-                    extractedFiles++
+                    if (entry.isDirectory) {
+                        outFile.mkdirs()
+                    } else {
+                        outFile.parentFile?.mkdirs()
+                        FileOutputStream(outFile).use { fos ->
+                            while (true) {
+                                val r = zis.read(buf)
+                                if (r <= 0) break
+                                fos.write(buf, 0, r)
+                            }
+                        }
+                        extractedFiles++
+                    }
+                    zis.closeEntry()
+                    entry = zis.nextEntry
                 }
-                zis.closeEntry()
-                entry = zis.nextEntry
             }
+        } catch (t: Throwable) {
+            try { targetDir.deleteRecursively() } catch (_: Throwable) {}
+            if (t is CancellationException || t is SecurityException) throw t
+            throw IllegalArgumentException(
+                "İçerik paketi bozuk veya eksik görünüyor; yerleşik hikâye paketi korunarak işlem iptal edildi.",
+                t
+            )
         }
 
         if (extractedFiles == 0) {
             targetDir.deleteRecursively()
-            throw IllegalArgumentException("ZIP paketinin içinde geçerli dosya bulunamadı.")
+            throw IllegalArgumentException("ZIP paketinin içinde geçerli dosya bulunamadı; yerleşik paket kullanılmaya devam edilecek.")
         }
 
         // Read optional manifest.json inside the pack for rich metadata

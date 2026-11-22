@@ -171,6 +171,7 @@ fun BotSettingsModal(
     keyCharacters: List<KeyCharacter>,
     characterEmotions: List<CharacterEmotionEntity> = emptyList(),
     affectionEvents: List<AffectionEventEntity> = emptyList(),
+    milestones: List<com.example.data.local.MilestoneEntity> = emptyList(),
     onDismiss: () -> Unit,
     onSave: (BotEntity, List<KeyCharacter>) -> Unit,
     onResetChat: (Boolean) -> Unit,
@@ -1294,6 +1295,13 @@ fun BotSettingsModal(
                             }
 
                             MorCamHairlineDivider()
+
+                            // Sistem #18: Chronological Relationship & Story Milestone Timeline
+                            com.example.ui.screens.StoryMilestoneTimelineCard(
+                                milestones = milestones
+                            )
+
+                            Spacer(modifier = Modifier.height(10.dp))
 
                             // Open Full Emotion Studio
                             MorCamChoicePill(

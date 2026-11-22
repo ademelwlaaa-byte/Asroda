@@ -14,10 +14,12 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import com.example.ui.animation.CosmicMotionSpecs
 import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.LocalCosmicMotionPolicy
 import com.example.ui.animation.cosmicDialogEnter
 import com.example.ui.animation.cosmicGlassSheen
 import com.example.ui.animation.cosmicPopupEnter
 import com.example.ui.animation.cosmicTapSpring
+import com.example.ui.animation.rememberCosmicPhase
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -64,7 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -177,42 +179,51 @@ enum class MorCamButtonVariant {
     Destructive
 }
 
+private val reusableMorCamStarPath = Path()
+
 fun Modifier.morCamCosmicGlow(
     cornerRadius: Dp,
     glowColor: Color = MorCamTokens.AmethystGlow,
     alpha: Float = 0.36f,
     blurDp: Dp = 12.dp
-): Modifier = this.drawBehind {
+): Modifier = this.drawWithCache {
     val cr = cornerRadius.toPx()
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-        val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.FILL
-            color = android.graphics.Color.argb(105, 7, 2, 18)
-            maskFilter = android.graphics.BlurMaskFilter(11.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    val dx = 2.dp.toPx()
+    val dy = 3.dp.toPx()
+    val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.FILL
+        color = android.graphics.Color.argb(105, 7, 2, 18)
+        maskFilter = android.graphics.BlurMaskFilter(11.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    val haloPaint = if (alpha > 0.01f) {
+        android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 2.6.dp.toPx()
+            color = android.graphics.Color.argb(
+                (alpha.coerceIn(0f, 1f) * 255).toInt(),
+                (glowColor.red * 255).toInt(),
+                (glowColor.green * 255).toInt(),
+                (glowColor.blue * 255).toInt()
+            )
+            maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
-        native.drawRoundRect(
-            2.dp.toPx(),
-            3.dp.toPx(),
-            size.width - 2.dp.toPx(),
-            size.height + 3.dp.toPx(),
-            cr,
-            cr,
-            shadowPaint
-        )
-        if (alpha > 0.01f) {
-            val haloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 2.6.dp.toPx()
-                color = android.graphics.Color.argb(
-                    (alpha.coerceIn(0f, 1f) * 255).toInt(),
-                    (glowColor.red * 255).toInt(),
-                    (glowColor.green * 255).toInt(),
-                    (glowColor.blue * 255).toInt()
-                )
-                maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    } else null
+
+    onDrawBehind {
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.drawRoundRect(
+                dx,
+                dy,
+                size.width - dx,
+                size.height + dy,
+                cr,
+                cr,
+                shadowPaint
+            )
+            if (haloPaint != null) {
+                native.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, haloPaint)
             }
-            native.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, haloPaint)
         }
     }
 }
@@ -239,16 +250,15 @@ fun DrawScope.drawMorCamFourPointStar(
         radius = outerRadius * 1.55f,
         center = center
     )
-    val path = Path().apply {
-        moveTo(center.x, center.y - outerRadius)
-        quadraticTo(center.x + innerRadius * 0.42f, center.y - innerRadius * 0.42f, center.x + outerRadius, center.y)
-        quadraticTo(center.x + innerRadius * 0.42f, center.y + innerRadius * 0.42f, center.x, center.y + outerRadius)
-        quadraticTo(center.x - innerRadius * 0.42f, center.y + innerRadius * 0.42f, center.x - outerRadius, center.y)
-        quadraticTo(center.x - innerRadius * 0.42f, center.y - innerRadius * 0.42f, center.x, center.y - outerRadius)
-        close()
-    }
+    reusableMorCamStarPath.reset()
+    reusableMorCamStarPath.moveTo(center.x, center.y - outerRadius)
+    reusableMorCamStarPath.quadraticTo(center.x + innerRadius * 0.42f, center.y - innerRadius * 0.42f, center.x + outerRadius, center.y)
+    reusableMorCamStarPath.quadraticTo(center.x + innerRadius * 0.42f, center.y + innerRadius * 0.42f, center.x, center.y + outerRadius)
+    reusableMorCamStarPath.quadraticTo(center.x - innerRadius * 0.42f, center.y + innerRadius * 0.42f, center.x - outerRadius, center.y)
+    reusableMorCamStarPath.quadraticTo(center.x - innerRadius * 0.42f, center.y - innerRadius * 0.42f, center.x, center.y - outerRadius)
+    reusableMorCamStarPath.close()
     drawPath(
-        path = path,
+        path = reusableMorCamStarPath,
         brush = Brush.radialGradient(
             colors = listOf(coreColor, edgeColor),
             center = center,
@@ -422,32 +432,28 @@ internal fun MorCamAnimatedStarCrest(
     baseGlowAlpha: Float = 0.55f
 ) {
     val motionConfig = LocalCosmicMotionConfig.current
-    val pulse: Float
-    val rotDeg: Float
-    if (motionConfig.enableAmbientLoops) {
-        val infinite = rememberInfiniteTransition(label = "starCrestBreath")
-        pulse = infinite.animateFloat(
-            initialValue = 0.86f,
-            targetValue = 1.12f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(2200, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "starPulse"
-        ).value
-        rotDeg = infinite.animateFloat(
-            initialValue = -7f,
-            targetValue = 7f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(3600, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "starTilt"
-        ).value
-    } else {
-        pulse = 1f
-        rotDeg = 0f
-    }
+    val motionPolicy = LocalCosmicMotionPolicy.current
+    val animateCrest = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
+    val pulse = rememberCosmicPhase(
+        durationMs = 2200,
+        initialValue = 0.86f,
+        targetValue = 1.12f,
+        staticValue = 1f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "starPulse",
+        enabled = animateCrest
+    )
+    val rotDeg = rememberCosmicPhase(
+        durationMs = 3600,
+        initialValue = -7f,
+        targetValue = 7f,
+        staticValue = 0f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "starTilt",
+        enabled = animateCrest
+    )
     Canvas(
         modifier = modifier
             .size(size)

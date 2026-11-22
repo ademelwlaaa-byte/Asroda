@@ -4,10 +4,7 @@ import com.example.ui.theme.AppColors
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -73,11 +70,16 @@ fun AppBackground(
     baseColor: Color = Color(0xFF06030E),
     activeTab: String = "chats"
 ) {
-    // 600ms Silky Crossfade + Depth Scale (1.04 -> 1.0) + Soft Blur Transition (6dp -> 0dp)
+    // 600ms Silky Crossfade (150ms when Reduce Motion / quick transitions active)
+    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
+    val motionPolicy = com.example.ui.animation.LocalCosmicMotionPolicy.current
     val isTemplates = activeTab == "templates"
     val templatesProgress by animateFloatAsState(
         targetValue = if (isTemplates) 1f else 0f,
-        animationSpec = tween(durationMillis = 600, easing = SeamlessBgEasing),
+        animationSpec = tween(
+            durationMillis = if (motionPolicy.shouldUseQuickTransitions) 150 else 600,
+            easing = SeamlessBgEasing
+        ),
         label = "templatesBgProgress"
     )
     val cosmicProgress = 1f - templatesProgress
@@ -144,8 +146,6 @@ fun AppBackground(
         list
     }
 
-    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
-
     // 14 subtle micro purple/lilac light particles (scaled by motion intensity)
     val floatingDust = remember {
         val rand = Random(108)
@@ -178,54 +178,47 @@ fun AppBackground(
         )
     }
 
-    val auroraTime: Float
-    val twinkleTime: Float
-    val dustRiseProgress: Float
-    val shootingStarPhase: Float
-    if (motionConfig.enableAmbientLoops) {
-        val infinite = rememberInfiniteTransition(label = "bg")
-        auroraTime = infinite.animateFloat(
-            initialValue = 0f,
-            targetValue = 2f * PI.toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(18000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "auroraTime"
-        ).value
-        twinkleTime = infinite.animateFloat(
-            initialValue = 0f,
-            targetValue = 2f * PI.toFloat(),
-            animationSpec = infiniteRepeatable(
-                animation = tween(4200, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "twinkleTime"
-        ).value
-        dustRiseProgress = infinite.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(22000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "dustRiseProgress"
-        ).value
-        shootingStarPhase = infinite.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(11500, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "shootingStarPhase"
-        ).value
-    } else {
-        auroraTime = 0.8f
-        twinkleTime = 1.2f
-        dustRiseProgress = 0f
-        shootingStarPhase = 0.9f
-    }
+    val allowAmbient = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
+    val auroraTime = com.example.ui.animation.rememberCosmicPhase(
+        durationMs = 18000,
+        initialValue = 0f,
+        targetValue = 2f * PI.toFloat(),
+        staticValue = 0.8f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "auroraTime",
+        enabled = allowAmbient
+    )
+    val twinkleTime = com.example.ui.animation.rememberCosmicPhase(
+        durationMs = 4200,
+        initialValue = 0f,
+        targetValue = 2f * PI.toFloat(),
+        staticValue = 1.2f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "twinkleTime",
+        enabled = allowAmbient
+    )
+    val dustRiseProgress = com.example.ui.animation.rememberCosmicPhase(
+        durationMs = 22000,
+        initialValue = 0f,
+        targetValue = 1f,
+        staticValue = 0f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "dustRiseProgress",
+        enabled = allowAmbient
+    )
+    val shootingStarPhase = com.example.ui.animation.rememberCosmicPhase(
+        durationMs = 11500,
+        initialValue = 0f,
+        targetValue = 1f,
+        staticValue = 0.9f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "shootingStarPhase",
+        enabled = allowAmbient
+    )
 
     Box(
         modifier = modifier

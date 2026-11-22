@@ -105,6 +105,35 @@ class CastMemberManager(
         }
     }
 
+    suspend fun getBlacklistedAliasTokensForBot(botId: String): Set<String> = withContext(Dispatchers.IO) {
+        val blacklistedRows = try {
+            castMemberDao.getBlacklistedCastMembersForBot(botId)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val namesFromQuery = try {
+            castMemberDao.getBlacklistedNamesForBot(botId)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        buildSet {
+            namesFromQuery.forEach { n ->
+                val norm = CastDetectorEngine.normalizeTurkishEntityName(n).lowercase(turkishLocale)
+                if (norm.isNotBlank()) add(norm)
+                val raw = n.trim().lowercase(turkishLocale)
+                if (raw.isNotBlank()) add(raw)
+            }
+            blacklistedRows.forEach { row ->
+                val norm = CastDetectorEngine.normalizeTurkishEntityName(row.name).lowercase(turkishLocale)
+                if (norm.isNotBlank()) add(norm)
+                CastDetectorEngine.extractStoredAliases(row.multiRoleJson).forEach { alias ->
+                    val alNorm = CastDetectorEngine.normalizeTurkishEntityName(alias).lowercase(turkishLocale)
+                    if (alNorm.isNotBlank()) add(alNorm)
+                }
+            }
+        }
+    }
+
     suspend fun ensureSideCharacterRegistered(
         botId: String,
         rawCharacterName: String,
@@ -114,25 +143,37 @@ class CastMemberManager(
         cueSentence: String = "",
         bot: BotEntity? = null,
         confidence: Int? = null,
-        pendingConfirmation: Boolean? = null
+        pendingConfirmation: Boolean? = null,
+        aliases: List<String> = emptyList(),
+        relation: String = "",
+        age: Int? = null,
+        currentMessageIndex: Int? = null
     ) = withContext(Dispatchers.IO) {
         val rawClean = cleanCharacterNameCandidate(rawCharacterName)
         val (canonicalName, titleRole) = CastDetectorEngine.extractCanonicalNameAndRole(rawClean)
-        val cleanName = canonicalName.ifBlank { rawClean }
+        val cleanName = CastDetectorEngine.normalizeTurkishEntityName(canonicalName.ifBlank { rawClean })
         if (cleanName.length < 2) return@withContext
 
         val targetBot = bot ?: botDao.getBotById(botId)
         if (targetBot != null && isMainOrUserCharacter(cleanName, targetBot)) return@withContext
 
-        val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId).map { it.lowercase(turkishLocale) }
-        if (blacklisted.contains(cleanName.lowercase(turkishLocale)) ||
-            blacklisted.any { CastDetectorEngine.isLikelyAlias(cleanName, it) }
-        ) return@withContext
+        val blacklistedTokens = getBlacklistedAliasTokensForBot(botId)
+        val candidateCheckTokens = aliases + listOf(rawClean, cleanName)
+        val isBlacklistedCandidate = candidateCheckTokens.any { token ->
+            val low = CastDetectorEngine.normalizeTurkishEntityName(token).lowercase(turkishLocale)
+            low.isNotBlank() && (
+                blacklistedTokens.contains(low) ||
+                    blacklistedTokens.any { bl -> CastDetectorEngine.isLikelyAlias(token, bl) }
+                )
+        }
+        if (isBlacklistedCandidate) return@withContext
 
-        // Alias-aware lookup: "Doktor Kerem", "Kerem Bey", "Kerem" resolve to one canonical cast member
+        // Alias-aware lookup: "Doktor Elif" <-> "Elif", stored aliases in multiRoleJson, Turkish normalized names
         val allExisting = castMemberDao.getCastMembersForBot(botId)
         val existing = castMemberDao.findByName(botId, cleanName)
-            ?: allExisting.firstOrNull { CastDetectorEngine.isLikelyAlias(cleanName, it.name) }
+            ?: allExisting.firstOrNull { member ->
+                CastDetectorEngine.matchesMemberOrAlias(cleanName, aliases + rawClean, member)
+            }
 
         val candidateScore = CastDetectorEngine.scoreCandidate(
             candidateName = rawClean,
@@ -152,6 +193,20 @@ class CastMemberManager(
             cueSentence = cueSentence
         )
 
+        val aliasesToPersist = buildList {
+            addAll(aliases)
+            if (rawClean.isNotBlank() && !rawClean.equals(cleanName, ignoreCase = true)) {
+                add(rawClean)
+            }
+        }
+        val enrichedDesc = buildString {
+            if (relation.isNotBlank()) append(relation.trim())
+            if (cueSentence.isNotBlank()) {
+                if (isNotEmpty()) append(" — ")
+                append(cueSentence.take(200))
+            }
+        }.take(240)
+
         if (existing == null) {
             if (confidence == null && !candidateScore.isSignificant && effectiveConfidence < 45) return@withContext
             val initialAffection = (50 + affectionDelta.coerceIn(-15, 15)).coerceIn(0, 100)
@@ -162,22 +217,29 @@ class CastMemberManager(
                 else -> 55
             }
             val personalityJson = PersonalityProfile.deriveFromPersonality(cleanName, resolvedRole, cueSentence).toJson()
+            val multiRoleWithAliases = CastDetectorEngine.mergeStoredAliases("[]", aliasesToPersist, cleanName)
+            val resolvedAge = age?.coerceIn(1, 150) ?: 20
             castMemberDao.insertCastMember(
                 CastMemberEntity(
                     botId = botId,
                     name = cleanName,
-                    description = cueSentence.take(240),
+                    description = enrichedDesc,
                     role = resolvedRole,
                     affectionScore = initialAffection,
                     relationshipState = initialMood.ifBlank { "Tanıdık" },
-                    importanceScore = initialImportance, // 0-100 scale aligned with CastDetectorEngine
+                    importanceScore = initialImportance,
                     isAutoAdded = true,
                     isBlacklisted = false,
+                    currentAge = resolvedAge,
+                    initialAge = resolvedAge,
                     detectionConfidence = effectiveConfidence,
                     pendingUserConfirmation = resolvedPending,
                     appearanceCount = 1,
                     lastSceneContext = cueSentence.take(200),
                     baseAffectionDifficultyMultiplier = difficultyMult,
+                    secondaryRole = relation.take(40),
+                    multiRoleJson = multiRoleWithAliases,
+                    lastRoleEvaluationIndex = currentMessageIndex ?: 0,
                     personalityJson = personalityJson
                 )
             )
@@ -192,12 +254,28 @@ class CastMemberManager(
             val ensuredPersonality = existing.personalityJson.ifBlank {
                 PersonalityProfile.deriveFromPersonality(existing.name, resolvedRole, cueSentence).toJson()
             }
+            val mergedMultiRole = CastDetectorEngine.mergeStoredAliases(
+                existingMultiRoleJson = existing.multiRoleJson,
+                newAliases = aliasesToPersist,
+                canonicalName = existing.name
+            )
+            val updatedAge = if (age != null && age in 1..150 && (existing.currentAge == 20 || existing.currentAge <= 0)) {
+                age
+            } else {
+                existing.currentAge
+            }
             castMemberDao.updateCastMember(
                 existing.copy(
                     role = if (existing.role.isBlank() || existing.role == "Yan Karakter") resolvedRole else existing.role,
+                    description = if (existing.description.isBlank() && enrichedDesc.isNotBlank()) enrichedDesc else existing.description,
+                    secondaryRole = if (existing.secondaryRole.isBlank() && relation.isNotBlank()) relation.take(40) else existing.secondaryRole,
+                    currentAge = updatedAge,
+                    initialAge = if (existing.initialAge == 20 && updatedAge != 20) updatedAge else existing.initialAge,
                     affectionScore = updatedAffection,
                     importanceScore = promotedImportance,
                     appearanceCount = newCount,
+                    multiRoleJson = mergedMultiRole,
+                    lastRoleEvaluationIndex = currentMessageIndex?.let { maxOf(existing.lastRoleEvaluationIndex, it) } ?: existing.lastRoleEvaluationIndex,
                     lastSceneContext = if (cueSentence.isNotBlank()) cueSentence.take(200) else existing.lastSceneContext,
                     personalityJson = ensuredPersonality
                 )
@@ -222,11 +300,47 @@ class CastMemberManager(
         }
     }
 
+    /**
+     * Applies validated Micro-AI (ExecutionMode.UTILITY) cast extraction results to Room.
+     * Strictly enforces blacklist lock (even across aliases) and deduplicates/enriches existing entries.
+     * Returns the set of active in-scene canonical character names extracted in this turn.
+     */
+    suspend fun applyMicroAiCastExtractionResult(
+        botId: String,
+        result: com.example.data.repository.CastExtractionResult,
+        bot: BotEntity? = null,
+        sceneContext: String = "",
+        currentMessageIndex: Int? = null
+    ): Set<String> = withContext(Dispatchers.IO) {
+        val targetBot = bot ?: botDao.getBotById(botId)
+        val activeInScene = mutableSetOf<String>()
+        for (member in result.members) {
+            if (!member.isPerson) continue
+            val canonical = CastDetectorEngine.normalizeTurkishEntityName(member.name)
+            if (canonical.length < 2) continue
+            if (targetBot != null && isMainOrUserCharacter(canonical, targetBot)) continue
+            ensureSideCharacterRegistered(
+                botId = botId,
+                rawCharacterName = canonical,
+                role = member.role.ifBlank { "Yan Karakter" },
+                cueSentence = sceneContext.take(200),
+                bot = targetBot,
+                confidence = if (result.usedMicroAi) 88 else null,
+                pendingConfirmation = if (result.usedMicroAi) false else null,
+                aliases = member.aliases,
+                relation = member.relation,
+                age = member.age,
+                currentMessageIndex = currentMessageIndex
+            )
+            if (member.inScene) {
+                activeInScene.add(canonical)
+            }
+        }
+        activeInScene
+    }
+
     suspend fun getBlacklistedCharacterNames(botId: String): Set<String> = withContext(Dispatchers.IO) {
-        castMemberDao.getBlacklistedNamesForBot(botId)
-            .map { it.trim().lowercase(turkishLocale) }
-            .filter { it.isNotBlank() }
-            .toSet()
+        getBlacklistedAliasTokensForBot(botId)
     }
 
     suspend fun detectAndRegisterCastMembers(
@@ -235,14 +349,14 @@ class CastMemberManager(
         userQuery: String = ""
     ) = withContext(Dispatchers.IO) {
         val bot = botDao.getBotById(botId)
-        val dbBlacklisted = getBlacklistedCharacterNames(botId)
+        val dbBlacklisted = getBlacklistedAliasTokensForBot(botId)
         val mergedBlacklist = CastDetectorEngine.getBlacklist() + dbBlacklisted
         val handledNames = mutableSetOf<String>()
 
         // 1) Explicit [CAST_MEMBER: Name | Role] tag (high confidence, auto-confirmed)
         val tagRegex = Regex("""\[CAST_MEMBER:\s*([^|\]]+?)(?:\s*\|\s*([^\]]+))?\]""", RegexOption.IGNORE_CASE)
         for (match in tagRegex.findAll(aiReplyText)) {
-            val name = cleanCharacterNameCandidate(match.groupValues[1])
+            val name = CastDetectorEngine.normalizeTurkishEntityName(cleanCharacterNameCandidate(match.groupValues[1]))
             val role = match.groupValues.getOrNull(2)?.trim().orEmpty().ifBlank { "Yan Karakter" }
             if (name.length < 2) continue
             val lower = name.lowercase(turkishLocale)
@@ -260,15 +374,14 @@ class CastMemberManager(
             )
         }
 
-        // 2) Full 8-stage CastDetectorEngine scan (titles, honorifics, intros, speech attribution, action verbs)
+        // 2) Full CastDetectorEngine Layer 1 scan (titles, kinship, full names, honorifics, intros, speech, actions)
         val detectedHits = CastDetectorEngine.detectCandidates(
             combinedText = aiReplyText,
             blacklist = mergedBlacklist
         )
         for (hit in detectedHits) {
-            // Only promote STRONG candidates on single-turn detection; WEAK apostrophe hits alone stay ignored
             if (hit.signalStrength != CastDetectorEngine.SignalStrength.STRONG) continue
-            val name = cleanCharacterNameCandidate(hit.canonicalName)
+            val name = CastDetectorEngine.normalizeTurkishEntityName(cleanCharacterNameCandidate(hit.canonicalName))
             if (name.length < 2) continue
             val lower = name.lowercase(turkishLocale)
             if (handledNames.contains(lower)) continue

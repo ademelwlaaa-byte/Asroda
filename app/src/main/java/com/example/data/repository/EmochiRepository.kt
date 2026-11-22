@@ -175,7 +175,8 @@ data class AiReplyResult(
     val usedProvider: String,
     val systemPromptSnapshot: String = "",
     val memoryCommitSummary: EmochiRepository.MemoryCommitSummary = EmochiRepository.MemoryCommitSummary(),
-    val ragRouteMode: MemoryEngine.RagRouteMode = MemoryEngine.RagRouteMode.HYBRID_FAST
+    val ragRouteMode: MemoryEngine.RagRouteMode = MemoryEngine.RagRouteMode.HYBRID_FAST,
+    val unlockedMilestone: com.example.data.local.MilestoneEntity? = null
 )
 
 object ContextMultiplierConfig {
@@ -355,34 +356,27 @@ class EmochiRepository(
             val cleaned = cleanLines.joinToString("\n").trim()
             if (cleaned.isNotBlank()) return cleaned
 
-            // Fallback 1: Try parsing JSON for embedded response text
-            try {
-                val jsonMatch = Regex("""(?is)\{.*\}""").find(rawText)?.value
-                if (jsonMatch != null) {
-                    val jsonObj = org.json.JSONObject(jsonMatch)
-                    val possibleKeys = listOf("response_text", "dialogue", "response", "reply", "message", "content", "narrative", "text")
-                    for (key in possibleKeys) {
-                        val str = jsonObj.optString(key, "")
-                        if (str.isNotBlank()) {
-                            return cleanEmotionTags(str.trim())
+            // Fallback 1: Try parsing pure JSON responses for embedded narrative text (never recycle STATE_JSON / <think>!)
+            val looksLikeInternalTagOnly = rawText.contains("[[STATE", ignoreCase = true) ||
+                rawText.contains("<think>", ignoreCase = true) ||
+                rawText.contains("<reasoning>", ignoreCase = true)
+            if (!looksLikeInternalTagOnly) {
+                try {
+                    val jsonMatch = Regex("""(?is)\{.*\}""").find(rawText)?.value
+                    if (jsonMatch != null) {
+                        val jsonObj = org.json.JSONObject(jsonMatch)
+                        val possibleKeys = listOf("response_text", "dialogue", "response", "reply", "message", "content", "narrative", "text")
+                        for (key in possibleKeys) {
+                            val str = jsonObj.optString(key, "")
+                            if (str.isNotBlank()) {
+                                return cleanEmotionTags(str.trim())
+                            }
                         }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
 
-            // Fallback 2: Extract text from <think> or <reasoning> if model put narrative inside think tags
-            try {
-                val thinkMatches = Regex("""(?is)<think>(.*?)</think>""").findAll(rawText)
-                val thinkTexts = thinkMatches.map { it.groupValues[1] }.joinToString("\n").trim()
-                if (thinkTexts.isNotBlank()) {
-                    val cleanedThink = cleanEmotionTags(thinkTexts)
-                    if (cleanedThink.length > 15) {
-                        return cleanedThink
-                    }
-                }
-            } catch (_: Exception) {}
-
-            // Fallback 3: If only emotion tags existed and no narrative was present, return empty string
+            // Zero tag leakage: if only internal tags/think blocks existed, return empty string (0 chars leaked)
             return ""
         }
 
@@ -430,7 +424,9 @@ class EmochiRepository(
                     val arr = org.json.JSONArray(member.multiRoleJson)
                     for (i in 0 until arr.length()) {
                         val r = arr.optString(i).trim()
-                        if (r.isNotBlank()) candidateRoles.add(r)
+                        if (r.isNotBlank() && !r.startsWith("alias:", ignoreCase = true)) {
+                            candidateRoles.add(r)
+                        }
                     }
                 } catch (_: Exception) {}
             }
@@ -1163,6 +1159,14 @@ class EmochiRepository(
             messageDao.insertMessage(openingMsg)
         }
 
+        // Guarantee airtight runtime cache isolation for the cloned bot
+        lastSummarizedMessageCount.remove(newBotId)
+        resetRegenerateCount(newBotId)
+        pendingConsistencyNoteMap.remove(newBotId)
+        pendingDecayNoteMap.remove(newBotId)
+        lastUnlockedMilestoneMap.remove(newBotId)
+        invalidateMemoryCaches(newBotId)
+
         autoBackupToStorage()
         return clonedBot
     }
@@ -1232,27 +1236,110 @@ class EmochiRepository(
         autoBackupToStorage()
     }
 
-    suspend fun checkAndSaveMilestone(botId: String, affection: Int, trust: Int): com.example.data.local.MilestoneEntity? {
+    private val lastUnlockedMilestoneMap = java.util.concurrent.ConcurrentHashMap<String, com.example.data.local.MilestoneEntity>()
+    private val activeInSceneCastMap = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
+    private val lastDetectedUserToneMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    fun getMilestonesFlow(botId: String): kotlinx.coroutines.flow.Flow<List<com.example.data.local.MilestoneEntity>> =
+        db.milestoneDao().getMilestonesFlow(botId)
+
+    suspend fun getMilestonesForBot(botId: String): List<com.example.data.local.MilestoneEntity> =
+        db.milestoneDao().getMilestonesForBot(botId)
+
+    suspend fun getRecentMilestonesForBot(botId: String, limit: Int = 3): List<com.example.data.local.MilestoneEntity> =
+        db.milestoneDao().getRecentMilestonesForBot(botId, limit)
+
+    /**
+     * Channel 1 (System #18): Deterministic numeric milestones (trust 25/50/75/95, affection 30/60/85/95).
+     * Strictly deduplicated per (botId, milestoneKey) so score oscillations (e.g. 50 -> 45 -> 52) NEVER re-trigger.
+     */
+    suspend fun checkAndSaveMilestone(
+        botId: String,
+        affection: Int,
+        trust: Int,
+        reachedAt: Long = System.currentTimeMillis()
+    ): com.example.data.local.MilestoneEntity? {
         val milestoneDao = db.milestoneDao()
-        val reached = milestoneDao.getReachedMilestoneTypes(botId).toSet()
+        val reached = milestoneDao.getReachedMilestoneTypes(botId).toMutableSet()
+        val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
+        val dayCounter = bot?.storyDayCounter ?: 1L
+        val calDate = bot?.storyCalendarDate.orEmpty()
+        var firstNewlyUnlocked: com.example.data.local.MilestoneEntity? = null
+
         for (def in com.example.data.local.MilestoneDefinitions.all) {
-            if (def.type in reached) continue
+            if (def.type in reached || milestoneDao.hasMilestoneKey(botId, def.type)) continue
             val value = if (def.field == "affection") affection else trust
             if (value >= def.threshold) {
+                val stampedTitle = com.example.data.local.MilestoneDefinitions.buildStampedTitle(
+                    baseTitle = "${def.title} (${def.threshold})",
+                    storyDayCounter = dayCounter,
+                    storyCalendarDate = calDate
+                )
                 val milestone = com.example.data.local.MilestoneEntity(
                     id = "${botId}_${def.type}",
                     botId = botId,
                     type = def.type,
-                    title = def.title,
+                    title = stampedTitle,
                     emoji = def.emoji,
                     affectionAtTime = affection,
-                    trustAtTime = trust
+                    trustAtTime = trust,
+                    reachedAt = reachedAt
                 )
                 milestoneDao.insertMilestone(milestone)
-                return milestone
+                reached.add(def.type)
+                if (firstNewlyUnlocked == null) {
+                    firstNewlyUnlocked = milestone
+                }
             }
         }
-        return null
+        return firstNewlyUnlocked
+    }
+
+    /**
+     * Channel 2 (System #18): AI narrative milestone from [[STATE_JSON]] "mile":{"k","t","d"} (0 extra API calls).
+     * Normalized unique key prevents duplicate inserts and stamps story calendar day/date.
+     */
+    suspend fun recordNarrativeMilestone(
+        botId: String,
+        rawKey: String,
+        rawTitle: String,
+        rawDescription: String = "",
+        affection: Int? = null,
+        trust: Int? = null,
+        reachedAt: Long = System.currentTimeMillis()
+    ): com.example.data.local.MilestoneEntity? {
+        val cleanTitle = rawTitle.trim()
+        val normalizedKey = com.example.data.local.MilestoneDefinitions.normalizeMilestoneKey(
+            rawKey = rawKey.ifBlank { cleanTitle },
+            narrativePrefix = true
+        )
+        if (normalizedKey.isBlank() || cleanTitle.isBlank()) return null
+
+        val milestoneDao = db.milestoneDao()
+        if (milestoneDao.hasMilestoneKey(botId, normalizedKey)) return null
+
+        val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
+        val emo = try { bot?.let { EmotionState.fromJson(it.emotionState) } } catch (_: Exception) { null }
+        val effAff = (affection ?: emo?.affection ?: 50).coerceIn(0, 100)
+        val effTrust = (trust ?: emo?.trust ?: 50).coerceIn(0, 100)
+        val stampedTitle = com.example.data.local.MilestoneDefinitions.buildStampedTitle(
+            baseTitle = cleanTitle,
+            description = rawDescription,
+            storyDayCounter = bot?.storyDayCounter ?: 1L,
+            storyCalendarDate = bot?.storyCalendarDate.orEmpty()
+        )
+        val milestone = com.example.data.local.MilestoneEntity(
+            id = "${botId}_${normalizedKey}",
+            botId = botId,
+            type = normalizedKey,
+            title = stampedTitle,
+            emoji = "✦",
+            affectionAtTime = effAff,
+            trustAtTime = effTrust,
+            reachedAt = reachedAt
+        )
+        milestoneDao.insertMilestone(milestone)
+        return milestone
     }
 
     suspend fun searchMessages(botId: String, query: String): List<com.example.data.local.MessageEntity> {
@@ -1321,6 +1408,23 @@ class EmochiRepository(
                     "DELETE FROM archived_memories WHERE botId = ? AND timestamp > ?",
                     arrayOf<Any>(botId, targetTimestamp)
                 )
+            } catch (_: Exception) {}
+
+            // 4b. Rewind pending_reappraisals cleanly:
+            // - Delete reappraisals triggered after targetMsgCount or targetTimestamp
+            // - Re-open earlier reappraisals (resolved = false, expired = false) that had been resolved/expired later
+            try {
+                val allReappraisals = pendingReappraisalDao.getAllForBot(botId)
+                for (pr in allReappraisals) {
+                    if (pr.triggeredAtMessageIndex > targetMsgCount || pr.triggeredAtTimestamp > targetTimestamp) {
+                        db.openHelper.writableDatabase.execSQL(
+                            "DELETE FROM pending_reappraisals WHERE id = ?",
+                            arrayOf<Any>(pr.id)
+                        )
+                    } else if (pr.resolved || pr.expired) {
+                        pendingReappraisalDao.update(pr.copy(resolved = false, expired = false))
+                    }
+                }
             } catch (_: Exception) {}
 
             // 5. Delete auto-added cast members that first appeared after targetTimestamp
@@ -1439,9 +1543,12 @@ class EmochiRepository(
         }
 
         if (rewound) {
-            // Clear in-memory summarization, regenerate & RAG vector caches so next turn starts cleanly
+            // Clear in-memory summarization, regenerate, milestone & RAG vector caches so next turn starts cleanly
             lastSummarizedMessageCount.remove(botId)
             resetRegenerateCount(botId)
+            pendingConsistencyNoteMap.remove(botId)
+            pendingDecayNoteMap.remove(botId)
+            lastUnlockedMilestoneMap.remove(botId)
             invalidateMemoryCaches(botId)
             autoBackupToStorage()
         }
@@ -2709,11 +2816,6 @@ class EmochiRepository(
             extractAndSaveRealtimeMemories(bot.id, latestUserMsg, latestAiReply)
         } catch (_: Exception) { 0 }
 
-        val explicitOverride = MemoryEngine.hasExplicitUserOverrideIntent(latestUserMsg)
-        if (!explicitOverride && !MemoryEngine.shouldExtractMemoriesForTurn(latestUserMsg, latestAiReply)) {
-            return@withContext MemoryCommitSummary(deletedFactsCount = implicitArchived)
-        }
-
         val settings = getOrCreateSettings()
         val userChar = bot.userCharName.ifBlank { "Kullanıcı" }
         val aiChar = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName.ifBlank { bot.universeName }
@@ -2722,6 +2824,56 @@ class EmochiRepository(
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
+
+        val lastTwoSceneText = buildString {
+            if (latestUserMsg.isNotBlank()) appendLine("$userChar: ${latestUserMsg.take(500)}")
+            if (latestAiReply.isNotBlank()) append("$aiChar: ${latestAiReply.take(700)}")
+        }
+        val shouldExtractCast = com.example.util.AppFeatureFlags.isMicroAiCastSentimentEnabled &&
+            CastDetectorEngine.shouldInvokeMicroAiCastExtraction(
+                text = lastTwoSceneText,
+                botName = aiChar,
+                userCharName = userChar,
+                knownNames = knownCastNames.toSet()
+            )
+
+        val explicitOverride = MemoryEngine.hasExplicitUserOverrideIntent(latestUserMsg)
+        if (!explicitOverride && !MemoryEngine.shouldExtractMemoriesForTurn(latestUserMsg, latestAiReply)) {
+            // Standalone background Micro-AI cast extraction ONLY when shouldInvokeMicroAiCastExtraction == true
+            if (shouldExtractCast) {
+                try {
+                    val blacklistedDb = managers.castMemberManager.getBlacklistedAliasTokensForBot(bot.id)
+                    val castResult = CastDetectorEngine.extractAndValidateCastWithMicroAi(
+                        recentTwoMessagesText = lastTwoSceneText,
+                        botName = aiChar,
+                        userCharName = userChar,
+                        knownNames = knownCastNames.toSet(),
+                        blacklistedDbNames = blacklistedDb,
+                        context = context,
+                        forceMicroAi = true,
+                        utilityCaller = { sysP, usrP, maxTok ->
+                            callUtilityLlm(
+                                settings = settings,
+                                systemPrompt = sysP,
+                                userMessage = usrP,
+                                botId = bot.id,
+                                maxTokens = maxTok,
+                                timeoutMs = 4500L
+                            )
+                        }
+                    )
+                    val inScene = managers.castMemberManager.applyMicroAiCastExtractionResult(
+                        botId = bot.id,
+                        result = castResult,
+                        bot = bot,
+                        sceneContext = latestAiReply.take(200),
+                        currentMessageIndex = recentMessages.size
+                    )
+                    if (inScene.isNotEmpty()) activeInSceneCastMap[bot.id] = inScene
+                } catch (_: Exception) {}
+            }
+            return@withContext MemoryCommitSummary(deletedFactsCount = implicitArchived)
+        }
 
         val existingFacts = try { memoryFactDao.getActiveFacts(bot.id) } catch (_: Exception) { emptyList() }
         val existingFactsPreview = existingFacts
@@ -2771,9 +2923,13 @@ Yalnızca GEÇERLİ JSON üret; markdown veya ek açıklama YAZMA.
    - "pov_character": Bu sahnede duygusal olarak EN ÇOK sarsılan karakter ($userChar, $aiChar veya yan karakter).
    - "narrative": 2-4 edebi cümle, 1. tekil şahıs ("Ben...") ağzıyla yaşanmış anı.
    - "inner_thought": Sohbette ASLA dile getirilmemiş gizli duygu/şüphe (1-2 cümle).
-
+${if (shouldExtractCast) """
+3) "cast" & "rejected" (Birleşik Yan Karakter Çıkarımı — Ekstra API Çağrısı Yok):
+   - Sahnede yeni geçen veya dolaylı tanıtılan gerçek İNSAN/VARLIK yan karakterlerini "cast" dizisine al (ana bot $aiChar ve kullanıcı $userChar HARİÇ).
+   - Yer/mekân/kavram yanlış pozitiflerini "rejected" dizisine koy.
+""" else ""}
 JSON ŞEMASI:
-{"vault_ops":[],"living_memory":null}
+${if (shouldExtractCast) """{"vault_ops":[],"living_memory":null,"cast":[{"name":"Kadir","is_person":true,"aliases":["yaşlı saatçi"],"role":"saat ustası","relation":"tanıdık","age":62,"in_scene":true}],"rejected":[]}""" else """{"vault_ops":[],"living_memory":null}"""}
         """.trimIndent()
 
         val userPrompt = """
@@ -2959,6 +3115,31 @@ $aiChar: ${latestAiReply.take(850)}
                     savedMemoryTitle = title
                 }
             }
+        }
+
+        // 4) Unified System #16 Cast Extraction from same Utility curator response (zero extra API call!)
+        if (shouldExtractCast) {
+            try {
+                val parsedCast = CastDetectorEngine.parseMicroAiCastFromJsonObject(jsonObj)
+                if (parsedCast != null) {
+                    val blacklistedDb = managers.castMemberManager.getBlacklistedAliasTokensForBot(bot.id)
+                    val sanitizedCast = CastDetectorEngine.sanitizeMicroAiCastResponse(
+                        response = parsedCast,
+                        botName = aiChar,
+                        userCharName = userChar,
+                        blacklist = CastDetectorEngine.getBlacklist(context) + blacklistedDb,
+                        blacklistedDbNames = blacklistedDb
+                    )
+                    val inScene = managers.castMemberManager.applyMicroAiCastExtractionResult(
+                        botId = bot.id,
+                        result = sanitizedCast,
+                        bot = bot,
+                        sceneContext = latestAiReply.take(200),
+                        currentMessageIndex = totalMsgCount
+                    )
+                    if (inScene.isNotEmpty()) activeInSceneCastMap[bot.id] = inScene
+                }
+            } catch (_: Exception) {}
         }
 
         MemoryCommitSummary(
@@ -3643,6 +3824,10 @@ $aiChar: ${latestAiReply.take(850)}
         var parsedSelfCheck = com.example.data.local.SelfCheckData()
         var parsedWorldState = com.example.data.local.WorldState.fromJson(bot.worldAtmosphere)
 
+        var parsedTrustDeltaCompact = 0
+        var parsedNarrativeMilestone: com.example.data.local.MilestoneEntity? = null
+        var parsedCompactReappObj: org.json.JSONObject? = null
+
         if (jsonObj != null) {
             val primObj = jsonObj.optJSONObject("primary_emotions")
             if (primObj != null) {
@@ -3656,8 +3841,10 @@ $aiChar: ${latestAiReply.take(850)}
 
             rawPhysicalComfort = jsonObj.optInt("physicalComfortScore", current.physicalComfortScore).coerceIn(0, 100)
             rawObsession = jsonObj.optInt("obsessionScore", current.obsessionScore).coerceIn(0, 100)
-            rawDominant = jsonObj.optString("dominant_emotion", "").ifBlank {
-                jsonObj.optString("mood", current.dominantEmotion)
+            rawDominant = jsonObj.optString("dom", "").ifBlank {
+                jsonObj.optString("dominant_emotion", "").ifBlank {
+                    jsonObj.optString("mood", current.dominantEmotion)
+                }
             }
             rawSuppressed = jsonObj.optString("suppressed_emotion", current.suppressedEmotion)
 
@@ -3671,9 +3858,20 @@ $aiChar: ${latestAiReply.take(850)}
                     parsedMode = ctxObj.optString("mode", "casual")
                     parsedTension = ctxObj.optString("tension", "none")
                 }
+            } else if (jsonObj.has("aff") && jsonObj.opt("aff") is Number) {
+                parsedDelta = jsonObj.optInt("aff", 0).coerceIn(-10, 10)
             } else if (jsonObj.has("affectionDelta")) {
                 parsedDelta = jsonObj.optInt("affectionDelta", 0)
             }
+
+            // Compact unified key: "trs" (-10..+10 trust delta)
+            if (jsonObj.has("trs") && jsonObj.opt("trs") is Number) {
+                parsedTrustDeltaCompact = jsonObj.optInt("trs", 0).coerceIn(-10, 10)
+                rawPrimaryEmotions = rawPrimaryEmotions.copy(
+                    trust = (rawPrimaryEmotions.trust + parsedTrustDeltaCompact).coerceIn(0, 100)
+                )
+            }
+
             if (parsedTension == "none" && jsonObj.has("tension")) {
                 parsedTension = when (jsonObj.optString("tension", "").lowercase().trim()) {
                     "yüksek", "high", "crisis", "kriz" -> "crisis"
@@ -3685,29 +3883,98 @@ $aiChar: ${latestAiReply.take(850)}
             // V3.1: "why" alanı — delta gerekçesi (delta.reason yoksa buradan alınır)
             parsedWhy = jsonObj.optString("why", "").ifBlank { parsedReason }
 
-            // V3.1: "trig" — anlamsal olarak dokunan hassas konu kimlikleri (LLM kararı)
-            val trigArr = jsonObj.optJSONArray("trig")
-            if (trigArr != null) {
-                val ids = mutableListOf<String>()
-                for (i in 0 until trigArr.length()) {
-                    val id = trigArr.optString(i, "").trim()
-                    if (id.isNotBlank()) ids.add(id)
+            // V3.1 / #8: "trig" — anlamsal olarak dokunan hassas konu kimlikleri (LLM kararı)
+            runCatching {
+                val trigArr = jsonObj.optJSONArray("trig")
+                if (trigArr != null) {
+                    val ids = mutableListOf<String>()
+                    for (i in 0 until trigArr.length()) {
+                        val id = trigArr.optString(i, "").trim()
+                        if (id.isNotBlank()) ids.add(id)
+                    }
+                    parsedTrigIds = ids
                 }
-                parsedTrigIds = ids
             }
 
-            // V3.1: "reapp" — reappraisal aktif bayrağı
-            parsedReapp = jsonObj.optBoolean("reapp", false)
+            // V3.1 / #8: "reapp" — supports both unified object {"id":12,"out":"softened|resolved|hardened"} and legacy boolean
+            runCatching {
+                val reappObj = jsonObj.optJSONObject("reapp")
+                if (reappObj != null) {
+                    parsedCompactReappObj = reappObj
+                } else {
+                    parsedReapp = jsonObj.optBoolean("reapp", false)
+                }
+            }
 
-            // V3.1: "supp" / "supp_emo" — bastırılan duygu (yalnızca geçerli duygu adı kabul edilir)
+            // V3.1: "supp" / "supp_emo" — bastırılan duygu
             val suppRaw = jsonObj.optString("suppressed_emotion", "").ifBlank {
                 jsonObj.optString("supp_emo", "")
             }
             parsedSuppNew = suppRaw.ifBlank { rawSuppressed }
 
+            // Sistem #17: Optional "u_tone" fallback from [[STATE_JSON]] for next-turn difficulty calibration
+            val uToneRaw = jsonObj.optString("u_tone", "").trim()
+            if (uToneRaw.isNotBlank()) {
+                lastDetectedUserToneMap[botId] = uToneRaw
+            }
+
             val worldObj = jsonObj.optJSONObject("world_state")
             if (worldObj != null) {
                 parsedWorldState = com.example.data.local.WorldState.fromJson(worldObj.toString())
+            }
+
+            // System #8: Unified compact "skip" (Int days OR String e.g. "sabah->gece" / "2 gün") + legacy "story_time_skip"
+            runCatching {
+                val rawSkip = if (jsonObj.has("skip") && !jsonObj.isNull("skip")) jsonObj.opt("skip") else null
+                if (rawSkip != null) {
+                    var daysToSkip = 0
+                    var newSceneTime: String? = null
+                    when (rawSkip) {
+                        is Number -> daysToSkip = rawSkip.toInt().coerceIn(0, 3650)
+                        is String -> {
+                            val trimmedSkip = rawSkip.trim()
+                            if (trimmedSkip.contains("->")) {
+                                val targetPart = trimmedSkip.substringAfterLast("->").trim()
+                                newSceneTime = TimePerceptionEngine.validateSceneTime(targetPart)
+                                val parsedJump = TimePerceptionEngine.parseStoryTimeJump(trimmedSkip)
+                                daysToSkip = parsedJump.daysToAdvance
+                            } else {
+                                val parsedInt = trimmedSkip.toIntOrNull()
+                                if (parsedInt != null) {
+                                    daysToSkip = parsedInt.coerceIn(0, 3650)
+                                } else {
+                                    val parsedJump = TimePerceptionEngine.parseStoryTimeJump(trimmedSkip)
+                                    daysToSkip = parsedJump.daysToAdvance
+                                    newSceneTime = TimePerceptionEngine.validateSceneTime(trimmedSkip)
+                                }
+                            }
+                        }
+                    }
+                    if (daysToSkip > 0 && !userAlreadyJumped) {
+                        val (newDate, newDayCounter, newAge) = TimePerceptionEngine.advanceCalendarDateAndCheckAge(
+                            currentCalendarDateStr = bot.storyCalendarDate,
+                            currentDayCounter = bot.storyDayCounter,
+                            elapsedDaysToAdd = daysToSkip,
+                            birthDateStr = bot.birthDate,
+                            initialAge = bot.initialAge
+                        )
+                        botDao.insertOrUpdate(
+                            bot.copy(
+                                storyCalendarDate = newDate,
+                                storyDayCounter = newDayCounter,
+                                currentAge = newAge,
+                                sceneTime = newSceneTime ?: bot.sceneTime
+                            )
+                        )
+                        updateCastMembersAgeForBot(bot.id, newDate)
+                        try {
+                            val msgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { 0 }
+                            reapExpiredMemories(bot.id, newDayCounter, msgCount)
+                        } catch (_: Exception) {}
+                    } else if (newSceneTime != null) {
+                        botDao.insertOrUpdate(bot.copy(sceneTime = newSceneTime))
+                    }
+                }
             }
 
             val storySkipObj = jsonObj.optJSONObject("story_time_skip")
@@ -3718,7 +3985,6 @@ $aiChar: ${latestAiReply.take(850)}
                     else TimePerceptionEngine.parseStoryTimeJump(amountStr).daysToAdvance
                 val sceneTimeRaw = storySkipObj.optString("scene_time", "")
                 val newSceneTime = TimePerceptionEngine.validateSceneTime(sceneTimeRaw)
-                // 4.5: Parse başarısız → detected=false gibi davran, log tut
                 if (daysToSkip <= 0 && amountStr.isNotBlank()) {
                     android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] provider=${settings.selectedProvider} amount='$amountStr' raw=${rawResponse.take(120)}")
                     try {
@@ -3735,7 +4001,6 @@ $aiChar: ${latestAiReply.take(850)}
                         )
                     } catch (_: Exception) {}
                 }
-                // Çift ilerleme önlemi: kullanıcı tarafı zaten ilerlediyse model atlama sayısını uygulama
                 val shouldApplyModelJump = daysToSkip > 0 && !userAlreadyJumped
                 if (shouldApplyModelJump) {
                     val (newDate, newDayCounter, newAge) = TimePerceptionEngine.advanceCalendarDateAndCheckAge(
@@ -3754,7 +4019,6 @@ $aiChar: ${latestAiReply.take(850)}
                         )
                     )
                     updateCastMembersAgeForBot(bot.id, newDate)
-                    // Natural Forgetting Reaper hook whenever TimePerceptionEngine advances storyDayCounter
                     try {
                         val msgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { 0 }
                         reapExpiredMemories(bot.id, newDayCounter, msgCount)
@@ -3763,7 +4027,6 @@ $aiChar: ${latestAiReply.take(850)}
                     botDao.insertOrUpdate(bot.copy(sceneTime = newSceneTime))
                 }
             } else if (storySkipObj == null && rawResponse.contains("story_time_skip", ignoreCase = true)) {
-                // story_time_skip alanı model çıktısında var ama JSON parse edilemedi
                 android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] story_time_skip field present but failed to parse. provider=${settings.selectedProvider}")
                 try {
                     db.timePerceptionMismatchLogDao().insertLog(
@@ -3923,11 +4186,20 @@ $aiChar: ${latestAiReply.take(850)}
             } catch (_: Exception) {}
         }
 
-        // V3.1: "reapp" — reappraisal aktifse kaydını al
-        // LLM "reapp": true döndürdüğünde bir olayın yeniden yorumlandığını bildirir.
-        // recordPendingReappraisalIfEligible yalnızca rawDelta <= -20 için çalışır,
-        // bu yüzden pozitif reappraisal durumlarında (delta >= 0) sadece log yazılır.
-        if (parsedReapp && effectiveParsedDelta <= -10) {
+        // System #8: Flexible AI reappraisal resolution via {"id":12,"out":"softened|resolved|hardened"}
+        if (parsedCompactReappObj != null) {
+            runCatching {
+                val targetId = parsedCompactReappObj!!.optLong("id", -1L)
+                val outcome = parsedCompactReappObj!!.optString("out", "").lowercase(java.util.Locale.ROOT).trim()
+                if (targetId > 0L && outcome in setOf("softened", "resolved", "hardened")) {
+                    val existing = pendingReappraisalDao.getAllForBot(botId).firstOrNull { it.id == targetId }
+                    if (existing != null && !existing.resolved) {
+                        val markExpired = outcome == "hardened"
+                        pendingReappraisalDao.update(existing.copy(resolved = true, expired = markExpired))
+                    }
+                }
+            }
+        } else if (parsedReapp && effectiveParsedDelta <= -10) {
             try {
                 recordPendingReappraisalIfEligible(
                     botId = botId,
@@ -4071,99 +4343,149 @@ $aiChar: ${latestAiReply.take(850)}
                 )
             )
 
-            // [6b] side_character_updates JSON parse — aktif cast filtresiyle
-            // Her iki yol da desteklenir: STATE_JSON.side_character_updates listesi VE [CHARACTER_EMOTION:] blokları
+            // [6b] Compact "cast_emo" ([{"n":"İsim","d":"duygu","v":-5..+5}]) + legacy "side_character_updates" JSON parse
             val MAX_SIDE_CHAR_UPDATES = 8
             if (jsonObj != null) {
-                val sideArr = jsonObj.optJSONArray("side_character_updates")
+                val sideArr = jsonObj.optJSONArray("cast_emo") ?: jsonObj.optJSONArray("side_character_updates")
                 if (sideArr != null) {
-                    // Son mesajlarda adı geçen aktif cast'i belirle
-                    val recentText = try {
-                        messageDao.getMessagesForBotList(botId).takeLast(4).joinToString(" ") { it.text }
-                    } catch (_: Exception) { "" }
-                    val confirmedCast = try {
-                        castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation }
-                    } catch (_: Exception) { emptyList() }
+                    runCatching {
+                        val recentText = try {
+                            messageDao.getMessagesForBotList(botId).takeLast(4).joinToString(" ") { it.text }
+                        } catch (_: Exception) { "" }
+                        val confirmedCast = try {
+                            castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation }
+                        } catch (_: Exception) { emptyList() }
 
-                    val seenNames = mutableSetOf<String>()
-                    val limit = minOf(sideArr.length(), MAX_SIDE_CHAR_UPDATES)
-                    for (i in 0 until limit) {
-                        val entry = sideArr.optJSONObject(i) ?: continue
-                        val rawName = entry.optString("name", "").ifBlank { entry.optString("character", "") }.trim()
-                        val cleanName = cleanCharacterNameCandidate(rawName)
-                        if (cleanName.isBlank()) continue
-                        if (isMainOrUserCharacter(rawName, bot) || isMainOrUserCharacter(cleanName, bot)) continue
-                        // Yalnızca sahnede olan karakterler güncellenir
-                        val isInScene = confirmedCast.any { cm ->
-                            cm.name.equals(cleanName, ignoreCase = true) &&
-                            recentText.contains(cm.name, ignoreCase = true)
-                        }
-                        if (!isInScene) continue
-                        // Aynı mesajda iki kez raporlanmışsa yalnızca ilki işlenir
-                        val nameLower = cleanName.lowercase()
-                        if (!seenNames.add(nameLower)) continue
+                        val seenNames = mutableSetOf<String>()
+                        val limit = minOf(sideArr.length(), MAX_SIDE_CHAR_UPDATES)
+                        for (i in 0 until limit) {
+                            val entry = sideArr.optJSONObject(i) ?: continue
+                            val rawName = entry.optString("n", "").ifBlank {
+                                entry.optString("name", "").ifBlank { entry.optString("character", "") }
+                            }.trim()
+                            val cleanName = cleanCharacterNameCandidate(rawName)
+                            if (cleanName.isBlank()) continue
+                            if (isMainOrUserCharacter(rawName, bot) || isMainOrUserCharacter(cleanName, bot)) continue
 
-                        val existingCharEntity = emotionDao.getEmotionForCharacter(botId, cleanName)
-                        val existingState = existingCharEntity
-                            ?.let { EmotionState.fromJson(it.emotionState) }
-                            ?: EmotionState.calculateBaselineEmotionState(bot.aiName, cleanName, "")
-                        val castMem = confirmedCast.firstOrNull { it.name.equals(cleanName, ignoreCase = true) }
-                        val sideRoleMult = if (castMem != null && castMem.baseAffectionDifficultyMultiplier > 0.0) {
-                            determineEffectiveRoleMultiplier(castMem, rawResponse.take(200))
-                        } else {
-                            calculateCastMemberDifficultyMultiplier("Yan Karakter", cleanName, rawResponse.take(200))
-                        }
+                            val castMem = confirmedCast.firstOrNull { it.name.equals(cleanName, ignoreCase = true) }
+                            val isCompactCastEmo = entry.has("n")
+                            val isInScene = castMem != null && (isCompactCastEmo || recentText.contains(castMem.name, ignoreCase = true))
+                            if (!isInScene) continue
 
-                        val rawAffDelta = entry.optInt("affection_delta", 0)
-                        val rawTrustDelta = entry.optInt("trust_delta", 0)
-                        val moodStr = entry.optString("mood", existingState.dominantEmotion)
-                        val sidePrevAff = existingState.affection
-                        val sidePrevDailyGain = if (castMem?.lastGainResetDate == todayStr) castMem.dailyAffectionGain else 0
-                        val sideConsecutiveCount = castMem?.consecutivePositiveCount ?: 0
-                        val sideRecoveryLock = castMem?.recoveryLockUntilMessageCount ?: 0
+                            val nameLower = cleanName.lowercase()
+                            if (!seenNames.add(nameLower)) continue
 
-                        val clampedSideAff = calculateClampedDelta(
-                            prevAffection = sidePrevAff,
-                            rawDelta = rawAffDelta.coerceIn(-50, 50),
-                            totalMsgCount = totalMsgCount,
-                            baseMultiplier = sideRoleMult,
-                            combinedContextMult = combinedContextMult,
-                            personalityAffectionMult = 1.0,
-                            recoveryLockUntilMessageCount = sideRecoveryLock,
-                            dailyAffectionGain = sidePrevDailyGain,
-                            consecutivePositiveCount = sideConsecutiveCount,
-                            regCount = regCount,
-                            isEstablishedRomantic = sidePrevAff >= 70
-                        )
-                        val clampedSideTrust = (rawTrustDelta.coerceIn(-50, 50) * sideRoleMult).toInt().coerceIn(-25, 15)
-                        val newSideAff = (sidePrevAff + clampedSideAff).coerceIn(0, 100)
-                        val newSideTrust = (existingState.trust + clampedSideTrust).coerceIn(0, 100)
+                            val existingCharEntity = emotionDao.getEmotionForCharacter(botId, cleanName)
+                            val existingState = existingCharEntity
+                                ?.let { EmotionState.fromJson(it.emotionState) }
+                                ?: EmotionState.calculateBaselineEmotionState(bot.aiName, cleanName, "")
+                            val sideRoleMult = if (castMem != null && castMem.baseAffectionDifficultyMultiplier > 0.0) {
+                                determineEffectiveRoleMultiplier(castMem, rawResponse.take(200))
+                            } else {
+                                calculateCastMemberDifficultyMultiplier("Yan Karakter", cleanName, rawResponse.take(200))
+                            }
 
-                        val updatedCharState = existingState.copy(
-                            dominantEmotion = moodStr,
-                            primaryEmotions = existingState.primaryEmotions.copy(trust = newSideTrust),
-                            relationshipAxes = existingState.relationshipAxes.copy(affectionScore = newSideAff)
-                        )
-                        val charEntityToSave = existingCharEntity
-                            ?.copy(characterName = cleanName, emotionState = updatedCharState.toJson())
-                            ?: CharacterEmotionEntity(botId = botId, characterName = cleanName, emotionState = updatedCharState.toJson())
-                        emotionDao.insertOrUpdate(charEntityToSave)
+                            val rawAffDelta = if (entry.has("v")) entry.optInt("v", 0).coerceIn(-5, 5)
+                                else entry.optInt("affection_delta", 0)
+                            val rawTrustDelta = entry.optInt("trust_delta", 0)
+                            val moodStr = entry.optString("d", "").ifBlank {
+                                entry.optString("mood", existingState.dominantEmotion)
+                            }
+                            val sidePrevAff = existingState.affection
+                            val sidePrevDailyGain = if (castMem?.lastGainResetDate == todayStr) castMem.dailyAffectionGain else 0
+                            val sideConsecutiveCount = castMem?.consecutivePositiveCount ?: 0
+                            val sideRecoveryLock = castMem?.recoveryLockUntilMessageCount ?: 0
 
-                        if (castMem != null) {
-                            val sideNewConsec = if (clampedSideAff > 0) sideConsecutiveCount + 1 else 0
-                            val sideNewDaily = if (clampedSideAff > 0) sidePrevDailyGain + clampedSideAff else sidePrevDailyGain
-                            castMemberDao.updateCastMember(
-                                castMem.copy(
+                            val clampedSideAff = calculateClampedDelta(
+                                prevAffection = sidePrevAff,
+                                rawDelta = rawAffDelta.coerceIn(-50, 50),
+                                totalMsgCount = totalMsgCount,
+                                baseMultiplier = sideRoleMult,
+                                combinedContextMult = combinedContextMult,
+                                personalityAffectionMult = 1.0,
+                                recoveryLockUntilMessageCount = sideRecoveryLock,
+                                dailyAffectionGain = sidePrevDailyGain,
+                                consecutivePositiveCount = sideConsecutiveCount,
+                                regCount = regCount,
+                                isEstablishedRomantic = sidePrevAff >= 70
+                            )
+                            val clampedSideTrust = (rawTrustDelta.coerceIn(-50, 50) * sideRoleMult).toInt().coerceIn(-25, 15)
+                            val newSideAff = (sidePrevAff + clampedSideAff).coerceIn(0, 100)
+                            val newSideTrust = (existingState.trust + clampedSideTrust).coerceIn(0, 100)
+
+                            val updatedCharState = existingState.copy(
+                                dominantEmotion = moodStr,
+                                primaryEmotions = existingState.primaryEmotions.copy(trust = newSideTrust),
+                                relationshipAxes = existingState.relationshipAxes.copy(affectionScore = newSideAff)
+                            )
+                            val charEntityToSave = existingCharEntity
+                                ?.copy(characterName = cleanName, emotionState = updatedCharState.toJson())
+                                ?: CharacterEmotionEntity(botId = botId, characterName = cleanName, emotionState = updatedCharState.toJson())
+                            emotionDao.insertOrUpdate(charEntityToSave)
+
+                            if (castMem != null) {
+                                val sideNewConsec = if (clampedSideAff > 0) sideConsecutiveCount + 1 else 0
+                                val sideNewDaily = if (clampedSideAff > 0) sidePrevDailyGain + clampedSideAff else sidePrevDailyGain
+                                castMemberDao.updateCastMember(
+                                    castMem.copy(
+                                        affectionScore = newSideAff,
+                                        consecutivePositiveCount = sideNewConsec,
+                                        dailyAffectionGain = sideNewDaily,
+                                        lastGainResetDate = todayStr,
+                                        peakAffectionScore = maxOf(castMem.peakAffectionScore, newSideAff),
+                                        recoveryLockUntilMessageCount = sideRecoveryLock
+                                    )
+                                )
+                            }
+                            emotionHistoryDao.insertHistory(
+                                EmotionHistoryEntity(
+                                    botId = botId,
+                                    characterName = cleanName,
+                                    timestamp = System.currentTimeMillis(),
+                                    messageIndex = totalMsgCount,
                                     affectionScore = newSideAff,
-                                    consecutivePositiveCount = sideNewConsec,
-                                    dailyAffectionGain = sideNewDaily,
-                                    lastGainResetDate = todayStr,
-                                    peakAffectionScore = maxOf(castMem.peakAffectionScore, newSideAff),
-                                    recoveryLockUntilMessageCount = sideRecoveryLock
+                                    respectScore = updatedCharState.relationshipAxes.respectScore,
+                                    comfortScore = updatedCharState.relationshipAxes.comfortScore,
+                                    resentmentScore = updatedCharState.relationshipAxes.resentmentScore,
+                                    trustScore = newSideTrust,
+                                    physicalComfortScore = updatedCharState.physicalComfortScore,
+                                    obsessionScore = updatedCharState.obsessionScore,
+                                    dominantEmotion = moodStr,
+                                    fullVectorJson = updatedCharState.toJson()
                                 )
                             )
                         }
                     }
+                }
+            }
+
+            // [6c] System #18 Hybrid Milestone Engine: Channel 2 AI Narrative ("mile") + Channel 1 Numeric
+            // Max 1 celebration banner per turn (prioritize narrative milestone if both trigger; persist both cleanly)
+            runCatching {
+                val mileObj = jsonObj?.optJSONObject("mile")
+                if (mileObj != null) {
+                    val mKey = mileObj.optString("k", "").trim()
+                    val mTitle = mileObj.optString("t", "").trim()
+                    val mDesc = mileObj.optString("d", "").trim()
+                    if (mKey.isNotBlank() || mTitle.isNotBlank()) {
+                        parsedNarrativeMilestone = recordNarrativeMilestone(
+                            botId = botId,
+                            rawKey = mKey.ifBlank { mTitle },
+                            rawTitle = mTitle.ifBlank { mKey },
+                            rawDescription = mDesc,
+                            affection = finalUpdatedStateWithDecay.affection,
+                            trust = finalUpdatedStateWithDecay.trust
+                        )
+                    }
+                }
+                val numericMilestone = checkAndSaveMilestone(
+                    botId = botId,
+                    affection = finalUpdatedStateWithDecay.affection,
+                    trust = finalUpdatedStateWithDecay.trust
+                )
+                val bannerWinner = parsedNarrativeMilestone ?: numericMilestone
+                if (bannerWinner != null) {
+                    lastUnlockedMilestoneMap[botId] = bannerWinner
                 }
             }
 
@@ -7580,7 +7902,11 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         activeRoutineHint: String = "",
         modelContextWindowTokens: Int = 128_000,
         literaryFramingMode: Boolean = false,
-        graphResolutionNote: String? = null
+        graphResolutionNote: String? = null,
+        pendingReappraisals: List<com.example.data.local.PendingReappraisalEntity> = emptyList(),
+        recentMilestones: List<com.example.data.local.MilestoneEntity> = emptyList(),
+        explicitInSceneCastNames: Set<String> = emptySet(),
+        userSubtextHint: String = ""
     ): String {
         val consistencyNote = pendingConsistencyNoteMap.remove(bot.id)
         val decayNote = pendingDecayNoteMap.remove(bot.id)
@@ -7605,7 +7931,11 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 modelContextWindowTokens = modelContextWindowTokens,
                 compactMode = compactMode,
                 literaryFramingMode = literaryFramingMode,
-                graphResolutionNote = graphResolutionNote
+                graphResolutionNote = graphResolutionNote,
+                pendingReappraisals = pendingReappraisals,
+                recentMilestones = recentMilestones,
+                explicitInSceneCastNames = explicitInSceneCastNames,
+                userSubtextHint = userSubtextHint
             )
         )
     }
@@ -7697,7 +8027,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             emptyList()
         }
 
-        val recentSceneText = contextMessages.takeLast(3).joinToString(" ") { it.text }
+        val recentSceneText = contextMessages.takeLast(6).joinToString(" ") { it.text }
         val activeRoutineHint = try {
             val routines = routineDao.getRoutinesForBot(updatedBot.id)
             val active = routines.firstOrNull { it.routineDescription.isNotBlank() }
@@ -7706,8 +8036,60 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             ""
         }
 
+        val activePendingReappraisals = try {
+            pendingReappraisalDao.getActivePendingReappraisals(updatedBot.id)
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val recentMilestones = try {
+            db.milestoneDao().getRecentMilestonesForBot(updatedBot.id, limit = 3)
+        } catch (_: Exception) {
+            emptyList()
+        }
+
+        // Sistem #17: Hybrid Layer 1 + Layer 2 Micro-AI User Sentiment & Subtext Sensor (2.5s race timeout)
+        val latestUserMessageText = contextMessages.lastOrNull { it.role == "user" }?.text.orEmpty()
+        val lastBotSummaryText = contextMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty().take(220)
+        val previousStateJsonTone = lastDetectedUserToneMap.remove(updatedBot.id)
+        var effectiveBot = updatedBot
+        val sentimentResult = UserSentimentAnalyzer.analyzeSentimentWithMicroAi(
+            userMessage = latestUserMessageText,
+            lastBotMessageSummary = lastBotSummaryText,
+            timeoutMs = 2500L,
+            utilityCaller = { sysP, usrP, maxTok ->
+                callUtilityLlm(
+                    settings = settings,
+                    systemPrompt = sysP,
+                    userMessage = usrP,
+                    botId = updatedBot.id,
+                    maxTokens = maxTok,
+                    timeoutMs = 2500L
+                )
+            }
+        )
+        if (com.example.util.AppFeatureFlags.isDynamicDifficultyEnabled && !sentimentResult.isOocMeta) {
+            val turnCalib = when {
+                sentimentResult.usedMicroAi -> com.example.util.DynamicDifficultyCalibrator.calibrateTurn(
+                    bot = effectiveBot,
+                    sentiment = sentimentResult
+                )
+                !previousStateJsonTone.isNullOrBlank() -> com.example.util.DynamicDifficultyCalibrator.calibrateFromStateJsonUserTone(
+                    bot = effectiveBot,
+                    uToneRaw = previousStateJsonTone
+                )
+                else -> null
+            }
+            if (turnCalib != null && kotlin.math.abs(turnCalib.delta) > 0.005f) {
+                effectiveBot = effectiveBot.copy(baseAffectionDifficulty = turnCalib.newDifficulty.toDouble())
+                try {
+                    botDao.insertOrUpdate(effectiveBot)
+                } catch (_: Exception) {}
+            }
+        }
+
+        val userSubtextHint = UserSentimentAnalyzer.buildSubtextPromptHint(sentimentResult)
         val baseSysPrompt = buildSystemPrompt(
-            bot = updatedBot,
+            bot = effectiveBot,
             settings = settings,
             includeStyleGuide = true,
             relevantFragments = ragBundle.fragments,
@@ -7722,15 +8104,20 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             activeRoutineHint = activeRoutineHint,
             modelContextWindowTokens = modelContextWindow,
             literaryFramingMode = literaryFramingMode,
-            graphResolutionNote = ragBundle.graphResolutionNote
+            graphResolutionNote = ragBundle.graphResolutionNote,
+            pendingReappraisals = activePendingReappraisals,
+            recentMilestones = recentMilestones,
+            explicitInSceneCastNames = activeInSceneCastMap[effectiveBot.id].orEmpty(),
+            userSubtextHint = userSubtextHint
         )
 
         // Wire UserSentimentAnalyzer into live replies (chat mode always; personal non-intense on NEGATIVE/WITHDRAWN)
-        val detectedMood = UserSentimentAnalyzer.analyze(contextMessages)
+        val detectedMood = if (sentimentResult.usedMicroAi) sentimentResult.mood else UserSentimentAnalyzer.analyze(contextMessages)
         val moodHint = when {
-            updatedBot.writingStyle.equals("chat", ignoreCase = true) -> UserSentimentAnalyzer.buildMoodHint(detectedMood)
-            updatedBot.mode == "personal" &&
-                !updatedBot.intensity.equals("intense", ignoreCase = true) &&
+            sentimentResult.isOocMeta -> ""
+            effectiveBot.writingStyle.equals("chat", ignoreCase = true) -> UserSentimentAnalyzer.buildMoodHint(detectedMood)
+            effectiveBot.mode == "personal" &&
+                !effectiveBot.intensity.equals("intense", ignoreCase = true) &&
                 (detectedMood == UserMood.NEGATIVE || detectedMood == UserMood.WITHDRAWN) ->
                 UserSentimentAnalyzer.buildMoodHint(detectedMood)
             else -> ""
@@ -7758,12 +8145,14 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             MemoryCommitSummary()
         }
 
+        lastUnlockedMilestoneMap.remove(updatedBot.id)
         try {
             parseAndApplyEmotionUpdates(
                 botId = updatedBot.id,
                 rawResponse = response.text
             )
         } catch (_: Exception) {}
+        val unlockedMilestone = lastUnlockedMilestoneMap.remove(updatedBot.id)
 
         // 50-Message Checkpoint Pyramid trigger (non-blocking fail-safe)
         try {
@@ -7778,7 +8167,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             usedProvider = response.usedProvider,
             systemPromptSnapshot = sysPrompt,
             memoryCommitSummary = channelASummary,
-            ragRouteMode = ragBundle.routeMode
+            ragRouteMode = ragBundle.routeMode,
+            unlockedMilestone = unlockedMilestone
         )
     }
 

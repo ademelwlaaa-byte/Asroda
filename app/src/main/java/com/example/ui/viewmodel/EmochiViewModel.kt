@@ -209,6 +209,17 @@ class EmochiViewModel @JvmOverloads constructor(
             initialValue = emptyList()
         )
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeMilestones: StateFlow<List<com.example.data.local.MilestoneEntity>> = _activeBotId
+        .flatMapLatest { id ->
+            if (id == null) flowOf(emptyList()) else repository.getMilestonesFlow(id)
+        }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000L),
+            initialValue = emptyList()
+        )
+
     val customProviders: StateFlow<List<com.example.data.local.CustomProviderEntity>> = repository.getCustomProvidersFlow()
         .stateIn(
             scope = viewModelScope,
@@ -878,11 +889,13 @@ class EmochiViewModel @JvmOverloads constructor(
                     repository.saveMessage(aiMsg)
                     startTypewriter(aiMsg.id, replyText)
 
-                    repository.saveBot(currentBot.copy(updatedAt = System.currentTimeMillis()))
+                    val freshBot = repository.getBot(botId) ?: currentBot
+                    repository.saveBot(freshBot.copy(updatedAt = System.currentTimeMillis()))
+                    replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
 
                     val finalMsgs = currentMsgs + aiMsg
                     if (replyResult.memoryCommitSummary.hasAnyChange) {
-                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, currentBot.aiName)
+                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, freshBot.aiName)
                         loadArchivedMemories(botId)
                     }
                     schedulePostTurnMemoryExtraction(currentBot, finalMsgs, sanitizedText, replyText)
@@ -946,11 +959,13 @@ class EmochiViewModel @JvmOverloads constructor(
                     )
                     repository.saveMessage(aiMsg)
                     startTypewriter(aiMsg.id, replyText)
-                    repository.saveBot(currentBot.copy(updatedAt = now))
+                    val freshBot = repository.getBot(botId) ?: currentBot
+                    repository.saveBot(freshBot.copy(updatedAt = now))
+                    replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
 
                     val finalMsgs = currentMsgs + aiMsg
                     if (replyResult.memoryCommitSummary.hasAnyChange) {
-                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, currentBot.aiName)
+                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, freshBot.aiName)
                         loadArchivedMemories(botId)
                     }
                     val lastUserText = currentMsgs.lastOrNull { it.role == "user" }?.text.orEmpty()
@@ -1020,6 +1035,7 @@ class EmochiViewModel @JvmOverloads constructor(
                     )
                     repository.saveMessage(newAiMsg)
                     startTypewriter(newAiMsg.id, replyText)
+                    replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
                 } catch (e: Exception) {
                     _errorMessage.value = e.message ?: "Yeniden oluşturulamadı."
                 }
@@ -1075,6 +1091,7 @@ class EmochiViewModel @JvmOverloads constructor(
                         )
                         repository.saveMessage(newAiMsg)
                         startTypewriter(newAiMsg.id, replyText)
+                        replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
                     } else {
                         repository.saveMessage(editedMsg)
                     }
@@ -1276,7 +1293,9 @@ class EmochiViewModel @JvmOverloads constructor(
                         provider = replyResult.usedProvider
                     )
                     repository.saveMessage(aiMsg)
-                    repository.saveBot(currentBot.copy(updatedAt = now))
+                    val freshBot = repository.getBot(botId) ?: currentBot
+                    repository.saveBot(freshBot.copy(updatedAt = now))
+                    replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
                 } catch (e: Exception) {
                     val friendlyMsg = extractUserFriendlyErrorMessage(e)
                     _errorMessage.value = friendlyMsg
@@ -1323,7 +1342,9 @@ class EmochiViewModel @JvmOverloads constructor(
                     )
                     repository.saveMessage(aiMsg)
                     startTypewriter(aiMsg.id, replyText)
-                    repository.saveBot(currentBot.copy(updatedAt = now))
+                    val freshBot = repository.getBot(botId) ?: currentBot
+                    repository.saveBot(freshBot.copy(updatedAt = now))
+                    replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
                 } catch (e: Exception) {
                     val friendlyMsg = extractUserFriendlyErrorMessage(e)
                     _errorMessage.value = friendlyMsg

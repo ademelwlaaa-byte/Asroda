@@ -8,6 +8,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -56,6 +58,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
@@ -88,6 +91,7 @@ import com.example.ui.components.morCamCosmicGlow
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+import com.example.util.BookChoiceParser
 
 /**
  * Collector's-Edition Mor Cam Chapter Cover Banner displayed at item 0 of each chapter.
@@ -143,8 +147,16 @@ fun CollectorChapterCoverCard(
                     )
                 }
         ) {
-            Image(
-                painter = painterResource(id = R.drawable.img_book_kozmik_suruklenis_banner),
+            val coverContext = LocalContext.current
+            val coverBannerRequest = remember(coverContext) {
+                ImageRequest.Builder(coverContext)
+                    .data(R.drawable.img_book_kozmik_suruklenis_banner)
+                    .allowRgb565(true)
+                    .crossfade(300)
+                    .build()
+            }
+            AsyncImage(
+                model = coverBannerRequest,
                 contentDescription = "Bölüm ${chapterMeta.number} kapağı",
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -1225,26 +1237,39 @@ fun AutoRevealMorCamChoiceSanctuary(
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    // Sculpted Mor Cam Choice Cards
+                    // Sculpted Mor Cam Choice Cards (live BookChoiceParser badges, relationship hints & lock states)
                     val romanLabels = listOf("I", "II", "III", "IV")
                     choices.forEachIndexed { idx, choice ->
                         val interaction = remember(choice.id) { MutableInteractionSource() }
+                        val parsedChoice = remember(choice.id, choice.label, choice.toneHint, choice.effect.isBranching, choice.effect.isRelationship) {
+                            BookChoiceParser.parseChoiceDisplay(
+                                rawLabel = choice.label,
+                                toneHint = choice.toneHint,
+                                isBranching = choice.effect.isBranching,
+                                isRelationship = choice.effect.isRelationship,
+                                indexNumber = idx + 1
+                            )
+                        }
                         val isBranchingChoice = choice.effect.isBranching
-                        val cardAccent = if (isBranchingChoice) Color(0xFFFDE047) else accentColor
+                        val cardAccent = when {
+                            parsedChoice.isLocked -> Color(0xFF94A3B8)
+                            isBranchingChoice -> Color(0xFFFDE047)
+                            else -> accentColor
+                        }
                         val roman = romanLabels.getOrElse(idx) { "${idx + 1}" }
 
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .cosmicStaggeredEnter(index = idx, key = choice.id)
-                                .cosmicTapSpring(interaction, pressedScale = 0.97f)
+                                .cosmicTapSpring(interaction, pressedScale = if (parsedChoice.isLocked) 1f else 0.97f)
                                 .clip(RoundedCornerShape(18.dp))
                                 .background(
                                     Brush.horizontalGradient(
-                                        colors = if (isBranchingChoice) {
-                                            listOf(Color(0x993E1B7A), Color(0x88240E4B), Color(0x9936166B))
-                                        } else {
-                                            listOf(Color(0x8C2C1459), Color(0x801B0B3B), Color(0x8C26114E))
+                                        colors = when {
+                                            parsedChoice.isLocked -> listOf(Color(0x661C152B), Color(0x55120D1F), Color(0x661C152B))
+                                            isBranchingChoice -> listOf(Color(0x993E1B7A), Color(0x88240E4B), Color(0x9936166B))
+                                            else -> listOf(Color(0x8C2C1459), Color(0x801B0B3B), Color(0x8C26114E))
                                         }
                                     )
                                 )
@@ -1253,7 +1278,7 @@ fun AutoRevealMorCamChoiceSanctuary(
                                     drawRoundRect(
                                         brush = Brush.verticalGradient(
                                             colors = listOf(
-                                                Color.White.copy(alpha = 0.14f),
+                                                Color.White.copy(alpha = if (parsedChoice.isLocked) 0.05f else 0.14f),
                                                 Color.Transparent
                                             ),
                                             startY = 0f,
@@ -1263,17 +1288,18 @@ fun AutoRevealMorCamChoiceSanctuary(
                                     )
                                 }
                                 .border(
-                                    width = if (isBranchingChoice) 1.25.dp else 1.05.dp,
+                                    width = if (isBranchingChoice && !parsedChoice.isLocked) 1.25.dp else 1.05.dp,
                                     brush = Brush.linearGradient(
                                         listOf(
-                                            Color(0xEEF5EEFF),
-                                            cardAccent.copy(alpha = 0.85f),
+                                            if (parsedChoice.isLocked) Color(0x6694A3B8) else Color(0xEEF5EEFF),
+                                            cardAccent.copy(alpha = if (parsedChoice.isLocked) 0.45f else 0.85f),
                                             Color(0x809333EA)
                                         )
                                     ),
                                     shape = RoundedCornerShape(18.dp)
                                 )
                                 .clickable(
+                                    enabled = !parsedChoice.isLocked,
                                     interactionSource = interaction,
                                     indication = null
                                 ) { onSelectChoice(choice) }
@@ -1298,7 +1324,7 @@ fun AutoRevealMorCamChoiceSanctuary(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = roman,
+                                        text = if (parsedChoice.isLocked) "🔒" else roman,
                                         fontFamily = DisplaySerifFontFamily,
                                         color = Color(0xFFFFFFFF),
                                         fontSize = 14.sp,
@@ -1311,39 +1337,60 @@ fun AutoRevealMorCamChoiceSanctuary(
                                     verticalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Text(
-                                        text = formatLiteraryParagraph(choice.label),
+                                        text = formatLiteraryParagraph(parsedChoice.displayText),
                                         fontFamily = LiterarySerifFontFamily,
-                                        color = Color(0xFFFAF6FF),
+                                        color = if (parsedChoice.isLocked) Color(0x99CBD5E1) else Color(0xFFFAF6FF),
                                         fontSize = 14.8.sp,
                                         fontWeight = FontWeight.Medium,
                                         lineHeight = 21.5.sp
                                     )
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(50))
-                                                .background(cardAccent.copy(alpha = 0.18f))
-                                                .border(0.7.dp, cardAccent.copy(alpha = 0.55f), RoundedCornerShape(50))
-                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                    if (parsedChoice.badges.isNotEmpty()) {
+                                        @OptIn(ExperimentalLayoutApi::class)
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
-                                            Text(
-                                                text = if (isBranchingChoice) "⑂ ${choice.toneHint}" else choice.toneHint,
-                                                fontFamily = InterFontFamily,
-                                                color = if (isBranchingChoice) Color(0xFFFEF08A) else Color(0xFFE2D4FA),
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
+                                            parsedChoice.badges.forEach { badge ->
+                                                val (badgeTint, badgeTextCol, prefix) = when (badge.kind) {
+                                                    BookChoiceParser.ChoiceBadgeKind.BRANCH -> Triple(Color(0xFFFDE047), Color(0xFFFEF08A), "⑂ ")
+                                                    BookChoiceParser.ChoiceBadgeKind.SECRET -> Triple(Color(0xFFC084FC), Color(0xFFF3E8FF), "✦ ")
+                                                    BookChoiceParser.ChoiceBadgeKind.RISK -> Triple(Color(0xFFF43F5E), Color(0xFFFECDD3), "⚡ ")
+                                                    BookChoiceParser.ChoiceBadgeKind.RELATIONSHIP -> Triple(Color(0xFFF472B6), Color(0xFFFCE7F3), "💜 ")
+                                                    BookChoiceParser.ChoiceBadgeKind.LOCKED -> Triple(Color(0xFF94A3B8), Color(0xFFE2E8F0), "🔒 ")
+                                                    BookChoiceParser.ChoiceBadgeKind.TONE -> Triple(cardAccent, Color(0xFFE2D4FA), "")
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(badgeTint.copy(alpha = 0.18f))
+                                                        .border(0.7.dp, badgeTint.copy(alpha = 0.55f), RoundedCornerShape(50))
+                                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "$prefix${badge.label}",
+                                                        fontFamily = InterFontFamily,
+                                                        color = badgeTextCol,
+                                                        fontSize = 10.5.sp,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                }
+                                            }
                                         }
+                                    }
+                                    if (parsedChoice.isLocked && !parsedChoice.lockReason.isNullOrBlank()) {
+                                        Text(
+                                            text = "Koşul: ${parsedChoice.lockReason}",
+                                            fontFamily = InterFontFamily,
+                                            color = Color(0xFFFCA5A5),
+                                            fontSize = 11.sp
+                                        )
                                     }
                                 }
 
                                 Icon(
                                     imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = "Seç",
-                                    tint = Color(0xFFE9D5FF),
+                                    contentDescription = if (parsedChoice.isLocked) "Kilitli" else "Seç",
+                                    tint = if (parsedChoice.isLocked) Color(0x5594A3B8) else Color(0xFFE9D5FF),
                                     modifier = Modifier.size(20.dp)
                                 )
                             }

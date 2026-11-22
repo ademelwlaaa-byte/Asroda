@@ -76,6 +76,9 @@ interface CastMemberDao {
     @Query("SELECT name FROM cast_members WHERE botId = :botId AND isBlacklisted = 1")
     suspend fun getBlacklistedNamesForBot(botId: String): List<String>
 
+    @Query("SELECT * FROM cast_members WHERE botId = :botId AND isBlacklisted = 1")
+    suspend fun getBlacklistedCastMembersForBot(botId: String): List<CastMemberEntity>
+
     @Query("DELETE FROM cast_members WHERE botId = :botId AND isAutoAdded = 1 AND firstAppearedAt > :timestamp")
     suspend fun deleteAutoAddedCastMembersAfterTimestamp(botId: String, timestamp: Long)
 }

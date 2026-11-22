@@ -9,6 +9,8 @@ import com.example.data.local.MemoryEventEntity
 import com.example.data.local.MemoryFactEntity
 import com.example.data.local.MemoryFragmentEntity
 import com.example.data.local.MessageEntity
+import com.example.data.local.MilestoneEntity
+import com.example.data.local.PendingReappraisalEntity
 import com.example.data.local.UserSettingsEntity
 import com.example.data.local.WorldState
 
@@ -19,13 +21,14 @@ import com.example.data.local.WorldState
  *  - P1 (Core): Fictional novel framing (start & end), identity, personality, scenario, pinned rules,
  *    user character, Zero OOC Moralizing, Dramatic Complicity, No Godmodding, optional Literary Framing retry mode.
  *  - P2 (Live Scene): Live EmotionState, WorldState, TimePerceptionEngine story time block,
- *    active routine hint, story notes, consistency & time-decay notes.
+ *    active routine hint, recent relationship milestones, conditional pending emotional reappraisals,
+ *    story notes, consistency & time-decay notes.
  *  - P3 (Tone & Style): writingStyle, customLength/responseLength, intensity, enableOoc,
- *    and the 7 UserSettingsEntity RP tone toggles (enableFlirty, enableDarkRp, enableSweet,
- *    enablePrimal, enableHardcore, enableFetish, enableNsfw).
+ *    and the 7 UserSettingsEntity RP tone toggles.
  *  - P4 (Selected Memory & Active Cast): [#ID] Neural Vault facts, Multi-POV Living Memories,
- *    starred anchor moments, last Checkpoints, fragments, and scene-filtered Cast members.
- *  - P5 (Invisible State Contract): Compact single-line [[STATE_JSON ...]] contract at the very end.
+ *    starred anchor moments, last Checkpoints, fragments, registered entities, and scene-filtered Cast members.
+ *  - P5 (Invisible State Contract): Unified compact single-line optional [[STATE_JSON ...]] contract
+ *    with conditional token-saving injection for cast_emo & reapp.
  */
 object SystemPromptBuilder {
 
@@ -55,7 +58,11 @@ object SystemPromptBuilder {
         val modelContextWindowTokens: Int = 128_000,
         val compactMode: Boolean = false,
         val literaryFramingMode: Boolean = false,
-        val graphResolutionNote: String? = null
+        val graphResolutionNote: String? = null,
+        val pendingReappraisals: List<PendingReappraisalEntity> = emptyList(),
+        val recentMilestones: List<MilestoneEntity> = emptyList(),
+        val explicitInSceneCastNames: Set<String> = emptySet(),
+        val userSubtextHint: String = ""
     )
 
     private const val MAX_PROMPT_TOKENS_STANDARD = 6_500
@@ -114,7 +121,7 @@ object SystemPromptBuilder {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // P2 — LIVE SCENE (TIME PERCEPTION + EMOTION + WORLD + ROUTINE)
+        // P2 — LIVE SCENE (TIME PERCEPTION + EMOTION + MILESTONES + REAPP + WORLD)
         // ═══════════════════════════════════════════════════════════════════════
         val storyTimeBlock = TimePerceptionEngine.buildStoryTimePromptBlock(
             storyDayCounter = bot.storyDayCounter,
@@ -158,6 +165,32 @@ object SystemPromptBuilder {
                 sb.appendLine("- Özel Duygu Parametreleri: $customSummary")
             }
         } catch (_: Exception) {}
+
+        // System #18: Compact 1-line Relationship Milestones live prompt loop (top 3 most recent)
+        val topMilestones = input.recentMilestones
+            .sortedByDescending { it.reachedAt }
+            .take(3)
+            .reversed()
+        if (topMilestones.isNotEmpty()) {
+            val formattedMilestones = topMilestones.joinToString("; ") { ms ->
+                val stamp = ms.storyStamp.substringBefore(" • ").trim()
+                val label = ms.displayTitle
+                if (stamp.isNotBlank()) "$stamp: $label" else label
+            }
+            sb.appendLine("\n[İLİŞKİ DÖNÜM NOKTALARI]: $formattedMilestones.")
+        }
+
+        // System #8: Conditional Pending Reappraisals (latest 1-2 only, flexible AI decision — zero tokens when empty)
+        val activePendingReappraisals = input.pendingReappraisals
+            .filter { !it.resolved && !it.expired }
+            .sortedByDescending { it.triggeredAtTimestamp }
+            .take(2)
+        if (activePendingReappraisals.isNotEmpty()) {
+            val summary = activePendingReappraisals.joinToString(" | ") { pr ->
+                "#${pr.id}: ${pr.originalEventDescription.trim().take(90)}"
+            }
+            sb.appendLine("\n[BEKLEYEN DUYGUSAL OLGUNLAŞMA]: $summary (Esnek AI kararı: sahnede kırgınlık/öfke gerçekten yumuşadı, çözüldü veya sertleştiyse JSON'da \"reapp\" kullan; zorunlu değil.)")
+        }
 
         try {
             val rawWorld = bot.worldAtmosphere.trim()
@@ -206,8 +239,8 @@ object SystemPromptBuilder {
         val fragmentLimit = if (isAutoCompact) 2 else 5
         val starredLimit = if (isAutoCompact) 2 else 4
 
-        // Reserve room for P3 (rules ~480 tok) + P5 (state contract ~85 tok) + closing notice
-        val p4TokenCeiling = (maxPromptTokens - 650).coerceAtLeast(1200)
+        // Reserve room for P3 (rules ~480 tok) + P5 (state contract ~110 tok) + closing notice
+        val p4TokenCeiling = (maxPromptTokens - 680).coerceAtLeast(1200)
         fun hasBudgetFor(line: String): Boolean = estimateTokens(sb.toString()) + estimateTokens(line) <= p4TokenCeiling
 
         if (!input.graphResolutionNote.isNullOrBlank()) {
@@ -276,20 +309,25 @@ object SystemPromptBuilder {
             }
         }
 
-        val activeCast = if (input.castMembers.isNotEmpty() && input.recentSceneText.isNotBlank()) {
+        val activeCast = if (input.castMembers.isNotEmpty()) {
             val filtered = CastDetectorEngine.filterActiveInSceneCastMembers(
                 allCastMembers = input.castMembers,
-                recentMessagesText = input.recentSceneText
+                recentMessagesText = input.recentSceneText,
+                maxActive = 4,
+                explicitInSceneNames = input.explicitInSceneCastNames
             )
-            filtered.ifEmpty { input.castMembers.take(3) }
+            filtered.ifEmpty { input.castMembers.filter { !it.isBlacklisted }.take(3) }
         } else {
-            input.castMembers
+            emptyList()
         }
         if (activeCast.isNotEmpty()) {
             sb.appendLine("\n[SAHNEDEKİ YAN KARAKTERLER]")
-            activeCast.take(if (isAutoCompact) 5 else 10).forEach { cm ->
+            activeCast.take(4).forEach { cm ->
                 sb.appendLine("- ${cm.name} (${cm.role}, Yakınlık: ${cm.affectionScore}/100): ${cm.description}")
             }
+        }
+        if (input.userSubtextHint.isNotBlank()) {
+            sb.appendLine(input.userSubtextHint.trim())
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -354,13 +392,43 @@ object SystemPromptBuilder {
         sb.appendLine("   - Önceki yanıtlarındaki aynı açılış cümlelerini ve klişe jestleri tekrarlama; her yanıt sahneyi psikolojik veya dramatik olarak bir adım ileri taşısın.")
 
         // ═══════════════════════════════════════════════════════════════════════
-        // P5 — INVISIBLE STATE CONTRACT (V3 Parser-Aligned, Active Even in Compact Mode)
+        // P5 — UNIFIED COMPACT OPTIONAL [[STATE_JSON]] CONTRACT (Conditional Tokens)
         // ═══════════════════════════════════════════════════════════════════════
-        sb.appendLine("\n[GİZLİ DURUM SÖZLEŞMESİ — KULLANICIYA ASLA SÖZ ETME]")
+        val hasActiveCast = activeCast.isNotEmpty()
+        val hasPendingReapp = activePendingReappraisals.isNotEmpty()
+        sb.appendLine("\n[GİZLİ DURUM BLOĞU — KULLANICIYA ASLA BAHSETME]:")
         if (input.compactMode) {
-            sb.appendLine("Yanıt sonuna tek satır gizli durum ekle: [[STATE_JSON {\"dominant_emotion\":\"<duygu>\",\"delta\":{\"value\":0,\"reason\":\"<kısa_neden>\"}}]]")
+            val optionalFields = buildString {
+                append(",\"skip\":<opsiyonel>")
+                if (hasActiveCast) append(",\"cast_emo\":<opsiyonel>")
+                if (hasPendingReapp) append(",\"reapp\":<opsiyonel>")
+                append(",\"mile\":<opsiyonel>,\"u_tone\":<opsiyonel>")
+            }
+            sb.appendLine(
+                "Yanıtının en son satırına yalnızca şu tek satırlık JSON'ı ekle (değişmeyen opsiyonel alanları HİÇ yazma): " +
+                    "[[STATE_JSON {\"dom\":\"<duygu>\",\"dominant_emotion\":\"<duygu>\",\"int\":50,\"aff\":0,\"trs\":0,\"delta\":{\"value\":0}$optionalFields}]]"
+            )
         } else {
-            sb.appendLine("Anlatım bittikten sonra en alt satıra tek satırlık gizli duygu/sahne güncellemesi ekle: [[STATE_JSON {\"dominant_emotion\":\"<duygu>\",\"delta\":{\"value\":0,\"reason\":\"<kısa_neden>\",\"context\":{\"setting\":\"private|public\",\"mode\":\"casual|flirt|deep|conflict\",\"tension\":\"none|conflict|crisis\"}},\"suppressed_emotion\":\"\"}]] (bu etiketten diyalogda asla bahsetme).")
+            val schemaParts = mutableListOf(
+                "\"dom\":\"<baskın duygu>\"",
+                "\"int\":<0-100>",
+                "\"aff\":<-10..+10>",
+                "\"trs\":<-10..+10>",
+                "\"skip\":<opsiyonel hikaye günü atlama: ör 1 veya \"sabah->gece\">"
+            )
+            if (hasActiveCast) {
+                schemaParts.add("\"cast_emo\":<opsiyonel [{\"n\":\"İsim\",\"d\":\"duygu\",\"v\":-5..+5}]>")
+            }
+            schemaParts.add("\"trig\":<opsiyonel [\"tetiklenen konu\"]>")
+            if (hasPendingReapp) {
+                schemaParts.add("\"reapp\":<opsiyonel {\"id\":12,\"out\":\"softened|resolved|hardened\"}>")
+            }
+            schemaParts.add("\"mile\":<opsiyonel {\"k\":\"benzersiz_anahtar\",\"t\":\"Kısa Başlık\",\"d\":\"Tek cümlelik dönüm noktası\"}>")
+            schemaParts.add("\"u_tone\":<opsiyonel \"warm|hurt|tense|sarcastic|distant|playful\">")
+
+            sb.appendLine("Yanıtının en son satırına yalnızca şu tek satırlık JSON'ı ekle (değişmeyen opsiyonel alanları HİÇ yazma; yalnızca sahnede gerçekten gerçekleştiğinde ekle):")
+            sb.appendLine("[[STATE_JSON {${schemaParts.joinToString(",")}}]]")
+            sb.appendLine("(Geriye dönük uyumluluk: \"dominant_emotion\" ve \"delta\":{\"value\":0,\"reason\":\"\"} biçimi de geçerlidir; bu bloktan asla bahsetme.)")
         }
 
         sb.appendLine()

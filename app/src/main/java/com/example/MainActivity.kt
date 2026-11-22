@@ -20,17 +20,26 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.animation.CosmicMotionConfig
 import com.example.ui.animation.CosmicMotionPreferences
 import com.example.ui.animation.CosmicMotionSpecs
 import com.example.ui.animation.CosmicOrbLoader
 import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.LocalCosmicMotionPolicy
+import com.example.ui.animation.MotionPolicy
+import com.example.util.AppFeatureFlags
 import com.example.ui.viewmodel.EmochiViewModel
 import com.example.ui.viewmodel.UiState
 import com.example.ui.screens.BotListScreen
@@ -57,8 +66,43 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val motionMode by CosmicMotionPreferences.mode.collectAsStateWithLifecycle()
-            val motionConfig = remember(motionMode) { CosmicMotionConfig.from(motionMode) }
-            CompositionLocalProvider(LocalCosmicMotionConfig provides motionConfig) {
+            val reduceMotion by AppFeatureFlags.reduceMotion.collectAsStateWithLifecycle()
+            val lifecycleOwner = LocalLifecycleOwner.current
+            var isAppInForeground by remember { mutableStateOf(true) }
+            var lifecycleTick by remember { mutableStateOf(0) }
+
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_START -> {
+                            isAppInForeground = true
+                            lifecycleTick++
+                        }
+                        Lifecycle.Event.ON_STOP -> {
+                            isAppInForeground = false
+                        }
+                        else -> Unit
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+
+            val motionPolicy = remember(reduceMotion, isAppInForeground, lifecycleTick) {
+                MotionPolicy.fromContext(
+                    context = this@MainActivity,
+                    reduceMotion = reduceMotion,
+                    isAppInForeground = isAppInForeground
+                )
+            }
+            val motionConfig = remember(motionMode, motionPolicy) {
+                CosmicMotionConfig.effective(motionMode, motionPolicy)
+            }
+
+            CompositionLocalProvider(
+                LocalCosmicMotionPolicy provides motionPolicy,
+                LocalCosmicMotionConfig provides motionConfig
+            ) {
                 MyApplicationTheme {
                     Surface(
                         modifier = Modifier.fillMaxSize(),

@@ -97,6 +97,19 @@ jobs:
           echo "version_code=$VER_CODE" >> "$GITHUB_OUTPUT"
           echo "Detected Asroda v${VER_NAME} (versionCode=${VER_CODE})"
 
+      - name: Run Mandatory Unit & Regression Tests (CI Quality Gate)
+        run: |
+          ./gradlew testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Upload JUnit Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-test-results
+          path: app/build/test-results/testDebugUnitTest/*.xml
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Build R8-Optimized Signed Release APK
         env:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}

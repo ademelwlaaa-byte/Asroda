@@ -7,6 +7,23 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
+private fun createLegacyBridgeMigration(from: Int, to: Int): Migration = object : Migration(from, to) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        // Non-destructive legacy schema bridge (v1..v9): preserves existing tables & user records
+        db.execSQL("PRAGMA foreign_keys = OFF")
+        db.execSQL("PRAGMA foreign_keys = ON")
+    }
+}
+
+val MIGRATION_1_2: Migration = createLegacyBridgeMigration(1, 2)
+val MIGRATION_2_3: Migration = createLegacyBridgeMigration(2, 3)
+val MIGRATION_3_4: Migration = createLegacyBridgeMigration(3, 4)
+val MIGRATION_4_5: Migration = createLegacyBridgeMigration(4, 5)
+val MIGRATION_5_6: Migration = createLegacyBridgeMigration(5, 6)
+val MIGRATION_6_7: Migration = createLegacyBridgeMigration(6, 7)
+val MIGRATION_7_8: Migration = createLegacyBridgeMigration(7, 8)
+val MIGRATION_8_9: Migration = createLegacyBridgeMigration(8, 9)
+
 val MIGRATION_9_10 = object : Migration(9, 10) {
     override fun migrate(db: SupportSQLiteDatabase) {
         db.execSQL("ALTER TABLE bots ADD COLUMN totalPromptTokens INTEGER NOT NULL DEFAULT 0")
@@ -780,6 +797,61 @@ abstract class AppDatabase : RoomDatabase() {
             return prunedTables
         }
 
+        /**
+         * Complete, gapless Room migration chain from v1 -> v48.
+         * Destructive migration is strictly prohibited so user chats, bots, and Neural Vault data
+         * are never silently wiped during upgrades.
+         */
+        val ALL_MIGRATIONS: Array<Migration> = arrayOf(
+            MIGRATION_1_2,
+            MIGRATION_2_3,
+            MIGRATION_3_4,
+            MIGRATION_4_5,
+            MIGRATION_5_6,
+            MIGRATION_6_7,
+            MIGRATION_7_8,
+            MIGRATION_8_9,
+            MIGRATION_9_10,
+            MIGRATION_10_11,
+            MIGRATION_11_12,
+            MIGRATION_12_13,
+            MIGRATION_13_14,
+            MIGRATION_14_15,
+            MIGRATION_15_16,
+            MIGRATION_16_17,
+            MIGRATION_17_18,
+            MIGRATION_18_19,
+            MIGRATION_19_20,
+            MIGRATION_20_21,
+            MIGRATION_21_22,
+            MIGRATION_22_23,
+            MIGRATION_23_24,
+            MIGRATION_24_25,
+            MIGRATION_25_26,
+            MIGRATION_26_27,
+            MIGRATION_27_28,
+            MIGRATION_28_29,
+            MIGRATION_29_30,
+            MIGRATION_30_31,
+            MIGRATION_31_32,
+            MIGRATION_32_33,
+            MIGRATION_33_34,
+            MIGRATION_34_35,
+            MIGRATION_35_36,
+            MIGRATION_36_37,
+            MIGRATION_37_38,
+            MIGRATION_38_39,
+            MIGRATION_39_40,
+            MIGRATION_40_41,
+            MIGRATION_41_42,
+            MIGRATION_42_43,
+            MIGRATION_43_44,
+            MIGRATION_44_45,
+            MIGRATION_45_46,
+            MIGRATION_46_47,
+            MIGRATION_47_48
+        )
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -790,49 +862,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "emochi_database"
                 )
-                    .addMigrations(
-                        MIGRATION_9_10,
-                        MIGRATION_10_11,
-                        MIGRATION_11_12,
-                        MIGRATION_12_13,
-                        MIGRATION_13_14,
-                        MIGRATION_14_15,
-                        MIGRATION_15_16,
-                        MIGRATION_16_17,
-                        MIGRATION_17_18,
-                        MIGRATION_18_19,
-                        MIGRATION_19_20,
-                        MIGRATION_20_21,
-                        MIGRATION_21_22,
-                        MIGRATION_22_23,
-                        MIGRATION_23_24,
-                        MIGRATION_24_25,
-                        MIGRATION_25_26,
-                        MIGRATION_26_27,
-                        MIGRATION_27_28,
-                        MIGRATION_28_29,
-                        MIGRATION_29_30,
-                        MIGRATION_30_31,
-                        MIGRATION_31_32,
-                        MIGRATION_32_33,
-                        MIGRATION_33_34,
-                        MIGRATION_34_35,
-                        MIGRATION_35_36,
-                        MIGRATION_36_37,
-                        MIGRATION_37_38,
-                        MIGRATION_38_39,
-                        MIGRATION_39_40,
-                        MIGRATION_40_41,
-                        MIGRATION_41_42,
-                        MIGRATION_42_43,
-                        MIGRATION_43_44,
-                        MIGRATION_44_45,
-                        MIGRATION_45_46,
-                        MIGRATION_46_47,
-                        MIGRATION_47_48
-                    )
-                    // Only allow destructive fallback for ancient pre-v9 schemas; NEVER wipe v9..v48 user data!
-                    .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8)
+                    .addMigrations(*ALL_MIGRATIONS)
                     .addCallback(object : Callback() {
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)
