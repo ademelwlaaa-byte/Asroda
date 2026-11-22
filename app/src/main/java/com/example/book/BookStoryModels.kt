@@ -14,7 +14,9 @@ enum class BookCharacterId(
     val possessiveName: String,
     val roleTitle: String,
     val accentHex: Long,
-    val initialBond: Int
+    val initialBond: Int,
+    val minChapter: Int = 1,
+    val introSceneOrder: Int = 1
 ) {
     STEVE(
         key = "steve",
@@ -78,6 +80,72 @@ enum class BookCharacterId(
         roleTitle = "Kozmik Müttefik • Onur",
         accentHex = 0xFF38BDF8L,
         initialBond = 36
+    ),
+    FURY(
+        key = "fury",
+        displayName = "Nick Fury",
+        shortName = "Fury",
+        possessiveName = "Fury'nin",
+        roleTitle = "S.H.I.E.L.D. Direktörü • İstihbarat",
+        accentHex = 0xFF94A3B8L,
+        initialBond = 30,
+        minChapter = 4,
+        introSceneOrder = 1
+    ),
+    VOSS(
+        key = "voss",
+        displayName = "Elias Voss",
+        shortName = "Voss",
+        possessiveName = "Voss'un",
+        roleTitle = "Denek 6-B • Kardeşlik",
+        accentHex = 0xFFF87171L,
+        initialBond = 30,
+        minChapter = 5,
+        introSceneOrder = 1
+    ),
+    MIRA(
+        key = "mira",
+        displayName = "Mira",
+        shortName = "Mira",
+        possessiveName = "Mira'nın",
+        roleTitle = "Denek 8-C • Yeni Hayat",
+        accentHex = 0xFF38BDF8L,
+        initialBond = 32,
+        minChapter = 7,
+        introSceneOrder = 2
+    ),
+    PIETRO(
+        key = "pietro",
+        displayName = "Pietro Maximoff",
+        shortName = "Pietro",
+        possessiveName = "Pietro'nun",
+        roleTitle = "Gümüş Şimşek • İkiz Kardeş",
+        accentHex = 0xFF7DD3FCL,
+        initialBond = 24,
+        minChapter = 12,
+        introSceneOrder = 2
+    ),
+    ZERO(
+        key = "zero",
+        displayName = "Sıfır",
+        shortName = "Sıfır",
+        possessiveName = "Sıfır'ın",
+        roleTitle = "Karanlık Gelecek • Tekillik Yankısı",
+        accentHex = 0xFF60A5FAL,
+        initialBond = 25,
+        minChapter = 13,
+        introSceneOrder = 3
+    ),
+    VISION(
+        key = "vision",
+        displayName = "Vision",
+        shortName = "Vision",
+        possessiveName = "Vision'ın",
+        roleTitle = "Zihin Taşı • Hakikat",
+        accentHex = 0xFFEAB308L,
+        initialBond = 34,
+        minChapter = 16,
+        introSceneOrder = 4
     );
 
     companion object {

@@ -4,10 +4,11 @@ import com.example.data.local.AffectionEventDao
 import com.example.data.local.AffectionEventEntity
 import com.example.data.local.BotDao
 import com.example.data.local.CharacterEmotionDao
+import com.example.data.local.CharacterEmotionEntity
 import com.example.data.local.EmotionHistoryDao
 import com.example.data.local.EmotionHistoryEntity
 import com.example.data.local.EmotionState
-import com.example.data.repository.EmochiRepository
+import com.example.data.repository.EmotionEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -71,6 +72,15 @@ class EmotionEngineManager(
         emotionHistoryDao.getRecentHistoryForCharacter(botId, characterName, limit)
     }
 
+    suspend fun getCurrentBotEmotionState(botId: String): EmotionState? = withContext(Dispatchers.IO) {
+        val bot = botDao.getBotById(botId) ?: return@withContext null
+        EmotionState.fromJson(bot.emotionState)
+    }
+
+    suspend fun getCharacterEmotions(botId: String): List<CharacterEmotionEntity> = withContext(Dispatchers.IO) {
+        emotionDao.getEmotionsForBot(botId)
+    }
+
     fun calculateClampedAffectionDelta(
         prevAffection: Int,
         rawDelta: Int,
@@ -84,7 +94,7 @@ class EmotionEngineManager(
         regCount: Int = 0,
         isEstablishedRomantic: Boolean = false
     ): Int {
-        return EmochiRepository.calculateClampedDelta(
+        return EmotionEngine.calculateClampedAffectionDelta(
             prevAffection = prevAffection,
             rawDelta = rawDelta,
             totalMsgCount = totalMsgCount,

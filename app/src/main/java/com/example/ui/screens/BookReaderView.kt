@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.content.Context
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -71,8 +73,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -82,10 +90,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.book.BookChapterMeta
+import com.example.book.BookCharacterId
 import com.example.book.BookChoiceDef
 import com.example.book.BookReadState
 import com.example.book.BookStateRepository
 import com.example.book.BookTranscriptItem
+import com.example.ui.screens.cosmic3d.CosmicRooftopBossDuelDialog
 import com.example.book.CosmicDriftBookRegistry
 import com.example.book.RecordedDecision
 import com.example.data.local.BotEntity
@@ -184,6 +194,7 @@ fun BookReaderView(
     onClearError: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val coroutineScope = rememberCoroutineScope()
     val motionConfig = LocalCosmicMotionConfig.current
 
@@ -200,19 +211,85 @@ fun BookReaderView(
     // Nonce incremented on chapter restart/switch so LazyListState cleanly resets to (0, 0)
     var chapterResetNonce by remember { mutableIntStateOf(0) }
 
-    // Reader controls & overlays
-    var fontSizeSp by remember { mutableFloatStateOf(16.8f) }
+    // Persisted Reader Preferences (font size & optional ambient soundtrack!)
+    val readerPrefs = remember(context) {
+        context.getSharedPreferences("cosmic_book_reader_prefs", Context.MODE_PRIVATE)
+    }
+    var fontSizeSp by remember {
+        mutableFloatStateOf(readerPrefs.getFloat("font_size_sp", 16.8f).coerceIn(14f, 22.5f))
+    }
+    var ambientMusicEnabled by remember { mutableStateOf(false) }
+    var activeVoiceCardKey by remember { mutableStateOf<String?>(null) }
+    val readerVoiceEngine = remember(context) {
+        com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine(context) { speaking ->
+            if (!speaking) {
+                activeVoiceCardKey = null
+            }
+        }
+    }
+    DisposableEffect(readerVoiceEngine) {
+        onDispose {
+            readerVoiceEngine.stopAndRelease()
+        }
+    }
+    LaunchedEffect(engineState.activeChapter) {
+        readerVoiceEngine.stopCurrentLine()
+        activeVoiceCardKey = null
+    }
     var isFullscreenMode by remember { mutableStateOf(false) }
+    BackHandler(enabled = isFullscreenMode) {
+        isFullscreenMode = false
+    }
     var showChapterSummaryModal by remember { mutableStateOf(false) }
+    var showTwinAidenPostCredits by remember { mutableStateOf(false) }
+    var showSeason2PostCredits by remember { mutableStateOf(false) }
     var showChronicleModal by remember { mutableStateOf(false) }
     var showChapterSwitcher by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
 
-    // Instant consequence banner + sparkle/confetti triggers
+    // Instant consequence banner + newly unlocked character toast + sparkle/confetti + cosmic screen edge pulse triggers
     var lastDecisionBanner by remember { mutableStateOf<RecordedDecision?>(null) }
     var showDecisionBanner by remember { mutableStateOf(false) }
+    var knownUnlockedChars by remember {
+        mutableStateOf(BookStateRepository.unlockedCharacters(engineState).toSet())
+    }
+    var newlyUnlockedCharBanner by remember { mutableStateOf<BookCharacterId?>(null) }
+    var showCharUnlockBanner by remember { mutableStateOf(false) }
+    var lastChoiceAppliedAtMs by remember { mutableStateOf(0L) }
     var choiceSparkTrigger by remember { mutableIntStateOf(0) }
     var chapterCompleteConfetti by remember { mutableIntStateOf(0) }
+    var choicePulseTrigger by remember { mutableIntStateOf(0) }
+    var choicePulseColor by remember { mutableStateOf(Color(0xFF38BDF8)) }
+
+    // Persisted mandatory mini-game completion tracking (unlocks choices only after winning!)
+    val miniGamePrefs = remember(context) {
+        context.getSharedPreferences("cosmic_book_minigames", Context.MODE_PRIVATE)
+    }
+    var completedMiniGameNodes by remember {
+        mutableStateOf(
+            miniGamePrefs.getStringSet("completed_nodes", emptySet())?.toSet().orEmpty()
+        )
+    }
+    var showQuickMandatoryDuel by remember { mutableStateOf(false) }
+
+    fun markMiniGameCompleted(nodeId: String) {
+        if (nodeId !in completedMiniGameNodes) {
+            val updated = completedMiniGameNodes + nodeId
+            completedMiniGameNodes = updated
+            miniGamePrefs.edit().putStringSet("completed_nodes", updated).apply()
+            choicePulseColor = Color(0xFF34D399)
+            choicePulseTrigger += 1
+            choiceSparkTrigger += 1
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
+
+    fun clearMiniGameForChapter(chapterNum: Int) {
+        val prefix = "ch${chapterNum}_"
+        val updated = completedMiniGameNodes.filterNot { it.startsWith(prefix) }.toSet()
+        completedMiniGameNodes = updated
+        miniGamePrefs.edit().putStringSet("completed_nodes", updated).apply()
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -235,6 +312,28 @@ fun BookReaderView(
     }
     val deterministicChoices = remember(currentSceneNode) {
         currentSceneNode?.choices.orEmpty()
+    }
+    val currentNodeMiniGameTag = remember(currentSceneNode) {
+        currentSceneNode?.paragraphs
+            ?.map { it.trim() }
+            ?.firstOrNull { it.startsWith("[[GAME3D|") && it.endsWith("]]") }
+    }
+    val currentNodeRequiresMiniGame = currentNodeMiniGameTag != null
+    val currentNodeBossInfo = remember(currentNodeMiniGameTag) {
+        val parts = currentNodeMiniGameTag
+            ?.removePrefix("[[")
+            ?.removeSuffix("]]")
+            ?.split("|")
+            .orEmpty()
+        val bossId = com.example.ui.screens.cosmic3d.CosmicDuelBossId.fromTag(parts.getOrNull(1).orEmpty())
+        val bossTitle = parts.getOrNull(2)?.trim().orEmpty().ifBlank {
+            when (bossId) {
+                com.example.ui.screens.cosmic3d.CosmicDuelBossId.MIRROR_ZERO -> "AYNA DÜELLOSU · KULE TERASI"
+                com.example.ui.screens.cosmic3d.CosmicDuelBossId.ULTRON_PRIME -> "DEMİR VE YANKI · SOKOVİA MEYDANI"
+                com.example.ui.screens.cosmic3d.CosmicDuelBossId.VAELOR_ROOFTOP -> "SON YÜZLEŞME · AVENGERS KULESİ ÇATISI"
+            }
+        }
+        bossId to bossTitle
     }
 
     // Build flat manuscript rows for exact scroll save/restore & in-flow choice reveal
@@ -331,13 +430,13 @@ fun BookReaderView(
         )
     }
 
-    // Continuously persist exact scroll position as the reader scrolls (debounced)
+    // Continuously persist exact scroll position as the reader scrolls (true debounce via collectLatest)
     LaunchedEffect(listState, engineState.activeChapter, useDeterministicEngine) {
         if (!useDeterministicEngine) return@LaunchedEffect
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
             .distinctUntilChanged()
-            .collect { (idx, off) ->
-                delay(180)
+            .collectLatest { (idx, off) ->
+                delay(250)
                 BookStateRepository.saveScrollPosition(
                     context = context,
                     firstVisibleIndex = idx,
@@ -345,6 +444,22 @@ fun BookReaderView(
                     bookId = CosmicDriftBookRegistry.BOOK_ID
                 )
             }
+    }
+
+    // Pause chapter-end soundtrack automatically when app is backgrounded (ON_STOP) and resume on ON_START
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> BookAudioController.pauseForBackground()
+                Lifecycle.Event.ON_START -> BookAudioController.resumeFromBackground()
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     // Also flush exact scroll position synchronously on exit / disposal
@@ -437,9 +552,37 @@ fun BookReaderView(
 
     LaunchedEffect(lastDecisionBanner) {
         if (lastDecisionBanner != null) {
+            showCharUnlockBanner = false
             showDecisionBanner = true
-            delay(2600)
+            delay(2700)
             showDecisionBanner = false
+        }
+    }
+
+    // Detect when a brand-new character enters the story as the player advances scenes
+    val currentUnlockedChars = remember(
+        engineState.activeChapter,
+        engineState.highestCompletedChapter,
+        engineState.currentNodeId,
+        engineState.numericFlags
+    ) {
+        BookStateRepository.unlockedCharacters(engineState).toSet()
+    }
+    LaunchedEffect(currentUnlockedChars) {
+        val added = currentUnlockedChars - knownUnlockedChars
+        if (added.isNotEmpty() && useDeterministicEngine) {
+            knownUnlockedChars = currentUnlockedChars
+            val newest = added.first()
+            // Wait cleanly if decision consequence banner is currently showing so banners NEVER collide
+            if (showDecisionBanner) {
+                delay(2850)
+            }
+            newlyUnlockedCharBanner = newest
+            showCharUnlockBanner = true
+            delay(2800)
+            showCharUnlockBanner = false
+        } else {
+            knownUnlockedChars = currentUnlockedChars
         }
     }
 
@@ -556,6 +699,7 @@ fun BookReaderView(
                 showResetDialog = false
                 BookAudioController.stop(fadeOutMs = 2000L)
                 if (useDeterministicEngine) {
+                    clearMiniGameForChapter(engineState.activeChapter)
                     BookStateRepository.restartCurrentChapter(context, CosmicDriftBookRegistry.BOOK_ID)
                     chapterResetNonce += 1
                 } else {
@@ -566,12 +710,44 @@ fun BookReaderView(
                 showResetDialog = false
                 BookAudioController.stop(fadeOutMs = 2000L)
                 if (useDeterministicEngine) {
+                    completedMiniGameNodes = emptySet()
+                    miniGamePrefs.edit().remove("completed_nodes").apply()
                     BookStateRepository.resetEntireBook(context, CosmicDriftBookRegistry.BOOK_ID)
                     chapterResetNonce += 1
                 } else {
                     onResetChat(true)
                 }
             }
+        )
+    }
+
+    if (showTwinAidenPostCredits) {
+        TwinAidenPostCreditsDialog(
+            onContinueToChoicesSummary = {
+                showTwinAidenPostCredits = false
+                showChapterSummaryModal = true
+            }
+        )
+    }
+
+    if (showSeason2PostCredits) {
+        Season2ArchitectPostCreditsDialog(
+            onContinueToChoicesSummary = {
+                showSeason2PostCredits = false
+                showChapterSummaryModal = true
+            }
+        )
+    }
+
+    if (showQuickMandatoryDuel) {
+        CosmicRooftopBossDuelDialog(
+            title = currentNodeBossInfo.second,
+            bossId = currentNodeBossInfo.first,
+            pietroSaved = engineState.flags["s2_pietro_fate"] == "saved",
+            onVictory = { _, _ ->
+                markMiniGameCompleted(engineState.currentNodeId)
+            },
+            onDismiss = { showQuickMandatoryDuel = false }
         )
     }
 
@@ -696,7 +872,8 @@ fun BookReaderView(
                                 ) {
                                     Text(
                                         text = if (useDeterministicEngine) {
-                                            "BÖLÜM ${activeChapterMeta.romanNumeral}  ·  SAHNE $currentSceneOrder/${activeChapterMeta.sceneCount}"
+                                            val seasonTag = if (activeChapterMeta.number >= 11) "2. SEZON" else "1. SEZON"
+                                            "$seasonTag · BÖLÜM ${activeChapterMeta.romanNumeral} · $currentSceneOrder/${activeChapterMeta.sceneCount}"
                                         } else {
                                             "İNTERAKTİF KİTAP"
                                         },
@@ -795,7 +972,11 @@ fun BookReaderView(
                             Box(
                                 modifier = Modifier
                                     .clip(CircleShape)
-                                    .clickable { fontSizeSp = (fontSizeSp - 1.2f).coerceAtLeast(14f) }
+                                    .clickable {
+                                        val next = (fontSizeSp - 1.2f).coerceAtLeast(14f)
+                                        fontSizeSp = next
+                                        readerPrefs.edit().putFloat("font_size_sp", next).apply()
+                                    }
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                                     .testTag("book_font_decrease")
                             ) {
@@ -810,12 +991,50 @@ fun BookReaderView(
                             Box(
                                 modifier = Modifier
                                     .clip(CircleShape)
-                                    .clickable { fontSizeSp = (fontSizeSp + 1.2f).coerceAtMost(22.5f) }
+                                    .clickable {
+                                        val next = (fontSizeSp + 1.2f).coerceAtMost(22.5f)
+                                        fontSizeSp = next
+                                        readerPrefs.edit().putFloat("font_size_sp", next).apply()
+                                    }
                                     .padding(horizontal = 8.dp, vertical = 3.dp)
                                     .testTag("book_font_increase")
                             ) {
                                 Text("A+", fontFamily = InterFontFamily, color = MorCamTokens.SilverLavenderBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                             }
+                        }
+
+                        // Optional Reading Ambient Music Toggle Orb
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(if (ambientMusicEnabled) accentColor.copy(alpha = 0.28f) else Color(0x8A1C0C3A))
+                                .border(
+                                    0.85.dp,
+                                    if (ambientMusicEnabled) accentColor else Color(0x66C4B5FD),
+                                    CircleShape
+                                )
+                                .clickable {
+                                    ambientMusicEnabled = !ambientMusicEnabled
+                                    if (ambientMusicEnabled) {
+                                        BookAudioController.play(
+                                            context = context,
+                                            rawResId = R.raw.kozmiksuruklenismuzik,
+                                            loop = true,
+                                            volume = 0.28f,
+                                            fadeInMs = 1200L,
+                                            autoUnmute = true
+                                        )
+                                    } else {
+                                        BookAudioController.stop(fadeOutMs = 900L)
+                                    }
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (ambientMusicEnabled) "🎵" else "🔇",
+                                fontSize = 12.sp
+                            )
                         }
 
                         Box(
@@ -864,7 +1083,12 @@ fun BookReaderView(
                         modifier = Modifier
                             .fillMaxSize()
                             .widthIn(max = 680.dp),
-                        contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 56.dp),
+                        contentPadding = PaddingValues(
+                            start = 18.dp,
+                            end = 18.dp,
+                            top = if (isFullscreenMode) 22.dp else 12.dp,
+                            bottom = if (isFullscreenMode) 84.dp else 56.dp
+                        ),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         itemsIndexed(
@@ -894,7 +1118,20 @@ fun BookReaderView(
                                         rawText = row.text,
                                         fontSizeSp = fontSizeSp,
                                         chapterAccent = accentColor,
-                                        useDropCap = row.useDropCap
+                                        useDropCap = row.useDropCap,
+                                        isMiniGameCompleted = row.nodeId in completedMiniGameNodes,
+                                        pietroSaved = engineState.flags["s2_pietro_fate"] == "saved",
+                                        activeVoiceCardKey = activeVoiceCardKey,
+                                        onToggleSpeakCard = { speakerKey, bodyText, cardKey ->
+                                            if (activeVoiceCardKey == cardKey) {
+                                                readerVoiceEngine.stopCurrentLine()
+                                                activeVoiceCardKey = null
+                                            } else {
+                                                activeVoiceCardKey = cardKey
+                                                readerVoiceEngine.speak(speakerKey, bodyText)
+                                            }
+                                        },
+                                        onMiniGameVictory = { markMiniGameCompleted(row.nodeId) }
                                     )
                                 }
 
@@ -919,29 +1156,125 @@ fun BookReaderView(
                                 }
 
                                 is ManuscriptRow.ChoiceAnchor -> {
-                                    AutoRevealMorCamChoiceSanctuary(
-                                        nodeId = row.nodeId,
-                                        isRevealed = row.nodeId in revealedChoiceNodes,
-                                        prompt = row.prompt,
-                                        choices = row.choices,
-                                        accentColor = accentColor,
-                                        glowPulse = glowPulse,
-                                        onForceReveal = {
-                                            revealedChoiceNodes = revealedChoiceNodes + row.nodeId
-                                        },
-                                        onSelectChoice = { choice ->
-                                            choiceSparkTrigger += 1
-                                            val updated = BookStateRepository.selectChoice(
-                                                context = context,
-                                                choiceId = choice.id,
-                                                bookId = CosmicDriftBookRegistry.BOOK_ID
+                                    val isLockedByMandatoryDuel =
+                                        currentNodeRequiresMiniGame && row.nodeId !in completedMiniGameNodes
+                                    if (isLockedByMandatoryDuel) {
+                                        // HARD PROGRESSION GATE: Story choices stay locked until Vaelor is defeated!
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 14.dp)
+                                                .morCamCosmicGlow(
+                                                    cornerRadius = 22.dp,
+                                                    glowColor = Color(0xFFF43F5E),
+                                                    alpha = 0.45f,
+                                                    blurDp = 18.dp
+                                                )
+                                                .clip(RoundedCornerShape(22.dp))
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        listOf(Color(0xEE2B091B), Color(0xF511061E))
+                                                    )
+                                                )
+                                                .border(1.4.dp, Color(0xCCF43F5E), RoundedCornerShape(22.dp))
+                                                .padding(horizontal = 18.dp, vertical = 18.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Text(
+                                                text = "🔒 ZORUNLU SAVAŞ — KARARLAR KİLİTLİ",
+                                                fontFamily = InterFontFamily,
+                                                color = Color(0xFFFCA5A5),
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                letterSpacing = 1.sp
                                             )
-                                            pendingScrollToNodeId = updated.currentNodeId
-                                            updated.currentChapterDecisions.lastOrNull()?.let { latest ->
-                                                lastDecisionBanner = latest
+                                            Text(
+                                                text = when (currentNodeBossInfo.first) {
+                                                    com.example.ui.screens.cosmic3d.CosmicDuelBossId.MIRROR_ZERO ->
+                                                        "Hikayede ilerlemek için kendi karanlık geleceğin Sıfır'ı Kule terasında durdurmalısın!"
+                                                    com.example.ui.screens.cosmic3d.CosmicDuelBossId.ULTRON_PRIME ->
+                                                        "2. Sezon finalini açmak için Sokovia meydanında Vibranyum Ultron Prime'ı yenmelisin!"
+                                                    com.example.ui.screens.cosmic3d.CosmicDuelBossId.VAELOR_ROOFTOP ->
+                                                        "Hikayede ilerlemek için Yüce Hakem Vaelor'u Avengers Kulesi'nin çatısında yenmelisin!"
+                                                },
+                                                fontFamily = DisplaySerifFontFamily,
+                                                color = Color.White,
+                                                fontSize = 15.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                textAlign = TextAlign.Center
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(RoundedCornerShape(14.dp))
+                                                    .background(
+                                                        Brush.horizontalGradient(
+                                                            listOf(Color(0xFF2563EB), Color(0xFFDC2626))
+                                                        )
+                                                    )
+                                                    .border(1.1.dp, Color(0xFFBAE6FD), RoundedCornerShape(14.dp))
+                                                    .clickable { showQuickMandatoryDuel = true }
+                                                    .padding(vertical = 13.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = when (currentNodeBossInfo.first) {
+                                                        com.example.ui.screens.cosmic3d.CosmicDuelBossId.MIRROR_ZERO ->
+                                                            "⚔ AYNA DÜELLOSUNA GİR ▶"
+                                                        com.example.ui.screens.cosmic3d.CosmicDuelBossId.ULTRON_PRIME ->
+                                                            "⚔ ULTRON PRİME DÜELLOSUNA GİR ▶"
+                                                        com.example.ui.screens.cosmic3d.CosmicDuelBossId.VAELOR_ROOFTOP ->
+                                                            "⚔ VAELOR ÇATI DÜELLOSUNA GİR ▶"
+                                                    },
+                                                    fontFamily = InterFontFamily,
+                                                    color = Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
                                             }
                                         }
-                                    )
+                                    } else {
+                                        AutoRevealMorCamChoiceSanctuary(
+                                            nodeId = row.nodeId,
+                                            isRevealed = row.nodeId in revealedChoiceNodes,
+                                            prompt = row.prompt,
+                                            choices = row.choices,
+                                            accentColor = accentColor,
+                                            glowPulse = glowPulse,
+                                            onForceReveal = {
+                                                revealedChoiceNodes = revealedChoiceNodes + row.nodeId
+                                            },
+                                            onSelectChoice = { choice ->
+                                                val nowMs = android.os.SystemClock.elapsedRealtime()
+                                                if (nowMs - lastChoiceAppliedAtMs < 350L) return@AutoRevealMorCamChoiceSanctuary
+                                                lastChoiceAppliedAtMs = nowMs
+                                                val isCritical = choice.effect.impactLevel.equals("kritik", ignoreCase = true)
+                                                haptic.performHapticFeedback(
+                                                    if (isCritical) HapticFeedbackType.LongPress else HapticFeedbackType.TextHandleMove
+                                                )
+                                                val toneLower = choice.toneHint.lowercase()
+                                                choicePulseColor = when {
+                                                    toneLower.contains("beyaz göz") -> Color(0xFFF8FAFC)
+                                                    choice.effect.redEyeDelta > 0 || toneLower.contains("kızıl") || toneLower.contains("wanda") -> Color(0xFFF43F5E)
+                                                    toneLower.contains("natasha") || toneLower.contains("gölge") -> Color(0xFFF472B6)
+                                                    toneLower.contains("zaman") || toneLower.contains("kozmik") || toneLower.contains("kalkan") -> Color(0xFF38BDF8)
+                                                    else -> Color(0xFFFDE047)
+                                                }
+                                                choicePulseTrigger += 1
+                                                choiceSparkTrigger += 1
+                                                val updated = BookStateRepository.selectChoice(
+                                                    context = context,
+                                                    choiceId = choice.id,
+                                                    bookId = CosmicDriftBookRegistry.BOOK_ID
+                                                )
+                                                pendingScrollToNodeId = updated.currentNodeId
+                                                updated.currentChapterDecisions.lastOrNull()?.let { latest ->
+                                                    lastDecisionBanner = latest
+                                                }
+                                            }
+                                        )
+                                    }
                                 }
 
                                 is ManuscriptRow.ChapterComplete -> {
@@ -959,7 +1292,11 @@ fun BookReaderView(
                                                 fadeInMs = 1500L,
                                                 autoUnmute = true
                                             )
-                                            showChapterSummaryModal = true
+                                            when (engineState.activeChapter) {
+                                                10 -> showTwinAidenPostCredits = true
+                                                24 -> showSeason2PostCredits = true
+                                                else -> showChapterSummaryModal = true
+                                            }
                                         },
                                         onOpenChronicle = { showChronicleModal = true },
                                         onNextChapter = {
@@ -971,6 +1308,7 @@ fun BookReaderView(
                                         },
                                         onRestartChapter = {
                                             BookAudioController.stop(fadeOutMs = 2000L)
+                                            clearMiniGameForChapter(engineState.activeChapter)
                                             BookStateRepository.restartCurrentChapter(context, CosmicDriftBookRegistry.BOOK_ID)
                                             chapterResetNonce += 1
                                         }
@@ -993,50 +1331,144 @@ fun BookReaderView(
                     )
                 }
 
-                // Floating Consequence Feedback Pill at top of reading stage
+                // Floating Consequence Feedback Pill at top of reading stage (zero overlap with exit fullscreen!)
                 BookConsequenceBanner(
                     decision = lastDecisionBanner,
                     visible = showDecisionBanner,
+                    onDismiss = { showDecisionBanner = false },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 8.dp, start = 16.dp, end = 16.dp)
+                        .padding(top = 10.dp, start = 16.dp, end = 16.dp)
                 )
 
-                // Floating Exit Fullscreen Pill
-                if (isFullscreenMode) {
-                    Box(
+                // Floating Newly-Unlocked Character Toast (never overlaps decision banner)
+                BookCharacterUnlockedBanner(
+                    character = newlyUnlockedCharBanner,
+                    visible = showCharUnlockBanner && !showDecisionBanner,
+                    onDismiss = { showCharUnlockBanner = false },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp, start = 16.dp, end = 16.dp)
+                )
+
+                // Ergonomic Floating Exit Fullscreen Pill at Bottom-End (thumb-friendly & NEVER overlaps top banners!)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isFullscreenMode,
+                    enter = fadeIn(tween(220)) + slideInVertically(initialOffsetY = { it / 2 }),
+                    exit = fadeOut(tween(180)) + slideOutVertically(targetOffsetY = { it / 2 }),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 18.dp, end = 14.dp)
+                ) {
+                    val exitInteraction = remember { MutableInteractionSource() }
+                    Row(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(top = 10.dp, end = 14.dp)
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xCC1C0C3A))
-                            .border(1.dp, MorCamTokens.RimGradient, CircleShape)
-                            .clickable { isFullscreenMode = false }
-                            .testTag("book_exit_fullscreen"),
-                        contentAlignment = Alignment.Center
+                            .cosmicTapSpring(exitInteraction, pressedScale = 0.92f)
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xD91E0D40), Color(0xE6110626))
+                                )
+                            )
+                            .border(1.dp, MorCamTokens.RimGradient, RoundedCornerShape(50))
+                            .clickable(interactionSource = exitInteraction, indication = null) {
+                                isFullscreenMode = false
+                            }
+                            .testTag("book_exit_fullscreen")
+                            .padding(horizontal = 13.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
                     ) {
+                        Text(
+                            text = "%${(sceneProgressFraction * 100f).toInt().coerceIn(1, 100)}",
+                            fontFamily = InterFontFamily,
+                            color = accentColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Box(
+                            modifier = Modifier
+                                .size(width = 1.dp, height = 12.dp)
+                                .background(Color(0x55D8B4FE))
+                        )
                         Icon(
                             imageVector = Icons.Default.FullscreenExit,
                             contentDescription = "Tam Ekrandan Çık",
                             tint = MorCamTokens.SilverLavenderBright,
-                            modifier = Modifier.size(18.dp)
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Çık",
+                            fontFamily = InterFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
             }
         }
 
+        // Cosmic screen-edge vignette pulse reacting to Aiden's chosen power (White Eye / Time / Crimson / Shadow)
+        CosmicChoicePulseOverlay(
+            triggerKey = choicePulseTrigger,
+            pulseColor = choicePulseColor,
+            modifier = Modifier.fillMaxSize()
+        )
+
         // Cosmic micro-sparkle feedback on choice selection & chapter celebration
         CosmicSparkleBurst(
             triggerKey = choiceSparkTrigger,
-            accentColor = accentColor,
+            accentColor = choicePulseColor,
             modifier = Modifier.fillMaxSize()
         )
         CosmicConfettiOverlay(
             triggerKey = chapterCompleteConfetti,
             modifier = Modifier.fillMaxSize()
         )
+    }
+}
+
+/**
+ * Non-blocking 1.1s cosmic edge vignette pulse triggered on every story decision.
+ * Gives White Eyes (pure icy white), Time Dilation / Cosmic Shield (electric blue),
+ * Crimson / Wanda (scarlet), and Shadow / Natasha (rose-violet) an instant tactile feel.
+ */
+@Composable
+private fun CosmicChoicePulseOverlay(
+    triggerKey: Int,
+    pulseColor: Color,
+    modifier: Modifier = Modifier
+) {
+    var active by remember { mutableStateOf(false) }
+    LaunchedEffect(triggerKey) {
+        if (triggerKey > 0) {
+            active = true
+            delay(180L)
+            active = false
+        }
+    }
+    val alpha by animateFloatAsState(
+        targetValue = if (active) 0.42f else 0f,
+        animationSpec = tween(durationMillis = if (active) 160 else 820),
+        label = "cosmic_choice_pulse"
+    )
+    if (alpha > 0.005f) {
+        Canvas(modifier = modifier) {
+            val radius = size.maxDimension * 0.72f
+            drawRect(
+                brush = Brush.radialGradient(
+                    colorStops = arrayOf(
+                        0.0f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        0.85f to pulseColor.copy(alpha = alpha * 0.45f),
+                        1.0f to pulseColor.copy(alpha = alpha)
+                    ),
+                    center = Offset(size.width / 2f, size.height / 2f),
+                    radius = radius
+                )
+            )
+        }
     }
 }
 

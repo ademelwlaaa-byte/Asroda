@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
     <cloud-backup>
-        <!-- Never upload Keystore-bound encrypted prefs, local autobackup snapshots, or ephemeral caches -->
+        <!-- Never upload Room SQLite DB (private chats + credentials), Keystore prefs, or local snapshots -->
+        <exclude domain="database" path="." />
         <exclude domain="sharedpref" path="emochi_secure_prefs.xml" />
         <exclude domain="sharedpref" path="androidx.security.crypto.master_key.xml" />
         <exclude domain="sharedpref" path="emochi_keystore_prefs.xml" />
+        <exclude domain="sharedpref" path="emochi_routine_notif_prefs.xml" />
         <exclude domain="file" path="emochi_autobackup.json" />
         <exclude domain="file" path="emochi_autobackup.json.tmp" />
         <exclude domain="file" path="image_cache" />
@@ -12,10 +14,13 @@
         <exclude domain="external" path="." />
     </cloud-backup>
     <device-transfer>
-        <!-- Exclude Keystore-tied prefs and transient caches on device-to-device transfer -->
+        <!-- Exclude hardware-bound Keystore DB/prefs and transient caches on device-to-device transfer -->
+        <exclude domain="database" path="." />
         <exclude domain="sharedpref" path="emochi_secure_prefs.xml" />
         <exclude domain="sharedpref" path="androidx.security.crypto.master_key.xml" />
         <exclude domain="sharedpref" path="emochi_keystore_prefs.xml" />
+        <exclude domain="sharedpref" path="emochi_routine_notif_prefs.xml" />
+        <exclude domain="file" path="emochi_autobackup.json" />
         <exclude domain="file" path="emochi_autobackup.json.tmp" />
         <exclude domain="file" path="image_cache" />
         <exclude domain="file" path="exports" />

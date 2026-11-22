@@ -1,6 +1,7 @@
 package com.example.work
 
 import android.content.Context
+import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -8,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.example.EmochiApplication
 import com.example.data.local.AppDatabase
 import com.example.data.local.ArchivedMemoryEntity
 import com.example.data.local.MemoryEventEntity
@@ -20,7 +22,7 @@ import java.util.concurrent.TimeUnit
  * - Tetiklenme: 8 saatte bir, pil/ağ uygunsa (EmochiRepository sayacıyla 20 yeni kayıt eşiği).
  * - Benzerlik eşiği: 0.88 — bu eşiğin altındaki çiftler ayrı tutulur.
  * - Birleşme: Yeni tek kayıt aktif, eskiler arşive gider (silinmez, geri alınabilir).
- * - Hata: Sessizce atlanır, sohbeti etkilemez.
+ * - Ayrıca periyodik bakım olarak 7 teşhis log tablosunu sınırlar (pruneDiagnosticLogs).
  */
 class BackgroundMemoryMergeWorker(
     context: Context,
@@ -28,10 +30,12 @@ class BackgroundMemoryMergeWorker(
 ) : CoroutineWorker(context, workerParams) {
 
     companion object {
+        private const val TAG = "MemoryMergeWorker"
         const val WORK_NAME = "emochi_background_memory_merge"
         const val MERGE_SIMILARITY_THRESHOLD = 0.88f
         const val MAX_MERGES_PER_RUN = 10
         const val MAX_GROUP_SIZE = 5
+        const val MAX_SCAN_EVENTS = 120
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
@@ -55,16 +59,26 @@ class BackgroundMemoryMergeWorker(
 
     override suspend fun doWork(): Result {
         val db = AppDatabase.getInstance(applicationContext)
-        val repository = EmochiRepository(db, applicationContext)
+        val repository = EmochiApplication.getSharedRepository(applicationContext)
 
-        val bots = try { db.botDao().getAllBotsList() } catch (_: Exception) { return Result.success() }
+        val bots = try {
+            db.botDao().getAllBotsList()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to load bots for memory merge: ${e.message}")
+            return if (runAttemptCount < 2) Result.retry() else Result.success()
+        }
 
         for (bot in bots) {
             if (bot.id == EmochiRepository.activeBotId) continue
             try {
                 mergeEventsForBot(bot.id, repository, db)
-            } catch (_: Exception) { }
+            } catch (e: Exception) {
+                Log.w(TAG, "Memory merge skipped for bot=${bot.id}: ${e.message}")
+            }
         }
+
+        // Periodic SQLite housekeeping: cap unbounded diagnostic log tables
+        AppDatabase.pruneDiagnosticLogs(db, maxRowsPerTable = 500)
 
         return Result.success()
     }
@@ -79,29 +93,36 @@ class BackgroundMemoryMergeWorker(
         val activeEvents = db.memoryEventDao().getActiveEvents(botId)
         if (activeEvents.size < 4) return
 
+        // Pre-filter plain legacy events & pre-parse embeddings ONCE (O(N) instead of O(N²) JSON parsing)
+        val candidates = activeEvents
+            .asSequence()
+            .filter { ev ->
+                !com.example.data.repository.LivingMemoryCodec.parse(ev.description, ev.importanceScore).isStructured
+            }
+            .take(MAX_SCAN_EVENTS)
+            .map { ev ->
+                val vec = repository.jsonToFloatArray(ev.embedding).takeIf { it.isNotEmpty() }
+                    ?: MemoryEngine.computeTurkishFeatureEmbedding(ev.description)
+                Pair(ev, vec)
+            }
+            .toList()
+
+        if (candidates.size < 2) return
+
         var mergeCount = 0
         val merged = mutableSetOf<Long>()
 
-        for (i in activeEvents.indices) {
+        for (i in candidates.indices) {
             if (mergeCount >= MAX_MERGES_PER_RUN) break
-            val ev1 = activeEvents[i]
+            val (ev1, vec1) = candidates[i]
             if (merged.contains(ev1.id)) continue
-            val parsed1 = com.example.data.repository.LivingMemoryCodec.parse(ev1.description, ev1.importanceScore)
-            // Preserve distinct curated Multi-POV Living Memories unless they are plain legacy notes
-            if (parsed1.isStructured) continue
-
-            val vec1 = repository.jsonToFloatArray(ev1.embedding).takeIf { it.isNotEmpty() }
-                ?: MemoryEngine.computeTurkishFeatureEmbedding(ev1.description)
 
             val similarGroup = mutableListOf<MemoryEventEntity>()
-            for (j in (i + 1) until activeEvents.size) {
+            for (j in (i + 1) until candidates.size) {
                 if (similarGroup.size >= MAX_GROUP_SIZE - 1) break
-                val ev2 = activeEvents[j]
+                val (ev2, vec2) = candidates[j]
                 if (merged.contains(ev2.id)) continue
-                val parsed2 = com.example.data.repository.LivingMemoryCodec.parse(ev2.description, ev2.importanceScore)
-                if (parsed2.isStructured) continue
-                val vec2 = repository.jsonToFloatArray(ev2.embedding).takeIf { it.size == vec1.size }
-                    ?: MemoryEngine.computeTurkishFeatureEmbedding(ev2.description)
+                if (vec2.size != vec1.size) continue
                 val sim = MemoryEngine.cosineSimilarity(vec1, vec2)
                 if (sim >= MERGE_SIMILARITY_THRESHOLD) {
                     similarGroup.add(ev2)

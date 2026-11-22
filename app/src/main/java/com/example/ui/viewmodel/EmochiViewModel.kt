@@ -1,7 +1,6 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
-import android.speech.tts.TextToSpeech
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
@@ -39,25 +38,28 @@ sealed class UiState {
     data class Chat(val botId: String) : UiState()
 }
 
-class EmochiViewModel(application: Application) : AndroidViewModel(application) {
-    val repository = EmochiRepository(AppDatabase.getInstance(application), application)
-
-    init {
-        // Feature flags SharedPreferences başlat
-        AppFeatureFlags.init(application)
-        // WorkManager rutin bildirimleri
-        if (AppFeatureFlags.isRoutineNotifEnabled) {
-            RoutineNotificationWorker.schedule(application)
-        }
-    }
+class EmochiViewModel @JvmOverloads constructor(
+    application: Application,
+    val repository: EmochiRepository = com.example.EmochiApplication.getSharedRepository(application)
+) : AndroidViewModel(application) {
 
     private val _uiState = MutableStateFlow<UiState>(UiState.Menu)
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
     init {
+        // 1. Initialize Feature Flags & background routine notifications
+        AppFeatureFlags.init(application)
+        if (AppFeatureFlags.isRoutineNotifEnabled) {
+            RoutineNotificationWorker.schedule(application)
+        }
+        // 2. Single ordered bootstrap coroutine (settings, starter bots, empty-message cleanup)
         viewModelScope.launch {
             try {
                 repository.deleteEmptyMessages()
+            } catch (_: Exception) {}
+            try {
+                repository.getOrCreateSettings()
+                repository.initStarterBotsIfEmpty()
             } catch (_: Exception) {}
         }
     }
@@ -132,7 +134,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         }
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.Eagerly,
+            started = SharingStarted.WhileSubscribed(5_000L),
             initialValue = emptyList()
         )
 
@@ -143,7 +145,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         }
         .stateIn(
             scope = viewModelScope,
-            started = SharingStarted.Eagerly,
+            started = SharingStarted.WhileSubscribed(5_000L),
             initialValue = emptyList()
         )
 
@@ -292,15 +294,28 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startTypewriter(msgId: String, fullText: String) {
         streamingJob?.cancel()
+        if (fullText.isEmpty()) {
+            _streamingMsgId.value = null
+            _streamingText.value = null
+            return
+        }
         _streamingMsgId.value = msgId
         _streamingText.value = ""
         maybeAutoSpeakReply(msgId, fullText)
+        // Frame-paced 60fps chunked reveal (16ms ticks, adaptive 3-6 char step) — avoids O(n²) StringBuilder churn
+        val charsPerTick = when {
+            fullText.length > 1200 -> 6
+            fullText.length > 500 -> 4
+            else -> 3
+        }
         streamingJob = viewModelScope.launch {
-            val sb = StringBuilder()
-            for (ch in fullText) {
-                sb.append(ch)
-                _streamingText.value = sb.toString()
-                kotlinx.coroutines.delay(7L)
+            var pos = 0
+            while (pos < fullText.length) {
+                pos = (pos + charsPerTick).coerceAtMost(fullText.length)
+                _streamingText.value = fullText.substring(0, pos)
+                if (pos < fullText.length) {
+                    kotlinx.coroutines.delay(16L)
+                }
             }
             // Streaming done — clear so DB text takes over
             _streamingMsgId.value = null
@@ -308,17 +323,25 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun skipTypewriter() {
+        streamingJob?.cancel()
+        streamingJob = null
+        _streamingMsgId.value = null
+        _streamingText.value = null
+    }
+
+    private fun setActiveBotId(botId: String?) {
+        if (_activeBotId.value != botId) {
+            skipTypewriter()
+        }
+        _activeBotId.value = botId
+        EmochiRepository.activeBotId = botId
+    }
+
     private val ttsManager = com.example.util.ChatTtsManager(application)
     val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
     val speakingMessageId: StateFlow<String?> = ttsManager.speakingMessageId
     val availableTtsVoices: StateFlow<List<com.example.util.ChatTtsManager.TtsVoiceOption>> = ttsManager.availableVoices
-
-    init {
-        viewModelScope.launch {
-            repository.getOrCreateSettings()
-            repository.initStarterBotsIfEmpty()
-        }
-    }
 
     private fun maybeAutoSpeakReply(messageId: String, fullText: String) {
         val settings = userSettings.value ?: return
@@ -371,21 +394,23 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
+        skipTypewriter()
+        EmochiRepository.activeBotId = null
         ttsManager.shutdown()
     }
 
     fun openMenu() {
         stopSpeaking()
         _errorMessage.value = null
-        _activeBotId.value = null
+        setActiveBotId(null)
         _immediateBotCache.value = null
         _immediateOpeningMessageCache.value = emptyList()
-        EmochiRepository.activeBotId = null
         _uiState.value = UiState.Menu
     }
 
     fun startWizard() {
         stopSpeaking()
+        skipTypewriter()
         _errorMessage.value = null
         _uiState.value = UiState.SetupWizard
     }
@@ -397,10 +422,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         if (cachedBot != null) {
             _immediateBotCache.value = cachedBot
         }
-        if (_activeBotId.value != botId) {
-            _activeBotId.value = botId
-        }
-        EmochiRepository.activeBotId = botId
+        setActiveBotId(botId)
         _uiState.value = UiState.Chat(botId)
 
         viewModelScope.launch {
@@ -556,8 +578,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                 repository.saveMessage(openingMsg)
 
                 resetBaselineAnalysisState()
-                _activeBotId.value = bot.id
-                EmochiRepository.activeBotId = bot.id
+                setActiveBotId(bot.id)
                 _uiState.value = UiState.Chat(bot.id)
                 onComplete()
             } catch (e: Exception) {
@@ -1069,8 +1090,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
                 _isSending.value = true
                 val cloned = repository.cloneBot(sourceBotId)
                 if (cloned != null) {
-                    _activeBotId.value = cloned.id
-                    EmochiRepository.activeBotId = cloned.id
+                    setActiveBotId(cloned.id)
                     _uiState.value = UiState.Chat(cloned.id)
                     onComplete?.invoke(cloned.id)
                 } else {
@@ -1222,8 +1242,7 @@ class EmochiViewModel(application: Application) : AndroidViewModel(application) 
         // Synchronously set active bot + opening message cache and transition straight to ChatScreen!
         _immediateBotCache.value = botToSave
         _immediateOpeningMessageCache.value = listOf(initialOpeningMsg)
-        _activeBotId.value = botToSave.id
-        EmochiRepository.activeBotId = botToSave.id
+        setActiveBotId(botToSave.id)
         _uiState.value = UiState.Chat(botToSave.id)
 
         viewModelScope.launch {

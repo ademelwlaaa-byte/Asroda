@@ -1,13 +1,9 @@
 package com.example.book
 
 /**
- * Chapters 6 and 7 of "Kozmik Sürükleniş" (Aiden Blackwood — MCU Evreni).
- * Extended novel-length Turkish literary prose with deep cross-chapter Memory Echoes,
- * Red Eye instability & Avengers Trust tracking, and rich narrative payoffs.
- *
- * Chapter 6: Kırık Ayna (İstanbul Arşivi, Denek 7-A gerçeği, 3 operasyon yolu & gelecek kararı)
- * Chapter 7: Karanlık Ayna (Dr. Hale'in teslimiyeti, Prag aile sırrı, Savaş Masası,
- *            Wanda Asansörü, Natasha Çatısı, İstanbul Tünelleri ve Mira Finali)
+ * Extended, novel-length Chapters 6 and 7 of "Kozmik Sürükleniş" (Aiden Blackwood — MCU).
+ * Rebuilt with long immersive prose, ONLY 2 monumental high-impact crossroads in Ch 6 and 3 in Ch 7,
+ * deep cross-chapter flags/echoes, and 100% fidelity to Aiden Blackwood's canon.
  */
 object CosmicDriftChapters6To7 {
 
@@ -18,991 +14,653 @@ object CosmicDriftChapters6To7 {
             title = "Kırık Ayna",
             titleEn = "Broken Mirror",
             subtitle = "İstanbul Arşivi, Denek 7-A ve Kalmak Üzerine",
-            description = "İstanbul arşivi bütün perdeyi yırtıyor: Aiden hiçbir zaman bir kaçak değildi — o bir projeydi. Ve Proje 7-A hâlâ sürüyor.",
-            descriptionEn = "The Istanbul archive reveals the truth: Aiden was never a fugitive — he was a project. And Project 7-A is not over.",
-            estimatedMinutes = 17,
-            accentHex = 0xFF34D399L,
+            description = "İstanbul sarnıçlarının altında Denek 7-A dosyasının tamamı, Boğaz kıyısında gerçek bir nefes ve yirmi yılın ardından verilen en büyük karar.",
+            descriptionEn = "The full Subject 7-A file beneath Istanbul's cisterns, a quiet breath by the Bosphorus, and the biggest choice after twenty years.",
+            estimatedMinutes = 9,
+            accentHex = 0xFFC084FCL,
             startNodeId = "ch6_s1",
-            sceneCount = 5,
-            decisionCount = 4
+            sceneCount = 3,
+            decisionCount = 2
         ),
         BookChapterMeta(
             number = 7,
             romanNumeral = "VII",
             title = "Karanlık Ayna",
             titleEn = "Dark Mirror",
-            subtitle = "Dr. Hale, Prag Sırrı ve İstanbul Tünellerinde Kırmızı Göz",
-            description = "Dr. Hale teslim oluyor. Ailenin izi bulunuyor. Ve İstanbul tünellerinde senin gibi bir Kırmızı Göz taşıyıcısı bekliyor.",
-            descriptionEn = "Dr. Hale surrenders. Aiden's family trace is found. And a Red Eye carrier waits in the Istanbul tunnels.",
-            estimatedMinutes = 22,
-            accentHex = 0xFFC084FCL,
+            subtitle = "Dr. Evelyn Hale, İstanbul Tünelleri ve Şafak",
+            description = "Dr. Evelyn Hale ile yüzleşme, İstanbul tünellerinde Mira ve Rezonans Kulesi finali, ve Boğaz'da yeni bir sayfa.",
+            descriptionEn = "Confronting Dr. Evelyn Hale, the Istanbul tunnels finale against Mira and the Resonance Tower, and dawn over the Bosphorus.",
+            estimatedMinutes = 12,
+            accentHex = 0xFFF472B6L,
             startNodeId = "ch7_s1",
-            sceneCount = 8,
-            decisionCount = 7
+            sceneCount = 4,
+            decisionCount = 3
         )
     )
 
     val nodes: Map<String, BookSceneNode> = listOf(
         // ═══════════════════════════════════════════════════════════════════════
-        // BÖLÜM 6: KIRIK AYNA
+        // BÖLÜM VI: KIRIK AYNA (2 Büyük Dönüm Noktası)
         // ═══════════════════════════════════════════════════════════════════════
         BookSceneNode(
             id = "ch6_s1",
             chapterNumber = 6,
             sceneOrder = 1,
-            sceneTitle = "Yirmi Yıllık Gölge",
-            locationTag = "AVENGERS KULESİ • 88. KAT • 04:15",
+            sceneTitle = "Boğaz Rüzgârı ve Sarnıcın Altı",
+            locationTag = "İSTANBUL • YEREBATAN ALTI GİZLİ ARŞİV • 22:30",
             paragraphs = listOf(
-                "Wanda'nın sesi hâlâ odada yankılanıyordu. *Seni yirmi yıl önce bırakmadılar. Sadece beklediler.* Haritanın üstündeki mavi çizgiler gözünün önünde bir anlığına bulanıklaştı, sonra cam gibi keskinleşti. Yirmi yıldır kaçtığın tüm o şehirler — Lizbon'un dar sokakları, Prag'ın karlı çatıları, ucuz motellerin kapıya dayanan yatakları, her sabah saydığın çıkış kapıları — hepsi tek yönlü bir laboratuvar camının ardından mı izlenmişti?",
-                "Göğsünün ortasında tuhaf bir boşluk açıldı; öfkeden daha soğuk, korkudan daha sessiz bir şey. Hayatta kalmakla gurur duyduğun yirmi yıl, başkasının deney defterinde *başarılı saha gözlemi* satırına mı denk geliyordu?",
-                "Wanda bir adım yaklaştı ama omzuna dokunmadı; nefes alacak alanı sana bilinçli olarak bıraktı. \"HYDRA öncesi, devletlerden ve ordulardan bağımsız bir yapı,\" dedi sesi duruydu. \"Kendilerine *Kör Nokta* diyorlar. Voss'un anılarında tek bir tarih alev gibi parlıyor: senin beş yaşına bastığın o mavi gece.\"",
-                "Odada yalnızca ikiniz vardınız. Cam duvarın hemen dışındaki brifing masasında Steve, Natasha, Tony, Bruce ve Clint sessizce bekliyor, kapıyı çalmadan önce senin hazır olmanı gözetiyordu."
+                "Quinjet sekiz saatlik okyanus geçişinin ardından gece yarısına doğru Karadeniz yönünden alçalırken, kokpit camının altında iki kıtayı birbirine bağlayan o uçsuz bucaksız altın ışık nehri göründü: İstanbul. Uçuş boyunca kabin çoğunlukla sessizdi. Steve Rogers yeraltı haritalarını ezberlemiş, Clint oklarının uçlarını kontrol etmiş, Wanda pencereden bulutları izlemişti. Natasha ise sadece iki kez yerinden kalkıp sana sıcak siyah çay uzatmış, tek kelime etmeden kendi koltuğuna dönmüştü.",
+                "İstanbul'un gecesi New York'unkine hiç benzemiyordu. Boğaz'dan esen tuzlu, serin rüzgâr, yüzlerce yıllık taş sokaklardaki yağmur kokusuna, uzak camilerin kubbelerinden süzülen soluk sarı ışıklara, ıslak Arnavut kaldırımlarına ve Karaköy'ün dar bir ara sokağındaki küçük ocakbaşından yükselen kömürde ızgara köfte dumanına karışıyordu. Quinjet'i şehrin kuzey dışındaki gizli S.H.I.E.L.D. pistine indirdikten sonra kalabalıktan uzak, loş taş yokuştan yürürken Natasha Romanoff o tanıdık köfte kokusunu senden tam bir saniye önce fark etti.",
+                "Durup omzunun üzerinden sana tek kelime etmeden baktı — dudağının kenarında sadece ikinizin anladığı o ince, sakin kıvrım vardı: *Önce iş, sonra yemek.* \"Gülümseme Romanoff,\" diye mırıldandın alçak sesle, \"o kömür ateşi New York'takinden daha tehlikeli.\" Yirmi yıldır dünyanın yarısını, hatta başka gezegenlerin mor gökyüzünü bile dolaşmıştın; ama iki kıtayı birbirine bağlayan bu kadim şehrin gecesinde, nefesini tutmanı gerektirmeyen tuhaf bir ağırlık ve gerçek bir sıcaklık vardı. Yoldan geçen yaşlı bir çaycı tepsisini taşırken seninle göz göze gelince bir saniyeliğine duraksayıp gözünü kaçırdı — çarpıcı mavi gözlerin bu şehirde de aynı sessiz, karşı konulmaz etkiyi bırakıyordu.",
+                "Ama yarım saat sonra, gecenin sessizliğine gömülmüş eski bir Bizans sarnıcının üçüncü sütununun ardındaki gizli çelik kapıyı açıp yeraltına indiğinizde şehrin bütün sıcaklığı yukarıda kaldı. Merdivenlerden otuz metre aşağı indikçe hava keskinleşti; taş duvarların arkasında yüzlerce yıllık su sızıntısının sesi modern bir jeneratörün alçak uğultusuna karıştı. Sarnıcın altındaki bu gizli arşiv karanlık, nemli ve tuhaf biçimde canlıydı. Yüksek taş kemerlerin arasında paslı borulardan damlayan soğuk sular yankılanıyor, karanlık su birikintilerinin yüzeyinde duvarlara gömülü mavi laboratuvar ekranlarının yansıması titriyordu. Kalın kurşun cam panellerin arkasında yirmi yıl öncesine ait deney kayıtları, beyin dalgası haritaları ve Sonsuzluk Taşı frekans şemaları sıralanmıştı. Odanın tam ortasındaki ana sunucuda ise tek bir dosya açıktı: **PROJE AYNA — DENEK 7-A: AIDEN BLACKWOOD.**",
+                "Steve Rogers ve Clint Barton üst girişteki taş kemerleri güvene alırken sen ana sunucuya yaklaştın. Elini yaklaştırdığın an biyometrik ekran kanındaki kozmik frekansı tanıdı ve yirmi yıldır kilitli duran eski güvenlik kamerası görüntüleri ile ses kayıtları kendiliğinden oynamaya başladı. Tarih ekranın köşesinde buz gibi parladı: **14 KASIM 2006 — NEW YORK — 23:41.**",
+                "Ekranda beş yaşındaki halini gördün. Yangın merdiveninin soğuk demirine küçük parmaklarınla tutunuyorsun; gökyüzü o korkunç, canlı maviyle yarılıyor ve sen annenin elini bırakıyorsun. Ama yirmi yıldır sadece kendi bulanık hafızandan bildiğin o saniyenin öncesi ve hemen sonrası ilk kez karşına çıktı: apartmanın iki sokak altındaki gizli sığınakta bir kozmik enerji çekirdeği aşırı yüklenmiş, ölümcül radyasyon dalgası doğrudan senin durduğun kata yönelmişti. Annenle baban kaçmamıştı. Baban o saniyede bir kontrol panelini kilitleyip ölümcül dalganın en yıkıcı kısmını annenle birlikte kendi üzerlerine çekmiş, yalnızca saf ve zararsız mavi enerjinin sana geçmesini sağlamışlardı. Babanın son saniyede yüzündeki o sakin maske korkudan değil, oğlunu kurtardığını bilmenin sarsılmaz kararlılığındandı.",
+                "Wanda Maximoff yanına yaklaştı, elini yavaşça soğuk cam panele yaklaştırdı; gözlerinin kenarında ince, kederli bir kızıl gölge belirdi. \"Burada hâlâ eski bir zihin ve enerji yankısı var Aiden,\" diye fısıldadı, sesi taş kemerlerde yankılandı. \"Annenle baban... o gece seni korumak için bütün yıkıcı akımı kendi üzerlerine çekmişler. Sen onları kaybetmedin. Elini bıraktığın için ölmediler. Onlar seni bilerek, sevgiyle kurtardı.\"",
+                "Kelimeler göğsünün tam ortasına ağır, sıcak bir dalga gibi indi. Yirmi yıldır her uykusuz gecede, her yeni ucuz otel odasında, her kaçışta sırtında sessizce taşıdığın o zehirli suçluluk — *neden annemin elini bıraktım?* sorusu — ilk kez ortadan ikiye çatladı ve yerini derin, yakıcı ama arındırıcı bir berraklığa bıraktı. Steve geride sessizce başını eğdi; Natasha ise tek kelime etmeden çevreyi taramaya devam ederek sana nefes alacak, kimsenin acımadığı o onurlu alanı bıraktı.",
+                "Tam o anda arşivin derinliklerinden alarm çalmadan soğuk, keskin, sinir bozucu bir enerji sinyali yükseldi. Ana sunucudaki bütün dosyalar bir anda kırmızı bir geri sayımla silinmeye başladı: **04:00.** Suyun altından ağır, kemikleri titreten bir sarsıntı geçti; yüksek taş kemerlerin ucundaki karanlık tünelde kör edici kızıl bir parıltı yanıp söndü. **Mira** bu tünellerdeydi, geldiğinizi biliyordu ve hem arşivi hem de bütün sarnıcı dört dakika içinde havaya uçurmak üzereydi."
             ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "ch5_mirror_stance",
-                    requiredFlagValue = "agreed",
-                    callbackLabel = "Kırık Aynanın Yankısı",
-                    paragraphs = listOf("Voss'un 'İkimiz de aynı şeyiz' sözü yeniden aklından geçti. İlk kez kaçmak yerine durup o aynanın içine bakıyordun — ve gördüğün şey artık seni felç etmiyordu.")
-                ),
-                ConditionalNarrative(
-                    requiredFlagKey = "ch5_voss_fate",
-                    requiredFlagValue = "protected",
-                    callbackLabel = "Voss'u Koruma Kararın",
-                    paragraphs = listOf("Wanda hafifçe ekledi: \"Voss'u Raft'a göndermemeni o da duydu, Aiden. Sabah bana gardiyan aracılığıyla tek bir not yolladı: *'Sarnıcın altındaki üçüncü mühür, çocuğun kendi el iziyle açılır.'*\"")
-                )
-            ),
-            decisionTitle = "Wanda'nın Açıklamasına Tepki",
-            choicePrompt = "Bu gerçeğin ilk darbesine nasıl karşılık vereceksin?",
+            decisionTitle = "İstanbul Arşivi — Kiminle ve Nasıl İlerleyeceksin?",
+            choicePrompt = "Arşiv dakikalar içinde silinecek. Bu operasyonda hem gerçeği hem de yanındakileri nasıl yöneteceksin?",
             choices = listOf(
                 BookChoiceDef(
-                    id = "ch6_c1_ask",
-                    label = "Sakin kal, nefesini topla ve doğrudan sor: \"Kim? Bu örgütü kim yönetiyor, Wanda?\"",
-                    toneHint = "Soğukkanlı • Odaklı",
-                    nextNodeId = "ch6_s2_istanbul_plan",
+                    id = "ch6_c1_natasha",
+                    label = "Natasha ile omuz omuza arşiv çekirdeğine in — sessiz, ölümcül bir koordinasyonla veriyi kurtar.",
+                    toneHint = "Natasha • Tam Güven • Gölge Operasyonu",
+                    nextNodeId = "ch6_s2_natasha",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 6, BookCharacterId.TONY to 5),
-                        avengersTrustDelta = 4,
-                        secretUnlocked = "Kör Nokta Örgüt Kaydı",
-                        setFlags = mapOf("ch6_reaction" to "calm_ask"),
-                        impactSummary = "Panik yerine gerçeğin köküne indin; Kör Nokta'nın yirmi yıllık gözetim protokolünü öğrendin.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "orta"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c1_alone",
-                    label = "Teras kapısına çık, beş dakika soğuk havada yalnız kal, sonra geri dön: \"Tamamını anlat.\"",
-                    toneHint = "İçsel • Dengeli",
-                    nextNodeId = "ch6_s2_istanbul_plan",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 9),
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 4, BookCharacterId.STEVE to 2),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.TRUST, 3),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.AFFECTION, 3),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.LOYALTY, 3)
+                        ),
+                        storyAxisDeltas = mapOf(
+                            StoryFlagAxis.SHADOW_ALLIANCE to 3,
+                            StoryFlagAxis.TACTICAL_DISCIPLINE to 3
+                        ),
                         avengersTrustDelta = 3,
-                        setFlags = mapOf("ch6_reaction" to "stepped_out"),
-                        impactSummary = "Wanda seni acele ettirmeden bekledi — sanki kaçmak yerine döneceğini zaten biliyormuş gibi.",
-                        isBranching = false,
+                        setFlags = mapOf("ch6_partner" to "natasha"),
+                        secretUnlocked = "Annenin Son Ses Kaydı",
+                        branchTag = "Natasha İle Sarnıç",
+                        impactSummary = "Natasha ile kusursuz bir sessizlikte arşivi kurtardınız; annenle babanın o geceye ait son kaydını buldun.",
+                        isBranching = true,
                         isRelationship = true,
-                        impactLevel = "orta"
+                        impactLevel = "kritik"
                     )
                 ),
                 BookChoiceDef(
-                    id = "ch6_c1_gather",
-                    label = "Kapıyı açıp tüm ekibi içeri çağır: \"Bunu herkesin duyması gerekiyor. Artık tek başıma saklamıyorum.\"",
-                    toneHint = "Birlik • Güven",
-                    nextNodeId = "ch6_s2_istanbul_plan",
+                    id = "ch6_c1_wanda",
+                    label = "Wanda ile zihinsel rezonans kurup arşivin enerji kilidini aç — Mira'nın bıraktığı izi birlikte oku.",
+                    toneHint = "Wanda • Zihinsel Köprü • Kozmik Derinlik",
+                    nextNodeId = "ch6_s2_wanda",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 10, BookCharacterId.CLINT to 8, BookCharacterId.NATASHA to 7, BookCharacterId.WANDA to 6, BookCharacterId.BRUCE to 6),
-                        avengersTrustDelta = 10,
-                        setFlags = mapOf("ch6_reaction" to "gathered_team"),
-                        impactSummary = "Steve: 'Bu artık senin tek başına sorunun değil. Bizim sorunumuz.' İlk kez bu yük hafif geldi.",
-                        isBranching = false,
+                        bondDeltas = mapOf(BookCharacterId.WANDA to 4, BookCharacterId.BRUCE to 2),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.EMPATHY, 3),
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.AFFECTION, 3),
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.LOYALTY, 3)
+                        ),
+                        storyAxisDeltas = mapOf(
+                            StoryFlagAxis.PSYCHIC_RESONANCE to 4,
+                            StoryFlagAxis.COSMIC_AWAKENING to 2
+                        ),
+                        mysteryDelta = 2,
+                        setFlags = mapOf("ch6_partner" to "wanda"),
+                        secretUnlocked = "Mira'nın Zihin İzi",
+                        branchTag = "Wanda İle Rezonans",
+                        impactSummary = "Wanda ile mavi ve kızıl enerjiyi birleştirip arşivi kurtardınız; Mira'nın acısını ve planını zihninden çektiniz.",
+                        isBranching = true,
                         isRelationship = true,
+                        impactLevel = "kritik"
+                    )
+                ),
+                BookChoiceDef(
+                    id = "ch6_c1_solo",
+                    label = "İkisini de geride bırak — zamanı büküp arşive tek başına gir, bu geçmişle yalnız yüzleş.",
+                    toneHint = "Yalnız Kurt • Bağımsız • Ağır Bedel",
+                    nextNodeId = "ch6_s2_solo",
+                    effect = BookChoiceEffect(
+                        bondDeltas = mapOf(BookCharacterId.TONY to 2, BookCharacterId.NATASHA to 1, BookCharacterId.WANDA to 1),
+                        storyAxisDeltas = mapOf(
+                            StoryFlagAxis.INDEPENDENCE to 4,
+                            StoryFlagAxis.MENTAL_FATIGUE to 2
+                        ),
+                        fatigueDelta = 2,
+                        setFlags = mapOf("ch6_partner" to "solo"),
+                        secretUnlocked = "Denek 7-A Tam Dosya",
+                        branchTag = "Yalnız Yüzleşme",
+                        impactSummary = "Kimseyi riske atmadan arşive tek başına girdin; dosyayı kurtardın ama yorgunluk seni neredeyse yere seriyordu.",
+                        isBranching = true,
+                        isRelationship = false,
                         impactLevel = "kritik"
                     )
                 )
             )
         ),
 
+        // ── BÖLÜM VI — DAL 6A/6B/6C → YİRMİ YILDAN SONRA İLK İSTEK ─────────────
         BookSceneNode(
-            id = "ch6_s2_istanbul_plan",
+            id = "ch6_s2_natasha",
             chapterNumber = 6,
             sceneOrder = 2,
-            sceneTitle = "İstanbul Operasyonu",
-            locationTag = "QUİNJET HANGARI • HAZIRLIK • 06:00",
+            sceneTitle = "Boğaz Kıyısında Sessiz Gerçek",
+            locationTag = "İSTANBUL • BOĞAZ KIYISI • 02:00",
             paragraphs = listOf(
-                "Quinjet'in türbinleri alçak, göğüste hissedilen bir uğultuyla ısınırken hangar kapıları yavaşça aralandı. Taktik hologramda İstanbul Boğazı'nın koyu lacivert suları ve tarihi yarımadanın metrelerce altında uzanan eski bir Bizans sarnıcı parlıyordu. Tony kırmızı noktayla işaretlenmiş yeraltı odasını büyüttü: \"Sarnıcın altı kurşun kaplı. Uydu içeri giremiyor; ne varsa gözünüzle görmeniz gerekecek.\"",
-                "Natasha siyah saha kemerini sıktı, eldivenlerini geçirdi ve dönüp doğrudan senin önüne geldi. Etrafındaki kalabalığa rağmen o an sadece ikiniz varmışsınız gibi konuştu.",
-                "\"Açık konuşacağım, Blackwood,\" dedi gözlerini kaçırmadan. \"İçeride bulacağımız dosyalar senin beş yaşındaki hayatına ait. Duygusal bulanıklık sahada en ölümcül hatadır — bunu kendi geçmişimden biliyorum. Bu operasyonda nerede durmak istiyorsun?\""
+                "Sarnıçtaki o dört dakika, tek bir fazladan kelime bile gerektirmeyen kusursuz bir gölge operasyonuna dönüştü. Sen geri sayım patlayıcılarının zaman akışını üçer saniyelik nefeslerle askıya alırken Natasha Romanoff karanlık suyun üstünden akrobatik bir hızla geçip iki kızılötesi lazer tuzağını saniyeler içinde devre dışı bıraktı ve ana veri çekirdeğini şifreli belleğe kopyaladı.",
+                "Geri sayım sıfıra inerken tünelin ucundan Mira'nın son anda fırlattığı yakıcı, dengesiz kırmızı şok dalgası taş kemerleri parçalayarak üzerinize geldi. Önüne geçip iki elinle berrak bir mavi kozmik kalkan açtın; patlamanın bütün basıncını avuçlarında emip sönümledin ve ikiniz birlikte taş merdivenlerden tek çizik almadan İstanbul gecesine çıktınız.",
+                "Dışarı çıktığınızda yağmur tamamen dinmişti. Boğaz'ın kara, derin sularında Asya yakasının soluk sarı ışıkları yavaşça titriyordu; uzaktan geçen dev bir yük gemisinin boğuk düdüğü geceyi ikiye yardı. Avucunun içinde annenle babanın 2006 gecesine ait son ses kaydı ve tam arşiv belleği duruyordu. Az önce kulaklıkta dinlediğin o kırk saniyelik kayıtta, annenin son sözleri hâlâ göğsünde yankılanıyordu: *Yaşa Aiden. Sadece yaşa, sakın arkana bakma.*",
+                "Artık neden hayatta olduğunu, o mavi gecenin bir lanet ya da senin hatan değil, uğruna ödenmiş bir sevgi olduğunu biliyordun. Steve, Wanda ve Clint birkaç yüz metre gerideki güvenli evde Dr. Hale'in izlerini ve Rezonans Kulesi'nin haritasını inceliyordu; sana bu gece yarım saatlik bir nefes alanı bırakmışlardı.",
+                "Natasha iki adım yanında, denizden nemlenmiş taş korkuluğa yaslanmıştı. Boğaz'ın soğuk rüzgârı siyah ceketinin yakasını ve kızıl saçlarını hafifçe savuruyordu. Senden tek bir kelime beklemiyordu; her zamanki gibi sessizliğine saygı duyuyor, duvarlarını zorlamıyor, seni sıradan teselli cümleleriyle boğmaya çalışmıyordu. O, gölgelerde büyümüş birinin başka bir gölgeye verebileceği en nadir, en değerli şeyi veriyordu: baskısız, güvenli bir sessizlik.",
+                "Beş dakika boyunca sadece suyun taşlara vurmasını dinlediniz. Uzaktaki bir köprüden geçen arabanın farları suyun üstünde soluk bir iz bıraktı. Aklına beş yaşındaki o mavi gece geldi, ardından on dokuz yıl boyunca uykusuz geçirdiğin tren garları, sahte pasaport kuyrukları, Prag'ın mor kumlu yabancı gökyüzü... Ve şimdi burada, Boğaz'ın soğuk rüzgârında ilk kez nefesini tutmadan duruyordun.",
+                "\"Annemle babam beni kurtarmış,\" dedin sonunda, sesin rüzgârda neredeyse bir fısıltı gibiydi. \"Yirmi yıldır elini bıraktığım için öldüklerini sandım. Her gece o saniyeyi tekrar tekrar yaşadım.\"",
+                "Natasha bir saniye denize baktı, sonra yavaşça sana döndü. Çarpıcı mavi gözlerinle karşılaştığında bakışları her zamanki gibi sabit, sakin ve dürüsttü. \"Kırmızı Oda'da bana yıllarca hayatta kalmanın suç olduğunu öğrettiler Aiden,\" dedi alçak bir sesle. \"Hayatta kalmak suç değil. Onlar senin yaşamanı istedi — sadece nefes almanı değil, gerçekten yaşamanı.\"",
+                "Bir an durdu, rüzgârda ceketinin yakasını düzeltti. \"Yirmi yıldır tek bir amacın vardı: iz bırakmamak ve kaçmak. Şimdi bütün gerçeği biliyorsun. Yarın gece Mira ve Dr. Hale bittiğinde, bütün o kovalamaca kapandığında... gerçekten ne istiyorsun?\""
             ),
-            decisionTitle = "İstanbul Operasyonunda Rol",
-            choicePrompt = "İstanbul yeraltı arşivine yapılacak operasyonda hangi rolü seçeceksin?",
+            decisionTitle = "Yirmi Yıldan Sonra İlk İstek",
+            choicePrompt = "İlk kez kaçmak zorunda olmadığın bir gelecek ihtimali önünde duruyor. Kalbin ve zihnin neyi seçiyor?",
             choices = listOf(
                 BookChoiceDef(
-                    id = "ch6_c2_lead",
-                    label = "\"Liderliği ben alıyorum. Bu benim hikâyem — içeride ne varsa ilk ben göreceğim.\"",
-                    toneHint = "Dallanma • Liderlik",
-                    nextNodeId = "ch6_s3_istanbul_lead",
+                    id = "ch6_c2_stay_and_step",
+                    label = "\"Artık kaçmak istemiyorum. Kule'de kalacağım — ve bu kez gerçekten birine yer açacağım.\"",
+                    toneHint = "Kalış • Bilinçli Duygusal Adım • Büyük Değişim",
+                    nextNodeId = "ch6_s3_end",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 7, BookCharacterId.STEVE to 6, BookCharacterId.CLINT to 4),
-                        fatigueDelta = 1,
-                        avengersTrustDelta = 5,
-                        setFlags = mapOf("ch6_istanbul_role" to "lead"),
-                        branchTag = "İstanbul Liderlik Yolu",
-                        impactSummary = "Natasha saygıyla başını eğdi: 'Tamam. Ama duygusal ağırlığı bilerek yürü, arkandayım.'",
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 4, BookCharacterId.STEVE to 3),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.AFFECTION, 3),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.TRUST, 3)
+                        ),
+                        storyAxisDeltas = mapOf(
+                            StoryFlagAxis.TOWER_BELONGING to 4,
+                            StoryFlagAxis.HUMANITY_ANCHOR to 4
+                        ),
+                        avengersTrustDelta = 3,
+                        setFlags = mapOf("ch6_desire" to "stay_bond"),
+                        branchTag = "Kalmayı Seçmek",
+                        impactSummary = "Aiden Blackwood hayatında ilk kez kendi iradesiyle bir adım attı. Natasha bakışını kaçırmadan yanına biraz daha yaklaştı.",
                         isBranching = true,
                         isRelationship = true,
                         impactLevel = "kritik"
                     )
                 ),
                 BookChoiceDef(
-                    id = "ch6_c2_support",
-                    label = "\"Destek kanadında gelirim. Objektif kalmam zor olabilir — saha komutasını Natasha alsın.\"",
-                    toneHint = "Dallanma • Olgun Destek",
-                    nextNodeId = "ch6_s3_istanbul_support",
+                    id = "ch6_c2_finish_first",
+                    label = "\"Önce bu işi bitireceğim. Dr. Hale ve Mira bitmeden hiçbir şeye söz vermem.\"",
+                    toneHint = "Odaklı • Mesafeli • Görev Öncelikli",
+                    nextNodeId = "ch6_s3_end",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 11, BookCharacterId.STEVE to 8),
-                        avengersTrustDelta = 8,
-                        setFlags = mapOf("ch6_istanbul_role" to "support"),
-                        branchTag = "İstanbul Destek Yolu",
-                        impactSummary = "Sınırını bilip dürüstçe söylemen Natasha'nın gözlerinde sıcak bir onay uyandırdı.",
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 2, BookCharacterId.STEVE to 2),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.TACTICAL_DISCIPLINE to 3, StoryFlagAxis.INDEPENDENCE to 2),
+                        setFlags = mapOf("ch6_desire" to "mission_first"),
+                        branchTag = "Önce Hesaplaşma",
+                        impactSummary = "Duygularını erteleyip gözünü tamamen final hesaplaşmasına diktin; Natasha bunu kırgınlık duymadan kabul etti.",
+                        isBranching = true,
+                        isRelationship = false,
+                        impactLevel = "orta"
+                    )
+                )
+            )
+        ),
+
+        BookSceneNode(
+            id = "ch6_s2_wanda",
+            chapterNumber = 6,
+            sceneOrder = 2,
+            sceneTitle = "İki Kırık Ayna, Tek Sessizlik",
+            locationTag = "İSTANBUL • BOĞAZ KIYISI • 02:00",
+            paragraphs = listOf(
+                "Sarnıcın en derin kemerinin altında, mavi kozmik enerjin ile Wanda Maximoff'un kızıl kaos gücü ilk kez tek bir akışta birleştiğinde tuhaf, yıllardır hiç yaşamadığın bir şey oldu: güç seni tüketmedi, şakaklarını yakmadı, nefesini kesmedi. İki farklı evren dalgası birbirini dengeledi. Arşivin kendi kendini imha eden enerji kilidini saniyeler içinde açtınız, annenle babanın son kaydını kurtardınız ve Mira'nın tünelin derinliklerinde bıraktığı o yakıcı zihin izini — yıllarca cam duvarların arkasında birikmiş öfkesini, yalnızlığını ve Boğaz'ın altındaki Rezonans Kulesi'nin tam koordinatlarını — tek bir ortak dokunuşla okudunuz.",
+                "Sarnıçtan yerüstüne çıktığınızda yağmur tamamen dinmişti. Boğaz'ın soğuk, karanlık suları taş rıhtıma usulca vuruyor, uzaktan geçen bir gece vapurunun ışıkları suda altın şeritler halinde dağılıyordu. Avucunun içinde annenle babanın kaydı duruyordu — yirmi yıl boyunca taşıdığın o suçluluk nihayet yerini dürüst bir vedaya bırakmıştı.",
+                "Wanda iki adım yanında duruyordu. Ellerini koyu ceketinin ceplerine sokmuş, Boğaz rüzgârında karşı kıyıya bakıyordu. Ne seni konuşturmaya çalışıyor ne de izinsiz zihnine dokunuyordu. İkiniz arasındaki o nadir zihinsel köprü yalnızca senin izin verdiğin kadar, senin açtığın kapı kadar vardı.",
+                "Uzun, rahatlatıcı bir sessizliğin ardından \"Annemle babam beni kurtarmış,\" dedin alçak sesle. \"Yirmi yıldır elini bıraktığım için öldüklerini sanıyordum. O suçluluğu her şehirde, her boyutta sırtımda taşıdım.\"",
+                "Wanda başını hafifçe sana çevirdi. Gözlerinde ne acıma ne de bir beklenti vardı — yalnızca kendi kayıplarını yaşamış birinin duru, derin anlayışı. \"Ben de Sokovia'da ailemi kaybettiğim ve ikizim Pietro'dan koptuğum gece aynı şeyi düşündüm Aiden,\" diye fısıldadı. \"Bazen hayatta kalan kişi en ağır yükü taşır. Ama onlar bizim suçlulukla gölgelerde saklanmamız için gitmediler.\"",
+                "Bir saniye Boğaz'ın karanlık sularına baktı, sonra tekrar sana döndü. \"Bütün hayatın boyunca senden korkan insanlardan, cam duvarlardan ve uydulardan kaçtın. Şimdi aileni, geçmişini ve neden hayatta olduğunu biliyorsun. Yarın gece bu savaş bittiğinde... gerçekten ne istiyorsun?\""
+            ),
+            decisionTitle = "Yirmi Yıldan Sonra İlk İstek",
+            choicePrompt = "Wanda soruyu sordu ve sessizce bekliyor. Hamle tamamen sende.",
+            choices = listOf(
+                BookChoiceDef(
+                    id = "ch6_c2_stay_and_step",
+                    label = "\"Kaçmayı bırakıyorum. Kule'de kalacağım — ve seninle bu sessizliği paylaşmak istiyorum.\"",
+                    toneHint = "Wanda • Bilinçli Duygusal Adım • Derin Bağ",
+                    nextNodeId = "ch6_s3_end",
+                    effect = BookChoiceEffect(
+                        bondDeltas = mapOf(BookCharacterId.WANDA to 4, BookCharacterId.STEVE to 2),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.AFFECTION, 3),
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.TRUST, 3)
+                        ),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.TOWER_BELONGING to 4, StoryFlagAxis.HUMANITY_ANCHOR to 4),
+                        avengersTrustDelta = 3,
+                        setFlags = mapOf("ch6_desire" to "stay_bond"),
+                        branchTag = "Wanda İle Kalış",
+                        impactSummary = "Aiden Blackwood kendi isteğiyle bir adım attı. Wanda'nın gözlerinde ilk kez saf, kırılgan bir mutluluk parladı.",
                         isBranching = true,
                         isRelationship = true,
                         impactLevel = "kritik"
                     )
                 ),
                 BookChoiceDef(
-                    id = "ch6_c2_stay_tower",
-                    label = "\"Gitmiyorum. Objektif kalamam ve birinizi tehlikeye atamam — Kule'de kalıp Voss ile konuşacağım.\"",
-                    toneHint = "Dallanma • Kule'de Kalış",
-                    nextNodeId = "ch6_s3_tower_voss",
+                    id = "ch6_c2_finish_first",
+                    label = "\"Önce Mira ve Dr. Hale bitecek. Ondan sonrasını şafakta konuşuruz.\"",
+                    toneHint = "Odaklı • Mesafeli • Görev Öncelikli",
+                    nextNodeId = "ch6_s3_end",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 11, BookCharacterId.STEVE to 6),
-                        avengersTrustDelta = 6,
-                        secretUnlocked = "Voss'un Kişisel Anahtarı",
-                        setFlags = mapOf("ch6_istanbul_role" to "stayed_tower"),
-                        branchTag = "Kule'de Voss Yüzleşmesi",
-                        impactSummary = "Wanda: 'Gitmemek bazen en zor seçimdir.' Voss'la baş başa kalıp arşivin şifresini bizzat aldın.",
+                        bondDeltas = mapOf(BookCharacterId.WANDA to 2, BookCharacterId.STEVE to 2),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.TACTICAL_DISCIPLINE to 3, StoryFlagAxis.INDEPENDENCE to 2),
+                        setFlags = mapOf("ch6_desire" to "mission_first"),
+                        branchTag = "Önce Hesaplaşma",
+                        impactSummary = "Duygularını erteleyip odağını finale çevirdin.",
+                        isBranching = true,
+                        isRelationship = false,
+                        impactLevel = "orta"
+                    )
+                )
+            )
+        ),
+
+        BookSceneNode(
+            id = "ch6_s2_solo",
+            chapterNumber = 6,
+            sceneOrder = 2,
+            sceneTitle = "Tek Başına Taşınan Ağırlık",
+            locationTag = "İSTANBUL • BOĞAZ KIYISI • 02:00",
+            paragraphs = listOf(
+                "Kimseyi kendi geçmişinin ateşine sürüklemedin. Ekibe kapıda kalmalarını söyledin, derin bir nefes aldın ve çevrendeki zamanı dört tam saniyeliğine dondurup sarnıcın çökmek üzere olan ana arşiv odasına tek başına daldın. Kızılötesi lazer tuzaklarını berrak bir mavi enerji kalkanıyla eritip susturdun; Denek 7-A tam dosyasını, Rezonans Kulesi haritasını ve annenle babanın o geceye ait son kaydını çekirdek patlamadan tam yarım saniye önce çekip aldın.",
+                "Sarnıcın dışına ışınlandığında dizlerin ıslak Arnavut taşlarının üstünde hafifçe titriyordu, burnundan ince bir çizgi halinde sıcak kan sızmıştı — hızlı iyileşmen hemen devreye girse de dört saniyelik tam zaman dondurma ve acil sıçrama bedeni ağır vurmuştu. Ama bütün gerçek elindeydi.",
+                "Boğaz'ın tuzlu, serin gece havasını ciğerlerine çekerken Steve Rogers, Natasha Romanoff ve Wanda Maximoff birkaç adım geride, taş korkuluğun başında sessizce bekliyordu. Hiçbiri seni acele ettirmedi, hiçbiri neden tek başına girdiğini sorgulamadı, hiçbiri omuzlarına dokunmaya kalkmadı. Yirmi yıllık yalnızlık alışkanlığı hâlâ sert bir zırh gibi omuzlarındaydı; ama hayatında ilk kez, arkana dönüp baktığında seni avlamak için değil, sessizce sırtını tutmak için orada duran insanlar vardı. Ve ilk kez kendine dürüst bir soru sormak zorundaydın: yarın gece bu savaş bittiğinde gerçekten ne yapacaksın?"
+            ),
+            decisionTitle = "Yirmi Yıldan Sonra İlk İstek",
+            choicePrompt = "Finalden önceki son sakin gecede kendine dürüst ol: bu savaş bittiğinde ne yapacaksın?",
+            choices = listOf(
+                BookChoiceDef(
+                    id = "ch6_c2_stay_and_step",
+                    label = "Kule'de kalmaya karar ver — artık kaçak değil, kendi yerini seçen biri ol.",
+                    toneHint = "Aidiyet • Yeni Sayfa",
+                    nextNodeId = "ch6_s3_end",
+                    effect = BookChoiceEffect(
+                        bondDeltas = mapOf(BookCharacterId.STEVE to 3, BookCharacterId.NATASHA to 2, BookCharacterId.WANDA to 2),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.TOWER_BELONGING to 4, StoryFlagAxis.HUMANITY_ANCHOR to 3),
+                        avengersTrustDelta = 3,
+                        setFlags = mapOf("ch6_desire" to "stay_bond"),
+                        branchTag = "Kalmayı Seçmek",
+                        impactSummary = "İçinde ilk kez bir yere ait olma fikrine yer açtın.",
                         isBranching = true,
                         isRelationship = true,
                         impactLevel = "kritik"
                     )
+                ),
+                BookChoiceDef(
+                    id = "ch6_c2_finish_first",
+                    label = "Bağımsız kal — bu işi bitir, ama hiçbir yere zincirlenme.",
+                    toneHint = "Özgür • Yalnız Kurt",
+                    nextNodeId = "ch6_s3_end",
+                    effect = BookChoiceEffect(
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 1),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.INDEPENDENCE to 4),
+                        setFlags = mapOf("ch6_desire" to "mission_first"),
+                        branchTag = "Özgür Yol",
+                        impactSummary = "Özgürlüğünü her şeyin üstünde tutmaya devam ettin.",
+                        isBranching = true,
+                        isRelationship = false,
+                        impactLevel = "orta"
+                    )
                 )
             )
         ),
 
-        // ── CH6 SCENE 3 (3 GENUINE BRANCHES) ──
         BookSceneNode(
-            id = "ch6_s3_istanbul_lead",
+            id = "ch6_s3_end",
             chapterNumber = 6,
             sceneOrder = 3,
-            sceneTitle = "Sarnıcın Altındaki Dosya",
-            locationTag = "İSTANBUL • YERALTI ARŞİVİ 7-A • 23:10",
-            paragraphs = listOf(
-                "Yağmurlu İstanbul gecesinde, eski taş duvarların arasına gizlenmiş dar merdivenlerden aşağı indiniz. Nem kokusuyla karışık keskin bir ozon kokusu burnuna çarptığında arşivin hâlâ gizli bir jeneratörle enerji çektiğini anladın. Güvenlik kapılarını uzam kıvılcımınla sessizce devre dışı bıraktın; Steve ve Natasha arkandan kusursuz bir disiplinle odayı güvene aldı.",
-                "Sütunların ortasındaki karanlık cam masada tek bir fırçalanmış metal klasör bırakılmıştı — sanki burayı boşaltanlar özellikle senin eline geçmesi için geride bırakmıştı. Kapağı açtığında beş yaşındaki fotoğrafınla göz göze geldin. Saçların dağınık, yüzünde henüz hiçbir kaçışın izi yok.",
-                "Fotoğrafın altındaki koyu kırmızı mühürde tek bir başlık kazılıydı: *PROJE 7-A — DENEK: AIDEN BLACKWOOD. DURUM: SERBEST GÖZLEM. AKTİVASYON BEKLENİYOR.*",
-                "İkinci sayfada laboratuvar notlarının altında düzgün, eğik bir el yazısıyla atılmış bir imza duruyordu: *Baş Araştırmacı: Dr. Evelyn Hale.* Sayfayı çevirdiğinde nefesin kesildi. Beş yaşındayken gökyüzünden inen o mavi ışık rastgele bir kozmik kaza değildi. Ailen sıradan bir felakette kaybolmamıştı — sen o gece özellikle seçilmiştin."
-            ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "ch3_locket",
-                    requiredFlagValue = "faced_past",
-                    callbackLabel = "Madalyondaki Koordinat Eşleşti",
-                    paragraphs = listOf("Dosyanın arka cebinden ince bir çelik anahtar kartı düştü — üstündeki beş haneli sayı, göğsündeki madalyonun içine kazılı olan o gizemli koordinatın birebir aynısıydı. Annen o madalyonu senin boynuna boşuna takmamıştı; bir gün bu odayı bulmanı istemişti.")
-                )
-            ),
-            decisionTitle = "'Denek 7-A' Gerçeğine Yanıt",
-            choicePrompt = "Yirmi yıllık hayatının bir deneyin 'serbest gözlem' aşaması olduğunu öğrendin. İçinde ne yükseliyor?",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch6_c3_anger",
-                    label = "Soğuk, keskin ve hedefi belli bir öfke — artık kimden hesap soracağını biliyorsun.",
-                    toneHint = "Soğuk Öfke",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 5, BookCharacterId.TONY to 6),
-                        redEyeDelta = 1,
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "cold_anger"),
-                        impactSummary = "Yirmi yıldır neden kaçtığını artık biliyordun; öfken dağılmadı, keskin bir odağa dönüştü.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c3_numb",
-                    label = "Sessiz bir uyuşma — hiçbir şey hissetmiyorsun; büyük kırılmalar bir anda değil, katman katman işlenir.",
-                    toneHint = "Sessiz • İçedönük",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 9),
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "numb"),
-                        impactSummary = "Gece geç saatte Natasha sessizce kahve getirdi: 'Büyük şeyler böyle işlenir — katman katman.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c3_relief",
-                    label = "Tuhaf ama gerçek bir rahatlama — yirmi yıl sonra ilk kez bir cevabın, bir adın ve bir düşmanın var.",
-                    toneHint = "Berraklık • Rahatlama",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 9, BookCharacterId.STEVE to 6),
-                        avengersTrustDelta = 5,
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "relief"),
-                        impactSummary = "Wanda: 'İyi misin?' — 'Hayır. Ama ilk kez ne olduğunu biliyorum. Bu her şeyi değiştiriyor.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                )
-            )
-        ),
-
-        BookSceneNode(
-            id = "ch6_s3_istanbul_support",
-            chapterNumber = 6,
-            sceneOrder = 3,
-            sceneTitle = "Natasha'nın Yanında Gerçek",
-            locationTag = "İSTANBUL • YERALTI ARŞİVİ 7-A • 23:10",
-            paragraphs = listOf(
-                "Natasha sarnıcın yankılı taş geçitlerinden ekibi tek bir el işaretiyle yönlendirdi. Sen arka kanadı koruyarak havadaki ince uzam kırılmalarını okudun; üç gizli lazer sensörünü daha tetiklenmeden devre dışı bıraktın. Arşiv odasına girdiğinizde Natasha masadaki metal klasörü önce tuzak ihtimaline karşı kendi taradı, sonra gözlerinin içine bakıp tek kelime etmeden sana uzattı.",
-                "Klasörün kapağını kaldırdığında yirmi yıl geriye baktın: *PROJE 7-A — DENEK: AIDEN BLACKWOOD. DURUM: SERBEST GÖZLEM. BAŞ ARAŞTIRMACI: DR. EVELYN HALE.*",
-                "Satırların arasında senin dokuz yaşındayken ilk ışınlanışının, on beşinde gözlerinin ilk kez beyaza dönüşünün tarihleri bile vardı. Biri hep bir gölge mesafesinde not tutmuştu. Beş yaşındayken mavi ışığın altında kalan yangın merdiveni bir kaza değildi. Sen bir kaçak değildin — yirmi yıl boyunca büyüyüp olgunlaşması izlenen bir projeydin."
-            ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "ch3_locket",
-                    requiredFlagValue = "faced_past",
-                    callbackLabel = "Madalyondaki Koordinat Eşleşti",
-                    paragraphs = listOf("Natasha dosyanın iç kapağındaki sayı dizisini fark edip başını kaldırdı: \"Bu koordinat... senin boynundaki eski madalyondaki sayı değil mi?\" Başını salladın. Annen seni tesadüfen değil, bir gün gerçeği bulman için işaretlemişti.")
-                )
-            ),
-            decisionTitle = "'Denek 7-A' Gerçeğine Yanıt",
-            choicePrompt = "Dosya ellerinde ağırlaşırken içinde hangi duygu ağır basıyor?",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch6_c3_anger",
-                    label = "Soğuk, keskin ve hedefi belli bir öfke — artık kimden hesap soracağını biliyorsun.",
-                    toneHint = "Soğuk Öfke",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 5, BookCharacterId.TONY to 6),
-                        redEyeDelta = 1,
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "cold_anger"),
-                        impactSummary = "Yirmi yıldır neden kaçtığını artık biliyordun; öfken dağılmadı, keskin bir odağa dönüştü.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c3_numb",
-                    label = "Sessiz bir uyuşma — hiçbir şey hissetmiyorsun; büyük kırılmalar bir anda değil, katman katman işlenir.",
-                    toneHint = "Sessiz • İçedönük",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 9),
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "numb"),
-                        impactSummary = "Gece geç saatte Natasha sessizce kahve getirdi: 'Büyük şeyler böyle işlenir — katman katman.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c3_relief",
-                    label = "Tuhaf ama gerçek bir rahatlama — yirmi yıl sonra ilk kez bir cevabın, bir adın ve bir düşmanın var.",
-                    toneHint = "Berraklık • Rahatlama",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 9, BookCharacterId.STEVE to 6),
-                        avengersTrustDelta = 5,
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "relief"),
-                        impactSummary = "Wanda: 'İyi misin?' — 'Hayır. Ama ilk kez ne olduğunu biliyorum. Bu her şeyi değiştiriyor.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                )
-            )
-        ),
-
-        BookSceneNode(
-            id = "ch6_s3_tower_voss",
-            chapterNumber = 6,
-            sceneOrder = 3,
-            sceneTitle = "Kule'de İki Kırık Ayna",
-            locationTag = "AVENGERS KULESİ • 42. KAT",
-            paragraphs = listOf(
-                "Ekip İstanbul'a uçarken sen 42. katta Voss'un tam karşısına oturdun. Bu kez aranızda tek yönlü ayna ya da çelik cam yoktu. Voss şaşkındı ama gözlerinde derin, neredeyse baba gibi bir anlayış belirdi. \"Sarnıca gitmedin,\" dedi sesi alçaktı. \"Çünkü cevabın yalnızca kâğıtlarda değil, benim hafızamda olduğunu anladın.\"",
-                "Kulaklığından Natasha'nın sesi geldiğinde İstanbul'daki ekip mühürlü terminale bağlanmıştı. Voss gözlerini kapatıp yıllardır zihninde kilitli tuttuğu kırk haneli şifre anahtarını tek nefeste okudu. Önündeki ekranda büyük kırmızı harflerle tek bir başlık açıldı:",
-                "*PROJE 7-A — DENEK: AIDEN BLACKWOOD. DURUM: SERBEST GÖZLEM. BAŞ ARAŞTIRMACI: DR. EVELYN HALE.*",
-                "Beş yaşındaki mavi gökyüzü kaza değildi. Yirmi yıl boyunca kaçtığını sanırken aslında geniş bir kafesin içinde izlenmiştin. Voss başını eğdi: \"Seni uyarmaya geç kaldım, çocuk. Ama hâlâ zamanın var.\""
-            ),
-            decisionTitle = "'Denek 7-A' Gerçeğine Yanıt",
-            choicePrompt = "Gerçek nihayet ekranı doldurduğunda içinde ne hissediyorsun?",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch6_c3_anger",
-                    label = "Soğuk, keskin ve hedefi belli bir öfke — artık kimden hesap soracağını biliyorsun.",
-                    toneHint = "Soğuk Öfke",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 5, BookCharacterId.TONY to 6),
-                        redEyeDelta = 1,
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "cold_anger"),
-                        impactSummary = "Yirmi yıldır neden kaçtığını artık biliyordun; öfken dağılmadı, keskin bir odağa dönüştü.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c3_numb",
-                    label = "Sessiz bir uyuşma — hiçbir şey hissetmiyorsun; büyük kırılmalar bir anda değil, katman katman işlenir.",
-                    toneHint = "Sessiz • İçedönük",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 9),
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "numb"),
-                        impactSummary = "Gece geç saatte Natasha sessizce kahve getirdi: 'Büyük şeyler böyle işlenir — katman katman.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c3_relief",
-                    label = "Tuhaf ama gerçek bir rahatlama — yirmi yıl sonra ilk kez bir cevabın, bir adın ve bir düşmanın var.",
-                    toneHint = "Berraklık • Rahatlama",
-                    nextNodeId = "ch6_s4_future",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 9, BookCharacterId.STEVE to 6),
-                        avengersTrustDelta = 5,
-                        secretUnlocked = "Proje 7-A Ana Dosyası",
-                        setFlags = mapOf("ch6_truth_emotion" to "relief"),
-                        impactSummary = "Wanda: 'İyi misin?' — 'Hayır. Ama ilk kez ne olduğunu biliyorum. Bu her şeyi değiştiriyor.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                )
-            )
-        ),
-
-        // ── CH6 SCENE 4: WHAT DO YOU WANT NEXT ──
-        BookSceneNode(
-            id = "ch6_s4_future",
-            chapterNumber = 6,
-            sceneOrder = 4,
-            sceneTitle = "Yirmi Yıldan Sonra İlk İstek",
-            locationTag = "AVENGERS KULESİ • 88. KAT • ŞAFAK",
-            paragraphs = listOf(
-                "Ertesi sabah solgun altın rengi güneş ışığı Manhattan'ın cam kulelerine vururken tüm ekip yeniden büyük masanın etrafındaydı. İstanbul'dan gelen şifreli dosyalar, enerji şemaları ve eski fotoğraflar masaya yayılmıştı; ama kimse yeni bir plan dikte etmiyordu. Odadaki beş çift göz de tek bir kişinin sözünü bekliyordu.",
-                "Steve Rogers masanın etrafından dolaşıp sana doğru bir adım attı. Sesinde komutan tınısı yoktu; yalnızca seni gerçekten gören bir dostun ağırlığı vardı.",
-                "\"Aiden,\" dedi. \"Yirmi yıldır başkalarının yazdığı bir hikâyeden kaçtın. Şu an kapılar açık, dosya masada ve bu oda senin yanında. Kimse seni bir şeye zorlamıyor. Söyle bize — bundan sonra *sen* ne istiyorsun?\""
-            ),
-            decisionTitle = "'Bundan Sonra Ne İstiyorsun?'",
-            choicePrompt = "Tüm ekibin önünde kendi geleceğine dair ilk gerçek kararını ver.",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch6_c4_hunt",
-                    label = "\"Kör Nokta'yı bulmak istiyorum. Ve bu projeyi sonsuza kadar bitirmek.\"",
-                    toneHint = "Kararlı • Taarruz",
-                    nextNodeId = "ch6_s5_end",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.CLINT to 10, BookCharacterId.TONY to 8, BookCharacterId.STEVE to 6, BookCharacterId.THOR to 6),
-                        avengersTrustDelta = 8,
-                        setFlags = mapOf("ch6_wish" to "hunt"),
-                        impactSummary = "Clint gülümsedi: 'Hoş geldin Blackwood — gerçekten bu sefer.' Ekip tek yürek oldu.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c4_stay",
-                    label = "\"Bilmiyorum henüz. Ama... burada kalmak istiyorum. İlk kez gitmek istemiyorum.\"",
-                    toneHint = "Duygusal • Aidiyet",
-                    nextNodeId = "ch6_s5_end",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 12, BookCharacterId.NATASHA to 9, BookCharacterId.WANDA to 9),
-                        avengersTrustDelta = 10,
-                        setFlags = mapOf("ch6_wish" to "stay"),
-                        impactSummary = "Steve elini uzattı: 'Yeter bu.' Yirmi yılda ilk kez uzatılan bir eli geri bırakmak istemedin.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch6_c4_save_voss",
-                    label = "\"Voss'u bu kâbustan kurtarmak istiyorum. Sonra birlikte Kör Nokta'nın kapısına gideriz.\"",
-                    toneHint = "Merhamet • Kurtarış",
-                    nextNodeId = "ch6_s5_end",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 12, BookCharacterId.STEVE to 8, BookCharacterId.CLINT to 6, BookCharacterId.BRUCE to 6),
-                        avengersTrustDelta = 8,
-                        setFlags = mapOf("ch6_wish" to "save_voss"),
-                        impactSummary = "Wanda'nın gözleri doldu: artık kaçmak için değil, birini kurtarmak için yürüyordun.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                )
-            )
-        ),
-
-        BookSceneNode(
-            id = "ch6_s5_end",
-            chapterNumber = 6,
-            sceneOrder = 5,
             sceneTitle = "Kapıdaki Ziyaretçi",
-            locationTag = "AVENGERS KULESİ • LİMAN GİRİŞİ • 08:22",
+            locationTag = "İSTANBUL GÜVENLİ EV • 04:15",
             paragraphs = listOf(
-                "Tam toplantı dağılırken odadaki tüm cam paneller bir anlığına titredi ve FRIDAY'in acil bildirim ışığı soğuk bir maviye döndü: \"Bay Stark, ana lobide silahsız bir kadın güvenlikten geçmeden teslim olmak istiyor. Sadece Aiden Blackwood ile konuşacağını söylüyor.\"",
-                "Tony parmağını havada kaydırıp güvenlik kamerasını masanın üstüne yansıttığında odadaki herkes olduğu yerde dondu. Yağmurdan ıslanmış gri saçlı, ince çerçeveli gözlüklü, iki elini yavaşça baş hizasına kaldırmış yaşlı bir kadın doğrudan kameranın lensine bakıyordu.",
-                "İstanbul sarnıcındaki dosyanın ikinci sayfasındaki fotoğrafın, o eğik imzanın birebir aynısıydı: *Dr. Evelyn Hale.*"
+                "Şafaktan iki saat önce, Boğaz'ın dar yamaçlarına bakan o küçük, eski taş güvenli evde zaman ağır ilerliyordu. Masanın üzerinde sarnıçtan çıkardığınız haritalar, enerji grafikleri ve Tony Stark'ın New York'tan canlı olarak güncellediği yeraltı tünel kesitleri açıktı. Steve Rogers elindeki sıcak kahveyle haritaya eğilmişti, Clint Barton pencere kenarından karanlık sokağı gözlüyordu, Wanda ve Natasha ise sessizce son mühimmat ve frekans kontrollerini yapıyordu.",
+                "Sen pencerenin hemen önündeki ahşap sandalyede oturup sarnıçtan kurtardığın o eski 2006 ses kaydını ikinci kez dinledin.",
+                "[[AUDIO|14 KASIM 2006 — ANNE & BABA SON SES KAYDI (00:42)|\"Aiden, sakın korkma oğlum. Sadece gözlerini kapat ve nefes al.\" — [Mavi yarık uğultusu, cam kırılması] — \"Yaşa Aiden. Sadece yaşa, sakın arkana bakma.\"]]",
+                "Kayıt bittiğinde kulaklığı masaya koydun. Yirmi yıldır ilk kez o geceyi düşündüğünde göğsünde buz değil, acı ama temiz bir gurur vardı.",
+                "Saat tam 04:15'i gösterdiğinde dış ahşap kapıda iki kısa, ölçülü ve hiç acele etmeyen vuruş duyuldu. *Tak. Tak.* Odadaki bütün hareket tek bir saniyede dondu. Steve refleksle kalkanına uzandı, Clint yayını sessizce kaldırdı, Natasha bir gölge gibi kapının yanındaki kör noktaya geçti. Ama kapıyı kendi elinle açtığında eşikte silahlı bir S.H.I.E.L.D. timi ya da Konsey suikastçısı yoktu.",
+                "Soğuk gece havasının içinde tek bir kişi duruyordu: saçlarına kır düşmüş, omuzları yılların yüküyle çökmüş, üzerinde yağmurdan ıslanmış eski bir trençkot olan altmışlı yaşlarında bir kadın. Tamamen silahsızdı; iki elini de açıkça görünür tutuyordu. Gözlerinin altında yirmi yıllık uykusuzluğun ve ağır bir vicdan azabının silinmez gölgesi vardı. Fotoğrafını 19 numaralı rıhtımdaki yanık dosyalarda görmüştün: **Dr. Evelyn Hale.**",
+                "\"Beni burada, bu eşikte öldürmeden önce üç dakika dinle Aiden,\" dedi kadın. Sesi soğuk Boğaz rüzgârında ince bir cam gibi çatlıyordu; senin çarpıcı mavi gözlerine bir saniyeden fazla bakamadı, bakışını yere indirdi. \"Kaçmadım. Koruma getirmedim. Kendim geldim. Çünkü Mira on dakika önce Boğaz'ın altındaki ana Rezonans Kulesi'ni çalıştırdı. Eğer şafak sökmeden durdurulmazsa, İstanbul'un üzerinde 2006'da New York'ta açılan o mavi yarığın on katı büyüklüğünde bir kozmik yırtık açılacak. Onu ve o kuleyi durdurabilecek tek kişi sensin.\""
+            ),
+            conditionalNarratives = listOf(
+                ConditionalNarrative(
+                    requiredFlagKey = "ch6_desire",
+                    requiredFlagValue = "stay_bond",
+                    callbackLabel = "İlk Kez Bir Gelecek",
+                    paragraphs = listOf(
+                        "Boğaz kıyısında yıllardır ilk kez kendi isteğinle bir adım atmış, kaçmayı bırakıp kalmaya karar vermiştin. Şimdi kapının eşiğinde duran geçmişin mimarına bakarken, savunacak gerçek bir geleceğin olduğunu ilk kez kemiklerinde hissediyordun."
+                    )
+                ),
+                ConditionalNarrative(
+                    requiredFlagKey = "ch6_desire",
+                    requiredFlagValue = "mission_first",
+                    callbackLabel = "Önce Hesaplaşma",
+                    paragraphs = listOf(
+                        "Gelecek, güven ya da kalmak — hepsini şafaktan sonraya ertelemiştin. Şimdi yirmi yıllık hesaplaşmanın son perdesi tam kapının eşiğinde duruyordu."
+                    )
+                )
             ),
             isChapterEnd = true,
-            chapterEndQuote = "Kırık ayna parçalandı. Şimdi seni yaratan el, kendi ayağıyla kapına geldi."
+            chapterEndQuote = "Kırık bir aynaya baktığında seni korkutan cam değil, içindeki kendi yüzündür."
         ),
 
         // ═══════════════════════════════════════════════════════════════════════
-        // BÖLÜM 7: KARANLIK AYNA
+        // BÖLÜM VII: KARANLIK AYNA (3 Büyük Dönüm Noktası — Büyük Final)
         // ═══════════════════════════════════════════════════════════════════════
         BookSceneNode(
             id = "ch7_s1",
             chapterNumber = 7,
             sceneOrder = 1,
-            sceneTitle = "Dr. Evelyn Hale",
-            locationTag = "AVENGERS KULESİ • YÜKSEK GÜVENLİK GÖRÜŞME ODASI",
+            sceneTitle = "Dr. Evelyn Hale ve Savaş Masası",
+            locationTag = "İSTANBUL GÜVENLİ EV • 04:45",
             paragraphs = listOf(
-                "Dr. Evelyn Hale beklediğin gibi soğuk, acımasız bir laboratuvar canavarı gibi görünmüyordu — ve bu onu zihninde büyüttüğün her kabustan çok daha rahatsız edici kılıyordu. Altmışlı yaşlarında, ince parmakları masanın kenarında hafifçe titreyen, koyu paltosunun yakasında hâlâ sabah yağmurunun damlaları parlayan yorgun bir bilim insanıydı.",
-                "Masanın karşısında otururken gözleri doğrudan senin yüzüne, sonra belli belirsiz bir saniyeliğine göz bebeklerinin derinliğine kaydı — sanki içinde hâlâ o mavi kıvılcımın yaşayıp yaşamadığını ölçüyordu.",
-                "\"Yirmi yıl,\" diye fısıldadı; sesinde hem suçluluk hem de tuhaf bir hayret vardı. \"Büyümüşsün, Aiden.\"",
-                "Tek yönlü camın arkasında Steve, Natasha ve Tony hazırdı; odanın loş köşesinde ise Wanda sessizce duruyor, parmaklarının ucunda henüz yanmamış kızıl bir kıvılcımla senin tek bir işaretini bekliyordu."
+                "Dr. Evelyn Hale, taş güvenli evin uzun ahşap masasının diğer ucunda elleri hafifçe titreyerek oturuyordu. Beş yaşındayken New York gökyüzünün maviye yarıldığı, annenin elini bıraktığın ve bütün çocukluğunu bir saniyede kaybettiğin o gecenin baş mimarı tam karşındaydı. Odadaki hava ağır, soğuk ve elektrikliydi; kimse kadına su ya da kahve ikram etmemişti. Clint duvar kenarında kollarını kavuşturmuştu, Natasha ise kadının her mikro ifadesini, her nefesini soğuk bir dikkatle okuyordu.",
+                "\"Bana sadece tek bir sorunun cevabını ver,\" dedin, sesin o kadar alçak ama o kadar buz gibiydi ki masadaki cam bardak bile ince bir titreşimle yankılandı. \"O gece apartmanın altındaki çekirdeği kapatsaydın, annemle babam yaşar mıydı?\"",
+                "Dr. Hale'in omuzları çöktü. Gözlerinden yaş akmadı — sanki yirmi yılda ağlayacak hiçbir şeyi kalmamış gibiydi. \"Hayır Aiden,\" diye fısıldadı, doğrudan senin çarpıcı mavi gözlerine bakmaya cesaret edemeyip bakışını kendi titreyen ellerine indirdi. \"Çekirdek kritik eşiği üç dakika önce geçmişti. Kapatmaya çalıştık, yemin ederim çalıştık. Ama çok geçti. Pişmanım — bunun annenle babanı geri getirmeyeceğini, çalınmış yirmi yılını telafi etmeyeceğini biliyorum.\"",
+                "\"2006'da Dünya Güvenlik Konseyi'nin gölge komitesi — özellikle de üstümüzdeki gizli yönetici — uzaydan yakalanan kadim bir kozmik çekirdekten savunma kalkanı yapmamızı emretti,\" diye devam etti Hale, sesi titreyerek. \"Bize bunun bütün gezegeni koruyacağını söylediler. Biz de kendi kibrimize inandık. Ama o gece çekirdek laboratuvardan kaçırılıp senin mahallende kontrolden çıktı; bana kaza dediler, üstünü örttüler. Annenle babanın neden orada olduğunu Konsey'in tepesindekilerden başka kimse bilmiyordu. Sen o saf mavi enerjiyi parçalanmadan taşıyabilen tek çocuktun. Konsey seni hemen bir silaha dönüştürmek istedi; ben ise dosyayı karartıp kaçmana göz yumduğumu sanarak yıllarca kendimi kandırdım.\"",
+                "Derin, kesik bir nefes alıp trençkotunun iç cebinden eski, şifreli bir titanyum kontrol anahtarı çıkarıp masanın ortasına koydu. \"Elias Voss acısını sessizliğe ve karanlığa gömdü. Sen yirmi yıl kaçtın ama elindeki evren düzeyindeki güce rağmen insanlığını hiç kaybetmedin. **Mira** — Denek 8-C — ise o şansa hiç sahip olmadı. Yıllarca Konsey'in kalın cam hücrelerinde 'canavar' diye damgalandı, her gün acı eşiği test edildi. Şimdi Boğaz'ın altındaki eski metro ve Bizans sarnıçlarının birleştiği devasa mağarada Proje Ayna'nın ana Rezonans Kulesi'ni ateşledi. Şehir uyanmadan o yarığı açıp onu kafese kapatan dünyayı kendi mavi ateşiyle yakmak istiyor.\"",
+                "\"Neden doğrudan S.H.I.E.L.D.'a gitmedin?\" diye sordu Steve Rogers sert bir sesle. Hale acı bir şekilde başını iki yana salladı: \"Çünkü Konsey'deki bazı adamlar o kulenin patlamasını ya da Mira'nın öldürülmesini istiyor Yüzbaşı. Bütün kanıtları tek gecede temizlemek için.\"",
+                "Tam o anda masanın ortasında Tony Stark'ın New York'tan bağlanan parlak mavi hologramı açıldı. Üç boyutlu yeraltı tünel haritasında kırk metrelik kırmızı bir enerji çekirdeği nabız gibi atıyordu. \"Dr. Hale'in getirdiği anahtar verilerini doğruladım,\" dedi Tony; sesinde o alışıldık alaycılıktan tek bir eser bile yoktu, tamamen ciddiydi. \"Rezonans Kulesi tam otuz dakika içinde kritik eşiğe ulaşacak. İçerideki kozmik enerji emilimi korkunç düzeyde — benim en yeni Mark zırhım bile çekirdeğe yüz metreden fazla yaklaşsa bütün devreleri anında erir. İki seçeneğimiz var: ya tünelleri dışarıdan yüksek patlayıcılarla vurup mağarayı çökerteceğiz — ki Mira içeride kesin olarak ölür ve Boğaz'da büyük bir sarsıntı riski doğar — ya da o enerji fırtınasının içine yürüyüp ayakta kalabilecek tek kişi içeri girip doğrudan Mira ile yüzleşecek.\"",
+                "Odadaki bütün gözler yavaşça sana döndü. Steve Rogers, Natasha Romanoff, Wanda Maximoff, Clint Barton ve hologramın arkasındaki Tony Stark. Çarpıcı mavi gözlerin masanın soğuk mavi ışığında parladı; bu kez odadaki hiç kimse gözünü kaçırmaya bile yeltenemedi. Yirmi yıl önce bir yangın merdiveninde başlayan bu hikâyeyi bitirecek olan kişi sendin — ama o tünellere kiminle ve nasıl gireceğine yalnızca sen karar verecektin."
             ),
-            decisionTitle = "Dr. Hale'e Yaklaşım",
-            choicePrompt = "Seni beş yaşında mavi ışığın altına sürükleyen kadın karşında. İlk hamlen ne olacak?",
+            decisionTitle = "Dr. Hale ve Operasyon Planı",
+            choicePrompt = "Otuz dakikan var. Hem Dr. Hale'e hem de İstanbul tünellerine nasıl yaklaşacaksın?",
             choices = listOf(
                 BookChoiceDef(
-                    id = "ch7_c1_ask",
-                    label = "Doğrudan gözlerinin içine bak ve sor: \"Benden ne istiyorsun, Hale?\"",
-                    toneHint = "Doğrudan • Keskin",
-                    nextNodeId = "ch7_s2_regret",
+                    id = "ch7_c1_team_plan",
+                    label = "Dr. Hale'in verisini al ve tüm ekiple koordineli gir — Steve ve Natasha çevreyi tutarken Wanda ile merkeze in.",
+                    toneHint = "Ekip Birliği • Tam Güven • Stratejik",
+                    nextNodeId = "ch7_s2_tunnels",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 4, BookCharacterId.NATASHA to 5),
-                        setFlags = mapOf("ch7_hale_open" to "direct"),
-                        impactSummary = "Hale: 'Seni tamamlamak için geldim.' O kelime ağzında buz gibi yanlış hissettirdi.",
-                        isBranching = false,
-                        isRelationship = false,
+                        bondDeltas = mapOf(BookCharacterId.STEVE to 4, BookCharacterId.NATASHA to 3, BookCharacterId.WANDA to 3),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.STEVE, CharacterFlagAxis.LOYALTY, 3),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.TRUST, 3)
+                        ),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.AVENGERS_TRUST to 4, StoryFlagAxis.TACTICAL_DISCIPLINE to 3),
+                        avengersTrustDelta = 4,
+                        setFlags = mapOf("ch7_plan" to "team"),
+                        branchTag = "Avengers İle Final",
+                        impactSummary = "İlk kez gerçek bir Avenger gibi ekiple omuz omuza tünellere indin.",
+                        isBranching = true,
+                        isRelationship = true,
                         impactLevel = "kritik"
                     )
                 ),
                 BookChoiceDef(
-                    id = "ch7_c1_step_out",
-                    label = "Tek kelime etmeden odadan çık — üç dakika nefes al, hazmet, sonra kendi hızınla geri dön.",
-                    toneHint = "Kontrollü • Denge",
-                    nextNodeId = "ch7_s2_regret",
+                    id = "ch7_c1_solo_plan",
+                    label = "Ekibe tünelin ağzında kalmasını söyle — Mira'nın karşısına tek başına çık, kimseyi kendi geçmişinin ateşine sürükleme.",
+                    toneHint = "Tek Kişilik Final • Koruyucu • Ağır Yük",
+                    nextNodeId = "ch7_s2_tunnels",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 7, BookCharacterId.NATASHA to 6),
-                        avengersTrustDelta = 5,
-                        setFlags = mapOf("ch7_hale_open" to "breathed"),
-                        impactSummary = "Kaçmak yerine geri döndün; kontrolün artık tamamen sende olduğunu kanıtladın.",
-                        isBranching = false,
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 2, BookCharacterId.WANDA to 2, BookCharacterId.TONY to 2),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.INDEPENDENCE to 4, StoryFlagAxis.COSMIC_AWAKENING to 3),
+                        fatigueDelta = 1,
+                        setFlags = mapOf("ch7_plan" to "solo"),
+                        branchTag = "Yalnız Final",
+                        impactSummary = "Sevdiklerini ve ekibi ateş hattının dışında bırakıp tünellere tek başına yürüdün.",
+                        isBranching = true,
                         isRelationship = false,
-                        impactLevel = "orta"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c1_wanda",
-                    label = "Wanda'ya dönüp sessizce başını salla: \"Önce zihnini oku, sonra konuşalım.\"",
-                    toneHint = "Zihinsel Doğrulama",
-                    nextNodeId = "ch7_s2_regret",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 10, BookCharacterId.TONY to 4),
-                        secretUnlocked = "Hale'in Gerçek Korkusu",
-                        setFlags = mapOf("ch7_hale_open" to "wanda_read"),
-                        impactSummary = "Wanda fısıldadı: 'Gerçekten pişman. Ve ölesiye korkuyor — senden değil, İstanbul'da uyandırdıkları şeyden.'",
-                        isBranching = false,
-                        isRelationship = true,
                         impactLevel = "kritik"
                     )
                 )
             )
         ),
 
+        // ── BÖLÜM VII — SAHNE 2: KARANLIK AYNA: MİRA ────────────────────────────
         BookSceneNode(
-            id = "ch7_s2_regret",
+            id = "ch7_s2_tunnels",
             chapterNumber = 7,
             sceneOrder = 2,
-            sceneTitle = "'Pişmanım'",
-            locationTag = "GÖRÜŞME ODASI • AVENGERS KULESİ",
+            sceneTitle = "Karanlık Ayna: Mira",
+            locationTag = "BOĞAZ ALTI REZONANS KULESİ • 05:20",
             paragraphs = listOf(
-                "Dr. Hale ince parmaklarını birbirine kenetledi. \"Altı gün içinde Kör Nokta, İstanbul tünellerinin derinindeki *Rezonans Kulesi*'ni ateşleyecek,\" dedi sesi hızlanırken. \"Cihaz senin Kırmızı Göz frekansını uzaktan tetikleyip iradeni kilitlemek için tasarlandı. Ve yalnız değilsin, Aiden — projeden sağ çıkan bir denek daha var. Onu kuleye bağladılar.\"",
-                "Masaya şifreli bir bellek diski bıraktı. \"Kuleyi durdurmak için frekans kesiciyi bizzat çekirdeğe yerleştirmeniz gerekiyor. Aksi halde sadece sen değil, Boğaz'ın altındaki tüm enerji hattı çöker.\"",
-                "Başını hafifçe eğdiğinde gözlüğü buğulandı, sesi çatallandı: \"Beş yaşındaki o gece... her şey kontrolden çıktığında seni kaçırdığımı sanıyorlardı. Hayır, Aiden. Seni onlardan sakladım. Ve bütün bunları başlattığım için... pişmanım.\""
+                "Boğaz'ın soğuk sularının altındaki antik taş tünellerin ve kullanılmayan eski metro hatlarının birleştiği en derin mağaraya inmek bile başlı başına bir sınavdı. Yüzlerce metre aşağı indikçe duvarlardaki paslı borular enerji fırtınasının basıncıyla inliyor, kulaklık hattı zaman zaman statik cızırtılarla kopuyordu. Ayağının altındaki su birikintileri yukarı doğru süzülen küçük kürelere dönüşmüştü — yerçekimi ve fizik kuralları burada artık tamamen çökmüştü.",
+                "Devasa kemerli mağaranın tam ortasında kırk metrelik çelik, titanyum ve parlayan kristalden oluşan **Rezonans Kulesi** yükseliyor, etrafında kör edici bir mavi ve koyu kızıl kozmik fırtına dönüyordu. Havada asılı kalan dev kaya parçaları, bükülmüş eski tren rayları, kopmuş çelik halatlar ve çatlayan beton sütunlar ağır çekimde kulenin çevresinde ölümcül bir yörüngeye girmişti.",
+                "[[ANIM|BOSPHORUS_RESONANCE|BOĞAZ ALTI · REZONANS KULESİ|Kırk metrelik çelik çekirdeğin çevresinde mavi kozmik ışık ve Mira'nın kızıl ateşi çarpışıyordu.]]",
+                "Havanın içindeki o soğuk bakır tadı artık nefesini kesen bir elektrik fırtınasına dönüşmüştü. Yukarıdaki kalın kaya tabakasının çatlaklarından Boğaz'ın tuzlu suları ince şelaleler halinde aşağı dökülüyor, ama yere düşmeden kulenin yaydığı ısıyla beyaz buhara dönüşüyordu.",
+                "Ve fırtınanın tam merkezinde, yerden beş metre yüksekte havada süzülen genç bir kadın duruyordu: **Mira — Denek 8-C.** Yüzü bembeyazdı, uzun siyah saçları statik elektrikle havaya kalkmıştı ve gözleri senin o berrak, çarpıcı mavi ışığının kontrolden çıkmış, yakıcı bir gölgesi gibi saf kızıl bir ateşle parlıyordu. Çevrende berrak mavi bir kozmik enerji kalkanı açtın ve uçuşan kaya parçalarını kenara iterek fırtınanın kalbine doğru yürüdün.",
+                "\"Sonunda geldin, 7-A,\" diye haykırdı Mira. Sesi enerji fırtınasının kulak sağır edici uğultusunu bastırıp mağaranın her duvarında yankılandı. \"Seni dosyalardan hep kıskandım biliyor musun? *Dengeli denek. Kusursuz uyum. Kaçmayı başaran mucize çocuk.* Bize hep **canavar** dediler Aiden! Çocukluğumuzdan beri kalın camların arkasından baktılar, kanımızı ölçtüler, ailelerimizi elimizden aldılar, sonra da kafese kapatmak için peşimize silahlı timler saldılar! Sen neden hâlâ onların tarafındasın? Onların cam kulesinde uyuyup onların emirleriyle mi yaşıyorsun?\"",
+                "\"Kimsenin emriyle yaşamıyorum Mira,\" dedin, sesin fırtınanın ortasında şaşırtıcı derecede sakin, derin ve net çıktı. İki adım daha yaklaştın, avuçlarını açık tutarak. \"O kelimeyi bana da söylediler. Dokuz yaşındaydım. Sağanak yağmurda burnumdan kan akarken telsizden duydum. Yirmi yıl boyunca kimseye sırtımı dönmedim, kimseye güvenmedim. Ama şu an bu kule patlarsa yukarıda uyuyan milyonlarca masum insan — hiçbir deneyden haberi olmayan çocuklar, aileler — ölecek. Bizi yaratanlar değil. Eğer bunu yaparsan, onların bize taktığı o ismi kendi ellerinle gerçeğe çevirmiş olacaksın.\"",
+                "Mira'nın gözlerinden iki kör edici kızıl şimşek fırlayıp senin mavi kalkanına çarptı. Darbe seni iki adım geriye kaydırdı, botların taş zeminde kıvılcım çıkardı ama kalkanın tek bir çatlak bile vermedi. \"Çok geç!\" diye haykırdı Mira, sesinde o yakıcı öfkenin hemen altında kırık, derin, neredeyse çocuksu bir çaresizlik vardı. \"Ben durduramıyorum Aiden — çekirdek zaten çatladı, enerjim kuleye kilitlendi! Çekilirsem beni yakıyor, bırakırsam şehri yakacak! Bırak kule patlasın! Bu dünya da bizim yandığımız gibi yansın!\"",
+                "Rezonans Kulesi'nin ana çekirdeği kör edici, kulakları sağır eden bir mavi-kızıl ışıkla çatlamaya başlamıştı. İki dakikan bile yoktu. Yukarıdaki Boğaz'ın suları tavan çatlaklarından artık kalın akıntılar halinde dökülüyordu. İçindeki kozmik güç, yirmi yıldır ilk kez bütün sınırlarını zorlayarak damarlarında uğulduyordu — ama bedenin bu yükü uzun süre kaldıramazdı.",
+                "Önünde iki yol vardı: ya Beyaz Göz'ü öfkeyle değil şefkatle açıp Rezonans Kulesi'nin bütün yıkıcı enerjisini kendi göğsünde emerek Mira'yı kurtaracaktın — kendi bedenini sonsuzluğun sınırına kadar yakma pahasına — ya da zamanı tamamen dondurup Rezonans Kulesi'ni acımasız bir taktik hassasiyetle parçalayarak Mira'nın gücünü mühürleyip şehri sıfır riskle kurtaracaktın."
             ),
-            decisionTitle = "'Pişmanım' Sözüne Tepki",
-            choicePrompt = "Hale'in 'pişmanım' sözü havada asılı. Ona ne soracaksın?",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch7_c2_cold",
-                    label = "\"Pişmanlık yetmez, Hale. Aktivasyon protokolünü, tetikleyici frekansı — her şeyi anlat.\"",
-                    toneHint = "Soğuk • Stratejik",
-                    nextNodeId = "ch7_s3_plan",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.TONY to 8, BookCharacterId.NATASHA to 6),
-                        avengersTrustDelta = 5,
-                        secretUnlocked = "Aktivasyon Protokolü Şeması",
-                        setFlags = mapOf("ch7_regret_reply" to "protocol"),
-                        impactSummary = "Hale tüm teknik şemayı ve frekans kesici şifresini eksiksiz biçimde masaya döktü.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
+            conditionalNarratives = listOf(
+                ConditionalNarrative(
+                    requiredFlagKey = "ch7_plan",
+                    requiredFlagValue = "team",
+                    callbackLabel = "Avengers Omuz Omuza",
+                    paragraphs = listOf(
+                        "Tünelin girişinde Steve Rogers vibranyum kalkanıyla düşen dev kaya parçalarını karşılıyor, Clint Barton şok oklarıyla çöken kabloları kesiyor, Natasha Romanoff son otomatik savunma kulelerini susturuyor ve Wanda Maximoff iki elinden yükselen güçlü kızıl kalkanla tünel tavanının çökmesini engelliyordu. Kulaklıktan Natasha'nın baskı altında her zamankinden daha sakin çıkan sesi geldi: \"Sırtın bizde Aiden. Kimse arkandan gelmeyecek. Bitir şu işi.\""
                     )
                 ),
+                ConditionalNarrative(
+                    requiredFlagKey = "ch7_plan",
+                    requiredFlagValue = "solo",
+                    callbackLabel = "Yalnız Yüzleşme",
+                    paragraphs = listOf(
+                        "Ekibi tünelin güvenli ağzında bırakmıştın — bu senin beş yaşında başlayan geçmişindi ve kimsenin senin ateşinde yanmasına izin vermeyecektin. Mağaranın içinde sadece sen, Mira ve evrenin kurallarını bükebilecek iki kırık güç karşı karşıyaydı."
+                    )
+                ),
+                ConditionalNarrative(
+                    requiredFlagKey = "ch5_voss_fate",
+                    requiredFlagValue = "protected",
+                    callbackLabel = "Elias Voss'un Anahtarı",
+                    paragraphs = listOf(
+                        "Kule'de Raft kafesinden koruduğun Elias Voss'un gitmeden önce verdiği o küçük frekans notu tam şu saniyede hayat kurtardı: Mira'nın kalkanındaki tek zayıf nokta — sol çekirdek bağlantı hattı — fırtınanın ortasında gözlerinin önünde kristal gibi netleşmişti."
+                    )
+                )
+            ),
+            decisionTitle = "Mira ve Rezonans Kulesi — Büyük Final Kararı",
+            choicePrompt = "İstanbul'un ve Mira'nın kaderi senin ellerinde. Bu savaşı nasıl bitireceksin?",
+            choices = listOf(
                 BookChoiceDef(
-                    id = "ch7_c2_parents",
-                    label = "Beklenmedik tek bir soru sor: \"Annem ve babam... o gece gerçekten öldüler mi, yoksa hayattalar mı?\"",
-                    toneHint = "Dallanma • Aile Sırrı",
-                    nextNodeId = "ch7_s3_plan",
+                    id = "ch7_c2_save_mira",
+                    label = "Beyaz Göz'ü şefkatle aç ve tüm kule enerjisini kendi bedeninde emerek Mira'yı kurtar — \"Canavar değiliz.\"",
+                    toneHint = "Kurtuluş • En Yüksek İrade • Kozmik Fedakârlık",
+                    nextNodeId = "ch7_s3_dawn",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 10, BookCharacterId.WANDA to 8, BookCharacterId.STEVE to 8),
-                        avengersTrustDelta = 7,
-                        secretUnlocked = "Prag'daki Aile Konumu",
-                        setFlags = mapOf("ch7_regret_reply" to "parents_alive"),
-                        branchTag = "Prag Aile Kurtarma İzi",
-                        impactSummary = "Hale'in gözleri doldu: 'Hayattalar. Prag'da, gizli gözetim altındalar.' Natasha anında konumu aldı.",
+                        bondDeltas = mapOf(BookCharacterId.MIRA to 8, BookCharacterId.WANDA to 5, BookCharacterId.NATASHA to 4, BookCharacterId.STEVE to 5),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.MIRA, CharacterFlagAxis.TRUST, 5),
+                            Triple(BookCharacterId.MIRA, CharacterFlagAxis.AFFECTION, 4),
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.AFFECTION, 3),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.RESPECT, 3),
+                            Triple(BookCharacterId.STEVE, CharacterFlagAxis.LOYALTY, 3)
+                        ),
+                        storyAxisDeltas = mapOf(
+                            StoryFlagAxis.HUMANITY_ANCHOR to 5,
+                            StoryFlagAxis.WHITE_EYE_CONTROL to 4,
+                            StoryFlagAxis.AVENGERS_TRUST to 5
+                        ),
+                        fatigueDelta = 2,
+                        avengersTrustDelta = 5,
+                        setFlags = mapOf("ch7_finale_act" to "saved_mira"),
+                        branchTag = "Mira Kurtarıldı",
+                        impactSummary = "Evren düzeyindeki enerjiyi kendi göğsünde sönümleyip Mira'yı ölümden ve öfkesinden kurtardın. Kule sessizce söndü.",
                         isBranching = true,
                         isRelationship = true,
                         impactLevel = "kritik"
                     )
                 ),
                 BookChoiceDef(
-                    id = "ch7_c2_enough",
-                    label = "Ayağa kalk ve kapıya yürü: \"Bu kadar bilgi yeterli. Altı gün sonra ne yapacağımızı biz seçeriz.\"",
-                    toneHint = "Mesafeli • Kararlı",
-                    nextNodeId = "ch7_s3_plan",
+                    id = "ch7_c2_destroy_tower",
+                    label = "Önce zamanı dondurup Rezonans Kulesi'ni parçalara ayır — Mira'nın gücünü mühürleyip şehri kesin güvenceye al.",
+                    toneHint = "Taktik • Kesin Çözüm • Sıfır Risk",
+                    nextNodeId = "ch7_s3_dawn",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 5),
-                        mysteryDelta = 1,
-                        setFlags = mapOf("ch7_regret_reply" to "walked_out"),
-                        impactSummary = "Hale'in vicdanını rahatlatmasına izin vermedin; hazırlıklar için hemen masaya döndün.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "orta"
+                        bondDeltas = mapOf(BookCharacterId.TONY to 4, BookCharacterId.STEVE to 3, BookCharacterId.NATASHA to 3, BookCharacterId.MIRA to -1),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.TONY, CharacterFlagAxis.RESPECT, 3),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.TRUST, 3),
+                            Triple(BookCharacterId.MIRA, CharacterFlagAxis.RESPECT, 2),
+                            Triple(BookCharacterId.MIRA, CharacterFlagAxis.FEAR, 2)
+                        ),
+                        storyAxisDeltas = mapOf(
+                            StoryFlagAxis.TACTICAL_DISCIPLINE to 4,
+                            StoryFlagAxis.AVENGERS_TRUST to 4
+                        ),
+                        fatigueDelta = 1,
+                        avengersTrustDelta = 4,
+                        setFlags = mapOf("ch7_finale_act" to "destroyed_tower"),
+                        branchTag = "Kesin Zafer",
+                        impactSummary = "Zamanı dondurup kuleyi saniyeler içinde etkisiz hale getirdin; şehir tek bir cam bile kırılmadan kurtuldu.",
+                        isBranching = true,
+                        isRelationship = true,
+                        impactLevel = "kritik"
                     )
                 )
             )
         ),
 
+        // ── BÖLÜM VII — SAHNE 3: BOĞAZ'DA ŞAFAK VE SON ADIM ────────────────────
         BookSceneNode(
-            id = "ch7_s3_plan",
+            id = "ch7_s3_dawn",
             chapterNumber = 7,
             sceneOrder = 3,
-            sceneTitle = "Savaş Masası",
-            locationTag = "AVENGERS KULESİ • 88. KAT TAKTİK SALON",
-            paragraphs = listOf(
-                "İstanbul tünellerinin üç boyutlu mavi hologramı masanın üstünde ağır ağır dönüyordu. Tony Stark, Dr. Hale'in verilerinden avuç içi büyüklüğünde, koyu mor çekirdekli bir *Frekans Bastırıcı* üretmişti. Cihazın merkez rezonans kulesine doğrudan temas etmesi gerekiyordu — aksi halde dalga tüm Boğaz hattını ve senin sinir sistemini geri dönüşsüz biçimde yakacaktı.",
-                "\"İçerideki koruma alanı yoğun,\" dedi Steve, hologramdaki üç ana giriş tünelini işaret ederek. \"Kör Nokta ne kadar güçlü olduğumuzu biliyor. Nasıl gireceğimize şimdi burada karar veriyoruz.\""
-            ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "ch7_regret_reply",
-                    requiredFlagValue = "parents_alive",
-                    callbackLabel = "Prag Kurtarma Sözü",
-                    paragraphs = listOf("Natasha masanın ucundan sana hafifçe başını salladı; gözlerinde sarsılmaz bir kararlılık vardı: \"Prag'daki güvenilir temasımız konum teyidini verdi, Aiden. İstanbul biter bitmez annenle babanı güvene alıyoruz. Söz veriyorum.\"")
-                ),
-                ConditionalNarrative(
-                    requiredFlagKey = "ch6_wish",
-                    requiredFlagValue = "stay",
-                    callbackLabel = "Kalma Kararın",
-                    paragraphs = listOf("Steve elini masanın kenarına koyup sana baktı: \"Dün sabah ilk kez burada kalmak istediğini söyledin. O yüzden yarın gece herkes tek parça geri dönecek.\"")
-                )
-            ),
-            decisionTitle = "Cihaz & Operasyon Kararı",
-            choicePrompt = "İstanbul tünellerindeki büyük operasyonun ana stratejisini seç.",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch7_c3_solo",
-                    label = "\"Tek başıma içeri ışınlanıp cihazı takacağım — diğerleri dış çemberi tutsun.\"",
-                    toneHint = "Yalnız Taarruz",
-                    nextNodeId = "ch7_s4_elevator",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.CLINT to 6, BookCharacterId.STEVE to 2),
-                        setFlags = mapOf("ch7_op_style" to "solo"),
-                        impactSummary = "Clint omzuna vurdu: 'Sırtın kollanıyor, vaat.' Steve ise kaygıyla gözlerinin içine baktı.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c3_team",
-                    label = "\"Birlikte giriyoruz — tam ekip planı. Artık tek başıma savaşmıyorum.\"",
-                    toneHint = "Ekip Birliği",
-                    nextNodeId = "ch7_s4_elevator",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 10, BookCharacterId.NATASHA to 7, BookCharacterId.CLINT to 8, BookCharacterId.TONY to 6, BookCharacterId.BRUCE to 6, BookCharacterId.THOR to 6),
-                        avengersTrustDelta = 10,
-                        setFlags = mapOf("ch7_op_style" to "team"),
-                        impactSummary = "İlk kez o masanın etrafında gerçekten onlardan biri gibi oturdun.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c3_bait",
-                    label = "\"Beni yem olarak kullanın — frekansımı açıp bütün savunmayı üstüme çekeyim, ekip çekirdeği indirsin.\"",
-                    toneHint = "Dallanma • Yem Stratejisi",
-                    nextNodeId = "ch7_s4_elevator",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 9, BookCharacterId.WANDA to 7, BookCharacterId.TONY to 7),
-                        fatigueDelta = 1,
-                        avengersTrustDelta = 8,
-                        setFlags = mapOf("ch7_op_style" to "bait"),
-                        branchTag = "Yem Operasyonu",
-                        impactSummary = "'Bu sefer kaçmak için değil.' Steve uzun süre sana derin bir saygıyla baktı.",
-                        isBranching = true,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                )
-            )
-        ),
-
-        // ── CH7 SCENE 4: WANDA ELEVATOR ──
-        BookSceneNode(
-            id = "ch7_s4_elevator",
-            chapterNumber = 7,
-            sceneOrder = 4,
-            sceneTitle = "Asansördeki Sessizlik",
-            locationTag = "AVENGERS KULESİ • GECE ASANSÖRÜ",
-            paragraphs = listOf(
-                "Operasyondan bir gece önce, katlar arasında neredeyse hiç ses çıkarmadan süzülen cam asansörde Wanda ile yalnız kaldın. Aşağıda Manhattan'ın milyonlarca ışığı cam duvarın ardında ağır ağır akıp gidiyordu; sanki bütün şehir nefesini tutmuştu.",
-                "Wanda yanında dururken omzu senin koluna santimler kadar yakındı. Zihnini okumadığını biliyordun — bunu haftalar önce sana verdiği sessiz sözle bırakmıştı — ama yine de insanı çıplak bırakan o yumuşak bakışla sana döndü.",
-                "\"İlk geldiğin gece zihninde sadece duvarlar, kilitli odalar ve kaçış haritaları vardı, Aiden,\" dedi fısıltıyla. \"Bugün ise... başka bir şey var. Merak. Sanki yarını gerçekten görmek istiyorsun.\""
-            ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "early_interest",
-                    requiredFlagValue = "wanda",
-                    callbackLabel = "İlk Geceden Kalan Bakış",
-                    paragraphs = listOf("Wanda'nın dudaklarında ince, neredeyse kırılgan bir tebessüm belirdi: \"Ve biliyor musun? O ilk gece pencerenin kenarında dururken bana baktığın saniyeden beri, o duvarların bir gün düşeceğini biliyordum.\"")
-                )
-            ),
-            decisionTitle = "Wanda'ya Asansör Cevabı",
-            choicePrompt = "Wanda'nın bu sessiz sorusuna nasıl karşılık vereceksin?",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch7_c4_share",
-                    label = "\"Merakı yıllarca bir lüks saydım, Wanda. Belki yanılıyormuşum — belki gitmemeye çalışıyorum.\"",
-                    toneHint = "İçten • Yakın",
-                    nextNodeId = "ch7_s5_rooftop",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 12),
-                        setFlags = mapOf("ch7_wanda_elevator" to "shared"),
-                        impactSummary = "Wanda hafifçe gülümsedi: 'Bu yeterli, Aiden. Gerçekten yeterli.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c4_silent",
-                    label = "Hiçbir şey söyleme — kapı açıldığında sessiz bir baş selamıyla çık.",
-                    toneHint = "Sessiz • Mesafeli",
-                    nextNodeId = "ch7_s5_rooftop",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 4, BookCharacterId.WANDA to -2),
-                        setFlags = mapOf("ch7_wanda_elevator" to "silent"),
-                        impactSummary = "Koridorda Natasha bekliyordu; kelime gerekmeden omuz omuza yürüdünüz.",
-                        isBranching = false,
-                        isRelationship = false,
-                        impactLevel = "dusuk"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c4_ask_back",
-                    label = "\"Peki sen ne hissediyordun, Wanda? İlk kez benim zihnime dokunduğunda?\"",
-                    toneHint = "Derin • Karşılıklı",
-                    nextNodeId = "ch7_s5_rooftop",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 14),
-                        setFlags = mapOf("ch7_wanda_elevator" to "asked_back"),
-                        impactSummary = "Wanda: 'Zihnin çok yer kaplıyor. Sanki yıllardır açılmayı bekleyen kocaman bir gökyüzü gibi.'",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                )
-            )
-        ),
-
-        // ── CH7 SCENE 5: NATASHA ROOFTOP ──
-        BookSceneNode(
-            id = "ch7_s5_rooftop",
-            chapterNumber = 7,
-            sceneOrder = 5,
-            sceneTitle = "Çatıda Sabaha Doğru",
-            locationTag = "AVENGERS KULESİ • ÇATI TERASI • 03:40",
-            paragraphs = listOf(
-                "Uçuşa üç saat kala gözüne uyku girmedi. Merdivenlerden çatı terasına çıktığında gece rüzgârı soğuktu ama gökyüzü yıldızlarla açılmıştı. Natasha çoktan oradaydı — siyah deri ceketi rüzgârda hafifçe dalgalanıyor, elinde buharı tüten iki sıcak çay bardağı tutuyordu. Birini sana uzattı.",
-                "Bir süre ikiniz de konuşmadan uyuyan New York'u izlediniz. Bazen bir insanla sessizce durabilmek, saatlerce konuşmaktan daha dürüst olurdu.",
-                "\"Biliyor musun,\" dedi Natasha sonunda, ufkun morarmaya başlayan ince çizgisine bakarak. \"Artık bir odaya girdiğinde çıkışları saymayı bıraktın, Blackwood. Fark ettin mi? Kaçış rotası kurmuyorsun artık.\""
-            ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "early_interest",
-                    requiredFlagValue = "natasha",
-                    callbackLabel = "Natasha ile Derin Bağ",
-                    paragraphs = listOf("Sana yan gözle baktığında o her zamanki profesyonel zırhından eser yoktu. \"İlk gece salona ışınlandığında gözlerin bende bir saniye fazla kalmıştı,\" diye mırıldandı. \"O zaman bunu tehlike taraması sanmıştım. Yanılmışım.\"")
-                ),
-                ConditionalNarrative(
-                    requiredFlagKey = "ch3_rooftop",
-                    requiredFlagValue = "sincere",
-                    callbackLabel = "Çatıdaki İkinci Gece",
-                    paragraphs = listOf("\"Aynı teras, aynı gece rüzgârı,\" dedi hafifçe gülerek. \"Ama bu sefer Kızıl Oda'dan da, kaçıştan da saklanmıyoruz.\"")
-                )
-            ),
-            decisionTitle = "Çatıda Natasha İle Gece",
-            choicePrompt = "Natasha'nın bu gözlemine ne söyleyeceksin?",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch7_c5_confirm",
-                    label = "\"Haklısın, Natasha. Artık kaçmayı düşünmüyorum.\"",
-                    toneHint = "Sıcak • Net",
-                    nextNodeId = "ch7_s6_tunnels",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 13),
-                        setFlags = mapOf("ch7_natasha_roof" to "confirmed"),
-                        impactSummary = "Natasha'nın omzu senin omzuna değdi. Saat dörde kadar tek kelime etmediniz ama ikiniz de gitmediniz.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c5_honest",
-                    label = "\"Hâlâ düşünüyorum. Ama bu sefer gitmek istemiyorum.\"",
-                    toneHint = "Gerçekçi • İçten",
-                    nextNodeId = "ch7_s6_tunnels",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 11),
-                        setFlags = mapOf("ch7_natasha_roof" to "honest"),
-                        impactSummary = "Natasha: 'İşte o fark her şeydir.' Sesin o gece daha az hesaplı, daha gerçekti.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c5_silence",
-                    label = "Sessiz kal — sadece yan yana durup uyuyan New York'u izleyin.",
-                    toneHint = "Sessiz Eşlik",
-                    nextNodeId = "ch7_s6_tunnels",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.NATASHA to 8),
-                        setFlags = mapOf("ch7_natasha_roof" to "silence"),
-                        impactSummary = "Bazı cevaplar kelimeye dökülmez; Natasha başını hafifçe eğip çayından bir yudum aldı.",
-                        isBranching = false,
-                        isRelationship = true,
-                        impactLevel = "orta"
-                    )
-                )
-            )
-        ),
-
-        // ── CH7 SCENE 6: ISTANBUL TUNNELS & MIRA (CLIMAX) ──
-        BookSceneNode(
-            id = "ch7_s6_tunnels",
-            chapterNumber = 7,
-            sceneOrder = 6,
-            sceneTitle = "Karanlık Ayna: Mira",
-            locationTag = "İSTANBUL • YERALTI REZONANS TÜNELLERİ • 02:55",
-            paragraphs = listOf(
-                "Boğaz'ın altındaki antik taş tüneller, modern çelik kablolar ve nabız gibi atan koyu kızıl bir uğultuyla titriyordu. Dış geçitte Steve, Natasha, Wanda, Clint ve yıldırımlarıyla taş koridorları aydınlatan Thor, Kör Nokta muhafızlarının hattını yararken sen elinde Tony'nin Frekans Bastırıcısı ile merkez çekirdek odasına ulaştın.",
-                "Ama oda boş değildi. Devasa rezonans kulesinin hemen önünde, yirmili yaşlarının başında genç bir kadın bekliyordu. Zayıf omuzları ağır siyah bir saha paltosunun içindeydi; saçları şakaklarına yapışmıştı. Başını sana kaldırdığı an kalbin duracak gibi oldu.",
-                "Gözleri koyu, yanan bir *kırmızıydı.* Tıpkı on yedi yaşındayken aynada gördüğün, bir daha uyanmasın diye yıllarca bastırdığın o kâbus gibi.",
-                "\"Aiden,\" dedi sesi titreyerek ama ürkütücü bir güçle yankılanarak. \"Ben Mira. Denek 7-B. Onlar seni serbest bıraktılar... beni ise yirmi yıl boyunca bu karanlıkta tuttular. Şimdi kule açılacak ve ilk kez bana bakan biri olacak.\"",
-                "Etrafındaki taş duvarlar kırmızı enerjiyle çatlamaya başladı. Kule otuz saniye içinde ateşlenmek üzereydi. Kulaklığında Steve'in gergin sesi duyuldu: \"Aiden, cihazı hemen yerleştir — yoksa tüneller hepimizin üstüne çökecek!\""
-            ),
-            conditionalNarratives = listOf(
-                ConditionalNarrative(
-                    requiredFlagKey = "has_stark_band",
-                    requiredFlagValue = "accepted",
-                    callbackLabel = "Stark Bilekliği Koruma Kalkanı",
-                    paragraphs = listOf("Bileğindeki titanyum halka parlak bir mavi halka çizerek devreye girdi; Mira'nın yaydığı boğucu kırmızı dalganın sinir sistemini kilitlemesini son anda engelledi.")
-                ),
-                ConditionalNarrative(
-                    minRedEye = 2,
-                    callbackLabel = "Kırmızı Göz Yankısı",
-                    paragraphs = listOf("Kendi içindeki bastırılmış Kırmızı Göz, Mira'nın frekansına şiddetle yanıt verdi. Gözlerinin kenarında kızıl bir ısı yükseldi; *onun acısını yalnızca kelimelerden değil, doğrudan damarlarından okuyabiliyordun.*")
-                )
-            ),
-            decisionTitle = "Mira ve Rezonans Kulesi Finali",
-            choicePrompt = "Karşında senin karanlık aynan duruyor. Son kararını ver.",
-            choices = listOf(
-                BookChoiceDef(
-                    id = "ch7_c6_reach_out",
-                    label = "Cihazı beline tak, elini uzat ve Beyaz Göz'le onun zihnine dokun: \"Yalnız değilsin, Mira. Seni burada bırakmıyorum.\"",
-                    toneHint = "Dallanma • Empati & Kurtarış",
-                    nextNodeId = "ch7_s7_aftermath",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 12, BookCharacterId.STEVE to 10, BookCharacterId.NATASHA to 6),
-                        fatigueDelta = 1,
-                        avengersTrustDelta = 10,
-                        secretUnlocked = "Denek 7-B: Mira'nın Kurtuluşu",
-                        setFlags = mapOf("ch7_mira_choice" to "saved"),
-                        branchTag = "Mira'yı Kurtarma Finali",
-                        impactSummary = "Mira'nın kırmızısı ilk kez söndü; kuleyi birlikte kapattınız ve yirmi yıl sonra ilk kez birine el uzattın.",
-                        isBranching = true,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c6_device_first",
-                    label = "Zaman yok — uzamı büküp doğrudan çekirdeğe ışınlan, Frekans Bastırıcı'yı yerleştir ve kuleyi anında kapat.",
-                    toneHint = "Dallanma • Görev Önceliği",
-                    nextNodeId = "ch7_s7_aftermath",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.TONY to 10, BookCharacterId.NATASHA to 9, BookCharacterId.STEVE to 7),
-                        avengersTrustDelta = 9,
-                        secretUnlocked = "Rezonans Kulesi Kapatıldı",
-                        setFlags = mapOf("ch7_mira_choice" to "shutdown_first"),
-                        branchTag = "Taktik Kapatma Finali",
-                        impactSummary = "Kule son saniyede sustu; Mira şok dalgasıyla geri savruldu ama hayatta kaldı ve karanlığa karıştı.",
-                        isBranching = true,
-                        isRelationship = false,
-                        impactLevel = "kritik"
-                    )
-                ),
-                BookChoiceDef(
-                    id = "ch7_c6_red_mirror",
-                    label = "Kendi Kırmızı Göz'ünü bilinçli olarak aç — onun dalgasını kendi üzerinde söndürerek ekibi ve şehri koru.",
-                    toneHint = "Dallanma • Kırmızı Göz Yüzleşmesi",
-                    nextNodeId = "ch7_s7_aftermath",
-                    effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.WANDA to 8, BookCharacterId.STEVE to 8, BookCharacterId.CLINT to 8, BookCharacterId.THOR to 8),
-                        fatigueDelta = 2,
-                        redEyeDelta = 2,
-                        mysteryDelta = 2,
-                        avengersTrustDelta = 7,
-                        secretUnlocked = "Kırmızı Göz Hakimiyeti",
-                        setFlags = mapOf("ch7_mira_choice" to "red_eye_absorb"),
-                        branchTag = "Kırmızı Göz Uyanışı Finali",
-                        impactSummary = "İki kırmızı frekans çarpıştı — ilk kez korkmadan kendi karanlığına hükmettin ve kuleyi parçaladın.",
-                        isBranching = true,
-                        isRelationship = true,
-                        impactLevel = "kritik"
-                    )
-                )
-            )
-        ),
-
-        // ── CH7 SCENE 7: DAWN OVER BOSPHORUS ──
-        BookSceneNode(
-            id = "ch7_s7_aftermath",
-            chapterNumber = 7,
-            sceneOrder = 7,
             sceneTitle = "Boğaz'da Şafak",
-            locationTag = "İSTANBUL • QUİNJET İNİŞ NOKTASI • 06:05",
+            locationTag = "İSTANBUL • BOĞAZ KIYISI • 06:30",
             paragraphs = listOf(
-                "Tünellerin çıkışı taze, tuzlu bir Boğaz rüzgârına açıldığında gökyüzü erguvani bir şafakla aydınlanıyordu. Kulaklığında Tony'nin rahatlamış sesi yankılandı: \"Rezonans sıfırlandı. Tüm İstanbul şebekesi normal. Ve sen hâlâ tek parçasın, Blackwood.\"",
-                "Steve elini omzuna koyduğunda ilk kez refleksle geri çekilmedin. Natasha az ileride Quinjet rampasını açmış bekliyor, Wanda ise yorgun gözlerle ama içten bir gülümsemeyle sana bakıyordu. Clint yayını omzuna asıp sırt çantanı sana fırlattı: \"Kahvaltı benden, uzaylı.\""
+                "Güneş Asya yakasının tepelerinden ağır ağır yükselirken İstanbul Boğazı'nın soğuk suları erimiş altına boyanmıştı. Martıların keskin ama huzurlu sesleri sabahın duru havasında yankılanıyor, karşı kıyıdaki ilk şehir hatları vapurları uyanmaya başlayan iki kıtanın arasını beyaz köpüklerle yarıyordu. Şehrin yedi milyon sakini hiçbir şeyden habersiz sıcak çaylarını koyuyor, perdelerini açıyor, sıradan bir güne başlıyordu — az önce ayaklarının kırk metre altında bütün bir kıtanın kaderinin yazıldığını hiç bilmeden.",
+                "Yeraltındaki Rezonans Kulesi artık tamamen sessizdi — ama kapanırken gökyüzüne fırlattığı son mavi enerji dalgası atmosferi delip derin uzaya doğru sessiz bir işaret fişeği gibi yayılıp kaybolmuştu; o sabah kimse bu sinyali evrenin öte ucunda kimlerin duyduğunu henüz bilmiyordu. Dr. Evelyn Hale hiçbir direniş göstermeden kendi isteğiyle Nick Fury'nin güvenli adalet birimine teslim olmuş, Proje Ayna'nın bilinen laboratuvarları Tony Stark ile Fury'nin ortak hamlesiyle mühürlenmişti. Yirmi yıldır peşini bırakmayan o bitmek bilmeyen S.H.I.E.L.D. kovalamacası nihayet durmuştu.",
+                "Hızlı iyileşmen şakaklarındaki, ellerindeki ve omuzlarındaki bütün çizikleri çoktan kapatmıştı ama göğsünde uzun, yirmi yıllık bir maratonun ardından gelen tatlı, derin bir yorgunluk vardı. Ceketinin yakasını indirdin, sabah güneşinin yüzündeki soğukluğu alışını hissettin.",
+                "Az ilerideki küçük sahil lokantasının taş fırınından ve açık mangalından sabahın ilk demli çay, sıcak tırnak pide ve kömürde pişen ızgara köfte kokusu rüzgârla kıyıya kadar ulaşıyordu. Kıtalar arası ışınlanabilen, zamanı yavaşlatabilen bir adam olarak, iki yüz yıl yaşasan bile bu kokunun seni gülümsetmekten asla vazgeçmeyeceğini biliyordun.",
+                "Rıhtımın hemen ucunda, sabah güneşine karşı Natasha Romanoff duruyordu. Kollarını kavuşturmuş, rüzgâr kızıl saçlarını savururken denize bakıyordu; her zamanki gibi ne seni çağırıyor, ne bir adım bekliyor, ne de acele ettiriyordu. Birkaç adım ötede Wanda Maximoff, parmaklarının arasındaki son ince kızıl kıvılcımı Boğaz rüzgârına bırakıp gözlerini kapattı ve uzun, huzurlu bir nefes aldı. Daha geride Steve Rogers, Tony Stark'ın gönderdiği ikmal hattını kapatan Clint Barton ve tıbbi çantasını toplayan Bruce Banner, Quinjet'in açık rampasının yanında sessizce senin kararını bekliyordu.",
+                "Kimse senden bir söz, bir yemin, bir bağlılık ya da bir adım talep etmiyordu. Yirmi beş yaşındaydın — ve hayatında ilk kez kaçmak için değil, yaşamak için bir yön seçecektin. Kimin yanında duracağına, nereye döneceğine yalnızca sen karar veriyordun."
             ),
             conditionalNarratives = listOf(
                 ConditionalNarrative(
-                    requiredFlagKey = "ch7_mira_choice",
-                    requiredFlagValue = "saved",
-                    callbackLabel = "Mira'nın Yeni Başlangıcı",
-                    paragraphs = listOf("Quinjet'in içinde, kalın bir battaniyeye sarılı Mira camdan ilk kez gerçek gün ışığına bakıyordu. Gözleri artık kırmızı değil, yorgun bir kahverengiydi. \"Beni neden bırakmadın?\" diye fısıldadığında cevabın basitti: \"Çünkü bir zamanlar kimse bana el uzatmamıştı.\"")
+                    requiredFlagKey = "ch7_finale_act",
+                    requiredFlagValue = "saved_mira",
+                    callbackLabel = "Mira'nın Kurtuluşu — Kozmik Fedakârlık",
+                    paragraphs = listOf(
+                        "Tünelde Beyaz Göz'ünü öfkeyle ya da kontrol tutkusuyla değil, saf bir şefkatle açıp Rezonans Kulesi'nin bütün yıkıcı enerjisini kendi göğsünde emip sönümlediğin o sonsuz üç saniye, mağaranın tamamını kör edici bir mavi huzurla doldurmuştu. Göğsün yanarken bile bırakmamıştın — ve sonunda Mira'nın gözlerindeki o çılgın kızıl ateş ilk kez söndü, dizlerinin üzerine çöküp ağlamaya başladı.",
+                        "Şu an Quinjet'in tıbbi bölmesinde Bruce Banner ve Wanda'nın gözetiminde güvenle uyuyordu. Bir canavar değil, yirmi yıllık bir karanlıktan kurtarılmış bir insandı. Steve Rogers tünelden çıkarken omzuna koyduğu elin sıcaklığı hâlâ üzerindeydi."
+                    )
                 ),
                 ConditionalNarrative(
-                    requiredFlagKey = "ch7_mira_choice",
-                    requiredFlagValue = "shutdown_first",
-                    callbackLabel = "Mira'nın İzi",
-                    paragraphs = listOf("Tünelin çıkışında yerde kırık bir kolye ucu kalmıştı. Mira kaçmıştı ama hayattaydı — ve bir gün yollarınızın yeniden kesişeceğini biliyordun.")
-                ),
-                ConditionalNarrative(
-                    requiredFlagKey = "ch7_mira_choice",
-                    requiredFlagValue = "red_eye_absorb",
-                    callbackLabel = "Kırmızı Göz Dengesi",
-                    paragraphs = listOf("Ellerin hâlâ hafifçe titriyordu ama gözlerin duruydu. On yedi yaşından beri bir canavar gibi sakladığın o kırmızı gücü ilk kez birini korumak için kullanmış ve kontrolü kaybetmemiştin.")
-                ),
-                ConditionalNarrative(
-                    requiredFlagKey = "ch7_regret_reply",
-                    requiredFlagValue = "parents_alive",
-                    callbackLabel = "Prag'dan Gelen Sinyal",
-                    paragraphs = listOf("Natasha telefon ekranını sana çevirdi; ekranda Prag'dan gelen şifreli tek bir onay satırı parlıyordu: *HEDEF GÜVENDE. KAPI AÇIK.* Yirmi yıl sonra ilk kez boğazında düğümlenen şey korku değildi.")
+                    requiredFlagKey = "ch7_finale_act",
+                    requiredFlagValue = "destroyed_tower",
+                    callbackLabel = "Kusursuz Müdahale — Kesin Zafer",
+                    paragraphs = listOf(
+                        "Zamanı beş tam saniyeliğine mutlak bir sessizliğe dondurup Rezonans Kulesi'nin kırk metrelik çelik çekirdeğini milimetrik enerji darbeleriyle parçalara ayırdığında, yukarıdaki milyonlarca insan tek bir sarsıntı bile hissetmeden uyumaya devam etmişti. Mira'nın kontrolden çıkan gücü güvenli bir kozmik kalkanla mühürlenip nötralize edilmiş, şehir tek bir pencere camı bile kırılmadan kurtulmuştu.",
+                        "Tony Stark hattan canlı enerji grafiğini gördüğünde uzun bir sessizliğin ardından tek cümle kurmuştu: \"Beş saniyede kıyameti iptal etti. Artık resmi olarak Avengers'ın en tehlikeli ve en disiplinli adamı sensin Blackwood.\""
+                    )
                 )
             ),
             decisionTitle = "Yeni Sayfanın İlk Adımı",
-            choicePrompt = "Quinjet'in rampası açık. Eve — Avengers Kulesi'ne — dönerken aklındaki son düşünce ne?",
+            choicePrompt = "Şafak söktü. Aiden Blackwood bundan sonra hangi yolu ve kimin yanını seçecek?",
             choices = listOf(
                 BookChoiceDef(
-                    id = "ch7_c7_home",
-                    label = "Rampadan yukarı yürü ve ilk kez yüksek sesle söyle: \"Eve dönelim.\"",
-                    toneHint = "Aidiyet • Huzur",
-                    nextNodeId = "ch7_s8_finale",
+                    id = "ch7_c3_natasha_home",
+                    label = "Natasha'nın yanına yürü — \"Kule'ye dönüyoruz. Ama önce şu köşede kahvaltı borcun var.\"",
+                    toneHint = "Natasha Yolu • Sessiz & Derin Bağ • Avengers",
+                    nextNodeId = "ch7_s4_finale",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.STEVE to 8, BookCharacterId.NATASHA to 8, BookCharacterId.WANDA to 8, BookCharacterId.CLINT to 6, BookCharacterId.TONY to 6, BookCharacterId.BRUCE to 6, BookCharacterId.THOR to 6),
-                        avengersTrustDelta = 10,
-                        setFlags = mapOf("ch7_ending_vow" to "home"),
-                        impactSummary = "Yirmi yıllık kaçış burada bitti. Artık bir adın, bir ekibin ve döneceğin bir yerin var.",
-                        isBranching = false,
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 5, BookCharacterId.STEVE to 3),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.AFFECTION, 4),
+                            Triple(BookCharacterId.NATASHA, CharacterFlagAxis.LOYALTY, 4)
+                        ),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.TOWER_BELONGING to 5, StoryFlagAxis.HUMANITY_ANCHOR to 4),
+                        avengersTrustDelta = 4,
+                        setFlags = mapOf("ch7_ending" to "natasha_home"),
+                        branchTag = "Natasha İle Şafak",
+                        impactSummary = "Aiden adımını attı. Natasha yıllardır ilk kez gerçekten güldü ve birlikte şafağa yürüdünüz.",
+                        isBranching = true,
                         isRelationship = true,
                         impactLevel = "kritik"
                     )
                 ),
                 BookChoiceDef(
-                    id = "ch7_c7_unfinished",
-                    label = "\"Kör Nokta'nın başı hâlâ dışarıda. Bugün kazandık — ama yarın bitireceğiz.\"",
-                    toneHint = "Kararlı • Devam",
-                    nextNodeId = "ch7_s8_finale",
+                    id = "ch7_c3_wanda_home",
+                    label = "Wanda'nın yanına yürü — \"Artık iki farklı güç değiliz. Kule'de birlikte kalalım.\"",
+                    toneHint = "Wanda Yolu • Zihinsel & Kalbi Bağ • Avengers",
+                    nextNodeId = "ch7_s4_finale",
                     effect = BookChoiceEffect(
-                        bondDeltas = mapOf(BookCharacterId.TONY to 8, BookCharacterId.NATASHA to 8, BookCharacterId.STEVE to 6),
-                        avengersTrustDelta = 8,
-                        mysteryDelta = 1,
-                        setFlags = mapOf("ch7_ending_vow" to "unfinished"),
-                        impactSummary = "Bakışların ufka kilitlendi; ikinci perde için artık çok daha güçlü ve hazırsın.",
-                        isBranching = false,
+                        bondDeltas = mapOf(BookCharacterId.WANDA to 5, BookCharacterId.STEVE to 3),
+                        characterAxisDeltas = listOf(
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.AFFECTION, 4),
+                            Triple(BookCharacterId.WANDA, CharacterFlagAxis.LOYALTY, 4)
+                        ),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.TOWER_BELONGING to 5, StoryFlagAxis.PSYCHIC_RESONANCE to 4),
+                        avengersTrustDelta = 4,
+                        setFlags = mapOf("ch7_ending" to "wanda_home"),
+                        branchTag = "Wanda İle Şafak",
+                        impactSummary = "Aiden adımını attı. Wanda elini uzattığında zihinlerinizde ilk kez tam bir huzur yankılandı.",
+                        isBranching = true,
                         isRelationship = true,
+                        impactLevel = "kritik"
+                    )
+                ),
+                BookChoiceDef(
+                    id = "ch7_c3_lone_horizon",
+                    label = "Ekibe başınla selam ver ama kalbini kimsede bırakma — \"İhtiyacınız olduğunda buradayım. Ama yolum hâlâ benim.\"",
+                    toneHint = "Bağımsız Final • Özgür Gezgin • Mesafeli",
+                    nextNodeId = "ch7_s4_finale",
+                    effect = BookChoiceEffect(
+                        bondDeltas = mapOf(BookCharacterId.NATASHA to 2, BookCharacterId.WANDA to 2, BookCharacterId.STEVE to 2),
+                        storyAxisDeltas = mapOf(StoryFlagAxis.INDEPENDENCE to 5, StoryFlagAxis.MYSTERY_AURA to 3),
+                        avengersTrustDelta = 2,
+                        setFlags = mapOf("ch7_ending" to "lone_horizon"),
+                        branchTag = "Özgür Ufuk",
+                        impactSummary = "Av bitti, müttefiklerin var — ama Aiden Blackwood kimseye zincirlenmeden kendi ufkuyla kaldı.",
+                        isBranching = true,
+                        isRelationship = false,
                         impactLevel = "kritik"
                     )
                 )
             )
         ),
 
+        // ── BÖLÜM VII — BÜYÜK FİNAL ─────────────────────────────────────────────
         BookSceneNode(
-            id = "ch7_s8_finale",
+            id = "ch7_s4_finale",
             chapterNumber = 7,
-            sceneOrder = 8,
+            sceneOrder = 4,
             sceneTitle = "Yıldızların Altında Yeni Bir İsim",
-            locationTag = "BULUTLARIN ÜSTÜNDE • QUİNJET • DÖNÜŞ ROTASI",
+            locationTag = "BOĞAZ • YENİ BAŞLANGIÇ",
             paragraphs = listOf(
-                "Quinjet İstanbul'un şafak bulutlarını yarıp gökyüzüne yükselirken camdan dışarı baktın. Gökyüzü bu sefer mavi bir kâbus değildi — derin, berrak bir sabah moruydu.",
-                "Beş yaşındayken elini bıraktığın o geceyi değiştiremezdin. Ama yirmi beş yaşında kimin yanında duracağını, hangi kapıyı açacağını ve kimin elini tutacağını artık yalnızca *sen* seçiyordun.",
-                "İlk yedi bölümün perdesi burada kapanırken, arka planda kurduğun tüm bağlar, açtığın sırlar ve verdiğin kararlar Hikâye Günlüğü'ne işlendi. Kör Nokta'nın gerçek mimarı ve Bölüm 8 çok yakında açılacak."
+                "Beş yaşındayken New York semalarında açılan mavi bir ışığın içinde annesini, babasını ve bütün çocukluğunu kaybeden o küçük çocuk artık kaçmıyordu. Yirmi yıl boyunca kıtalar, yabancı gezegenler ve kırık zaman çizgileri arasında sırtını hep duvarlara yaslamış, her girdiği odada çıkışları saymış, kimseye güvenmemiş ve hiçbir kapının kilidini açık bırakmamıştı.",
+                "Ama o sabah İstanbul Boğazı'nın üzerindeki berrak, altın renkli gökyüzüne baktığında ağzında ne o yirmi yıllık soğuk bakır tadı vardı, ne de ensesinde S.H.I.E.L.D. uydularının görünmez elektrik iğneleri. Annenle babanın seni kurtarmak için ödediği o bedel nihayet boşa gitmemişti — hayatta kalmakla yetinmemiş, yaşamayı seçmiştin.",
+                "Artık ne dosyalardaki bir deney numarasıydın, ne kapatılması gereken kozmik bir anomali, ne de birilerinin korktuğu için 'canavar' diye damgaladığı bir gölge. Kendi sınırlarını, kendi gücünü ve kendi sessizliğini bilen Aiden Blackwood'dun. Ve önünde hayatında ilk kez, kaçarak değil bilinçle seçerek yazacağın açık bir ufuk uzanıyordu."
+            ),
+            conditionalNarratives = listOf(
+                ConditionalNarrative(
+                    requiredFlagKey = "ch7_ending",
+                    requiredFlagValue = "natasha_home",
+                    callbackLabel = "Gölgeden Şafağa — Natasha Romanoff",
+                    paragraphs = listOf(
+                        "Natasha Romanoff'un yanına yürüyüp o cümleyi kurduğunda iki saniye boyunca Boğaz rüzgârından başka hiçbir ses çıkmadı. Sonra Natasha sana döndü; çarpıcı mavi gözlerine her zamanki gibi tek milimetre bile kaçırmadan baktı ve yıllardır neredeyse hiç kimsenin görmediği kadar gerçek, dingin ve sıcak bir gülümseme yüzüne yayıldı.",
+                        "\"Kömür ateşinde ızgara köfte, sıcak pide ve demli çay,\" dedi alçak, keyifli bir sesle. \"Kabul Aiden. Ama hesabı Stark'ın sınırsız kartından ödüyoruz — ve dönüşte Quinjet'i ben kullanıyorum.\"",
+                        "Sahil yolundaki küçük lokantaya doğru yan yana yürürken omzu hafifçe omzuna değdi. Zorlamadan, acele etmeden, senden olmadığın biri olmanı beklemeden — tam da Aiden Blackwood'un dünyasına yakışan o nadir, sakin ve gerektiğinde bütün dünyayı karşısına alabilecek kadar sarsılmaz dengeyle. Aiden ilk kez kendi iradesiyle bir adım atmıştı ve bu kez yanında duran gölge hiç gitmeyecekti."
+                    )
+                ),
+                ConditionalNarrative(
+                    requiredFlagKey = "ch7_ending",
+                    requiredFlagValue = "wanda_home",
+                    callbackLabel = "Mavi ve Kızıl — Wanda Maximoff",
+                    paragraphs = listOf(
+                        "Wanda Maximoff'un yanına yürüdüğünde zihnine izinsiz dokunmadı; sadece başını kaldırıp doğrudan senin çarpıcı mavi gözlerine baktı ve parmaklarını yavaşça senin avucuna bıraktı. O saniyede ne senin berrak mavi kozmik enerjin ne de onun kızıl kaos gücü birbiriyle çarpıştı — ikisi ilk kez aynı sakin, huzurlu ritimde nefes aldı.",
+                        "\"Artık cam duvarların arkasında değiliz Aiden,\" diye fısıldadı Wanda, gözleri Boğaz'ın sabah güneşinde parlayarak. \"Ve artık ikimiz de bu ağırlığı tek başımıza taşımak zorunda değiliz.\"",
+                        "Quinjet'e doğru el ele yürürken Steve'in yüzünde sessiz bir gülümseme belirdi. Yirmi yılın ardından ilk kez bir kuleye dönmenin sadece geçici bir sığınak değil, gerçekten kendine ait bir ev olabileceğini hissettin."
+                    )
+                ),
+                ConditionalNarrative(
+                    requiredFlagKey = "ch7_ending",
+                    requiredFlagValue = "lone_horizon",
+                    callbackLabel = "Özgür Ufuk — Yalnız Gezgin",
+                    paragraphs = listOf(
+                        "Steve Rogers başını derin bir saygıyla eğdi, Clint Barton \"Yine de o Türk lokantasının adresini bırak\" diye seslendi, Tony ise hattan \"İletişim bilekliğini açık tut yeter, dünyanın başı yine derde girecek\" dedi. Natasha tek bir kırgınlık gölgesi olmadan gözlerinin içine bakıp hafifçe başını eğdi; Wanda ise sabah rüzgârında sessiz, anlayışlı bir tebessümle elini kaldırdı. Kimse seni durdurmaya ya da kalmaya zorlamaya çalışmadı.",
+                        "Av bitmişti. Arkanda seni anlayan ve sırtını kollayacak gerçek müttefiklerin vardı — ama Aiden Blackwood kimseye zincirlenmeden, bu kez korktuğu ya da kaçtığı için değil tamamen özgürce seçtiği için güneşin doğduğu altın ufka doğru yürüdü."
+                    )
+                )
             ),
             isChapterEnd = true,
-            chapterEndQuote = "Artık gökyüzünden kaçmıyorsun, Aiden Blackwood. Kendi yıldız haritanı çiziyorsun."
+            chapterEndQuote = "Artık kaçak bir anomali değil; kendi kaderini yazan Aiden Blackwood'sun."
         )
     ).associateBy { it.id }
 }

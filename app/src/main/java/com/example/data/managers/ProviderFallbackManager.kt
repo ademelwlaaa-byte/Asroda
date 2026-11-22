@@ -13,12 +13,19 @@ import com.example.data.repository.EmochiRepository
 import com.example.data.repository.ProviderFallbackLogEntry
 import com.example.util.AppFeatureFlags
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class ProviderFallbackManager(
     private val customProviderDao: CustomProviderDao,
@@ -34,6 +41,28 @@ class ProviderFallbackManager(
     enum class ExecutionMode {
         NARRATIVE,
         UTILITY
+    }
+
+    /** Coroutine-cooperative OkHttp execution: cancels the underlying socket immediately on timeout/cancellation. */
+    private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation {
+            try {
+                cancel()
+            } catch (_: Throwable) {}
+        }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (cont.isActive) {
+                    cont.resume(response)
+                } else {
+                    response.close()
+                }
+            }
+        })
     }
 
     fun buildProviderChain(
@@ -54,8 +83,7 @@ class ProviderFallbackManager(
             "mistral" -> settings.mistralApiKey.isNotBlank()
             "llm7" -> settings.enableLlm7 && settings.llm7Enabled
             "pollinations" -> settings.enablePollinations && settings.pollinationsEnabled
-            "ovh" -> settings.enableOvh && settings.ovhEnabled &&
-                System.currentTimeMillis() > EmochiRepository.ovhCooldownUntilTimestamp
+            "ovh" -> settings.enableOvh && settings.ovhEnabled
             else -> if (providerKey.startsWith("custom_")) {
                 val id = providerKey.removePrefix("custom_").toLongOrNull()
                 id != null && customProviders.containsKey(id)
@@ -265,9 +293,6 @@ class ProviderFallbackManager(
                                 errorMessage = e.message ?: "Bilinmeyen hata"
                             )
                         }
-                        if (providerKey == "ovh") {
-                            EmochiRepository.ovhCooldownUntilTimestamp = System.currentTimeMillis() + 60_000L
-                        }
                         onLogFallback(
                             ProviderFallbackLogEntry(
                                 providerName = providerKey,
@@ -311,15 +336,22 @@ class ProviderFallbackManager(
         val chain = buildProviderChain(settings, customMap, buildConfigGeminiKey)
         val candidates = ProviderHealthTracker.selectOrderedCandidates(chain)
 
-        val clientBuilder = okhttp3.OkHttpClient.Builder()
+        // Share RetrofitClient's singleton ConnectionPool & Dispatcher via newBuilder() — zero pool leaks
+        val clientBuilder = RetrofitClient.okHttpClient.newBuilder()
             .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             .writeTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
             .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .addInterceptor(com.example.EmochiApplication.createTemperatureInterceptor())
 
+        val tempInterceptor = com.example.EmochiApplication.installedTemperatureInterceptor
+        if (tempInterceptor == null || clientBuilder.interceptors().none { it === tempInterceptor }) {
+            clientBuilder.addInterceptor(com.example.EmochiApplication.createTemperatureInterceptor())
+        }
         val externalInterceptor = RetrofitClient.customInterceptor
-        if (externalInterceptor != null && externalInterceptor !== com.example.EmochiApplication.installedTemperatureInterceptor) {
+        if (externalInterceptor != null &&
+            externalInterceptor !== tempInterceptor &&
+            clientBuilder.interceptors().none { it === externalInterceptor }
+        ) {
             clientBuilder.addInterceptor(externalInterceptor)
         }
         val utilityClient = clientBuilder.build()
@@ -347,7 +379,7 @@ class ProviderFallbackManager(
                     maxTokens = maxTokens
                 ) ?: continue
 
-                utilityClient.newCall(request).execute().use { resp ->
+                utilityClient.newCall(request).awaitResponse().use { resp ->
                     val rawBody = resp.body?.string().orEmpty()
                     val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
                     if (!resp.isSuccessful) {
@@ -405,7 +437,7 @@ class ProviderFallbackManager(
                 apiKey = settings.customApiKey.ifBlank { buildConfigGeminiKey }.trim()
                 if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") return null
                 format = "gemini"
-                url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
             }
             providerKey == "claude" -> {
                 apiKey = settings.claudeApiKey.trim()
@@ -471,7 +503,7 @@ class ProviderFallbackManager(
                     url = if (cleanBase.endsWith("/messages")) cleanBase else "$cleanBase/v1/messages"
                 } else if (fmt == "gemini" || cleanBase.contains("generativelanguage.googleapis.com")) {
                     format = "gemini"
-                    url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+                    url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
                 } else {
                     format = "openai"
                     url = when {
@@ -498,7 +530,9 @@ class ProviderFallbackManager(
         }
 
         val payload = when (format) {
-            "gemini" -> JSONObject().apply {
+            "gemini" -> {
+                if (apiKey.isNotBlank()) reqBuilder.header("x-goog-api-key", apiKey)
+                JSONObject().apply {
                 if (systemPrompt.isNotBlank()) {
                     put(
                         "system_instruction",
@@ -523,6 +557,7 @@ class ProviderFallbackManager(
                         .put("topP", com.example.EmochiApplication.UTILITY_TOP_P)
                         .put("maxOutputTokens", maxTokens)
                 )
+            }
             }
             "anthropic" -> {
                 reqBuilder.header("anthropic-version", "2023-06-01")
@@ -645,7 +680,7 @@ class ProviderFallbackManager(
             // 1. Google Gemini native REST test
             if (format == "gemini" || cleanUrl.contains("generativelanguage.googleapis.com")) {
                 val safeModel = EmochiRepository.sanitizeModelName(modelName.ifBlank { "gemini-2.0-flash" })
-                val geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/$safeModel:generateContent?key=${apiKey.trim()}"
+                val geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/$safeModel:generateContent"
                 val payload = JSONObject().apply {
                     put(
                         "contents",
@@ -668,13 +703,16 @@ class ProviderFallbackManager(
                         JSONObject().apply { put("maxOutputTokens", 16) }
                     )
                 }
-                val req = Request.Builder()
+                val reqBuilder = Request.Builder()
                     .url(geminiUrl)
                     .post(payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType()))
                     .header("Content-Type", "application/json")
-                    .build()
+                if (apiKey.isNotBlank()) {
+                    reqBuilder.header("x-goog-api-key", apiKey.trim())
+                }
+                val req = reqBuilder.build()
 
-                RetrofitClient.okHttpClient.newCall(req).execute().use { resp ->
+                RetrofitClient.okHttpClient.newCall(req).awaitResponse().use { resp ->
                     val bodyStr = resp.body?.string().orEmpty()
                     val latency = System.currentTimeMillis() - startMs
                     return@withContext if (resp.isSuccessful) {
@@ -722,7 +760,7 @@ class ProviderFallbackManager(
                 if (apiKey.isNotBlank()) {
                     reqBuilder.header("x-api-key", apiKey.trim())
                 }
-                RetrofitClient.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+                RetrofitClient.okHttpClient.newCall(reqBuilder.build()).awaitResponse().use { resp ->
                     val bodyStr = resp.body?.string().orEmpty()
                     val latency = System.currentTimeMillis() - startMs
                     return@withContext if (resp.isSuccessful) {
@@ -791,7 +829,7 @@ class ProviderFallbackManager(
                 reqBuilder.header("Authorization", "Bearer ${apiKey.trim()}")
             }
 
-            RetrofitClient.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+            RetrofitClient.okHttpClient.newCall(reqBuilder.build()).awaitResponse().use { resp ->
                 val bodyStr = resp.body?.string().orEmpty()
                 val latency = System.currentTimeMillis() - startMs
                 if (!resp.isSuccessful) {
@@ -868,7 +906,7 @@ class ProviderFallbackManager(
             if (apiKey.isNotBlank()) {
                 reqBuilder.header("Authorization", "Bearer ${apiKey.trim()}")
             }
-            RetrofitClient.okHttpClient.newCall(reqBuilder.build()).execute().use { resp ->
+            RetrofitClient.okHttpClient.newCall(reqBuilder.build()).awaitResponse().use { resp ->
                 if (!resp.isSuccessful) return@withContext emptyList<String>()
                 val body = resp.body?.string().orEmpty()
                 val arr = JSONObject(body).optJSONArray("data") ?: return@withContext emptyList<String>()

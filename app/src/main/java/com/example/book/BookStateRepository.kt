@@ -9,72 +9,25 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
 
+import java.util.concurrent.ConcurrentHashMap
+
 /**
- * Central registry for the built-in interactive novel "Kozmik Sürükleniş"
- * (all 7 playable chapters, extended literary scenes, deep cross-chapter flags).
+ * Extensible multi-book contract for 100% deterministic (zero-AI) interactive novels.
+ * New story packs simply implement [BookCatalogProvider] and register in [BookRegistryHub].
  */
-object CosmicDriftBookRegistry {
-    const val BOOK_ID = "preset_aiden_mcu_cosmic"
-    const val TOTAL_PLAYABLE_CHAPTERS = 7
-
-    val allNodes: Map<String, BookSceneNode> by lazy {
-        buildMap {
-            putAll(CosmicDriftChapters1To3.nodes)
-            putAll(CosmicDriftChapters4To5.nodes)
-            putAll(CosmicDriftChapters6To7.nodes)
-        }
-    }
-
-    val chapters: List<BookChapterMeta> by lazy {
-        val raw = CosmicDriftChapters1To3.chaptersMeta +
-            CosmicDriftChapters4To5.chaptersMeta +
-            CosmicDriftChapters6To7.chaptersMeta
-        raw.map { meta ->
-            val chapterNodes = allNodes.values.filter { it.chapterNumber == meta.number }
-            val maxScene = chapterNodes.maxOfOrNull { it.sceneOrder } ?: meta.sceneCount
-            val distinctDecisionOrders = chapterNodes
-                .filter { it.choices.isNotEmpty() }
-                .map { it.sceneOrder }
-                .distinct()
-                .size
-            meta.copy(
-                sceneCount = maxScene,
-                decisionCount = distinctDecisionOrders
-            )
-        }
-    }
-
-    val totalChoiceBranches: Int by lazy {
-        allNodes.values.sumOf { it.choices.size }
-    }
-
-    val totalEstimatedMinutes: Int by lazy {
-        chapters.sumOf { it.estimatedMinutes }
-    }
+interface BookCatalogProvider {
+    val bookId: String
+    val totalPlayableChapters: Int
+    val allNodes: Map<String, BookSceneNode>
+    val chapters: List<BookChapterMeta>
 
     fun chapterMeta(chapterNumber: Int): BookChapterMeta =
         chapters.firstOrNull { it.number == chapterNumber } ?: chapters.first()
 
+    fun resolveChapterStartNodeId(chapterNumber: Int, flags: Map<String, String>): String =
+        chapterMeta(chapterNumber).startNodeId
+
     fun node(nodeId: String): BookSceneNode? = allNodes[nodeId]
-
-    /**
-     * Resilient detector: matches both the canonical preset ID and any previously
-     * imported Room copy of "Kozmik Sürükleniş" (even if an older build gave it a UUID).
-     */
-    fun supportsDeterministicEngine(bot: BotEntity): Boolean =
-        bot.id == BOOK_ID ||
-            bot.aiName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
-            bot.aiName.contains("Cosmic Drift", ignoreCase = true) ||
-            bot.universeName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
-            bot.pinnedMemory.contains("KOZMİK SÜRÜKLENİŞ", ignoreCase = true)
-
-    fun supportsDeterministicEngine(botId: String): Boolean =
-        botId == BOOK_ID
-
-    data class ResolvedSceneText(
-        val paragraphs: List<String>,
-        val memoryEchoes: List<Pair<String, String>>
-    )
 
     fun resolveSceneContent(
         node: BookSceneNode,
@@ -84,7 +37,7 @@ object CosmicDriftBookRegistry {
         avengersTrust: Int,
         bonds: Map<BookCharacterId, Int>,
         secrets: Set<String>
-    ): ResolvedSceneText {
+    ): CosmicDriftBookRegistry.ResolvedSceneText {
         val out = node.paragraphs.toMutableList()
         val echoes = mutableListOf<Pair<String, String>>()
         node.conditionalNarratives.forEach { cond ->
@@ -107,8 +60,156 @@ object CosmicDriftBookRegistry {
                 }
             }
         }
-        return ResolvedSceneText(out, echoes)
+        return CosmicDriftBookRegistry.ResolvedSceneText(out, echoes)
     }
+}
+
+/**
+ * Multi-book registry hub allowing any number of deterministic interactive novels
+ * to share [BookStateRepository] without hardcoding a single story.
+ */
+object BookRegistryHub {
+    private val providers = ConcurrentHashMap<String, BookCatalogProvider>().apply {
+        put(CosmicDriftBookRegistry.BOOK_ID, CosmicDriftBookRegistry)
+    }
+
+    fun register(provider: BookCatalogProvider) {
+        providers[provider.bookId] = provider
+    }
+
+    fun unregister(bookId: String) {
+        if (bookId != CosmicDriftBookRegistry.BOOK_ID) {
+            providers.remove(bookId)
+        }
+    }
+
+    fun resolve(bookId: String): BookCatalogProvider =
+        providers[bookId] ?: CosmicDriftBookRegistry
+
+    fun allBookIds(): Set<String> = providers.keys.toSet()
+}
+
+/**
+ * Central registry for the built-in interactive novel "Kozmik Sürükleniş"
+ * (all 10 playable chapters including Season 1 Finale, extended literary scenes, deep cross-chapter flags).
+ */
+object CosmicDriftBookRegistry : BookCatalogProvider {
+    const val BOOK_ID = "preset_aiden_mcu_cosmic"
+    const val TOTAL_PLAYABLE_CHAPTERS = 24
+
+    override val bookId: String = BOOK_ID
+    override val totalPlayableChapters: Int = TOTAL_PLAYABLE_CHAPTERS
+
+    override val allNodes: Map<String, BookSceneNode> by lazy {
+        buildMap {
+            // Season 1 (Chapters 1..10)
+            putAll(CosmicDriftChapters1To3.nodes)
+            putAll(CosmicDriftChapters4To5.nodes)
+            putAll(CosmicDriftChapters6To7.nodes)
+            putAll(CosmicDriftChapters8To9.nodes)
+            putAll(CosmicDriftChapter10Finale.nodes)
+            // Season 2: Demir ve Yankı (Chapters 11..24)
+            putAll(CosmicDriftS2Chapters11To12.nodes)
+            putAll(CosmicDriftS2Chapters13To14.nodes)
+            putAll(CosmicDriftS2Chapter15VossMira.nodes)
+            putAll(CosmicDriftS2Chapters15To16.nodes)
+            putAll(CosmicDriftS2Chapters17To18.nodes)
+            putAll(CosmicDriftS2Chapters19And22.nodes)
+            putAll(CosmicDriftS2Chapters19To20.nodes)
+            putAll(CosmicDriftS2Chapters23To24Finale.nodes)
+        }
+    }
+
+    override val chapters: List<BookChapterMeta> by lazy {
+        val raw = (CosmicDriftChapters1To3.chaptersMeta +
+            CosmicDriftChapters4To5.chaptersMeta +
+            CosmicDriftChapters6To7.chaptersMeta +
+            CosmicDriftChapters8To9.chaptersMeta +
+            CosmicDriftChapter10Finale.chaptersMeta +
+            CosmicDriftS2Chapters11To12.chaptersMeta +
+            CosmicDriftS2Chapters13To14.chaptersMeta +
+            CosmicDriftS2Chapter15VossMira.chaptersMeta +
+            CosmicDriftS2Chapters15To16.chaptersMeta +
+            CosmicDriftS2Chapters17To18.chaptersMeta +
+            CosmicDriftS2Chapters19And22.chaptersMeta +
+            CosmicDriftS2Chapters19To20.chaptersMeta +
+            CosmicDriftS2Chapters23To24Finale.chaptersMeta).sortedBy { it.number }
+        raw.map { meta ->
+            val chapterNodes = allNodes.values.filter { it.chapterNumber == meta.number }
+            val maxScene = chapterNodes.maxOfOrNull { it.sceneOrder } ?: meta.sceneCount
+            val distinctDecisionOrders = chapterNodes
+                .filter { it.choices.isNotEmpty() }
+                .map { it.sceneOrder }
+                .distinct()
+                .size
+            meta.copy(
+                sceneCount = maxScene,
+                decisionCount = distinctDecisionOrders
+            )
+        }
+    }
+
+    override fun resolveChapterStartNodeId(chapterNumber: Int, flags: Map<String, String>): String {
+        if (chapterNumber == 11) {
+            return when (flags["season1_ending"]) {
+                "twin_stars" -> "ch11_s1_twin_stars"
+                "shield_reborn" -> "ch11_s1_shield_reborn"
+                else -> "ch11_s1_vanguard"
+            }
+        }
+        return chapterMeta(chapterNumber).startNodeId
+    }
+
+    val totalChoiceBranches: Int by lazy {
+        allNodes.values.sumOf { it.choices.size }
+    }
+
+    val totalEstimatedMinutes: Int by lazy {
+        chapters.sumOf { it.estimatedMinutes }
+    }
+
+    override fun chapterMeta(chapterNumber: Int): BookChapterMeta =
+        chapters.firstOrNull { it.number == chapterNumber } ?: chapters.first()
+
+    override fun node(nodeId: String): BookSceneNode? = allNodes[nodeId]
+
+    /**
+     * Resilient detector: matches both the canonical preset ID and any previously
+     * imported Room copy of "Kozmik Sürükleniş" (even if an older build gave it a UUID).
+     */
+    fun supportsDeterministicEngine(bot: BotEntity): Boolean =
+        bot.id == BOOK_ID ||
+            BookRegistryHub.allBookIds().contains(bot.id) ||
+            bot.aiName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
+            bot.aiName.contains("Cosmic Drift", ignoreCase = true) ||
+            bot.universeName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
+            bot.pinnedMemory.contains("KOZMİK SÜRÜKLENİŞ", ignoreCase = true)
+
+    fun supportsDeterministicEngine(botId: String): Boolean =
+        botId == BOOK_ID || BookRegistryHub.allBookIds().contains(botId)
+
+    data class ResolvedSceneText(
+        val paragraphs: List<String>,
+        val memoryEchoes: List<Pair<String, String>>
+    )
+
+    override fun resolveSceneContent(
+        node: BookSceneNode,
+        flags: Map<String, String>,
+        fatigue: Int,
+        redEyeInstability: Int,
+        avengersTrust: Int,
+        bonds: Map<BookCharacterId, Int>,
+        secrets: Set<String>
+    ): ResolvedSceneText = super.resolveSceneContent(
+        node = node,
+        flags = flags,
+        fatigue = fatigue,
+        redEyeInstability = redEyeInstability,
+        avengersTrust = avengersTrust,
+        bonds = bonds,
+        secrets = secrets
+    )
 }
 
 /**
@@ -119,6 +220,13 @@ object CosmicDriftBookRegistry {
 object BookStateRepository {
     private const val PREFS_NAME = "aetheria_book_engine_state_v4"
     private val flows = mutableMapOf<String, MutableStateFlow<BookReadState>>()
+    private val lastSavedScroll = mutableMapOf<String, Pair<Int, Int>>()
+
+    @Synchronized
+    fun resetForTesting() {
+        flows.clear()
+        lastSavedScroll.clear()
+    }
 
     private fun defaultBonds(): Map<BookCharacterId, Int> =
         BookCharacterId.entries.associateWith { it.initialBond }
@@ -129,6 +237,7 @@ object BookStateRepository {
         if (existing != null) return existing.asStateFlow()
         val loaded = loadFromPrefs(context.applicationContext, bookId)
             ?: createInitialState(bookId, chapterNumber = 1)
+        lastSavedScroll[bookId] = loaded.savedScrollIndex to loaded.savedScrollOffset
         val flow = MutableStateFlow(loaded)
         flows[bookId] = flow
         return flow.asStateFlow()
@@ -138,8 +247,9 @@ object BookStateRepository {
         stateFlow(context, bookId).value
 
     /**
-     * Persists exact scroll index & pixel offset so exiting mid-chapter resumes
-     * at the exact paragraph where the reader left off.
+     * Persists exact scroll index & pixel offset in <0.1 ms using two lightweight Int keys
+     * (never re-serializes the growing transcript JSON on the main thread and never triggers
+     * redundant StateFlow recompositions during active scrolling).
      */
     @Synchronized
     fun saveScrollPosition(
@@ -149,23 +259,24 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ) {
         val appCtx = context.applicationContext
-        val current = getState(appCtx, bookId)
         val safeIndex = firstVisibleIndex.coerceAtLeast(0)
         val safeOffset = firstVisibleOffset.coerceAtLeast(0)
-        if (current.savedScrollIndex == safeIndex && current.savedScrollOffset == safeOffset) return
-        val updated = current.copy(
-            savedScrollIndex = safeIndex,
-            savedScrollOffset = safeOffset
-        )
-        saveToPrefs(appCtx, bookId, updated)
-        flows[bookId]?.value = updated
+        val prev = lastSavedScroll[bookId]
+        if (prev != null && prev.first == safeIndex && prev.second == safeOffset) return
+
+        lastSavedScroll[bookId] = safeIndex to safeOffset
+        appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt("scroll_idx_$bookId", safeIndex)
+            .putInt("scroll_off_$bookId", safeOffset)
+            .apply()
     }
 
     /**
      * Scales legacy/raw deltas down to grounded, realistic increments (+1..+3 standard,
      * +4 for major turns, +5 ONLY for truly massive watershed climax events).
      */
-    private fun normalizeDelta(raw: Int, isWatershed: Boolean): Int {
+    internal fun normalizeDelta(raw: Int, isWatershed: Boolean): Int {
         if (raw == 0) return 0
         val sign = if (raw > 0) 1 else -1
         val absVal = kotlin.math.abs(raw)
@@ -177,6 +288,44 @@ object BookStateRepository {
             else -> if (isWatershed) 5 else 4
         }
         return sign * scaled
+    }
+
+    /**
+     * Progressively unlocks characters as the player actually encounters them in the story.
+     * Once a character has been met (by chapter/scene progression OR by earning any flag),
+     * they stay unlocked even if the player revisits an earlier chapter.
+     */
+    fun unlockedCharacters(state: BookReadState): List<BookCharacterId> {
+        val maxChapterReached = maxOf(state.activeChapter, state.highestCompletedChapter)
+        val currentSceneOrder = CosmicDriftBookRegistry.node(state.currentNodeId)?.sceneOrder
+            ?: (state.transcript.lastOrNull { it is BookTranscriptItem.SceneBlock } as? BookTranscriptItem.SceneBlock)?.sceneOrder
+            ?: 1
+        return BookCharacterId.entries.filter { char ->
+            val hasEarnedFlag = state.numericFlags.entries.any { (k, v) ->
+                k.startsWith("char:${char.key}:") && v != 0
+            }
+            when {
+                char.minChapter <= 1 -> true
+                hasEarnedFlag -> true
+                maxChapterReached > char.minChapter -> true
+                state.activeChapter == char.minChapter && currentSceneOrder >= char.introSceneOrder -> true
+                else -> false
+            }
+        }
+    }
+
+    /**
+     * Returns all non-zero multi-axis flags for a specific character sorted by impact strength.
+     */
+    fun characterFlagsFor(state: BookReadState, charId: BookCharacterId): List<Pair<CharacterFlagAxis, Int>> {
+        val prefix = "char:${charId.key}:"
+        return state.numericFlags.entries
+            .filter { it.key.startsWith(prefix) && it.value != 0 }
+            .mapNotNull { (k, v) ->
+                val axis = CharacterFlagAxis.fromKey(k.removePrefix(prefix)) ?: return@mapNotNull null
+                axis to v
+            }
+            .sortedByDescending { kotlin.math.abs(it.second) }
     }
 
     /**
@@ -275,6 +424,36 @@ object BookStateRepository {
                 hintLower.contains("güven") -> CharacterFlagAxis.TRUST
                 else -> CharacterFlagAxis.RESPECT
             }
+            BookCharacterId.PIETRO -> when {
+                hintLower.contains("kurtar") || hintLower.contains("kardeş") || isWatershed -> CharacterFlagAxis.LOYALTY
+                hintLower.contains("güven") -> CharacterFlagAxis.TRUST
+                else -> CharacterFlagAxis.RESPECT
+            }
+            BookCharacterId.FURY -> when {
+                hintLower.contains("şüphe") || hintLower.contains("sır") -> CharacterFlagAxis.SUSPICION
+                hintLower.contains("saygı") || hintLower.contains("taktik") -> CharacterFlagAxis.RESPECT
+                else -> CharacterFlagAxis.TRUST
+            }
+            BookCharacterId.ZERO -> when {
+                hintLower.contains("kefaret") || hintLower.contains("huzur") || hintLower.contains("anla") -> CharacterFlagAxis.EMPATHY
+                hintLower.contains("müttefik") || hintLower.contains("yemin") || isWatershed -> CharacterFlagAxis.LOYALTY
+                else -> CharacterFlagAxis.TRUST
+            }
+            BookCharacterId.VISION -> when {
+                hintLower.contains("hakikat") || hintLower.contains("insan") -> CharacterFlagAxis.EMPATHY
+                hintLower.contains("güven") || isWatershed -> CharacterFlagAxis.TRUST
+                else -> CharacterFlagAxis.RESPECT
+            }
+            BookCharacterId.VOSS -> when {
+                hintLower.contains("kardeş") || hintLower.contains("aile") || hintLower.contains("koru") || isWatershed -> CharacterFlagAxis.LOYALTY
+                hintLower.contains("güven") -> CharacterFlagAxis.TRUST
+                else -> CharacterFlagAxis.RESPECT
+            }
+            BookCharacterId.MIRA -> when {
+                hintLower.contains("aile") || hintLower.contains("sevgi") || isWatershed -> CharacterFlagAxis.AFFECTION
+                hintLower.contains("güven") || hintLower.contains("koru") -> CharacterFlagAxis.TRUST
+                else -> CharacterFlagAxis.EMPATHY
+            }
         }
         return axis to scaled
     }
@@ -309,22 +488,22 @@ object BookStateRepository {
             )
         }
 
-        // 1) Explicit per-character multi-axis flags if authored on the choice
-        if (effect.characterAxisDeltas.isNotEmpty()) {
-            effect.characterAxisDeltas.forEach { (charId, axis, delta) ->
-                val key = "char:${charId.key}:${axis.key}"
-                val colorHex = if (axis.isNegativeTone) axis.accentHex else charId.accentHex
-                appendEntry(
-                    key = key,
-                    label = "${charId.possessiveName} ${axis.turkishLabel}",
-                    delta = delta,
-                    accentHex = colorHex,
-                    charId = charId
-                )
-            }
-        } else {
-            // Auto-infer nuanced multi-axis character flags from bondDeltas with balanced small values
-            effect.bondDeltas.forEach { (charId, rawDelta) ->
+        // 1) Explicit per-character multi-axis flags AND auto-inferred axes for any other characters in bondDeltas!
+        val explicitlyCoveredChars = mutableSetOf<BookCharacterId>()
+        effect.characterAxisDeltas.forEach { (charId, axis, delta) ->
+            explicitlyCoveredChars.add(charId)
+            val key = "char:${charId.key}:${axis.key}"
+            val colorHex = if (axis.isNegativeTone) axis.accentHex else charId.accentHex
+            appendEntry(
+                key = key,
+                label = "${charId.possessiveName} ${axis.turkishLabel}",
+                delta = delta,
+                accentHex = colorHex,
+                charId = charId
+            )
+        }
+        effect.bondDeltas.forEach { (charId, rawDelta) ->
+            if (charId !in explicitlyCoveredChars) {
                 val (axis, balancedDelta) = inferCharacterAxis(chapterNumber, charId, rawDelta, choice)
                 val key = "char:${charId.key}:${axis.key}"
                 val colorHex = if (axis.isNegativeTone) axis.accentHex else charId.accentHex
@@ -459,10 +638,11 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ): BookReadState {
         val appCtx = context.applicationContext
+        val catalog = BookRegistryHub.resolve(bookId)
         val current = getState(appCtx, bookId)
-        val currentNode = CosmicDriftBookRegistry.node(current.currentNodeId) ?: return current
+        val currentNode = catalog.node(current.currentNodeId) ?: return current
         val choice = currentNode.choices.firstOrNull { it.id == choiceId } ?: return current
-        val nextNode = CosmicDriftBookRegistry.node(choice.nextNodeId) ?: return current
+        val nextNode = catalog.node(choice.nextNodeId) ?: return current
 
         val effect = choice.effect
         val isWatershed = effect.impactLevel == "kritik" && (effect.isBranching || current.activeChapter >= 6)
@@ -529,7 +709,7 @@ object BookStateRepository {
             impactLevel = effect.impactLevel
         )
 
-        val resolved = CosmicDriftBookRegistry.resolveSceneContent(
+        val resolved = catalog.resolveSceneContent(
             node = nextNode,
             flags = updatedFlags,
             fatigue = updatedFatigue,
@@ -595,15 +775,16 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ): BookReadState {
         val appCtx = context.applicationContext
-        val clamped = chapterNumber.coerceIn(1, CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS)
+        val catalog = BookRegistryHub.resolve(bookId)
+        val clamped = chapterNumber.coerceIn(1, catalog.totalPlayableChapters)
         val current = getState(appCtx, bookId)
 
         if (current.activeChapter == clamped && !forceRestartIfSame && !current.isChapterCompleted) {
             return current
         }
 
-        val chapterMeta = CosmicDriftBookRegistry.chapterMeta(clamped)
-        val startNode = CosmicDriftBookRegistry.node(chapterMeta.startNodeId)
+        val startNodeId = catalog.resolveChapterStartNodeId(clamped, current.flags)
+        val startNode = catalog.node(startNodeId)
             ?: return current
 
         val snapshot = ChapterSnapshot(
@@ -618,7 +799,7 @@ object BookStateRepository {
             discoveredBranches = current.discoveredBranches
         )
 
-        val resolved = CosmicDriftBookRegistry.resolveSceneContent(
+        val resolved = catalog.resolveSceneContent(
             node = startNode,
             flags = snapshot.flags,
             fatigue = snapshot.fatigue,
@@ -688,10 +869,11 @@ object BookStateRepository {
             discoveredSecrets = emptySet(),
             discoveredBranches = emptySet()
         )
-        val chapterMeta = CosmicDriftBookRegistry.chapterMeta(current.activeChapter)
-        val startNode = CosmicDriftBookRegistry.node(chapterMeta.startNodeId) ?: return current
+        val catalog = BookRegistryHub.resolve(bookId)
+        val startNodeId = catalog.resolveChapterStartNodeId(current.activeChapter, snap.flags)
+        val startNode = catalog.node(startNodeId) ?: return current
 
-        val resolved = CosmicDriftBookRegistry.resolveSceneContent(
+        val resolved = catalog.resolveSceneContent(
             node = startNode,
             flags = snap.flags,
             fatigue = snap.fatigue,
@@ -754,9 +936,10 @@ object BookStateRepository {
     }
 
     private fun createInitialState(bookId: String, chapterNumber: Int): BookReadState {
-        val meta = CosmicDriftBookRegistry.chapterMeta(chapterNumber)
-        val startNode = CosmicDriftBookRegistry.node(meta.startNodeId)
-            ?: CosmicDriftBookRegistry.allNodes.values.first()
+        val catalog = BookRegistryHub.resolve(bookId)
+        val meta = catalog.chapterMeta(chapterNumber)
+        val startNode = catalog.node(meta.startNodeId)
+            ?: catalog.allNodes.values.first()
         val initialBonds = defaultBonds()
         val snap = ChapterSnapshot(
             bonds = initialBonds,
@@ -768,7 +951,7 @@ object BookStateRepository {
             discoveredSecrets = emptySet(),
             discoveredBranches = emptySet()
         )
-        val resolved = CosmicDriftBookRegistry.resolveSceneContent(
+        val resolved = catalog.resolveSceneContent(
             node = startNode,
             flags = emptyMap(),
             fatigue = 0,
@@ -812,6 +995,12 @@ object BookStateRepository {
 
     private fun persistAndEmit(context: Context, bookId: String, state: BookReadState) {
         saveToPrefs(context, bookId, state)
+        lastSavedScroll[bookId] = state.savedScrollIndex to state.savedScrollOffset
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt("scroll_idx_$bookId", state.savedScrollIndex)
+            .putInt("scroll_off_$bookId", state.savedScrollOffset)
+            .apply()
         ChapterProgressManager.setExactCompletedChapter(context, bookId, state.highestCompletedChapter)
         val flow = flows[bookId]
         if (flow != null) {
@@ -899,11 +1088,12 @@ object BookStateRepository {
 
     private fun loadFromPrefs(context: Context, bookId: String): BookReadState? {
         return try {
-            val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString("state_$bookId", null) ?: return null
+            val catalog = BookRegistryHub.resolve(bookId)
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val raw = prefs.getString("state_$bookId", null) ?: return null
             val root = JSONObject(raw)
-            val currentNodeId = root.optString("currentNodeId", "ch1_s1")
-            if (CosmicDriftBookRegistry.node(currentNodeId) == null) return null
+            val currentNodeId = root.optString("currentNodeId", catalog.chapterMeta(1).startNodeId)
+            if (catalog.node(currentNodeId) == null) return null
 
             val completed = mutableSetOf<Int>()
             root.optJSONArray("completedChapters")?.let { arr ->
@@ -995,9 +1185,48 @@ object BookStateRepository {
                 )
             }
 
+            val fastScrollIdx = if (prefs.contains("scroll_idx_$bookId")) {
+                prefs.getInt("scroll_idx_$bookId", 0).coerceAtLeast(0)
+            } else {
+                root.optInt("savedScrollIndex", 0).coerceAtLeast(0)
+            }
+            val fastScrollOff = if (prefs.contains("scroll_off_$bookId")) {
+                prefs.getInt("scroll_off_$bookId", 0).coerceAtLeast(0)
+            } else {
+                root.optInt("savedScrollOffset", 0).coerceAtLeast(0)
+            }
+
+            val loadedFlags = decodeStringMap(root.optJSONObject("flags"))
+            val loadedNumericFlags = decodeIntMap(root.optJSONObject("numericFlags")).toMutableMap()
+            // Backward-compatible flag backfill for newly added characters (Voss, Mira, Fury, Zero)
+            // if the user already played those chapters on an earlier version!
+            if (loadedFlags["ch5_voss_fate"] == "protected" && loadedNumericFlags.keys.none { it.startsWith("char:voss:") }) {
+                loadedNumericFlags["char:voss:trust"] = 4
+                loadedNumericFlags["char:voss:loyalty"] = 4
+            } else if (loadedFlags["ch5_voss_fate"] == "handed_over" && loadedNumericFlags.keys.none { it.startsWith("char:voss:") }) {
+                loadedNumericFlags["char:voss:suspicion"] = 3
+            }
+            if (loadedFlags["ch7_finale_act"] == "saved_mira" && loadedNumericFlags.keys.none { it.startsWith("char:mira:") }) {
+                loadedNumericFlags["char:mira:trust"] = 5
+                loadedNumericFlags["char:mira:affection"] = 4
+            } else if (loadedFlags["ch7_finale_act"] == "destroyed_tower" && loadedNumericFlags.keys.none { it.startsWith("char:mira:") }) {
+                loadedNumericFlags["char:mira:respect"] = 2
+                loadedNumericFlags["char:mira:fear"] = 2
+            }
+            if (loadedFlags["s2_zero_choice"] == "ally" && loadedNumericFlags.keys.none { it.startsWith("char:zero:") }) {
+                loadedNumericFlags["char:zero:trust"] = 4
+                loadedNumericFlags["char:zero:empathy"] = 4
+            } else if (loadedFlags["s2_zero_choice"] == "guarded" && loadedNumericFlags.keys.none { it.startsWith("char:zero:") }) {
+                loadedNumericFlags["char:zero:respect"] = 2
+            }
+            if (loadedFlags["ch14_fury"] == "full_truth" && loadedNumericFlags.keys.none { it.startsWith("char:fury:") }) {
+                loadedNumericFlags["char:fury:trust"] = 4
+                loadedNumericFlags["char:fury:respect"] = 3
+            }
+
             BookReadState(
                 bookId = root.optString("bookId", bookId),
-                activeChapter = root.optInt("activeChapter", 1).coerceIn(1, CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS),
+                activeChapter = root.optInt("activeChapter", 1).coerceIn(1, catalog.totalPlayableChapters),
                 completedChapters = completed,
                 currentNodeId = currentNodeId,
                 transcript = transcript,
@@ -1007,13 +1236,13 @@ object BookStateRepository {
                 mystery = root.optInt("mystery", 0).coerceIn(0, 10),
                 redEyeInstability = root.optInt("redEyeInstability", 0).coerceIn(0, 5),
                 avengersTrust = root.optInt("avengersTrust", 35).coerceIn(0, 100),
-                flags = decodeStringMap(root.optJSONObject("flags")),
-                numericFlags = decodeIntMap(root.optJSONObject("numericFlags")),
+                flags = loadedFlags,
+                numericFlags = loadedNumericFlags,
                 discoveredSecrets = secrets,
                 discoveredBranches = branches,
                 isChapterCompleted = root.optBoolean("isChapterCompleted", false),
-                savedScrollIndex = root.optInt("savedScrollIndex", 0).coerceAtLeast(0),
-                savedScrollOffset = root.optInt("savedScrollOffset", 0).coerceAtLeast(0),
+                savedScrollIndex = fastScrollIdx,
+                savedScrollOffset = fastScrollOff,
                 chapterStartSnapshot = snapshot
             )
         } catch (e: Exception) {

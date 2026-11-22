@@ -1,12 +1,16 @@
 package com.example.work
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -14,9 +18,11 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.R
 import com.example.data.local.AppDatabase
+import com.example.data.repository.EmochiRepository
 import com.example.util.AppFeatureFlags
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 class RoutineNotificationWorker(
@@ -25,9 +31,12 @@ class RoutineNotificationWorker(
 ) : CoroutineWorker(ctx, params) {
 
     companion object {
-        private const val CHANNEL_ID   = "routine_reminders"
-        private const val WORK_TAG     = "routine_notification_daily"
+        private const val TAG = "RoutineNotifWorker"
+        private const val CHANNEL_ID = "routine_reminders"
+        private const val WORK_TAG = "routine_notification_daily"
+        private const val PREFS_NAME = "emochi_routine_notif_prefs"
         private const val NOTIF_ID_BASE = 9100
+        private val TR_LOCALE = Locale("tr", "TR")
 
         fun schedule(context: Context) {
             if (!AppFeatureFlags.isRoutineNotifEnabled) return
@@ -45,51 +54,90 @@ class RoutineNotificationWorker(
         fun cancel(context: Context) {
             WorkManager.getInstance(context).cancelAllWorkByTag(WORK_TAG)
         }
+
+        /**
+         * API 24+ safe (no java.time) day-of-week matcher supporting BOTH Turkish ("Pazartesi".."Pazar",
+         * as stored by WorldStateManager) AND English ("monday".."sunday") values.
+         */
+        fun matchesDayOfWeek(routineDayOfWeek: String?, calendarDayOfWeek: Int): Boolean {
+            if (routineDayOfWeek.isNullOrBlank()) return true
+            val norm = routineDayOfWeek.trim().lowercase(TR_LOCALE)
+            val expected = when (calendarDayOfWeek) {
+                Calendar.MONDAY -> setOf("pazartesi", "monday")
+                Calendar.TUESDAY -> setOf("salı", "sali", "tuesday")
+                Calendar.WEDNESDAY -> setOf("çarşamba", "carsamba", "wednesday")
+                Calendar.THURSDAY -> setOf("perşembe", "persembe", "thursday")
+                Calendar.FRIDAY -> setOf("cuma", "friday")
+                Calendar.SATURDAY -> setOf("cumartesi", "saturday")
+                Calendar.SUNDAY -> setOf("pazar", "sunday")
+                else -> emptySet()
+            }
+            return norm in expected
+        }
     }
 
     override suspend fun doWork(): Result {
         if (!AppFeatureFlags.isRoutineNotifEnabled) return Result.success()
-
-        val db = AppDatabase.getInstance(ctx)
-        val bots = try { db.botDao().getAllBotsList() } catch (_: Exception) { return Result.success() }
-        val today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
-        val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        ensureChannel(nm)
-
-        var notifId = NOTIF_ID_BASE
-        for (bot in bots) {
-            val routines = try {
-                db.routineDao().getRoutinesForBot(bot.id)
-            } catch (_: Exception) { continue }
-
-            for (routine in routines) {
-                if (routine.lastMentionedStoryDate == today) continue
-                val dayMatch = routine.dayOfWeek.isNullOrBlank() ||
-                        routine.dayOfWeek == LocalDate.now().dayOfWeek.name.lowercase()
-                if (!dayMatch) continue
-
-                val launchIntent = ctx.packageManager
-                    .getLaunchIntentForPackage(ctx.packageName)
-                    ?.apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-
-                val pi = PendingIntent.getActivity(
-                    ctx, notifId, launchIntent ?: Intent(),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-
-                val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
-                    .setSmallIcon(R.drawable.ic_vai_logo)
-                    .setContentTitle("${bot.aiName} seni bekliyor")
-                    .setContentText(routine.routineDescription.take(80))
-                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    .setContentIntent(pi)
-                    .setAutoCancel(true)
-                    .build()
-
-                nm.notify(notifId++, notif)
-            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return Result.success()
         }
-        return Result.success()
+
+        return try {
+            val db = AppDatabase.getInstance(ctx)
+            val bots = db.botDao().getAllBotsList()
+            val cal = Calendar.getInstance()
+            val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
+            val todayDow = cal.get(Calendar.DAY_OF_WEEK)
+
+            // Real-world daily dedup kept strictly separate from in-story routine.lastMentionedStoryDate!
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            ensureChannel(nm)
+
+            var notifId = NOTIF_ID_BASE
+            for (bot in bots) {
+                if (bot.id == EmochiRepository.activeBotId) continue
+                val routines = try {
+                    db.routineDao().getRoutinesForBot(bot.id)
+                } catch (_: Exception) { continue }
+
+                for (routine in routines) {
+                    val prefKey = "notified_${routine.id}"
+                    if (prefs.getString(prefKey, null) == today) continue
+                    if (!matchesDayOfWeek(routine.dayOfWeek, todayDow)) continue
+
+                    val openIntent = Intent(ctx, com.example.MainActivity::class.java).apply {
+                        action = "com.example.OPEN_CHAT"
+                        putExtra("botId", bot.id)
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    }
+                    val pi = PendingIntent.getActivity(
+                        ctx,
+                        notifId,
+                        openIntent,
+                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                    )
+
+                    val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
+                        .setSmallIcon(R.drawable.ic_vai_logo)
+                        .setContentTitle("${bot.aiName} seni bekliyor")
+                        .setContentText(routine.routineDescription.take(80))
+                        .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                        .setContentIntent(pi)
+                        .setAutoCancel(true)
+                        .build()
+
+                    nm.notify(notifId++, notif)
+                    prefs.edit().putString(prefKey, today).apply()
+                }
+            }
+            Result.success()
+        } catch (e: Exception) {
+            Log.w(TAG, "Routine notification failed (attempt=$runAttemptCount): ${e.message}")
+            if (runAttemptCount >= 2) Result.failure() else Result.retry()
+        }
     }
 
     private fun ensureChannel(nm: NotificationManager) {

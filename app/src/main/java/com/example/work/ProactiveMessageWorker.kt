@@ -1,12 +1,16 @@
 package com.example.work
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -14,6 +18,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.example.EmochiApplication
 import com.example.data.local.AppDatabase
 import com.example.data.local.MessageEntity
 import com.example.data.repository.EmochiRepository
@@ -26,14 +31,18 @@ class ProactiveMessageWorker(
 ) : CoroutineWorker(context, workerParams) {
 
     companion object {
+        private const val TAG = "ProactiveMsgWorker"
         const val WORK_NAME = "emochi_proactive_message"
         const val CHANNEL_ID = "emochi_proactive"
         const val CHANNEL_NAME = "Karakter Mesajları"
         const val IDLE_THRESHOLD_MS = 2 * 60 * 60 * 1000L // 2 saat
+        const val UNANSWERED_FOLLOWUP_COOLDOWN_MS = 12 * 60 * 60 * 1000L // 12 saat
+        const val MAX_CONSECUTIVE_ASSISTANT_MESSAGES = 2
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiresBatteryNotLow(true)
                 .build()
             val request = PeriodicWorkRequestBuilder<ProactiveMessageWorker>(45, TimeUnit.MINUTES)
                 .setConstraints(constraints)
@@ -43,6 +52,40 @@ class ProactiveMessageWorker(
                 ExistingPeriodicWorkPolicy.KEEP,
                 request
             )
+        }
+
+        /**
+         * Pure eligibility gate (easily unit-testable) preventing infinite 45-min spam loops:
+         * - Skips active bot
+         * - Requires at least 1 message and >= IDLE_THRESHOLD_MS since latest message
+         * - Blocks consecutive spam: max 1 unanswered assistant message within 12h, never > 2 consecutive assistant messages
+         */
+        fun shouldSendProactiveMessage(
+            botId: String,
+            proactiveEnabled: Boolean,
+            activeBotId: String?,
+            botLastMessageTimestamp: Long,
+            recentMessages: List<MessageEntity>,
+            nowMs: Long
+        ): Boolean {
+            if (!proactiveEnabled) return false
+            if (botId == activeBotId) return false
+            if (recentMessages.isEmpty()) return false
+
+            val lastMsg = recentMessages.last()
+            val effectiveLastTs = maxOf(botLastMessageTimestamp, lastMsg.timestamp)
+            val idleTime = nowMs - effectiveLastTs
+            if (idleTime < IDLE_THRESHOLD_MS) return false
+
+            // Count trailing assistant messages to avoid spamming an absent user
+            var trailingAssistant = 0
+            for (i in recentMessages.lastIndex downTo 0) {
+                if (recentMessages[i].role == "assistant") trailingAssistant++ else break
+            }
+            if (trailingAssistant >= MAX_CONSECUTIVE_ASSISTANT_MESSAGES) return false
+            if (trailingAssistant >= 1 && idleTime < UNANSWERED_FOLLOWUP_COOLDOWN_MS) return false
+
+            return true
         }
 
         fun createNotificationChannel(context: Context) {
@@ -64,37 +107,47 @@ class ProactiveMessageWorker(
     override suspend fun doWork(): Result {
         return try {
             val db = AppDatabase.getInstance(applicationContext)
-            val repository = EmochiRepository(db, applicationContext)
+            val repository = EmochiApplication.getSharedRepository(applicationContext)
 
             val allBots = db.botDao().getAllBotsList()
             val now = System.currentTimeMillis()
 
             for (bot in allBots) {
-                if (!bot.proactiveEnabled) continue
-                val idleTime = now - bot.lastMessageTimestamp
-                if (idleTime < IDLE_THRESHOLD_MS) continue
+                if (!bot.proactiveEnabled || bot.id == EmochiRepository.activeBotId) continue
 
-                val messages = db.messageDao().getMessagesForBotList(bot.id)
-                if (messages.isEmpty()) continue
+                // Load only the latest 5 messages (never entire chat history)
+                val recentMessages = db.messageDao().getRecentMessagesForBot(bot.id, limit = 5)
+                if (!shouldSendProactiveMessage(
+                        botId = bot.id,
+                        proactiveEnabled = bot.proactiveEnabled,
+                        activeBotId = EmochiRepository.activeBotId,
+                        botLastMessageTimestamp = bot.lastMessageTimestamp,
+                        recentMessages = recentMessages,
+                        nowMs = now
+                    )
+                ) continue
 
+                val idleTime = now - maxOf(bot.lastMessageTimestamp, recentMessages.last().timestamp)
                 val proactivePrompt = buildProactivePrompt(bot.aiName, bot.aiPersonality, idleTime)
 
                 try {
                     val replyResult = repository.generateAiReply(
                         bot.copy(aiPersonality = proactivePrompt + "\n\n" + bot.aiPersonality),
-                        messages.takeLast(5)
+                        recentMessages
                     )
                     val replyText = replyResult.replyText
                     if (replyText.isBlank()) continue
 
+                    val msgTs = System.currentTimeMillis()
                     val aiMsg = MessageEntity(
                         id = UUID.randomUUID().toString(),
                         botId = bot.id,
                         role = "assistant",
                         text = replyText,
-                        timestamp = now,
+                        timestamp = msgTs,
                         provider = replyResult.usedProvider
                     )
+                    // saveMessage also advances bot.lastMessageTimestamp atomically
                     repository.saveMessage(aiMsg)
 
                     sendNotification(
@@ -102,14 +155,15 @@ class ProactiveMessageWorker(
                         botName = bot.aiName,
                         messagePreview = replyText.take(80)
                     )
-                } catch (_: Exception) {
-                    // Sessizce atla, sohbeti engelleme
+                } catch (e: Exception) {
+                    Log.w(TAG, "Proactive reply skipped for bot=${bot.id}: ${e.message}")
                 }
             }
 
             Result.success()
         } catch (e: Exception) {
-            Result.retry()
+            Log.w(TAG, "Proactive worker failed (attempt=$runAttemptCount): ${e.message}")
+            if (runAttemptCount >= 3) Result.failure() else Result.retry()
         }
     }
 
@@ -125,6 +179,11 @@ Maksimum 2 cümle.
     }
 
     private fun sendNotification(botId: String, botName: String, messagePreview: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         createNotificationChannel(applicationContext)
 
         val openIntent = Intent(applicationContext, com.example.MainActivity::class.java).apply {

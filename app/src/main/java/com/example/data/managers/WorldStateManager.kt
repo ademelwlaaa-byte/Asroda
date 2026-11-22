@@ -6,11 +6,13 @@ import com.example.data.local.EntityRelationDao
 import com.example.data.local.EntityRelationEntity
 import com.example.data.local.RoutineDao
 import com.example.data.local.RoutineEntity
+import com.example.data.local.WorldState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.time.DayOfWeek
-import java.time.LocalDate
+import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
 
 data class GraphTraversalResult(
     val finalTargetName: String,
@@ -39,21 +41,40 @@ class WorldStateManager(
         "pazar" to "Pazar"
     )
 
+    /** API 24+ safe (no java.time desugaring required) Turkish day-of-week resolver. */
     fun getDayOfWeekTurkish(dateStr: String): String {
+        val clean = dateStr.trim().take(10)
+        if (clean.length < 10) return ""
         return try {
-            val date = LocalDate.parse(dateStr.trim().take(10))
-            when (date.dayOfWeek) {
-                DayOfWeek.MONDAY -> "Pazartesi"
-                DayOfWeek.TUESDAY -> "Salı"
-                DayOfWeek.WEDNESDAY -> "Çarşamba"
-                DayOfWeek.THURSDAY -> "Perşembe"
-                DayOfWeek.FRIDAY -> "Cuma"
-                DayOfWeek.SATURDAY -> "Cumartesi"
-                DayOfWeek.SUNDAY -> "Pazar"
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
+            }
+            val parsed = sdf.parse(clean) ?: return ""
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = parsed }
+            when (cal.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.MONDAY -> "Pazartesi"
+                Calendar.TUESDAY -> "Salı"
+                Calendar.WEDNESDAY -> "Çarşamba"
+                Calendar.THURSDAY -> "Perşembe"
+                Calendar.FRIDAY -> "Cuma"
+                Calendar.SATURDAY -> "Cumartesi"
+                Calendar.SUNDAY -> "Pazar"
+                else -> ""
             }
         } catch (_: Exception) {
             ""
         }
+    }
+
+    suspend fun getWorldState(botId: String): WorldState? = withContext(Dispatchers.IO) {
+        val bot = botDao.getBotById(botId) ?: return@withContext null
+        WorldState.fromJson(bot.worldAtmosphere)
+    }
+
+    suspend fun updateWorldState(botId: String, state: WorldState) = withContext(Dispatchers.IO) {
+        val bot = botDao.getBotById(botId) ?: return@withContext
+        botDao.insertOrUpdate(bot.copy(worldAtmosphere = state.toJson()))
     }
 
     suspend fun extractAndSaveRoutinesFromBotPersonality(
@@ -242,9 +263,12 @@ class WorldStateManager(
             saved.add(created)
         }
 
-        // Pattern 1: "Ahmet'in kardeşi Mehmet'tir." / "Mehmet'in en yakın arkadaşı Can'dır." / "Can'ın patronu Leyla'dır."
+        // Supports single names ("Ahmet"), multi-word names ("Kerem Aydın"), and titled names ("Dr. Kerem")
+        val nameExpr = """(?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})?"""
+
+        // Pattern 1: "Ahmet'in kardeşi Mehmet'tir." / "Dr. Kerem'in patronu Leyla Aydın'dır."
         val possessivePattern = Regex(
-            """\b([A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+((?:en\s+yakın\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|arkadaşı|dostu|sevgilisi|düşmanı|patronu|asistanı|hocası|eşi))\s+([A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})(?:['’][a-zçğıöşü]+)?"""
+            """(?<![\p{L}\p{N}])($nameExpr)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+((?:en\s+yakın\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|arkadaşı|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|hocası|eşi))\s+($nameExpr)(?:['’][a-zçğıöşü]+)?"""
         )
         for (match in possessivePattern.findAll(text)) {
             upsertRelation(
@@ -257,7 +281,7 @@ class WorldStateManager(
 
         // Pattern 2: "Ahmet'in Mehmet adlı kardeşi"
         val appositivePattern = Regex(
-            """\b([A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,20})(?:['’][a-zçğıöşü]+)?\s+([A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,20})\s+(?:adlı\s+)?(kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|dostu|sevgilisi|düşmanı|patronu|asistanı)\b"""
+            """(?<![\p{L}\p{N}])($nameExpr)(?:['’][a-zçğıöşü]+)?\s+($nameExpr)\s+(?:adlı\s+)?(kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı)(?![\p{L}\p{N}])"""
         )
         for (match in appositivePattern.findAll(text)) {
             upsertRelation(
@@ -268,17 +292,25 @@ class WorldStateManager(
             )
         }
 
-        // Pattern 3: "Ahmet ile Mehmet kardeş"
+        // Pattern 3: "Ahmet ile Mehmet kardeş" -> canonical possessive form stored in BOTH directions!
+        val mutualCanonical = mapOf(
+            "kardeş" to "kardeşi",
+            "ortak" to "ortağı",
+            "dost" to "dostu",
+            "evli" to "eşi",
+            "sevgili" to "sevgilisi",
+            "düşman" to "düşmanı",
+            "rakip" to "rakibi"
+        )
         val mutualPattern = Regex(
-            """\b([A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,20})\s+ile\s+([A-ZÇĞİÖŞÜ][a-zçğıöşü]{2,20})\s+(kardeş|ortak|dost|evli|sevgili|düşman|rakip)\b"""
+            """(?<![\p{L}\p{N}])($nameExpr)\s+ile\s+($nameExpr)\s+(kardeş|ortak|dost|evli|sevgili|düşman|rakip)(?![\p{L}\p{N}])"""
         )
         for (match in mutualPattern.findAll(text)) {
-            upsertRelation(
-                sourceName = match.groupValues[1],
-                relType = match.groupValues[3],
-                targetName = match.groupValues[2],
-                conf = defaultConfidence
-            )
+            val left = match.groupValues[1]
+            val right = match.groupValues[2]
+            val canonicalRel = mutualCanonical[match.groupValues[3].lowercase(turkishLocale)] ?: match.groupValues[3]
+            upsertRelation(sourceName = left, relType = canonicalRel, targetName = right, conf = defaultConfidence)
+            upsertRelation(sourceName = right, relType = canonicalRel, targetName = left, conf = defaultConfidence)
         }
 
         saved
@@ -295,13 +327,15 @@ class WorldStateManager(
 
         var current = startEntity.trim()
         val visited = mutableListOf(current)
+        val visitedLower = mutableSetOf(current.lowercase(turkishLocale))
         val pathDescriptions = mutableListOf<String>()
 
         for (rawStep in relationSteps) {
             val step = normalizeRelationStep(rawStep)
             val candidates = allRelations.filter { rel ->
                 rel.sourceEntityName.equals(current, ignoreCase = true) &&
-                    normalizeRelationStep(rel.relationType) == step
+                    normalizeRelationStep(rel.relationType) == step &&
+                    !visitedLower.contains(rel.targetEntityName.trim().lowercase(turkishLocale))
             }
             val best = candidates.maxWithOrNull(
                 compareBy<EntityRelationEntity>({ confidenceRank(it.confidence) }, { it.createdAtMessageIndex }, { it.id })
@@ -322,6 +356,7 @@ class WorldStateManager(
             pathDescriptions.add("$current -> [${best.relationType}] -> ${best.targetEntityName}")
             current = best.targetEntityName
             visited.add(current)
+            visitedLower.add(current.trim().lowercase(turkishLocale))
         }
 
         GraphTraversalResult(
@@ -341,7 +376,8 @@ class WorldStateManager(
         val trimmed = query.trim()
         if (trimmed.isBlank()) return@withContext null
 
-        val startMatch = Regex("""\b([A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+(.+)""").find(trimmed)
+        val nameExpr = """(?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})?"""
+        val startMatch = Regex("""(?<![\p{L}\p{N}])($nameExpr)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+(.+)""").find(trimmed)
             ?: return@withContext null
         val startEntity = startMatch.groupValues[1].trim()
         var remainder = startMatch.groupValues[2]

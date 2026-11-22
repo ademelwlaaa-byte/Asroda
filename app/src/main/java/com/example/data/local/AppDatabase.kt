@@ -268,8 +268,8 @@ val MIGRATION_27_28 = object : Migration(27, 28) {
         RoutineEntity::class,
         MilestoneEntity::class
     ],
-    version = 47,
-    exportSchema = false
+    version = 48,
+    exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun botDao(): BotDao
@@ -735,12 +735,57 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_47_48 = object : Migration(47, 48) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Performance indices matching @Entity declarations on source-owned tables
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_botId_timestamp` ON `messages` (`botId`, `timestamp`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_cast_members_botId` ON `cast_members` (`botId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_memory_checkpoints_botId` ON `memory_checkpoints` (`botId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_milestones_botId` ON `milestones` (`botId`)")
+            }
+        }
+
+        /** Bounded retention across all 7 diagnostic log tables so SQLite never grows unbounded. */
+        val DIAGNOSTIC_LOG_TABLES = listOf(
+            "prompt_violation_logs",
+            "self_check_failure_logs",
+            "active_memory_call_logs",
+            "time_perception_mismatch_logs",
+            "empty_response_logs",
+            "malformed_output_logs",
+            "implicit_correction_logs"
+        )
+
+        fun pruneDiagnosticLogs(database: AppDatabase, maxRowsPerTable: Int = 500): Int {
+            val safeCap = maxRowsPerTable.coerceAtLeast(50)
+            var prunedTables = 0
+            try {
+                val sqlite = database.openHelper.writableDatabase
+                sqlite.beginTransaction()
+                try {
+                    for (table in DIAGNOSTIC_LOG_TABLES) {
+                        sqlite.execSQL(
+                            "DELETE FROM `$table` WHERE rowid NOT IN (" +
+                                "SELECT rowid FROM `$table` ORDER BY rowid DESC LIMIT $safeCap)"
+                        )
+                        prunedTables++
+                    }
+                    sqlite.setTransactionSuccessful()
+                } finally {
+                    sqlite.endTransaction()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("AppDatabase", "Diagnostic log pruning skipped: ${e.message}")
+            }
+            return prunedTables
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                val instance = Room.databaseBuilder(
+                INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "emochi_database"
@@ -783,12 +828,22 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_43_44,
                         MIGRATION_44_45,
                         MIGRATION_45_46,
-                        MIGRATION_46_47
+                        MIGRATION_46_47,
+                        MIGRATION_47_48
                     )
-                    .fallbackToDestructiveMigration(dropAllTables = true)
+                    // Only allow destructive fallback for ancient pre-v9 schemas; NEVER wipe v9..v48 user data!
+                    .fallbackToDestructiveMigrationFrom(true, 1, 2, 3, 4, 5, 6, 7, 8)
+                    .addCallback(object : Callback() {
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            try {
+                                db.execSQL("PRAGMA foreign_keys = ON")
+                                db.execSQL("PRAGMA busy_timeout = 5000")
+                            } catch (_: Exception) {}
+                        }
+                    })
                     .build()
-                INSTANCE = instance
-                instance
+                    .also { INSTANCE = it }
             }
         }
     }

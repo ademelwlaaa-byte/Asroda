@@ -9,6 +9,7 @@ import com.example.data.local.RelationshipAxes
 import com.example.data.local.SideCharacterEmotionUpdate
 import org.json.JSONObject
 import java.util.Locale
+import kotlin.math.roundToInt
 
 /**
  * Emotion Engine V3 (Duygu Sistemi).
@@ -97,6 +98,57 @@ object EmotionEngine {
             internalSuppressionAmount = suppressed,
             isRegulationActive = true
         )
+    }
+
+    /**
+     * Canonical 11-parameter affection delta clamping engine (Single Source of Truth).
+     * Both [EmochiRepository.calculateClampedDelta] and [EmotionEngineManager.calculateClampedAffectionDelta]
+     * delegate here so runtime clamping and engine math never diverge.
+     */
+    fun calculateClampedAffectionDelta(
+        prevAffection: Int,
+        rawDelta: Int,
+        totalMsgCount: Int,
+        baseMultiplier: Double = 1.0,
+        combinedContextMult: Double = 1.0,
+        personalityAffectionMult: Double = 1.0,
+        recoveryLockUntilMessageCount: Int = 0,
+        dailyAffectionGain: Int = 0,
+        consecutivePositiveCount: Int = 0,
+        regCount: Int = 0,
+        isEstablishedRomantic: Boolean = false
+    ): Int {
+        if (rawDelta <= 0) {
+            return rawDelta.coerceIn(-35, 0)
+        }
+
+        var delta = rawDelta.coerceIn(0, 15)
+        if (totalMsgCount < 5 && !isEstablishedRomantic) {
+            delta = minOf(delta, 3)
+        }
+
+        var maxAllowed = when {
+            prevAffection < 60 -> 8
+            prevAffection in 60..85 -> 6
+            else -> 4
+        }
+
+        if (totalMsgCount < recoveryLockUntilMessageCount) {
+            maxAllowed = (maxAllowed * 0.5).roundToInt().coerceAtLeast(1)
+        }
+
+        val effectiveMaxAllowed = (maxAllowed * baseMultiplier * combinedContextMult * personalityAffectionMult)
+            .roundToInt()
+            .coerceAtLeast(1)
+        delta = minOf(delta, effectiveMaxAllowed)
+
+        val maxDailyBudget = (35 * baseMultiplier).roundToInt().coerceAtLeast(12)
+        val remainingDailyBudget = (maxDailyBudget - dailyAffectionGain).coerceAtLeast(0)
+        delta = minOf(delta, remainingDailyBudget)
+
+        if (regCount > 3) delta = 0
+
+        return delta.coerceIn(0, 15)
     }
 
     fun calculateClampedDelta(

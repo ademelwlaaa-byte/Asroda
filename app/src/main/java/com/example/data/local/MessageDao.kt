@@ -13,6 +13,16 @@ interface MessageDao {
     @Query("SELECT * FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0 ORDER BY timestamp ASC")
     suspend fun getMessagesForBotList(botId: String): List<MessageEntity>
 
+    /** Returns only the latest [limit] messages in chronological ASC order without loading full chat history into RAM. */
+    @Query(
+        "SELECT * FROM (SELECT * FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0 " +
+            "ORDER BY timestamp DESC LIMIT :limit) ORDER BY timestamp ASC"
+    )
+    suspend fun getRecentMessagesForBot(botId: String, limit: Int): List<MessageEntity>
+
+    @Query("SELECT * FROM messages WHERE id = :id LIMIT 1")
+    suspend fun getMessageById(id: String): MessageEntity?
+
     @Query("SELECT COUNT(*) FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0")
     suspend fun getMessageCountForBot(botId: String): Int
 

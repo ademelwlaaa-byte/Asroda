@@ -1,15 +1,15 @@
 package com.example.work
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.example.EmochiApplication
 import com.example.data.local.AppDatabase
 import com.example.data.local.EmotionHistoryEntity
 import com.example.data.local.EmotionState
 import com.example.data.local.MessageEntity
-import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.EmochiRepository
-import com.example.data.repository.EmotionEngine
 
 /**
  * Arka plan duygu denetimi — her ~50 mesajda bir tetiklenir, state belirgin kaymışsa.
@@ -36,7 +36,8 @@ class BackgroundEmotionAuditWorker(
             val recentHistory = db.emotionHistoryDao().getRecentHistoryForBot(botId, limit = 20)
             if (recentHistory.size < 5) return Result.success()
 
-            val recentMessages = db.messageDao().getMessagesForBotList(botId).takeLast(15)
+            // Load ONLY the last 15 messages via SQL LIMIT instead of full chat history
+            val recentMessages = db.messageDao().getRecentMessagesForBot(botId, limit = 15)
             val currentState = EmotionState.fromJson(bot.emotionState)
 
             // Audit prompt: LLM'e mevcut state + son mesajları ver, tutarlılık değerlendirmesi iste
@@ -48,7 +49,7 @@ class BackgroundEmotionAuditWorker(
 Sen bir duygu tutarlılığı denetçisisin. Aşağıdaki verilerle bir karakterin duygu gidişatını değerlendir.
 Yalnızca GERÇEK tutarsızlıkları bildir — küçük dalgalanmalar normal kabul edilir.
 Cevabını yalnızca şu JSON formatında ver, başka hiçbir şey yazma:
-{"consistent": true/false, "correction": {"field": "affectionScore/anger/trust/...", "suggested": <0-100>, "reason": "kısa açıklama"} veya null}
+{"consistent": true/false, "correction": {"field": "affectionScore/anger/trust/resentmentScore", "suggested": <0-100>, "reason": "kısa açıklama"} veya null}
 """.trimIndent()
 
             val auditUserMessage = """
@@ -64,7 +65,8 @@ $currentStateJson
 Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
 """.trimIndent()
 
-            val repository = EmochiRepository(db, applicationContext)
+            // Reuse process-wide shared repository (no leaked CoroutineScope)
+            val repository = EmochiApplication.getSharedRepository(applicationContext)
             val result = repository.callLlmForAudit(
                 settings = settings,
                 systemPrompt = auditSystemPrompt,
@@ -77,15 +79,15 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
             }
 
             Result.success()
-        } catch (_: Exception) {
-            // Sessizce atla — sohbeti etkileme
-            Result.success()
+        } catch (e: Exception) {
+            Log.w("EmotionAudit", "Audit worker error for bot=$botId (attempt=$runAttemptCount): ${e.message}")
+            if (runAttemptCount < 2) Result.retry() else Result.success()
         }
     }
 
     private fun buildHistorySnapshot(history: List<EmotionHistoryEntity>): String {
         return history.joinToString("\n") { h ->
-            "msg#${h.messageIndex}: aff=${h.affectionScore} trust=${h.trustScore} anger=${h.resentmentScore} dom=${h.dominantEmotion}"
+            "msg#${h.messageIndex}: aff=${h.affectionScore} trust=${h.trustScore} resentment=${h.resentmentScore} dom=${h.dominantEmotion}"
         }
     }
 

@@ -18,10 +18,31 @@ android {
         applicationId = "com.aistudio.emochi.uczaob"
         minSdk = 24
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.5"
+        versionCode = 16
+        versionName = "3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    androidResources {
+        // AAA mobile optimization: keep only Turkish & English locales (strips 75+ unused AndroidX languages)
+        localeFilters += listOf("tr", "en")
+    }
+
+    packaging {
+        resources {
+            // Strip unused JVM/coroutine debug metadata & license bloat (ZERO visual/audio quality loss!)
+            excludes += setOf(
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "META-INF/*.kotlin_module",
+                "META-INF/*.version",
+                "DebugProbesKt.bin",
+                "kotlin-tooling-metadata.json"
+            )
+        }
     }
 
     signingConfigs {
@@ -34,11 +55,32 @@ android {
         }
         create("release") {
             val keystorePath = System.getenv("KEYSTORE_PATH")
+            val projectReleaseKeystore = file("${rootDir}/asroda-release.keystore")
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
             if (!keystorePath.isNullOrBlank() && file(keystorePath).exists()) {
                 storeFile = file(keystorePath)
-                storePassword = System.getenv("STORE_PASSWORD") ?: "android"
+                storePassword = System.getenv("STORE_PASSWORD")
+                    ?: error("STORE_PASSWORD env var is required when KEYSTORE_PATH is set")
                 keyAlias = System.getenv("KEY_ALIAS") ?: "upload"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: "android"
+                keyPassword = System.getenv("KEY_PASSWORD")
+                    ?: error("KEY_PASSWORD env var is required when KEYSTORE_PATH is set")
+            } else if (projectReleaseKeystore.exists()) {
+                val localProps = java.util.Properties().apply {
+                    val lpFile = rootProject.file("local.properties")
+                    if (lpFile.exists()) lpFile.inputStream().use { load(it) }
+                }
+                storeFile = projectReleaseKeystore
+                storePassword = localProps.getProperty("ASRODA_STORE_PASSWORD")
+                    ?: System.getenv("STORE_PASSWORD")
+                    ?: error("ASRODA_STORE_PASSWORD in local.properties or STORE_PASSWORD env var is required")
+                keyAlias = localProps.getProperty("ASRODA_KEY_ALIAS")
+                    ?: System.getenv("KEY_ALIAS")
+                    ?: "asroda_release"
+                keyPassword = localProps.getProperty("ASRODA_KEY_PASSWORD")
+                    ?: System.getenv("KEY_PASSWORD")
+                    ?: storePassword
             } else {
                 storeFile = debugKeystoreFile
                 storePassword = "android"
@@ -67,6 +109,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -92,7 +135,12 @@ secrets {
     ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
 
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
     implementation(files("libs/precompiled_missing.jar"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

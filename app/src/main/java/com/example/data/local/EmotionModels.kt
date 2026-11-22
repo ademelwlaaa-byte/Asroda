@@ -1,7 +1,9 @@
 package com.example.data.local
 
+import com.example.data.repository.TurkishTextAnalyzer
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 import kotlin.math.roundToInt
 
 // ==========================================
@@ -46,8 +48,13 @@ data class PersonalityProfile(
             }
         }
 
+        private val TR_LOCALE = Locale("tr", "TR")
+
+        private fun hasAnyWordPrefix(text: String, vararg terms: String): Boolean =
+            terms.any { TurkishTextAnalyzer.containsWordPrefix(text, it) }
+
         fun deriveFromPersonality(aiName: String, personalityText: String, scenarioText: String): PersonalityProfile {
-            val text = "$aiName $personalityText $scenarioText".lowercase()
+            val text = "$aiName $personalityText $scenarioText".lowercase(TR_LOCALE)
 
             var open = 50
             var cons = 50
@@ -56,18 +63,18 @@ data class PersonalityProfile(
             var neur = 50
             var attach = "secure"
 
-            if (text.contains("sanatçı") || text.contains("filozof") || text.contains("hayal") || text.contains("merak")) open += 25
-            if (text.contains("disiplin") || text.contains("düzen") || text.contains("ciddi") || text.contains("kuralcı")) cons += 25
-            if (text.contains("dışa dönük") || text.contains("sosyal") || text.contains("coşkulu") || text.contains("neşeli")) extra += 25
-            if (text.contains("içe dönük") || text.contains("sessiz") || text.contains("utangaç") || text.contains("mesafeli")) extra -= 20
-            if (text.contains("sevecen") || text.contains("nazik") || text.contains("şefkat") || text.contains("yardımsever")) agree += 25
-            if (text.contains("asi") || text.contains("soğuk") || text.contains("sert") || text.contains("saldırgan") || text.contains("rakip")) agree -= 25
-            if (text.contains("stresli") || text.contains("kaygılı") || text.contains("öfkeli") || text.contains("duygusal") || text.contains("travma")) neur += 25
-            if (text.contains("sakin") || text.contains("dengeli") || text.contains("soğukkanlı")) neur -= 20
+            if (hasAnyWordPrefix(text, "sanatçı", "filozof", "hayal", "merak")) open += 25
+            if (hasAnyWordPrefix(text, "disiplin", "düzen", "ciddi", "kuralcı")) cons += 25
+            if (hasAnyWordPrefix(text, "dışa dönük", "sosyal", "coşkulu", "neşeli")) extra += 25
+            if (hasAnyWordPrefix(text, "içe dönük", "sessiz", "utangaç", "mesafeli")) extra -= 20
+            if (hasAnyWordPrefix(text, "sevecen", "nazik", "şefkat", "yardımsever")) agree += 25
+            if (hasAnyWordPrefix(text, "asi", "soğuk", "sert", "saldırgan", "rakip")) agree -= 25
+            if (hasAnyWordPrefix(text, "stresli", "kaygılı", "öfkeli", "duygusal", "travma")) neur += 25
+            if (hasAnyWordPrefix(text, "sakin", "dengeli", "soğukkanlı")) neur -= 20
 
-            if (text.contains("kaçınan") || text.contains("mesafeli") || text.contains("bağlanamayan")) {
+            if (hasAnyWordPrefix(text, "kaçınan", "mesafeli", "bağlanamayan")) {
                 attach = if (neur > 60) "fearful_avoidant" else "avoidant"
-            } else if (text.contains("kaygılı") || text.contains("terk edilme") || text.contains("bağımlı")) {
+            } else if (hasAnyWordPrefix(text, "kaygılı", "terk edilme", "bağımlı")) {
                 attach = "anxious"
             }
 
@@ -82,19 +89,21 @@ data class PersonalityProfile(
         }
 
         fun deriveEmotionalRegulationCapacity(aiName: String, personalityText: String, scenarioText: String): Int {
-            val text = "$aiName $personalityText $scenarioText".lowercase()
+            val text = "$aiName $personalityText $scenarioText".lowercase(TR_LOCALE)
             var capacity = 50
 
-            if (text.contains("yaşlı") || text.contains("deneyimli") || text.contains("olgun") ||
-                text.contains("sakin") || text.contains("bilge") || text.contains("mantıklı") ||
-                text.contains("profesör") || text.contains("doktor") || text.contains("yetişkin") ||
-                text.contains("uzman") || text.contains("komutan") || text.contains("kıdemli") || text.contains("ağırbaşlı")) {
+            if (hasAnyWordPrefix(
+                    text, "yaşlı", "deneyimli", "olgun", "sakin", "bilge", "mantıklı",
+                    "profesör", "doktor", "yetişkin", "uzman", "komutan", "kıdemli", "ağırbaşlı"
+                )
+            ) {
                 capacity += 30
             }
-            if (text.contains("genç") || text.contains("çocuk") || text.contains("ergen") ||
-                text.contains("toy") || text.contains("deneyimsiz") || text.contains("dürtüsel") ||
-                text.contains("hızlı öfkelenen") || text.contains("heyecanlı") || text.contains("sabırsız") ||
-                text.contains("dramatik") || text.contains("öfkeli")) {
+            if (hasAnyWordPrefix(
+                    text, "genç", "çocuk", "ergen", "toy", "deneyimsiz", "dürtüsel",
+                    "hızlı öfkelenen", "heyecanlı", "sabırsız", "dramatik", "öfkeli"
+                )
+            ) {
                 capacity -= 25
             }
             return capacity.coerceIn(0, 100)
@@ -748,7 +757,7 @@ data class EmotionState(
                     setting = ctxObj?.optString("setting", "private") ?: "private",
                     mode = ctxObj?.optString("mode", "casual") ?: "casual",
                     tension = ctxObj?.optString("tension", "none") ?: "none",
-                    schemaVersion = json.optInt("schemaVersion", 2),
+                    schemaVersion = json.optInt("schemaVersion", 3),
                     highAffectionStreak = json.optInt("highAffectionStreak", 0),
                     consecutivePositiveCount = json.optInt("consecutivePositiveCount", 0),
                     dailyAffectionGain = json.optInt("dailyAffectionGain", 0),

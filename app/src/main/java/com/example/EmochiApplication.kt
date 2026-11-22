@@ -2,12 +2,16 @@ package com.example
 
 import android.app.Application
 import android.content.ComponentCallbacks2
+import android.content.Context
+import android.util.Log
 import coil.Coil
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import coil.request.CachePolicy
+import com.example.data.local.AppDatabase
+import com.example.data.repository.EmochiRepository
 import com.example.util.AppFeatureFlags
 import com.example.util.FrostedBackdropCache
 import kotlinx.coroutines.asContextElement
@@ -34,6 +38,23 @@ class EmochiApplication : Application(), ImageLoaderFactory {
 
         const val OPENROUTER_REFERER = "https://emochi.app"
         const val OPENROUTER_TITLE = "Emochi"
+        private const val MAX_POLICY_BODY_BYTES = 2L * 1024L * 1024L
+
+        @Volatile
+        private var sharedRepository: EmochiRepository? = null
+
+        /**
+         * Process-wide shared repository instance so UI ViewModel and all background Workers
+         * share a single CoroutineScope, Moshi instance, and MemoryVectorCache without leaks.
+         */
+        fun getSharedRepository(context: Context): EmochiRepository {
+            return sharedRepository ?: synchronized(this) {
+                sharedRepository ?: EmochiRepository(
+                    AppDatabase.getInstance(context.applicationContext),
+                    context.applicationContext
+                ).also { sharedRepository = it }
+            }
+        }
 
         /**
          * Coroutine-propagated call-type context so precompiled LLM adapters that do not accept
@@ -73,6 +94,7 @@ class EmochiApplication : Application(), ImageLoaderFactory {
             }
 
             if (originalReq.method == "POST" && body != null &&
+                (body.contentLength() <= MAX_POLICY_BODY_BYTES) &&
                 (urlStr.contains("generateContent") || urlStr.contains("/chat/completions") || urlStr.contains("/messages"))
             ) {
                 try {
@@ -115,7 +137,8 @@ class EmochiApplication : Application(), ImageLoaderFactory {
                         val newBody = jsonObj.toString().toRequestBody(contentType)
                         return cleanBuilder.post(newBody).build()
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    Log.w("EmochiApp", "Temperature policy body parse skipped: ${e.message}")
                 }
             }
             return cleanBuilder.build()
@@ -132,22 +155,29 @@ class EmochiApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         AppFeatureFlags.init(this)
-        configureNovelAiInterceptor()
+        configureLlmTemperatureInterceptor()
         try {
             com.example.work.SummarizationWorker.schedule(this)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("EmochiApp", "SummarizationWorker schedule failed: ${e.message}")
         }
         try {
             com.example.work.BackgroundMemoryMergeWorker.schedule(this)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("EmochiApp", "BackgroundMemoryMergeWorker schedule failed: ${e.message}")
         }
         try {
             com.example.work.ProactiveMessageWorker.schedule(this)
             com.example.work.ProactiveMessageWorker.createNotificationChannel(this)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w("EmochiApp", "ProactiveMessageWorker schedule failed: ${e.message}")
+        }
+        try {
+            if (AppFeatureFlags.isRoutineNotifEnabled) {
+                com.example.work.RoutineNotificationWorker.schedule(this)
+            }
+        } catch (e: Exception) {
+            Log.w("EmochiApp", "RoutineNotificationWorker schedule failed: ${e.message}")
         }
     }
 
@@ -163,7 +193,7 @@ class EmochiApplication : Application(), ImageLoaderFactory {
         }
     }
 
-    private fun configureNovelAiInterceptor() {
+    private fun configureLlmTemperatureInterceptor() {
         com.example.data.api.RetrofitClient.customInterceptor = installedTemperatureInterceptor
     }
 

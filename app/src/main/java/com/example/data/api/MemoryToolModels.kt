@@ -54,11 +54,11 @@ object MemoryToolRegistry {
                     enum = listOf("ephemeral", "arc", "core")
                 ),
                 "ttl_days" to MemoryToolProperty(
-                    type = "string",
+                    type = "integer",
                     description = "Opsiyonel hikâye günü ömrü: ephemeral için 2-3, arc için 10-14, core için 0."
                 ),
                 "importance" to MemoryToolProperty(
-                    type = "string",
+                    type = "integer",
                     description = "Önem derecesi 1-10. 2 ve altı: gürültü (kaydedilmez). 3-5: geçici (ephemeral). 6-7: orta/arc. 8+: kalıcı/çok önemli (core)."
                 ),
                 "subject" to MemoryToolProperty(
@@ -116,38 +116,182 @@ object MemoryToolRegistry {
     }
 
     /**
+     * Safely parses integer tool arguments whether the LLM/serializer emits an Int, Long,
+     * Double (e.g. Gemini JSON numbers like `8.0`), or a numeric String (`"8"` / `"8.0"`).
+     */
+    fun parseIntArg(raw: Any?, default: Int): Int {
+        return when (raw) {
+            null -> default
+            is Number -> raw.toInt()
+            else -> {
+                val s = raw.toString().trim()
+                s.toIntOrNull() ?: s.toDoubleOrNull()?.toInt() ?: default
+            }
+        }
+    }
+
+    /**
      * Parses text-fallback memory commands emitted by Custom Providers without native function calling:
-     * Example: [ACTIVE_MEMORY_CALL: save_memory(content="...", category="fact", key="Meslek", importance=8)]
-     * Supports multiple pipe-separated calls inside one tag or multiple tags in the same response.
+     * Example: [ACTIVE_MEMORY_CALL: save_memory(content="İstanbul (Kadıköy) [Gizli]", category="fact", importance=8)]
+     * Uses a quote-aware, bracket/paren-balanced scanner so values containing `)`, `]`, `,`, or escaped
+     * quotes `\"` / `\'` never break parsing.
      */
     fun parseTextFallbackMemoryCalls(responseText: String): List<ParsedMemoryToolCall> {
         if (responseText.isBlank() || !responseText.contains("ACTIVE_MEMORY_CALL", ignoreCase = true)) {
             return emptyList()
         }
         val results = mutableListOf<ParsedMemoryToolCall>()
-        val blockRegex = Regex("""(?is)\[ACTIVE_MEMORY_CALL:\s*(.*?)\]""")
-        val callRegex = Regex("""(?is)\b(save_memory|update_memory|delete_memory)\s*\(([^)]*)\)""")
-        val argRegex = Regex("""(?is)([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^,)\s]+))""")
+        val tagHeaderRegex = Regex("""(?i)\[ACTIVE_MEMORY_CALL:\s*""")
+        val fnNameSet = setOf("save_memory", "update_memory", "delete_memory")
 
-        for (blockMatch in blockRegex.findAll(responseText)) {
-            val blockBody = blockMatch.groupValues[1]
-            for (callMatch in callRegex.findAll(blockBody)) {
-                val fnName = callMatch.groupValues[1].lowercase().trim()
-                val argsBody = callMatch.groupValues[2]
-                val argsMap = mutableMapOf<String, Any>()
-                for (argMatch in argRegex.findAll(argsBody)) {
-                    val argName = argMatch.groupValues[1].trim()
-                    val argVal = argMatch.groupValues[2].ifEmpty {
-                        argMatch.groupValues[3].ifEmpty { argMatch.groupValues[4] }
-                    }.trim()
-                    argsMap[argName] = argVal
-                }
-                if (argsMap.isNotEmpty()) {
-                    results.add(ParsedMemoryToolCall(name = fnName, arguments = argsMap))
-                }
-            }
+        var searchFrom = 0
+        while (searchFrom < responseText.length) {
+            val headerMatch = tagHeaderRegex.find(responseText, searchFrom) ?: break
+            val blockStart = headerMatch.range.last + 1
+            val blockEnd = findClosingBracketQuoteAware(responseText, blockStart)
+            if (blockEnd < 0) break
+
+            val blockBody = responseText.substring(blockStart, blockEnd)
+            parseCallsFromBlock(blockBody, fnNameSet, results)
+            searchFrom = blockEnd + 1
         }
         return results
+    }
+
+    private fun findClosingBracketQuoteAware(text: String, startIndex: Int): Int {
+        var i = startIndex
+        var inQuote: Char? = null
+        var bracketDepth = 0
+        while (i < text.length) {
+            val ch = text[i]
+            if (inQuote != null) {
+                if (ch == '\\' && i + 1 < text.length) {
+                    i += 2
+                    continue
+                }
+                if (ch == inQuote) inQuote = null
+            } else {
+                when (ch) {
+                    '"', '\'' -> inQuote = ch
+                    '[' -> bracketDepth++
+                    ']' -> {
+                        if (bracketDepth == 0) return i
+                        bracketDepth--
+                    }
+                }
+            }
+            i++
+        }
+        return -1
+    }
+
+    private fun parseCallsFromBlock(
+        blockBody: String,
+        validNames: Set<String>,
+        out: MutableList<ParsedMemoryToolCall>
+    ) {
+        val fnStartRegex = Regex("""(?i)\b(save_memory|update_memory|delete_memory)\s*\(""")
+        var pos = 0
+        while (pos < blockBody.length) {
+            val m = fnStartRegex.find(blockBody, pos) ?: break
+            val fnName = m.groupValues[1].lowercase().trim()
+            val argsStart = m.range.last + 1
+            val argsEnd = findClosingParenQuoteAware(blockBody, argsStart)
+            if (argsEnd < 0) break
+
+            if (fnName in validNames) {
+                val argsMap = parseNamedArguments(blockBody.substring(argsStart, argsEnd))
+                if (argsMap.isNotEmpty()) {
+                    out.add(ParsedMemoryToolCall(name = fnName, arguments = argsMap))
+                }
+            }
+            pos = argsEnd + 1
+        }
+    }
+
+    private fun findClosingParenQuoteAware(text: String, startIndex: Int): Int {
+        var i = startIndex
+        var inQuote: Char? = null
+        var parenDepth = 0
+        while (i < text.length) {
+            val ch = text[i]
+            if (inQuote != null) {
+                if (ch == '\\' && i + 1 < text.length) {
+                    i += 2
+                    continue
+                }
+                if (ch == inQuote) inQuote = null
+            } else {
+                when (ch) {
+                    '"', '\'' -> inQuote = ch
+                    '(' -> parenDepth++
+                    ')' -> {
+                        if (parenDepth == 0) return i
+                        parenDepth--
+                    }
+                }
+            }
+            i++
+        }
+        return -1
+    }
+
+    private fun parseNamedArguments(argsBody: String): MutableMap<String, Any> {
+        val argsMap = mutableMapOf<String, Any>()
+        var i = 0
+        val len = argsBody.length
+        while (i < len) {
+            while (i < len && (argsBody[i].isWhitespace() || argsBody[i] == ',')) i++
+            if (i >= len) break
+
+            val keyStart = i
+            while (i < len && (argsBody[i].isLetterOrDigit() || argsBody[i] == '_')) i++
+            val key = argsBody.substring(keyStart, i).trim()
+            if (key.isEmpty()) {
+                i++
+                continue
+            }
+
+            while (i < len && argsBody[i].isWhitespace()) i++
+            if (i >= len || argsBody[i] != '=') continue
+            i++ // skip '='
+            while (i < len && argsBody[i].isWhitespace()) i++
+            if (i >= len) break
+
+            val value: String = if (argsBody[i] == '"' || argsBody[i] == '\'') {
+                val quote = argsBody[i]
+                i++
+                val sb = StringBuilder()
+                while (i < len) {
+                    val c = argsBody[i]
+                    if (c == '\\' && i + 1 < len) {
+                        val next = argsBody[i + 1]
+                        sb.append(
+                            when (next) {
+                                'n' -> '\n'
+                                't' -> '\t'
+                                else -> next
+                            }
+                        )
+                        i += 2
+                        continue
+                    }
+                    if (c == quote) {
+                        i++
+                        break
+                    }
+                    sb.append(c)
+                    i++
+                }
+                sb.toString().trim()
+            } else {
+                val valStart = i
+                while (i < len && argsBody[i] != ',' && !argsBody[i].isWhitespace()) i++
+                argsBody.substring(valStart, i).trim()
+            }
+            argsMap[key] = value
+        }
+        return argsMap
     }
 
     // 1) Gemini Mapper (GeminiTool format)

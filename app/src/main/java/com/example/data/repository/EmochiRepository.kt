@@ -49,15 +49,23 @@ import com.example.data.local.ArchivedMemoryEntity
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import com.example.data.managers.BackupSnapshotManager
+import com.example.util.SecureApiKeyVault
+import com.example.util.UserMood
+import com.example.util.UserSentimentAnalyzer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import java.util.Locale
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -551,38 +559,19 @@ class EmochiRepository(
             consecutivePositiveCount: Int,
             regCount: Int = 0,
             isEstablishedRomantic: Boolean = false
-        ): Int {
-            if (rawDelta <= 0) {
-                // Negative deltas (drops/hurts) are allowed to go through, capped safely at -35
-                return rawDelta.coerceIn(-35, 0)
-            }
-
-            var delta = rawDelta.coerceIn(0, 15)
-            if (totalMsgCount < 5 && !isEstablishedRomantic) {
-                delta = minOf(delta, 3)
-            }
-
-            var maxAllowed = when {
-                prevAffection < 60 -> 8
-                prevAffection in 60..85 -> 6
-                else -> 4
-            }
-
-            if (totalMsgCount < recoveryLockUntilMessageCount) {
-                maxAllowed = (maxAllowed * 0.5).roundToInt().coerceAtLeast(1)
-            }
-
-            val effectiveMaxAllowed = (maxAllowed * baseMultiplier * combinedContextMult * personalityAffectionMult).roundToInt().coerceAtLeast(1)
-            delta = minOf(delta, effectiveMaxAllowed)
-
-            val maxDailyBudget = (35 * baseMultiplier).roundToInt().coerceAtLeast(12)
-            val remainingDailyBudget = (maxDailyBudget - dailyAffectionGain).coerceAtLeast(0)
-            delta = minOf(delta, remainingDailyBudget)
-
-            if (regCount > 3) delta = 0
-
-            return delta.coerceIn(0, 15)
-        }
+        ): Int = EmotionEngine.calculateClampedAffectionDelta(
+            prevAffection = prevAffection,
+            rawDelta = rawDelta,
+            totalMsgCount = totalMsgCount,
+            baseMultiplier = baseMultiplier,
+            combinedContextMult = combinedContextMult,
+            personalityAffectionMult = personalityAffectionMult,
+            recoveryLockUntilMessageCount = recoveryLockUntilMessageCount,
+            dailyAffectionGain = dailyAffectionGain,
+            consecutivePositiveCount = consecutivePositiveCount,
+            regCount = regCount,
+            isEstablishedRomantic = isEstablishedRomantic
+        )
 
         fun sanitizeModelName(model: String): String {
             val trimmed = model.trim()
@@ -703,6 +692,16 @@ class EmochiRepository(
     internal val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var backupDebounceJob: Job? = null
     private val BACKUP_DEBOUNCE_MS = 10_000L
+    private val MAX_FALLBACK_LOG_ENTRIES = 100
+    private val MAX_CLASSIFICATION_LOG_ENTRIES = 100
+    private val trLocale = Locale("tr", "TR")
+
+    /** Explicit lifecycle teardown for tests or process shutdown (prevents leaked repositoryScope). */
+    fun close() {
+        backupDebounceJob?.cancel()
+        backupDebounceJob = null
+        repositoryScope.cancel()
+    }
 
     internal val botDao = db.botDao()
     internal val messageDao = db.messageDao()
@@ -715,8 +714,14 @@ class EmochiRepository(
     }
 
     private fun logFallbackAttempt(entry: ProviderFallbackLogEntry) {
-        _providerFallbackLog.value = _providerFallbackLog.value + entry
-        android.util.Log.d("EmochiFallback", "[${entry.status}] ${entry.providerName} - ${entry.errorMessage ?: "Success"}")
+        val safeEntry = entry.copy(
+            errorMessage = entry.errorMessage?.let { SecureApiKeyVault.redactSecrets(it) }
+        )
+        val updated = (_providerFallbackLog.value + safeEntry).let { list ->
+            if (list.size > MAX_FALLBACK_LOG_ENTRIES) list.takeLast(MAX_FALLBACK_LOG_ENTRIES) else list
+        }
+        _providerFallbackLog.value = updated
+        android.util.Log.d("EmochiFallback", "[${safeEntry.status}] ${safeEntry.providerName} - ${safeEntry.errorMessage ?: "Success"}")
     }
 
     data class ClassificationCallFailure(
@@ -726,6 +731,14 @@ class EmochiRepository(
     )
 
     val classificationCallFailureLog = java.util.concurrent.CopyOnWriteArrayList<ClassificationCallFailure>()
+
+    private fun recordClassificationFailure(provider: String, errorMessage: String) {
+        val redacted = SecureApiKeyVault.redactSecrets(errorMessage)
+        classificationCallFailureLog.add(ClassificationCallFailure(provider = provider, errorMessage = redacted))
+        while (classificationCallFailureLog.size > MAX_CLASSIFICATION_LOG_ENTRIES) {
+            classificationCallFailureLog.removeAt(0)
+        }
+    }
 
     fun clearClassificationCallFailureLogs() {
         classificationCallFailureLog.clear()
@@ -793,7 +806,9 @@ class EmochiRepository(
         // Maksimum girdi uzunluğu: 4000 karakter — context bombing önlemi
         val bounded = if (userText.length > MAX_USER_INPUT_CHARS) userText.take(MAX_USER_INPUT_CHARS) else userText
         return bounded
-            // STATE ve sistem etiketleri — enjeksiyon koruması
+            // STATE, düşünce ve sistem etiketleri — enjeksiyon koruması
+            .replace(Regex("""(?i)<think>.*?</think>""", RegexOption.DOT_MATCHES_ALL), "")
+            .replace(Regex("""(?i)<reasoning>.*?</reasoning>""", RegexOption.DOT_MATCHES_ALL), "")
             .replace(Regex("""(?i)\[\[STATE.*?\]\]""", RegexOption.DOT_MATCHES_ALL), "")
             .replace(Regex("""(?i)\[\[.*?\]\]""", RegexOption.DOT_MATCHES_ALL), "")
             // Komut benzeri etiketler kullanıcıdan gelirse temizle
@@ -818,31 +833,39 @@ class EmochiRepository(
         }
     }
 
-    fun getCharacterEmotionsFlow(botId: String): Flow<List<CharacterEmotionEntity>> {
-        return emotionDao.getEmotionsForBotFlow(botId).map { list ->
-            val bot = botDao.getBotById(botId)
-            val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId).map { it.lowercase() }.toSet()
-            list.filter { em ->
-                val clean = cleanCharacterNameCandidate(em.characterName)
-                clean.length >= 2 &&
-                (bot == null || (!isMainOrUserCharacter(em.characterName, bot) && !isMainOrUserCharacter(clean, bot))) &&
-                !blacklisted.contains(em.characterName.lowercase()) &&
-                !blacklisted.contains(clean.lowercase())
-            }
-        }
-    }
-
-    suspend fun getCharacterEmotions(botId: String): List<CharacterEmotionEntity> {
-        val list = emotionDao.getEmotionsForBot(botId)
-        val bot = botDao.getBotById(botId)
-        val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId).map { it.lowercase() }.toSet()
+    private fun filterValidCharacterEmotions(
+        list: List<CharacterEmotionEntity>,
+        bot: BotEntity?,
+        blacklistedLower: Set<String>
+    ): List<CharacterEmotionEntity> {
         return list.filter { em ->
             val clean = cleanCharacterNameCandidate(em.characterName)
             clean.length >= 2 &&
-            (bot == null || (!isMainOrUserCharacter(em.characterName, bot) && !isMainOrUserCharacter(clean, bot))) &&
-            !blacklisted.contains(em.characterName.lowercase()) &&
-            !blacklisted.contains(clean.lowercase())
+                (bot == null || (!isMainOrUserCharacter(em.characterName, bot) && !isMainOrUserCharacter(clean, bot))) &&
+                !blacklistedLower.contains(em.characterName.lowercase(trLocale)) &&
+                !blacklistedLower.contains(clean.lowercase(trLocale))
         }
+    }
+
+    fun getCharacterEmotionsFlow(botId: String): Flow<List<CharacterEmotionEntity>> {
+        return combine(
+            emotionDao.getEmotionsForBotFlow(botId),
+            botDao.getBotByIdFlow(botId)
+        ) { list, bot ->
+            val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId)
+                .map { it.lowercase(trLocale) }
+                .toSet()
+            filterValidCharacterEmotions(list, bot, blacklisted)
+        }.flowOn(Dispatchers.IO)
+    }
+
+    suspend fun getCharacterEmotions(botId: String): List<CharacterEmotionEntity> = withContext(Dispatchers.IO) {
+        val list = emotionDao.getEmotionsForBot(botId)
+        val bot = botDao.getBotById(botId)
+        val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId)
+            .map { it.lowercase(trLocale) }
+            .toSet()
+        filterValidCharacterEmotions(list, bot, blacklisted)
     }
 
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
@@ -850,6 +873,18 @@ class EmochiRepository(
         Types.newParameterizedType(List::class.java, KeyCharacter::class.java)
     )
     private val backupAdapter = moshi.adapter(BackupSnapshot::class.java)
+    private val backupSnapshotManager: BackupSnapshotManager by lazy {
+        BackupSnapshotManager(
+            db = db,
+            context = context,
+            backupAdapter = backupAdapter,
+            onAfterRestore = {
+                lastSummarizedMessageCount.clear()
+                managers.memoryRetrievalManager.clearAllCaches()
+                autoBackupToStorage()
+            }
+        )
+    }
 
     private fun getBuildConfigKey(): String {
         return try {
@@ -862,6 +897,7 @@ class EmochiRepository(
 
     val allBots: Flow<List<BotEntity>> = botDao.getAllBots()
     val userSettingsFlow: Flow<UserSettingsEntity?> = settingsDao.getUserSettingsFlow()
+        .map { it?.let(SecureApiKeyVault::decryptSettingsKeys) }
 
     fun getBotFlow(id: String): Flow<BotEntity?> = botDao.getBotByIdFlow(id)
     fun getMessagesFlow(botId: String): Flow<List<MessageEntity>> = messageDao.getMessagesForBot(botId)
@@ -1089,6 +1125,16 @@ class EmochiRepository(
     suspend fun saveMessage(msg: MessageEntity) {
         if (msg.text.isBlank()) return
         messageDao.insertMessage(msg)
+        // Always advance bot.lastMessageTimestamp so idle tracking & ProactiveMessageWorker stay accurate
+        try {
+            val bot = botDao.getBotById(msg.botId)
+            if (bot != null) {
+                val ts = maxOf(bot.lastMessageTimestamp, msg.timestamp)
+                if (ts != bot.lastMessageTimestamp) {
+                    botDao.insertOrUpdate(bot.copy(lastMessageTimestamp = ts, updatedAt = System.currentTimeMillis()))
+                }
+            }
+        } catch (_: Exception) {}
         autoBackupToStorage()
     }
 
@@ -1129,8 +1175,7 @@ class EmochiRepository(
     }
 
     suspend fun toggleMessageStar(msgId: String) {
-        val msgs = messageDao.getAllMessagesList()
-        val msg = msgs.firstOrNull { it.id == msgId } ?: return
+        val msg = messageDao.getMessageById(msgId) ?: return
         messageDao.setMessageStarred(msgId, !msg.isStarred)
     }
 
@@ -1319,7 +1364,7 @@ class EmochiRepository(
     }
 
     suspend fun updateUserSettings(settings: UserSettingsEntity) {
-        settingsDao.insertOrUpdate(settings)
+        settingsDao.insertOrUpdate(SecureApiKeyVault.encryptSettingsKeys(settings))
         autoBackupToStorage()
     }
 
@@ -1336,112 +1381,14 @@ class EmochiRepository(
         doActualBackup()
     }
 
-    private suspend fun buildBackupSnapshot(includeApiKeys: Boolean): BackupSnapshot {
-        val bots = botDao.getAllBotsList()
-        val allMessages = mutableListOf<MessageEntity>()
-        val allFacts = mutableListOf<com.example.data.local.MemoryFactEntity>()
-        val allEvents = mutableListOf<com.example.data.local.MemoryEventEntity>()
-        val allCheckpoints = mutableListOf<com.example.data.local.MemoryCheckpointEntity>()
-        val allCast = mutableListOf<com.example.data.local.CastMemberEntity>()
-        val allEmotions = mutableListOf<com.example.data.local.CharacterEmotionEntity>()
-        val allTriggers = mutableListOf<com.example.data.local.SensitiveTriggerEntity>()
-        val allRoutines = mutableListOf<com.example.data.local.RoutineEntity>()
-        val allRelations = mutableListOf<com.example.data.local.EntityRelationEntity>()
-        val allMilestones = mutableListOf<com.example.data.local.MilestoneEntity>()
-        val milestoneDao = db.milestoneDao()
+    private suspend fun buildBackupSnapshot(includeApiKeys: Boolean): BackupSnapshot =
+        backupSnapshotManager.buildBackupSnapshot(includeApiKeys)
 
-        for (b in bots) {
-            allMessages.addAll(messageDao.getMessagesForBotList(b.id))
-            try { allFacts.addAll(memoryFactDao.getActiveFacts(b.id)) } catch (_: Exception) {}
-            try { allEvents.addAll(memoryEventDao.getActiveEvents(b.id)) } catch (_: Exception) {}
-            try { allCheckpoints.addAll(memoryCheckpointDao.getCheckpointsForBot(b.id)) } catch (_: Exception) {}
-            try { allCast.addAll(castMemberDao.getCastMembersForBot(b.id)) } catch (_: Exception) {}
-            try { allEmotions.addAll(emotionDao.getEmotionsForBot(b.id)) } catch (_: Exception) {}
-            try { allTriggers.addAll(sensitiveTriggerDao.getTriggersForBot(b.id)) } catch (_: Exception) {}
-            try { allRoutines.addAll(routineDao.getRoutinesForBot(b.id)) } catch (_: Exception) {}
-            try { allRelations.addAll(entityRelationDao.getRelationsForBot(b.id)) } catch (_: Exception) {}
-            try { allMilestones.addAll(milestoneDao.getMilestonesForBot(b.id)) } catch (_: Exception) {}
-        }
+    private suspend fun doActualBackup() =
+        backupSnapshotManager.doActualBackup()
 
-        val rawSettings = settingsDao.getUserSettings() ?: UserSettingsEntity()
-        val exportedSettings = if (includeApiKeys) rawSettings else rawSettings.sanitizedForBackup()
-
-        return BackupSnapshot(
-            version = 2,
-            exportedAt = System.currentTimeMillis(),
-            bots = bots,
-            messages = allMessages,
-            settings = exportedSettings,
-            memoryFacts = allFacts,
-            memoryEvents = allEvents,
-            memoryCheckpoints = allCheckpoints,
-            castMembers = allCast,
-            characterEmotions = allEmotions,
-            sensitiveTriggers = allTriggers,
-            routines = allRoutines,
-            entityRelations = allRelations,
-            milestones = allMilestones
-        )
-    }
-
-    private suspend fun doActualBackup() = withContext(Dispatchers.IO) {
-        val ctx = context ?: return@withContext
-        try {
-            // Auto-backup ALWAYS strips API keys and writes atomically to internal filesDir only
-            val snapshot = buildBackupSnapshot(includeApiKeys = false)
-            val json = backupAdapter.toJson(snapshot)
-
-            val targetFile = java.io.File(ctx.filesDir, "emochi_autobackup.json")
-            val tmpFile = java.io.File(ctx.filesDir, "emochi_autobackup.json.tmp")
-            java.io.FileOutputStream(tmpFile).use { out ->
-                out.write(json.toByteArray(Charsets.UTF_8))
-                out.flush()
-                try { out.fd.sync() } catch (_: Exception) {}
-            }
-            if (!tmpFile.renameTo(targetFile)) {
-                tmpFile.copyTo(targetFile, overwrite = true)
-                tmpFile.delete()
-            }
-
-            // Security cleanup: delete any legacy plaintext backup file in external storage
-            try {
-                ctx.getExternalFilesDir(null)?.let { extDir ->
-                    val legacyExternal = java.io.File(extDir, "emochi_autobackup.json")
-                    if (legacyExternal.exists()) {
-                        legacyExternal.delete()
-                    }
-                }
-            } catch (_: Exception) {}
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    suspend fun autoRestoreFromStorage(): Boolean = withContext(Dispatchers.IO) {
-        val ctx = context ?: return@withContext false
-        try {
-            val internalFile = java.io.File(ctx.filesDir, "emochi_autobackup.json")
-            val legacyExternalFile = ctx.getExternalFilesDir(null)?.let {
-                java.io.File(it, "emochi_autobackup.json")
-            }
-            val backupFile = when {
-                internalFile.exists() && internalFile.length() > 0L -> internalFile
-                legacyExternalFile != null && legacyExternalFile.exists() && legacyExternalFile.length() > 0L -> legacyExternalFile
-                else -> null
-            } ?: return@withContext false
-
-            val json = backupFile.readText(Charsets.UTF_8)
-            val summary = importDataSnapshot(jsonStr = json, overwriteExisting = false)
-            if (backupFile == legacyExternalFile && summary.botsCount > 0) {
-                // Migrate away from insecure external storage immediately
-                doActualBackup()
-            }
-            return@withContext summary.botsCount > 0
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return@withContext false
-    }
+    suspend fun autoRestoreFromStorage(): Boolean =
+        backupSnapshotManager.autoRestoreFromStorage()
 
     suspend fun getMessageListForBot(botId: String): List<MessageEntity> {
         return messageDao.getMessagesForBotList(botId)
@@ -1629,7 +1576,7 @@ class EmochiRepository(
             )
             settingsDao.insertOrUpdate(settings)
         }
-        return settings
+        return SecureApiKeyVault.decryptSettingsKeys(settings)
     }
 
     private suspend fun recordTokenUsage(botId: String? = null, promptTokens: Long, candidateTokens: Long) {
@@ -1639,10 +1586,15 @@ class EmochiRepository(
 
         android.util.Log.d("StateBlockTokenLog", "BotId: $botId | PromptTokens: $cleanPrompt | CandidateTokens: $cleanCand | TotalResponseTokens: $totalTokens")
 
-        val current = getOrCreateSettings()
-        val updated = current.copy(
-            totalPromptTokens = (current.totalPromptTokens + cleanPrompt).coerceAtLeast(0L),
-            totalCandidateTokens = (current.totalCandidateTokens + cleanCand).coerceAtLeast(0L)
+        // Preserve encrypted API key columns in DB — never write decrypted plaintext back to Room
+        val currentRaw = settingsDao.getUserSettings() ?: UserSettingsEntity(
+            selectedModel = "gemini-2.0-flash",
+            fallbackModel = "gemini-2.0-flash",
+            geminiModel = "gemini-2.0-flash"
+        )
+        val updated = currentRaw.copy(
+            totalPromptTokens = (currentRaw.totalPromptTokens + cleanPrompt).coerceAtLeast(0L),
+            totalCandidateTokens = (currentRaw.totalCandidateTokens + cleanCand).coerceAtLeast(0L)
         )
         settingsDao.insertOrUpdate(updated)
 
@@ -2419,11 +2371,11 @@ class EmochiRepository(
                 "save_memory" -> {
                     val content = tc.arguments["content"]?.toString()?.trim().orEmpty()
                     val category = tc.arguments["category"]?.toString()?.trim().orEmpty().ifBlank { "fact" }
-                    val importance = tc.arguments["importance"]?.toString()?.trim()?.toIntOrNull() ?: 7
+                    val importance = com.example.data.api.MemoryToolRegistry.parseIntArg(tc.arguments["importance"], 7)
                     val subject = tc.arguments["subject"]?.toString()?.trim().orEmpty()
                     val key = tc.arguments["key"]?.toString()?.trim().orEmpty()
                     val tier = tc.arguments["tier"]?.toString()?.trim().orEmpty()
-                    val ttlDays = tc.arguments["ttl_days"]?.toString()?.trim()?.toIntOrNull() ?: 0
+                    val ttlDays = com.example.data.api.MemoryToolRegistry.parseIntArg(tc.arguments["ttl_days"], 0)
                     if (content.isNotBlank() && importance >= 3) {
                         val ok = processSaveMemory(
                             botId = botId,
@@ -3589,7 +3541,9 @@ $aiChar: ${latestAiReply.take(850)}
 
             rawPhysicalComfort = jsonObj.optInt("physicalComfortScore", current.physicalComfortScore).coerceIn(0, 100)
             rawObsession = jsonObj.optInt("obsessionScore", current.obsessionScore).coerceIn(0, 100)
-            rawDominant = jsonObj.optString("dominant_emotion", current.dominantEmotion)
+            rawDominant = jsonObj.optString("dominant_emotion", "").ifBlank {
+                jsonObj.optString("mood", current.dominantEmotion)
+            }
             rawSuppressed = jsonObj.optString("suppressed_emotion", current.suppressedEmotion)
 
             val deltaObj = jsonObj.optJSONObject("delta")
@@ -3601,6 +3555,15 @@ $aiChar: ${latestAiReply.take(850)}
                     parsedSetting = ctxObj.optString("setting", "private")
                     parsedMode = ctxObj.optString("mode", "casual")
                     parsedTension = ctxObj.optString("tension", "none")
+                }
+            } else if (jsonObj.has("affectionDelta")) {
+                parsedDelta = jsonObj.optInt("affectionDelta", 0)
+            }
+            if (parsedTension == "none" && jsonObj.has("tension")) {
+                parsedTension = when (jsonObj.optString("tension", "").lowercase().trim()) {
+                    "yüksek", "high", "crisis", "kriz" -> "crisis"
+                    "orta", "medium", "conflict", "çatışma" -> "conflict"
+                    else -> "none"
                 }
             }
 
@@ -7250,9 +7213,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             )
             val raw = res.text.trim()
             if (raw.isBlank()) {
-                classificationCallFailureLog.add(
-                    ClassificationCallFailure(provider = activeProvider, errorMessage = "Error: Empty utility response")
-                )
+                recordClassificationFailure(activeProvider, "Error: Empty utility response")
                 return@withContext EmochiRepository.evaluateCharacterSignificance(candidateName, sceneContext)
             }
             val cleaned = raw.trim().removePrefix("```json").removePrefix("```").removeSuffix("```").trim()
@@ -7273,12 +7234,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             }
             Quadruple(isSig, role, conf, mult)
         } catch (e: Exception) {
-            classificationCallFailureLog.add(
-                ClassificationCallFailure(
-                    provider = activeProvider,
-                    errorMessage = e.message ?: "Error classifying character"
-                )
-            )
+            recordClassificationFailure(activeProvider, e.message ?: "Error classifying character")
             EmochiRepository.evaluateCharacterSignificance(candidateName, sceneContext)
         }
     }
@@ -7543,7 +7499,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             ""
         }
 
-        val sysPrompt = buildSystemPrompt(
+        val baseSysPrompt = buildSystemPrompt(
             bot = updatedBot,
             settings = settings,
             includeStyleGuide = true,
@@ -7560,6 +7516,18 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             modelContextWindowTokens = modelContextWindow,
             literaryFramingMode = literaryFramingMode
         )
+
+        // Wire UserSentimentAnalyzer into live replies (chat mode always; personal non-intense on NEGATIVE/WITHDRAWN)
+        val detectedMood = UserSentimentAnalyzer.analyze(contextMessages)
+        val moodHint = when {
+            updatedBot.writingStyle.equals("chat", ignoreCase = true) -> UserSentimentAnalyzer.buildMoodHint(detectedMood)
+            updatedBot.mode == "personal" &&
+                !updatedBot.intensity.equals("intense", ignoreCase = true) &&
+                (detectedMood == UserMood.NEGATIVE || detectedMood == UserMood.WITHDRAWN) ->
+                UserSentimentAnalyzer.buildMoodHint(detectedMood)
+            else -> ""
+        }
+        val sysPrompt = if (moodHint.isNotBlank()) baseSysPrompt + moodHint else baseSysPrompt
 
         val response = executeModelRequestWithFallback(
             model = effectiveModel,
@@ -7795,148 +7763,14 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         testTools = true
     )
 
-    // --- Import / Export Backup Snapshot (v2, backward-compatible with v1) ---
+    // --- Import / Export Backup Snapshot (delegated to BackupSnapshotManager) ---
 
-    suspend fun exportDataSnapshot(includeApiKeys: Boolean = false): String = withContext(Dispatchers.IO) {
-        val snapshot = buildBackupSnapshot(includeApiKeys = includeApiKeys)
-        backupAdapter.toJson(snapshot)
-    }
+    suspend fun exportDataSnapshot(includeApiKeys: Boolean = false): String =
+        backupSnapshotManager.exportDataSnapshot(includeApiKeys = includeApiKeys)
 
     suspend fun importDataSnapshot(
         jsonStr: String,
         overwriteExisting: Boolean = false
-    ): BackupImportSummary = withContext(Dispatchers.IO) {
-        if (jsonStr.isBlank()) {
-            throw IllegalArgumentException("Yedek verisi boş.")
-        }
-        val snapshot = try {
-            backupAdapter.fromJson(jsonStr)
-        } catch (e: Exception) {
-            throw IllegalArgumentException("Geçersiz yedek JSON formatı: ${e.message}", e)
-        } ?: throw IllegalArgumentException("Yedek dosyası çözümlenemedi.")
-
-        val existingSettings = try { settingsDao.getUserSettings() } catch (_: Exception) { null }
-        val mergedSettings = snapshot.settings.mergePreservingExistingKeys(existingSettings)
-        val milestoneDao = db.milestoneDao()
-
-        db.withTransaction {
-            if (overwriteExisting) {
-                val existingBots = botDao.getAllBotsList()
-                for (existingBot in existingBots) {
-                    val bid = existingBot.id
-                    messageDao.deleteMessagesForBot(bid)
-                    memoryFactDao.deleteAllFactsForBot(bid)
-                    memoryEventDao.deleteAllEventsForBot(bid)
-                    memoryCheckpointDao.deleteCheckpointsForBot(bid)
-                    emotionDao.deleteEmotionsForBot(bid)
-                    sensitiveTriggerDao.deleteTriggersForBot(bid)
-                    routineDao.deleteRoutinesForBot(bid)
-                    milestoneDao.deleteMilestonesForBot(bid)
-                    castMemberDao.getCastMembersForBot(bid).forEach { castMemberDao.deleteCastMember(it.id) }
-                    entityRelationDao.getRelationsForBot(bid).forEach { entityRelationDao.deleteRelation(it.id) }
-                    fragmentDao.deleteFragmentsForBot(bid)
-                }
-                botDao.deleteAllBots()
-            }
-
-            for (b in snapshot.bots) {
-                botDao.insertOrUpdate(b)
-            }
-            for (m in snapshot.messages) {
-                messageDao.insertMessage(m)
-            }
-            settingsDao.insertOrUpdate(mergedSettings)
-
-            // v2 extended Neural Vault & world state tables (gracefully empty on v1 backups)
-            if (snapshot.memoryFacts.isNotEmpty()) {
-                val botsWithFacts = snapshot.memoryFacts.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithFacts.forEach { memoryFactDao.deleteAllFactsForBot(it) }
-                }
-                memoryFactDao.insertFacts(snapshot.memoryFacts.map { it.copy(id = 0L) })
-            }
-            if (snapshot.memoryEvents.isNotEmpty()) {
-                val botsWithEvents = snapshot.memoryEvents.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithEvents.forEach { memoryEventDao.deleteAllEventsForBot(it) }
-                }
-                memoryEventDao.insertEvents(snapshot.memoryEvents.map { it.copy(id = 0L) })
-            }
-            if (snapshot.memoryCheckpoints.isNotEmpty()) {
-                val botsWithCheckpoints = snapshot.memoryCheckpoints.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithCheckpoints.forEach { memoryCheckpointDao.deleteCheckpointsForBot(it) }
-                }
-                for (cp in snapshot.memoryCheckpoints) {
-                    memoryCheckpointDao.insertCheckpoint(cp.copy(id = 0L))
-                }
-            }
-            if (snapshot.castMembers.isNotEmpty()) {
-                val botsWithCast = snapshot.castMembers.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithCast.forEach { bid ->
-                        castMemberDao.getCastMembersForBot(bid).forEach { castMemberDao.deleteCastMember(it.id) }
-                    }
-                }
-                for (cm in snapshot.castMembers) {
-                    castMemberDao.insertCastMember(cm.copy(id = 0L))
-                }
-            }
-            if (snapshot.characterEmotions.isNotEmpty()) {
-                val botsWithEmotions = snapshot.characterEmotions.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithEmotions.forEach { emotionDao.deleteEmotionsForBot(it) }
-                }
-                for (em in snapshot.characterEmotions) {
-                    emotionDao.insertOrUpdate(em)
-                }
-            }
-            if (snapshot.sensitiveTriggers.isNotEmpty()) {
-                val botsWithTriggers = snapshot.sensitiveTriggers.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithTriggers.forEach { sensitiveTriggerDao.deleteTriggersForBot(it) }
-                }
-                for (tr in snapshot.sensitiveTriggers) {
-                    sensitiveTriggerDao.insertOrUpdate(tr.copy(id = 0L))
-                }
-            }
-            if (snapshot.routines.isNotEmpty()) {
-                val botsWithRoutines = snapshot.routines.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithRoutines.forEach { routineDao.deleteRoutinesForBot(it) }
-                }
-                routineDao.insertRoutines(snapshot.routines.map { it.copy(id = 0L) })
-            }
-            if (snapshot.entityRelations.isNotEmpty()) {
-                val botsWithRelations = snapshot.entityRelations.map { it.botId }.toSet()
-                if (!overwriteExisting) {
-                    botsWithRelations.forEach { bid ->
-                        entityRelationDao.getRelationsForBot(bid).forEach { entityRelationDao.deleteRelation(it.id) }
-                    }
-                }
-                entityRelationDao.insertRelations(snapshot.entityRelations.map { it.copy(id = 0L) })
-            }
-            if (snapshot.milestones.isNotEmpty()) {
-                for (ms in snapshot.milestones) {
-                    milestoneDao.insertMilestone(ms)
-                }
-            }
-        }
-
-        // Invalidate caches so RAG & summarization stay consistent after restore
-        lastSummarizedMessageCount.clear()
-        managers.memoryRetrievalManager.clearAllCaches()
-        autoBackupToStorage()
-
-        BackupImportSummary(
-            version = snapshot.version,
-            botsCount = snapshot.bots.size,
-            messagesCount = snapshot.messages.size,
-            memoryFactsCount = snapshot.memoryFacts.size,
-            memoryEventsCount = snapshot.memoryEvents.size,
-            castMembersCount = snapshot.castMembers.size,
-            milestonesCount = snapshot.milestones.size,
-            overwriteExisting = overwriteExisting
-        )
-    }
+    ): BackupImportSummary =
+        backupSnapshotManager.importDataSnapshot(jsonStr = jsonStr, overwriteExisting = overwriteExisting)
 }

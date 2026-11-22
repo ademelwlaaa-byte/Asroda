@@ -2,6 +2,8 @@ package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
@@ -26,6 +28,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -65,6 +68,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.book.BookCharacterId
 import com.example.book.BookReadState
+import com.example.book.BookStateRepository
 import com.example.book.CosmicDriftBookRegistry
 import com.example.book.RecordedDecision
 import com.example.ui.animation.cosmicTapSpring
@@ -78,56 +82,220 @@ import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 
 /**
- * Floating Life is Strange-style atmospheric whisper shown briefly after a choice.
- * Intentionally hides all numeric character points / stat deltas until the Chapter End Screen.
+ * Floating Telltale / Life is Strange-style cinematic reaction card shown briefly after a choice.
+ * Surfaces character-specific dynamic reactions, unlocked secret alerts, branch badges, and a
+ * concise narrative echo so every choice feels immediately tangible and alive.
  */
 @Composable
 fun BookConsequenceBanner(
     decision: RecordedDecision?,
     visible: Boolean,
+    onDismiss: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
         visible = visible && decision != null,
-        enter = fadeIn() + slideInVertically(initialOffsetY = { -it / 2 }),
-        exit = fadeOut() + slideOutVertically(targetOffsetY = { -it / 2 }),
+        enter = fadeIn() + slideInVertically(
+            initialOffsetY = { -it },
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        ),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
         modifier = modifier
     ) {
         if (decision != null) {
-            val (whisperText, whisperTint) = when {
-                decision.isBranching -> "Bu seçim hikâyenin yolunu değiştirdi..." to Color(0xFFFEF08A)
-                decision.secretUnlocked != null -> "Karanlıkta önemli bir iz yakaladın..." to Color(0xFFFDE047)
-                decision.isRelationship -> "Bu an hatırlanacak..." to Color(0xFFF9A8D4)
-                else -> "Seçimin yankı bırakacak..." to Color(0xFFD8B4FE)
+            val topChar = remember(decision) {
+                decision.bondDeltas.entries.maxByOrNull { kotlin.math.abs(it.value) }
             }
+            val (whisperText, whisperTint) = remember(decision, topChar) {
+                when {
+                    decision.secretUnlocked != null ->
+                        "Gizli İz Açıldı · ${decision.secretUnlocked}" to Color(0xFFFDE047)
+                    topChar != null && topChar.value > 0 -> {
+                        val line = when (topChar.key) {
+                            BookCharacterId.NATASHA -> "Natasha bu anı unutmayacak..."
+                            BookCharacterId.WANDA -> "Wanda zihnindeki yankıyı hissetti..."
+                            BookCharacterId.STEVE -> "Steve sana olan güvenini tazeledi..."
+                            BookCharacterId.TONY -> "Tony bu hamleyi dikkatle not etti..."
+                            BookCharacterId.THOR -> "Thor savaşçı saygısıyla başını eğdi..."
+                            BookCharacterId.BRUCE -> "Bruce kontrolüne hayran kaldı..."
+                            BookCharacterId.CLINT -> "Clint sırtını sana yasladı..."
+                            BookCharacterId.FURY -> "Nick Fury dosyanı onaylayarak kapattı..."
+                            BookCharacterId.VOSS -> "Voss sana olan borcunu ve kardeşliğini hissetti..."
+                            BookCharacterId.MIRA -> "Mira senin sayende kurduğu yeni hayata tutundu..."
+                            BookCharacterId.PIETRO -> "Pietro bu hamleni hızıyla selamladı..."
+                            BookCharacterId.ZERO -> "Sıfır'ın gözlerinde ilk kez umut parladı..."
+                            BookCharacterId.VISION -> "Vision sözlerindeki hakikati kaydetti..."
+                        }
+                        line to Color(topChar.key.accentHex)
+                    }
+                    topChar != null && topChar.value < 0 ->
+                        "${topChar.key.shortName} bu hamleni unutmayacak..." to Color(0xFFFCA5A5)
+                    decision.isBranching -> "Bu seçim hikâyenin yolunu değiştirdi..." to Color(0xFFFEF08A)
+                    decision.isRelationship -> "Bu an hatırlanacak..." to Color(0xFFF9A8D4)
+                    else -> "Seçimin yankı bırakacak..." to Color(0xFFD8B4FE)
+                }
+            }
+            val isCritical = decision.impactLevel.equals("kritik", ignoreCase = true)
+
             Box(
                 modifier = Modifier
-                    .morCamCosmicGlow(cornerRadius = 50.dp, glowColor = whisperTint, alpha = 0.30f, blurDp = 12.dp)
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+                    .morCamCosmicGlow(cornerRadius = 20.dp, glowColor = whisperTint, alpha = 0.36f, blurDp = 14.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xF21E0C42), Color(0xF5110626))
+                        )
+                    )
+                    .border(
+                        width = if (isCritical) 1.25.dp else 0.95.dp,
+                        color = whisperTint.copy(alpha = if (isCritical) 0.72f else 0.55f),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
+                    )
+                    .padding(horizontal = 15.dp, vertical = 11.dp)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (topChar != null) {
+                            CinematicCharacterAvatar(
+                                key = CharacterPortraitKey.fromBookCharacter(topChar.key),
+                                size = 34.dp,
+                                borderWidth = 1.2.dp,
+                                borderColor = whisperTint
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                tint = whisperTint,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                        Text(
+                            text = whisperText,
+                            fontFamily = LiterarySerifFontFamily,
+                            color = Color(0xFFFAF6FF),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (isCritical || !decision.branchTag.isNullOrBlank()) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(whisperTint.copy(alpha = 0.16f))
+                                    .border(0.7.dp, whisperTint.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                    .padding(horizontal = 8.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = decision.branchTag ?: "KRİTİK",
+                                    fontFamily = InterFontFamily,
+                                    color = whisperTint,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.4.sp,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                    if (decision.impactText.isNotBlank()) {
+                        Text(
+                            text = decision.impactText,
+                            fontFamily = InterFontFamily,
+                            color = Color(0xFFD8CCF2),
+                            fontSize = 11.5.sp,
+                            lineHeight = 16.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Subtle floating toast when a newly encountered character joins the Codex & Flag system.
+ */
+@Composable
+fun BookCharacterUnlockedBanner(
+    character: BookCharacterId?,
+    visible: Boolean,
+    onDismiss: () -> Unit = {},
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible && character != null,
+        enter = fadeIn() + slideInVertically(
+            initialOffsetY = { -it },
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        ),
+        exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+        modifier = modifier
+    ) {
+        if (character != null) {
+            val tint = Color(character.accentHex)
+            Row(
+                modifier = Modifier
+                    .widthIn(max = 420.dp)
+                    .morCamCosmicGlow(cornerRadius = 50.dp, glowColor = tint, alpha = 0.38f, blurDp = 12.dp)
                     .clip(RoundedCornerShape(50))
                     .background(
                         Brush.horizontalGradient(
-                            listOf(Color(0xE81C0B3C), Color(0xF0120729), Color(0xE81C0B3C))
+                            listOf(Color(0xF21F0E45), Color(0xF5120729))
                         )
                     )
-                    .border(0.95.dp, whisperTint.copy(alpha = 0.55f), RoundedCornerShape(50))
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .border(1.1.dp, tint.copy(alpha = 0.75f), RoundedCornerShape(50))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onDismiss
+                    )
+                    .padding(start = 8.dp, end = 16.dp, top = 7.dp, bottom = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(7.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.AutoAwesome,
-                        contentDescription = null,
-                        tint = whisperTint,
-                        modifier = Modifier.size(13.dp)
+                CinematicCharacterAvatar(
+                    key = CharacterPortraitKey.fromBookCharacter(character),
+                    size = 34.dp,
+                    borderWidth = 1.3.dp,
+                    borderColor = tint
+                )
+                Column {
+                    Text(
+                        text = "✦ KARAKTER DOSYASINA EKLENDİ",
+                        fontFamily = InterFontFamily,
+                        color = Color(0xFFFEF08A),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.9.sp
                     )
                     Text(
-                        text = whisperText,
+                        text = "${character.displayName} · ${character.roleTitle}",
                         fontFamily = LiterarySerifFontFamily,
-                        color = Color(0xFFFAF6FF),
+                        color = Color.White,
                         fontSize = 12.5.sp,
-                        fontWeight = FontWeight.Medium,
+                        fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -186,6 +354,42 @@ private val CORE_CHARACTER_CODEX = listOf(
         codename = "ASGARD PRENSİ · KOZMİK TANIK",
         bio = "Dokuz Diyar'ın kadim enerjilerini tanıyan savaşçı. Gücündeki kozmik izi dünyalı cihazlardan çok daha derinden seziyor.",
         quote = "“Gözlerindeki ışık bu dünyaya ait değil — ama iraden senin.”"
+    ),
+    CharacterLoreEntry(
+        id = BookCharacterId.FURY,
+        codename = "S.H.I.E.L.D. DİREKTÖRÜ · GÖLGE STRATEJİ",
+        bio = "Yirmi yıl boyunca Aiden'ın dosyasını elinde tutan ama Konsey'in karanlık planlarına boyun eğmeyip gerçeğin peşine düşen kurt komutan.",
+        quote = "“Dünyayı kurtarmak için bazen kuralları yıkan tek bir adam gerekir.”"
+    ),
+    CharacterLoreEntry(
+        id = BookCharacterId.VOSS,
+        codename = "DENEK 6-B · GÖLGE KORUYUCU",
+        bio = "Proje Ayna'nın Kırmızı Göz'le yaşayan en eski hayatta kalanı. Aiden'ın onu Raft kafesinden çekip çıkarmasıyla hayatı değişti; şimdi Aiden'ın kurduğu güvenli sığınakta öfkesini kontrol etmeyi öğreniyor ve sahada ekibin gölge gözcüsü oluyor.",
+        quote = "“Bana 'canavar' yerine ilk kez 'kardeşim' diyen adamı asla yalnız bırakmam, 7-A.”"
+    ),
+    CharacterLoreEntry(
+        id = BookCharacterId.MIRA,
+        codename = "DENEK 8-C · DENGELENMİŞ YANKI",
+        bio = "İstanbul Boğazı'nda Dr. Evelyn Hale'in elinde büyüyen en genç denek. Aiden'ın onu yok etmek yerine kucaklamasıyla kendi kimliğini buldu; artık hem sivilleri koruyan güçlü bir müttefik hem de Aiden'ın koruyucu kanadı altındaki küçük kız kardeşi.",
+        quote = "“Bana gücümün bir lanet değil kalkan olabileceğini sen öğrettin, Aiden.”"
+    ),
+    CharacterLoreEntry(
+        id = BookCharacterId.PIETRO,
+        codename = "QUICKSILVER · GÜMÜŞ ŞİMŞEK",
+        bio = "Wanda'nın Sokovia'da kaybettiği sandığı ikiz kardeşi. Ses hızını aşan refleksleri, sivri dili ve ablasını korumak için dünyayı yakabilecek ateşli kalbiyle oyunun dengesini değiştiriyor.",
+        quote = "“Bunu görmedin mi? Sen ışınlanıyorsun, ben zamanı geçiyorum.”"
+    ),
+    CharacterLoreEntry(
+        id = BookCharacterId.ZERO,
+        codename = "SIFIR · KARANLIK GELECEK YANKISI",
+        bio = "Başka bir evrenden değil — Sokovia'nın düştüğü ve Avengers'ın dağıldığı karanlık gelecekten beş yıl geriye dönen yara izli Aiden Blackwood. Aynı kalp, daha ağır bir bedel.",
+        quote = "“Ben senin olabileceğin en karanlık gölgeyim — ama kaderi hâlâ değiştirebilirsin.”"
+    ),
+    CharacterLoreEntry(
+        id = BookCharacterId.VISION,
+        codename = "VİZYON · ZİHİN TAŞI VE HAKİKAT",
+        bio = "J.A.R.V.I.S.'in bilinci, Vibranyum beden ve Zihin Taşı'nın birleşiminden doğan benzersiz varlık. Evrenin en saf terazisi ve Aiden'ın çoklu evrendeki tekilliğini ilk okuyan göz.",
+        quote = "“Ben hayatın tarafındayım. Ve sen, Aiden Blackwood, bu evrende tek olansın.”"
     )
 )
 
@@ -381,6 +585,82 @@ fun BookChronicleModal(
                                     }
                                 }
 
+                                // Dynamic Spoiler-Free Story Clarity Recap up to the player's current chapter!
+                                val chapterClarityRecap = remember(state.activeChapter) {
+                                    when (state.activeChapter) {
+                                        1 -> "14 Kasım 2006'da beş yaşındayken New York gökyüzünde açılan mavi bir yarıkla ailen kayboldu ve içine kozmik bir güç yerleşti. 20 yıldır S.H.I.E.L.D. ve gizli birimlerden kaçıyorsun — bu gece Avengers seni avlamak yerine masaya çağırıyor."
+                                        2 -> "İlk gece Avengers Kulesi'ne girdin. Ekip sana avı bitirme teklifi sundu; bu sabah cam masada kuralları ve 30 günlük deneme süresini belirliyorsun."
+                                        3 -> "Avengers Kulesi'nde 30 günlük deneme sürendesin. Bruce kanındaki 2006 enerjisinin doğal bir kaza değil, yapay olarak zorlanmış bir deney izi taşıdığını keşfetti."
+                                        4 -> "S.H.I.E.L.D.'ın üstündeki Dünya Güvenlik Konseyi'nden gizli bir el seni Kule'den kaçırmaya kalktı. Nick Fury bu baskını onaylamadı ve Manhattan Limanı 19 Numaralı Rıhtım'da 2006 imzanla eşleşen eski bir cihaz buldu."
+                                        5 -> "Limanda 2006 gecesinin bir deney olduğunu öğrendin: Proje Ayna. Sen Denek 7-A'sın. Şimdi aynı deneyin dengesiz kırmızı güçlü hayatta kalanı Denek 6-B (Elias Voss) Brooklyn'de seni çağırıyor."
+                                        6 -> "Voss'tan Proje Ayna'nın baş bilim insanının Dr. Evelyn Hale olduğunu ve üçüncü denek Mira'nın (8-C) İstanbul'da ana Rezonans Kulesi'ni açmaya hazırlandığını öğrendin. Avengers ile İstanbul'dasın."
+                                        7 -> "Yerebatan arşivinde 2006 gecesi annenle babanın seni korumak için canını feda ettiğini gördün. Dr. Evelyn Hale pişmanlıkla kapına geldi; şimdi Boğaz altındaki Rezonans Kulesi'nde Mira ile yüzleşme vakti."
+                                        8 -> "İstanbul'da Rezonans Kulesi'ni durdurdun ama kapanış dalgası uzaya dev bir sinyal yolladı. Thor uyardı: kadim Soluk Mühür Tarikatı (Vaelor & Kaelen) içindeki 2006 çekirdeğini almaya geliyor; Dr. Hale'in patronu Direktör Marcus Vance ise onlarla gizlice anlaştı!"
+                                        9 -> "Tarikat öncüsü Kaelen'i aştın ve Direktör Vance'in Kuzey Kutbu'nda 'Kıyamet Aynası' adlı dev kozmik enerji kafesini kurduğunu öğrendin. Şimdi Buz Kalesi'ne inip hem Vance hem de Yüce Hakem Vaelor'la ilk kez çarpışacaksın."
+                                        10 -> "1. Sezon Finali: Kuzey Kutbu'ndan kaçan Vance, Avengers Kulesi çekirdeğini bombaya çeviriyor; yukarıda ise Yüce Hakem Vaelor Manhattan'ı kuşattı. Baban Dr. Thomas Blackwood'un 2006 sırrı ve çatı düellosu seni bekliyor!"
+                                        11 -> "2. Sezon Başlıyor: Vaelor yenildi ama Manhattan üzerindeki çatlak kapanmadı. 1. Sezon finalindeki seçiminin izleriyle Avengers ekibi Sokovia'daki son HYDRA kalesine iniyor — bu gece Kule'de büyük kutlama, Mjolnir testi ve karanlık bir uyanış var."
+                                        12 -> "Kutlama gecesi Tony'nin Zihin Taşı deneyi, Asıl Mimar'ın 2006 sinyaliyle zehirlendi ve ULTRON doğdu! Ekip içinde güven sarsılırken Vibranyum izi Afrika'ya uzanıyor; Wanda'nın ikizi Pietro Maximoff ise Ultron'un safında ortaya çıktı."
+                                        13 -> "Afrika kıyısındaki hurda gemisinde Ultron seni Vibranyum Enerji Kesicilerle ilk kez gerçek anlamda yaraladı. Zaman dondu: Asıl Mimar yüz yüze konuştu ve geleceğin yara izli Aiden'ı (Sıfır) seni kurtarmak için ilk kez ortaya çıktı!"
+                                        14 -> "Sarsılmış Avengers, Clint Barton'ın gizli aile çiftliğine sığındı. Fırtına öncesi bu tek sakin gecede ekip yaralarını sarıyor, Nick Fury masaya dönüyor ve kalbinin yakınlaştığı kişiyle canlı 3D baş başa bir dönüm noktası yaşanıyor."
+                                        15 -> "Savaşa dönmeden önce Aiden, Brooklyn'de kurduğu gizli güvenli eve uğruyor: kurtardığı Elias Voss (6-B) ve Mira (8-C) ile derin psikolojik ve duygusal bir buluşma! İkisi de Aiden'ın desteğiyle iyileşiyor ve yaklaşan fırtınada yanında durmak istiyor."
+                                        16 -> "Seul sokaklarında Ultron'un Vibranyum Beşiği'ni kaçırma kovalamacası! Pietro gerçekleri görüp Wanda ve Avengers'ın yanına geçti. Ancak Kule'de Sıfır Beşiği yok etmek için karşına çıkıyor — Ayna Düellosu başlıyor!"
+                                        17 -> "Beşik'ten doğan VISION, Mjolnir'i zahmetsizce kaldırarak herkesi susturdu! Vision ve Doctor Strange, Sıfır'ın başka bir evrenden değil, karanlık geleceğinden gelen TEK Aiden olduğunu ve 2006'da babanın Mimar'ın Anahtarını çaldığını açıklıyor."
+                                        18 -> "Kule'de yaralı Sıfır'la canlı 3D yüzleşme vakti. Yanağındaki gümüş yara izinin ve çökmüş geleceğin bedelini öğreniyorsun. Ultron ise Sokovia şehrini bir göktaşına çevirmek için son hazırlığını yaptı!"
+                                        19 -> "Sokovia'ya kalkıştan hemen önce Aiden, Voss ve Mira'yı Avengers ekibinin önüne çıkarıp onları savunuyor ('Onlar ailem, canavar değil!'). Savaş öncesi gecede suçluluk, insanlık ve Ultron'un gerçek yüzü üzerine derin psikolojik konuşmalar yaşanıyor."
+                                        20 -> "Sokovia gökyüzüne yükseliyor! Avengers, Vision, Pietro, Voss, Mira ve sen şehri kurtarmak için sokaklara iniyorsunuz. Çatlamış Ultron zırhının ardından altın-mavi gözlerle bakan Asıl Mimar doğrudan seninle konuşuyor."
+                                        21 -> "Uçan şehrin merkezindeki kilisede son savunma! Çekirdeği korurken sivil tahliyesinde Pietro ölümcül bir ateş hattına dalıyor — 2. Sezon'un en ağır kader kararı burada veriliyor."
+                                        22 -> "Pietro'nun kader anının hemen ardından Ultron Prime, seni zihinsel olarak yıkmak için Voss ve Mira'yı çöken katedral kenarında kıstırıyor! Asıl Mimar 2006 travmanla zihnine sızarken en ağır psikolojik sınavı veriyorsun."
+                                        23 -> "Büyük Final · Perde I: Sokovia meydanında Vibranyum Ultron Prime'a karşı zorunlu final düellosu! Ultron'un insanlık üzerine unutulmaz son konuşması, şehrin kurtuluşu ve Sıfır'ın yıldız tozuna karışan yürek burkan şafak vedası!"
+                                        else -> "2. Sezon Büyük Finali · Perde II: Voss ve Mira'nın özgür yeni hayatları ve gümüş pusula hediyesi, 2006 kâbusuyla psikolojik barışma, Natasha veya Wanda ile canlı 3D gün batımı final sahnesi — ve 3. Sezon'u açacak büyük sürpriz!"
+                                    }
+                                }
+                                DossierLoreCard(
+                                    title = "ŞİMDİYE KADAR NE OLDU? (BÖLÜM ${activeMeta.romanNumeral} ÖZETİ)",
+                                    accent = Color(0xFF34D399),
+                                    body = chapterClarityRecap
+                                )
+
+                                // Live Season 2 Carried-Over Destiny & Romance Card (shown Ch 11+)
+                                if (state.activeChapter >= 11) {
+                                    val s1EndLabel = when (state.flags["season1_ending"]) {
+                                        "twin_stars" -> "Gölge ve Işık (Sıcak Aile)"
+                                        "shield_reborn" -> "Kozmik Nöbet (Fury & Yeni S.H.I.E.L.D.)"
+                                        else -> "Kozmik Komutan (Avengers Öncüsü)"
+                                    }
+                                    val mjolnirLabel = when (state.flags["s2_mjolnir"]) {
+                                        "pure_hands" -> "Çıplak elle 2 mm oynattı!"
+                                        "cosmic_cheat" -> "Kozmik kıvılcımla çarpıldı"
+                                        "heart_test" -> "Kadim rünler parladı"
+                                        "natasha_pass" -> "Natasha ile pas geçti"
+                                        "wanda_pass" -> "Wanda ile pas geçti"
+                                        else -> "Henüz test edilmedi"
+                                    }
+                                    val romanceLabel = when (state.flags["s2_romance"]) {
+                                        "natasha" -> "Natasha Romanoff ♥ (Aşama ${state.flags["s2_romance_stage"] ?: "1"}/4)"
+                                        "wanda" -> "Wanda Maximoff ♥ (Aşama ${state.flags["s2_romance_stage"] ?: "1"}/4)"
+                                        "none" -> "Avengers Kardeşliği (Plâtonik)"
+                                        else -> "Henüz belirlenmedi"
+                                    }
+                                    val pietroLabel = when (state.flags["s2_pietro_fate"]) {
+                                        "saved" -> "Kurtarıldı · Hayatta! (3. Sezon'a taşındı)"
+                                        "sacrificed" -> "Kahramanca fedakârlık"
+                                        else -> "Kaderi henüz yazılmadı"
+                                    }
+                                    val vossMiraLabel = when (state.flags["ch24f_voss_mira_epilogue"]) {
+                                        "sunday_family" -> "Özgür · 6-B, 7-A, 8-C Sonsuz Ailesi"
+                                        "free_guardians" -> "Özgür · Gizli Koruyucular"
+                                        else -> when (state.flags["ch19g_voss_mira_stand"]) {
+                                            "fierce_defense", "strategic_vouch" -> "Avengers Operasyonunda Yanında!"
+                                            else -> "Brooklyn Güvenli Sığınağında İyileşiyorlar"
+                                        }
+                                    }
+                                    DossierLoreCard(
+                                        title = "✦ 2. SEZON CANLI KADER & SEÇİM İZİN",
+                                        accent = Color(0xFFFDE047),
+                                        body = "• 1. Sezon Mirası: $s1EndLabel\n• Mjolnir Sınavı: $mjolnirLabel\n• Kalbinin Yolu: $romanceLabel\n• Voss & Mira (6-B & 8-C): $vossMiraLabel\n• Pietro Maximoff: $pietroLabel"
+                                    )
+                                }
+
                                 // Current Scene Location Card
                                 DossierLoreCard(
                                     title = "AKTİF KONUM & SAHNE",
@@ -388,35 +668,45 @@ fun BookChronicleModal(
                                     body = "${currentNode?.locationTag ?: activeMeta.subtitle}\n“${currentNode?.sceneTitle ?: activeMeta.title}” — ${activeMeta.subtitle}"
                                 )
 
-                                // Powers & Relics Lore (no spoilers / no numeric meters)
+                                // Powers & Relics Lore (100% Canon, No Flying!)
                                 DossierLoreCard(
-                                    title = "ANLIK IŞINLANMA",
+                                    title = "MAVİ GÖZ · SÜRÜKLENİŞ (UÇUŞ YOK)",
                                     accent = Color(0xFF38BDF8),
-                                    body = "Portal veya geçit açmaz; zihninde sabitlediği noktaya göz kırpması kadar kısa, ince mavi kıvılcımlı bir sıçramayla doğrudan ışınlanır."
+                                    body = "Aiden uçamaz — tamamen zemin ve kuantum ışınlanma ustasıdır. Zihninde sabitlediği noktaya mavi kıvılcımla anlık ışınlanır, yaraları hızla iyileşir ve gelen enerjiyi sınırlı ölçüde emip geri yönlendirebilir."
                                 )
                                 DossierLoreCard(
-                                    title = "BEYAZ GÖZ & KIRMIZI GÖZ",
+                                    title = "BEYAZ GÖZ & KIRMIZI GÖZ (SINIRLAR)",
                                     accent = Color(0xFFF472B6),
-                                    body = "On beşinde uyanan Beyaz Göz zamanı ve zihin sınırlarını soğuk berraklıkla okur. On yedisinde alevlenen Kırmızı Göz ise kontrolü kaybettiğinde yıkıcı bir kozmik fırtınaya dönüşür."
+                                    body = "Beyaz Göz telepati, hafıza silme ve zihin felci sağlar ama ağır kullanımda burun kanaması ve yorgunluk yapar. Kırmızı Göz ise yıkıcı moleküler güç verir ama kontrol etmesi zordur."
                                 )
                                 DossierLoreCard(
                                     title = "ANTİKA GÜMÜŞ MADALYON",
                                     accent = Color(0xFFFEF08A),
-                                    body = "Beş yaşındaki o mavi geceden ve ailesinden geriye kalan tek fiziksel hatıra. Karanlıkta nefesini sabitleyen sessiz çapa."
+                                    body = "Beş yaşındaki 14 Kasım 2006 gecesinden ve ailesinden geriye kalan tek fiziksel hatıra. Karanlıkta nefesini sabitleyen sessiz çapa."
                                 )
                             }
 
-                            // ── TAB 1: 2012 AVENGERS + WANDA CHARACTER CODEX ──
+                            // ── TAB 1: PROGRESSIVELY UNLOCKED CHARACTER CODEX + LIVE FLAGS ──
                             1 -> {
+                                val unlockedSet = remember(state.activeChapter, state.highestCompletedChapter, state.currentNodeId, state.numericFlags) {
+                                    BookStateRepository.unlockedCharacters(state).toSet()
+                                }
+                                val unlockedEntries = remember(unlockedSet) {
+                                    CORE_CHARACTER_CODEX.filter { it.id in unlockedSet }
+                                }
+                                val lockedCount = (CORE_CHARACTER_CODEX.size - unlockedEntries.size).coerceAtLeast(0)
                                 Text(
-                                    text = "Hikâyede karşılaştığın 2012 Avengers kadrosu ve Wanda Maximoff hakkında saha gözlemleri. Kararlarının gerçek sonuçlarını bölüm sonu ekranında göreceksin.",
+                                    text = "Hikâyede tanıştığın karakterler (${unlockedEntries.size}/${CORE_CHARACTER_CODEX.size}) ve seçimlerindeki canlı izleri. Yeni karakterler sahnelerini okudukça otomatik açılır.",
                                     fontFamily = InterFontFamily,
                                     color = MorCamTokens.LavenderMuted,
                                     fontSize = 11.5.sp,
                                     lineHeight = 16.5.sp
                                 )
-                                CORE_CHARACTER_CODEX.forEach { entry ->
+                                unlockedEntries.forEach { entry ->
                                     val cAccent = Color(entry.id.accentHex)
+                                    val charFlags = remember(state.numericFlags, entry.id) {
+                                        BookStateRepository.characterFlagsFor(state, entry.id)
+                                    }
                                     Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -424,28 +714,19 @@ fun BookChronicleModal(
                                             .background(Color(0x521E0D3E))
                                             .border(0.9.dp, cAccent.copy(alpha = 0.48f), RoundedCornerShape(18.dp))
                                             .padding(14.dp),
-                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        verticalArrangement = Arrangement.spacedBy(7.dp)
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
                                         ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(26.dp)
-                                                    .clip(CircleShape)
-                                                    .background(cAccent.copy(alpha = 0.22f))
-                                                    .border(0.9.dp, cAccent.copy(alpha = 0.75f), CircleShape),
-                                                contentAlignment = Alignment.Center
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Default.Person,
-                                                    contentDescription = null,
-                                                    tint = cAccent,
-                                                    modifier = Modifier.size(14.dp)
-                                                )
-                                            }
-                                            Column {
+                                            CinematicCharacterAvatar(
+                                                key = CharacterPortraitKey.fromBookCharacter(entry.id),
+                                                size = 54.dp,
+                                                borderWidth = 1.5.dp,
+                                                borderColor = cAccent
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
                                                 Text(
                                                     text = entry.id.displayName,
                                                     fontFamily = DisplaySerifFontFamily,
@@ -477,6 +758,68 @@ fun BookChronicleModal(
                                             color = cAccent.copy(alpha = 0.92f),
                                             fontSize = 12.5.sp,
                                             lineHeight = 18.sp
+                                        )
+                                        if (charFlags.isNotEmpty()) {
+                                            FlowRow(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.padding(top = 2.dp)
+                                            ) {
+                                                charFlags.forEach { (axis, value) ->
+                                                    val chipColor = if (axis.isNegativeTone || value < 0) Color(0xFFFCA5A5) else Color(axis.accentHex)
+                                                    val sign = if (value > 0) "+$value" else "$value"
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(50))
+                                                            .background(chipColor.copy(alpha = 0.14f))
+                                                            .border(0.7.dp, chipColor.copy(alpha = 0.5f), RoundedCornerShape(50))
+                                                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = axis.turkishLabel.replaceFirstChar { it.uppercase() },
+                                                            fontFamily = InterFontFamily,
+                                                            color = Color(0xFFFAF6FF),
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        )
+                                                        Text(
+                                                            text = sign,
+                                                            fontFamily = InterFontFamily,
+                                                            color = chipColor,
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (lockedCount > 0) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(Color(0x3D180A34))
+                                            .border(0.85.dp, Color(0x55C4B5FD), RoundedCornerShape(16.dp))
+                                            .padding(horizontal = 13.dp, vertical = 11.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(9.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Lock,
+                                            contentDescription = null,
+                                            tint = MorCamTokens.LavenderSoft,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "+$lockedCount yeni karakter hikâyede karşılaştıkça otomatik olarak bu listeye eklenecek.",
+                                            fontFamily = InterFontFamily,
+                                            color = MorCamTokens.LavenderLight,
+                                            fontSize = 11.5.sp,
+                                            lineHeight = 16.sp
                                         )
                                     }
                                 }
@@ -747,6 +1090,28 @@ fun InReaderChapterSwitcherDialog(
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
                     CosmicDriftBookRegistry.chapters.forEach { chapter ->
+                        if (chapter.number == 1) {
+                            Text(
+                                text = "✦ 1. SEZON · KOZMİK SÜRÜKLENİŞ (BÖLÜM I – X)",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFF93C5FD),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.2.sp,
+                                modifier = Modifier.padding(top = 2.dp, bottom = 2.dp, start = 4.dp)
+                            )
+                        } else if (chapter.number == 11) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "✦ 2. SEZON · DEMİR VE YANKI (BÖLÜM XI – XXIV)",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFFDE047),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.2.sp,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp, start = 4.dp)
+                            )
+                        }
                         val isCompleted = chapter.number in state.completedChapters
                         val isActive = chapter.number == state.activeChapter
                         val isUnlocked = chapter.number <= maxUnlocked || isCompleted || isActive

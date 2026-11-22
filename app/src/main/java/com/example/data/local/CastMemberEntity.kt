@@ -2,13 +2,17 @@ package com.example.data.local
 
 import androidx.room.Dao
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Update
 
-@Entity(tableName = "cast_members")
+@Entity(
+    tableName = "cast_members",
+    indices = [Index(value = ["botId"])]
+)
 data class CastMemberEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val botId: String,

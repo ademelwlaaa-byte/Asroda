@@ -2,12 +2,16 @@ package com.example.data.local
 
 import androidx.room.Dao
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 
-@Entity(tableName = "memory_checkpoints")
+@Entity(
+    tableName = "memory_checkpoints",
+    indices = [Index(value = ["botId"])]
+)
 data class MemoryCheckpointEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val botId: String,

@@ -120,21 +120,25 @@ object CastDetectorEngine {
         "lara", "lere", "lardan", "lerden", "larda", "lerde"
     )
 
+    private const val WB_L = """(?<![\p{L}\p{N}])"""
+    private const val WB_R = """(?![\p{L}\p{N}])"""
+
     /**
      * Proper name stemmer: apostrof varsa ek kontrol ederek soyar.
      * Apostrof yoksa ismi olduğu gibi döndürür — kör ek tahmini yapılmaz.
-     * Örnek: "Ayla’nın" → "Ayla", "Zar’thul" → "Zar’thul", "Cemile" → "Cemile".
+     * Örnek: "Ayla'nın" / "Ayla’nın" → "Ayla", "Zar'thul" → "Zar'thul", "Cemile" → "Cemile".
      */
     fun stemTurkishProperName(rawName: String): String {
         val clean = rawName.trim().removeSurrounding("\"")
         if (clean.isBlank()) return ""
 
-        val apostropheRegex = Regex("""[‘’`]""")
+        // Includes standard ASCII straight apostrophe ' as well as curly quotes ‘ ’ and backtick `
+        val apostropheRegex = Regex("""['‘’`]""")
         if (apostropheRegex.containsMatchIn(clean)) {
             val parts = clean.split(apostropheRegex, limit = 2)
             val base = parts[0].trim()
             val suffix = if (parts.size > 1) parts[1].trim().lowercase(Locale("tr", "TR")) else ""
-            // Ek geçerliyse soy; değilse ismin parçasıdır (Zar’thul gibi)
+            // Ek geçerliyse soy; değilse ismin parçasıdır (Zar'thul gibi)
             return if (suffix in TURKISH_INFLECTION_SUFFIXES && base.length >= 2) base else clean
         }
 
@@ -215,11 +219,14 @@ object CastDetectorEngine {
             confidence = maxOf(confidence, 85)
         }
 
-        // 3. Dialogue & Action cues: "Kerem dedi", "Kerem sordu"
+        // 3. Dialogue & Action cues (Unicode word-boundary safe): "Kerem dedi", "dedi Kerem", "Kerem sordu"
+        val escapedClean = Regex.escape(lower)
+        val lowerScene = sceneContext.lowercase(Locale("tr", "TR"))
         val hasSpeechCue = DIALOGUE_ACTION_VERBS.any { verb ->
-            sceneContext.contains("$clean $verb", ignoreCase = true) ||
-            sceneContext.contains("\" $clean", ignoreCase = true)
-        }
+            val v = Regex.escape(verb)
+            Regex("""${WB_L}$escapedClean\s+$v$WB_R""").containsMatchIn(lowerScene) ||
+                Regex("""${WB_L}$v\s+$escapedClean$WB_R""").containsMatchIn(lowerScene)
+        } || Regex("""["»”]\s*,?\s*$escapedClean$WB_R""").containsMatchIn(lowerScene)
         if (hasSpeechCue) {
             confidence += 30
         }
@@ -339,7 +346,7 @@ object CastDetectorEngine {
 
         // ── 2. Unvan + İsim  "Doktor Kerem" (STRONG) ───────────────────────────
         val titlePattern = Regex(
-            """\b(Bay|Bayan|Doktor|Prof|Profesör|Yüzbaşı|Kaptan|Amiral|Komutan|Lord|Prens|Prenses|Kral|Kraliçe|Usta|Hoca|Savaşçı|Büyücü|Şövalye|Mimar|Aziz|Üstat|Gözcü|Dedektif|Ajan|Müfettiş|Savcı|Hâkim|Teğmen|Binbaşı|Albay|General|Sultan|Paşa|Dük|Kont|Baron|Barones|Rahip|Cadı|Gölge|Muhafız|Hizmetkar|Tüccar|Eczacı|Yargıç|Bakan|Başkan|Reis|Çavuş|Efe|Kethüda|Seyis)\s+($NAME_PATTERN)\b"""
+            """${WB_L}(Bay|Bayan|Doktor|Prof|Profesör|Dr\.|Yüzbaşı|Kaptan|Amiral|Komutan|Lord|Prens|Prenses|Kral|Kraliçe|Usta|Hoca|Savaşçı|Büyücü|Şövalye|Mimar|Aziz|Üstat|Gözcü|Dedektif|Ajan|Müfettiş|Savcı|Hâkim|Teğmen|Binbaşı|Albay|General|Sultan|Paşa|Dük|Kont|Baron|Barones|Rahip|Cadı|Gölge|Muhafız|Hizmetkar|Tüccar|Eczacı|Yargıç|Bakan|Başkan|Reis|Çavuş|Efe|Kethüda|Seyis)\s+($NAME_PATTERN)$WB_R"""
         )
         titlePattern.findAll(stripped).forEach { m ->
             addCandidate(m.groupValues[2], m.groupValues[1], SignalStrength.STRONG, m.value.take(120))
@@ -347,7 +354,7 @@ object CastDetectorEngine {
 
         // ── 3. İsim + Hitap  "Kerem Bey" (STRONG) ──────────────────────────────
         val honorificPattern = Regex(
-            """\b($NAME_PATTERN)\s+(Bey|Hanım|Efendi|Ağa|Usta|Abi|Abla|Komutan|Kaptan|Doktor|Hazretleri|Paşa|Hoca|Teyze|Amca|Dayı|Yenge|Dede|Peder)\b"""
+            """${WB_L}($NAME_PATTERN)\s+(Bey|Hanım|Efendi|Ağa|Usta|Abi|Abla|Komutan|Kaptan|Doktor|Hazretleri|Paşa|Hoca|Teyze|Amca|Dayı|Yenge|Dede|Peder)$WB_R"""
         )
         honorificPattern.findAll(stripped).forEach { m ->
             val name = m.groupValues[1].trim()
@@ -356,7 +363,7 @@ object CastDetectorEngine {
 
         // ── 4. Açık tanıtma  "X adında / X adlı" (STRONG) ─────────────────────
         val introPattern = Regex(
-            """\b($NAME_PATTERN)\s+(adında|isminde|adlı|denen|diye\s+çağrılan|isimli|adındaki|ismindeki|arkadaşım|doktorum|yardımcım|sekreterim|muhafızım)\b"""
+            """${WB_L}($NAME_PATTERN)\s+(adında|isminde|adlı|denen|diye\s+çağrılan|isimli|adındaki|ismindeki|arkadaşım|doktorum|yardımcım|sekreterim|muhafızım)$WB_R"""
         )
         introPattern.findAll(stripped).forEach { m ->
             addCandidate(m.groupValues[1], "Yan Karakter", SignalStrength.STRONG, m.value.take(120))
@@ -364,22 +371,22 @@ object CastDetectorEngine {
 
         // ── 5. Konuşma atfı (STRONG) ─────────────────────────────────────────────
         // "..." dedi Kerem  |  Kerem, "..."  |  Kerem dedi  |  "..." dedi[,] Kerem
-        val speechVerbs = """(?:dedi|sordu|fısıldadı|bağırdı|güldü|mırıldandı|haykırdı|söyledi|yanıtladı|ekledi|çıkıştı|karşılık\s+verdi|seslendi|atıldı|cevap\s+verdi)"""
-        val speechPost = Regex("""(?:"[^"]{3,300}"|«[^»]{3,300}»)\s*$speechVerbs\s+($NAME_PATTERN)\b""")
-        val speechPre = Regex("""\b($NAME_PATTERN)\s*,\s*(?:"[^"]{3,300}"|«[^»]{3,300}»)""")
-        val speechDirect = Regex("""\b($NAME_PATTERN)\s+$speechVerbs\b""")
+        val speechVerbs = """(?:dedi|sordu|fısıldadı|bağırdı|güldü|mırıldandı|haykırdı|söyledi|yanıtladı|ekledi|çıkıştı|karşılık\s+verdi|seslendi|atıldı|cevap\s+verdi|cevapladı)"""
+        val speechPost = Regex("""(?:"[^"]{3,300}"|«[^»]{3,300}»)\s*,?\s*$speechVerbs\s+($NAME_PATTERN)$WB_R""")
+        val speechPre = Regex("""${WB_L}($NAME_PATTERN)\s*,\s*(?:"[^"]{3,300}"|«[^»]{3,300}»)""")
+        val speechDirect = Regex("""${WB_L}($NAME_PATTERN)\s+$speechVerbs$WB_R""")
         speechPost.findAll(combinedText).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
         speechPre.findAll(combinedText).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
         speechDirect.findAll(stripped).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
 
         // ── 6. Eylem kalıpları (STRONG) ──────────────────────────────────────────
         val actionVerbs = """(?:içeri\s+girdi|kapıyı\s+çaldı|masaya\s+oturdu|elini\s+uzattı|gülümsedi|arkasını\s+döndü|ayağa\s+kalktı|bize\s+katıldı|yaklaştı|konuşmaya\s+başladı|yanımıza\s+geldi|bize\s+baktı|odaya\s+girdi|kapıdan\s+çıktı)"""
-        val actionPattern = Regex("""\b($NAME_PATTERN)\s+$actionVerbs""")
+        val actionPattern = Regex("""${WB_L}($NAME_PATTERN)\s+$actionVerbs$WB_R""")
         actionPattern.findAll(stripped).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Eyleme Geçen Karakter", SignalStrength.STRONG, m.value.take(120)) }
 
         // ── 7. Apostroflu özel isim (WEAK) ───────────────────────────────────────
-        // "Ayla'nın", "kerem'e" — apostrof özel isim göstergesi
-        val apostrophePattern = Regex("""([\p{L}]{2,25})[''`](${TURKISH_INFLECTION_SUFFIXES.joinToString("|") { Regex.escape(it) }})\b""")
+        // "Ayla'nın", "kerem'e" — apostrof özel isim göstergesi (ASCII ' ve eğik ‘ ’ ` destekli)
+        val apostrophePattern = Regex("""${WB_L}([\p{L}]{2,25})['‘’`](${TURKISH_INFLECTION_SUFFIXES.joinToString("|") { Regex.escape(it) }})$WB_R""")
         apostrophePattern.findAll(combinedText).forEach { m ->
             val base = m.groupValues[1]
             val capitalized = base.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale("tr", "TR")) else it.toString() }
@@ -390,27 +397,26 @@ object CastDetectorEngine {
     }
 
     /**
-     * Word-boundary aware name mention check, with suffix/alias tolerance.
-     * Prevents "Ali" matching "Alışveriş".
+     * Unicode word-boundary aware name mention check, with suffix/alias tolerance.
+     * Prevents "Ali" matching "Alışveriş" (both leading and trailing boundaries enforced!).
      */
     fun isNameMentionedInText(name: String, text: String): Boolean {
         if (name.isBlank() || text.isBlank()) return false
         val lowerText = text.lowercase(Locale("tr", "TR"))
-        val nameLower = name.lowercase(Locale("tr", "TR"))
-        val stem = stemTurkishProperName(name).lowercase(Locale("tr", "TR"))
+        val nameLower = name.lowercase(Locale("tr", "TR")).trim()
+        val stem = stemTurkishProperName(name).lowercase(Locale("tr", "TR")).trim()
 
-        // Word boundary match for base name and stem
         val candidates = setOfNotNull(
             nameLower.takeIf { it.length >= 2 },
             stem.takeIf { it.length >= 2 && it != nameLower }
         )
         for (c in candidates) {
-            if (Regex("""\b${Regex.escape(c)}""").containsMatchIn(lowerText)) return true
+            val esc = Regex.escape(c)
+            // Exact Unicode word match (leading AND trailing boundary)
+            if (Regex("""${WB_L}$esc$WB_R""").containsMatchIn(lowerText)) return true
+            // Apostrophe-inflected Turkish proper noun: "Kerem'e", "Ayla'nın", "Ali’den"
+            if (Regex("""${WB_L}$esc['‘’`][\p{L}]+$WB_R""").containsMatchIn(lowerText)) return true
         }
-
-        // Also match apostrophe-inflected forms: "Kerem'e", "Kerem'in" etc.
-        if (Regex("""\b${Regex.escape(nameLower)}[''`]""").containsMatchIn(lowerText)) return true
-        if (stem != nameLower && Regex("""\b${Regex.escape(stem)}[''`]""").containsMatchIn(lowerText)) return true
         return false
     }
 

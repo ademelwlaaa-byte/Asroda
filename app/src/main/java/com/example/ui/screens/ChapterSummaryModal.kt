@@ -20,13 +20,18 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -52,6 +57,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.MusicOff
@@ -119,6 +125,22 @@ private data class MeaningfulImpactLine(
     val isNewFlag: Boolean = false
 )
 
+private enum class ChoiceAtmosphereMode {
+    RAIN_NEON,
+    WHITE_EYE,
+    RED_ALARM,
+    BLIZZARD_SNOW,
+    ISTANBUL_EMBER,
+    COSMIC_STORM,
+    GOLDEN_DAWN
+}
+
+private data class ChoiceVisualSpec(
+    @param:DrawableRes val artRes: Int,
+    val atmosphere: ChoiceAtmosphereMode,
+    val moodTag: String
+)
+
 private data class Lis2DecisionSlide(
     val index: Int,
     val nodeId: String,
@@ -129,41 +151,249 @@ private data class Lis2DecisionSlide(
     val isRelationship: Boolean,
     val secretUnlocked: String?,
     val branchTag: String?,
-    @DrawableRes val artworkResId: Int?,
+    @param:DrawableRes val artworkResId: Int,
+    val atmosphere: ChoiceAtmosphereMode,
+    val moodTag: String,
     val meaningfulImpacts: List<MeaningfulImpactLine>
 )
 
 /**
- * Resolves choice-specific compressed KB-sized WebP artwork for Chapter 1's
- * Life is Strange 2-style Chapter End Screen, matched directly to the meaning
- * and characters of the exact choice the player made (with consistent Aidem design).
+ * Resolves exact event- and choice-specific 2.5D live-action cinema artwork & atmospheric VFX
+ * across ALL 10 chapters of Season 1 (every single decision and branch gets its own matched visual!).
  */
-@DrawableRes
-private fun resolveChapterChoiceArtwork(
+private fun resolveChapterChoiceVisual(
     chapterNumber: Int,
     choiceId: String,
     nodeId: String,
     orderIndex: Int
-): Int? {
-    if (chapterNumber != 1) return null
-    return when (choiceId) {
-        "ch1_c1_trace" -> R.drawable.img_ch1_c1_vision_trace
-        "ch1_c1_distant", "ch1_c1_deep" -> R.drawable.img_ch1_c1_vision_calm
-        "ch1_c2_direct" -> R.drawable.img_ch1_c2_direct_rift
-        "ch1_c2_observe" -> R.drawable.img_ch1_c2_stealth_terrace
-        "ch1_c2_retreat" -> R.drawable.img_ch1_c2_forced_rift
-        "ch1_c3_cold", "ch1_c3_witty", "ch1_c3_silent" -> R.drawable.img_ch1_c3_stark_faceoff
-        "ch1_c4_natasha" -> R.drawable.img_ch1_c4_natasha_gaze
-        "ch1_c4_wanda" -> R.drawable.img_ch1_c4_wanda_gaze
-        "ch1_c4_neutral" -> R.drawable.img_ch1_c3_stark_faceoff
-        "ch1_c5_accept", "ch1_c5_probe", "ch1_c5_guarded" -> R.drawable.img_ch1_c5_tower_night
-        else -> when {
-            nodeId.startsWith("ch1_s1") || orderIndex == 1 -> R.drawable.img_ch1_c1_vision_calm
-            nodeId.startsWith("ch1_s2") || orderIndex == 2 -> R.drawable.img_ch1_c2_direct_rift
-            nodeId.startsWith("ch1_s3") || orderIndex == 3 -> R.drawable.img_ch1_c3_stark_faceoff
-            nodeId.startsWith("ch1_s4") || orderIndex == 4 -> R.drawable.img_ch1_c4_wanda_gaze
-            else -> R.drawable.img_ch1_c5_tower_night
+): ChoiceVisualSpec = when (choiceId) {
+    // ── BÖLÜM 1: KOZMİK SÜRÜKLENİŞ ──────────────────────────────────────────
+    "ch1_c1_direct" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "MAVİ KIVILCIMLA GİRİŞ")
+    "ch1_c1_shadow" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_stealth_terrace, ChoiceAtmosphereMode.RAIN_NEON, "GÖLGEDEN GİRİŞ")
+    "ch1_c1_echo" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "KIZIL İPLİK YANKISI")
+    "ch1_c2_stay_terms" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RAIN_NEON, "EŞİT ŞARTLAR")
+    "ch1_c2_probe_mind" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "BEYAZ GÖZ YOKLAMASI")
+    "ch1_c2_cold_trial" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RAIN_NEON, "TEK GECELİK MESAFE")
+
+    // ── BÖLÜM 2: ŞARTLAR ────────────────────────────────────────────────────
+    "ch2_c1_measured" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.COSMIC_STORM, "ASKIDA KALAN ZAMAN")
+    "ch2_c1_white_eye" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "ÜÇ SANİYELİK BOŞLUK")
+    "ch2_c1_refuse" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RAIN_NEON, "TAVİZSİZ SINIR")
+    "ch2_c2_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "TERASTA SESSİZ GÜVEN")
+    "ch2_c2_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "KÜTÜPHANEDE KIZIL DENGE")
+    "ch2_c2_alone" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RAIN_NEON, "BİLİNÇLİ MESAFE")
+
+    // ── BÖLÜM 3: DENEME SÜRESİ ──────────────────────────────────────────────
+    "ch3_c1_honor" -> ChoiceVisualSpec(R.drawable.img_char_steve, ChoiceAtmosphereMode.GOLDEN_DAWN, "ONURLU DÜELLO · STEVE")
+    "ch3_c1_cosmic" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "KOZMİK FIRTINA")
+    "ch3_c1_tactical" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "SESSİZ DENGE")
+    "ch3_c2_stand_ground" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RED_ALARM, "KIRMIZI ALARM · KALKAN")
+    "ch3_c2_white_eye_lock" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "BEYAZ GÖZ KİLİTLENMESİ")
+    "ch3_c2_vanish_return" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_calm, ChoiceAtmosphereMode.RAIN_NEON, "ÇATIDA HESAPLAŞMA")
+
+    // ── BÖLÜM 4: İLK GÖREV (19 NUMARALI RIHTIM) ────────────────────────────
+    "ch4_c1_shield_team" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_forced_rift, ChoiceAtmosphereMode.RAIN_NEON, "RIHTIMDA EKİP KALKANI")
+    "ch4_c1_shadow_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "GÖLGE İKİLİSİ · NATASHA")
+    "ch4_c1_solo_overwhelm" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "TEK KİŞİLİK FIRTINA")
+    "ch4_c2_share_all" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.GOLDEN_DAWN, "AÇIK DOSYA · DENEK 7-A")
+    "ch4_c2_hide_disk" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_calm, ChoiceAtmosphereMode.RAIN_NEON, "SAKLI VERİ DİSKİ")
+
+    // ── BÖLÜM 5: KIRMIZI BUZ (ELIAS VOSS) ───────────────────────────────────
+    "ch5_c1_capture" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.BLIZZARD_SNOW, "BROOKLYN KAR FIRTINASI")
+    "ch5_c1_talk_alone" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.WHITE_EYE, "KARDA ZİHİN İTİRAFI")
+    "ch5_c2_protect_voss" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "KAFES KIRILDI · VOSS")
+    "ch5_c2_handover_voss" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.RED_ALARM, "SOĞUKKANLI PROTOKOL")
+
+    // ── BÖLÜM 6: KIRIK AYNA (İSTANBUL ARŞİVİ) ──────────────────────────────
+    "ch6_c1_natasha" -> ChoiceVisualSpec(R.drawable.img_ch6_istanbul_cistern, ChoiceAtmosphereMode.ISTANBUL_EMBER, "İSTANBUL SARNICI · NATASHA")
+    "ch6_c1_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "MAVİ VE KIZIL REZONANS")
+    "ch6_c1_solo" -> ChoiceVisualSpec(R.drawable.img_ch6_istanbul_cistern, ChoiceAtmosphereMode.COSMIC_STORM, "YEREBATAN YALNIZ YÜZLEŞME")
+    "ch6_c2_stay_and_step" -> ChoiceVisualSpec(R.drawable.img_ch6_istanbul_cistern, ChoiceAtmosphereMode.GOLDEN_DAWN, "BOĞAZ KIYISINDA İLK ADIM")
+    "ch6_c2_finish_first" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RAIN_NEON, "ÖNCE HESAPLAŞMA")
+
+    // ── BÖLÜM 7: KARANLIK AYNA (MİRA & ŞAFAK) ──────────────────────────────
+    "ch7_c1_team_plan" -> ChoiceVisualSpec(R.drawable.img_ch6_istanbul_cistern, ChoiceAtmosphereMode.ISTANBUL_EMBER, "AVENGERS İLE FİNAL PLANI")
+    "ch7_c1_solo_plan" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.COSMIC_STORM, "TÜNELLERDE YALNIZ YÜRÜYÜŞ")
+    "ch7_c2_save_mira" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.ISTANBUL_EMBER, "MİRA KURTARILDI")
+    "ch7_c2_destroy_tower" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.COSMIC_STORM, "REZONANS KULESİ YIKILDI")
+    "ch7_c3_natasha_home" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "BOĞAZ'DA ŞAFAK · NATASHA")
+    "ch7_c3_wanda_home" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "BOĞAZ'DA ŞAFAK · WANDA")
+    "ch7_c3_lone_horizon" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_calm, ChoiceAtmosphereMode.GOLDEN_DAWN, "ÖZGÜR UFUK")
+
+    // ── BÖLÜM 8: KIRIK GÖKLER (THOR & KAELEN) ──────────────────────────────
+    "ch8_c1_thor_sky" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "GÖK BARİYERİ · THOR")
+    "ch8_c1_natasha_bunker" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RED_ALARM, "KONSEY SIĞINAĞI BASKINI")
+    "ch8_c1_white_eye_trace" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "KOZMİK ZİHİN HARİTASI")
+    "ch8_c2_time_break" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "DONMUŞ SANİYE · KAELEN")
+    "ch8_c2_absorb_reflect" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "KOZMİK YANKI PATLAMASI")
+    "ch8_c2_white_eye_steal" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "KAELEN ZİHİN SIZMASI")
+    "ch8_c3_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "SAVAŞ ÖNCESİ · NATASHA")
+    "ch8_c3_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "SAVAŞ ÖNCESİ · WANDA")
+    "ch8_c3_thor" -> ChoiceVisualSpec(R.drawable.img_char_thor, ChoiceAtmosphereMode.COSMIC_STORM, "ASGARD YILDIZ HARİTASI")
+    "ch8_c3_alone" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RAIN_NEON, "YALNIZ HAZIRLIK")
+    "ch8_c4_arctic" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.BLIZZARD_SNOW, "KUZEY KUTBU CEPHESİ")
+    "ch8_c4_orbit" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "YÖRÜNGE TAARRUZU")
+
+    // ── BÖLÜM 9: KIYAMET AYNASI (KUZEY KUTBU & VAELOR) ─────────────────────
+    "ch9_c1_shatter", "ch9_c1_time_sabotage" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.BLIZZARD_SNOW, "SIFIR NOKTASI BASKINI")
+    "ch9_c1_shadow_flank" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.BLIZZARD_SNOW, "GÖLGE KUŞATMASI · VANCE")
+    "ch9_c2_cut_feed" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RED_ALARM, "GÖLGEDE KALDIN")
+    "ch9_c2_open_world" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.COSMIC_STORM, "SEKİZ MİLYAR TANIK")
+    "ch9_c2_white_eye_turn" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "VANCE'İN CANLI İTİRAFI")
+    "ch9_c3_solo_tank", "ch9_c3_trinity", "ch9_c3_dimension_strike" -> ChoiceVisualSpec(R.drawable.img_game_rooftop_arena, ChoiceAtmosphereMode.COSMIC_STORM, "VAELOR İLK ÇARPIŞMA")
+    "ch9_c4_natasha_vow" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "SON GECE · NATASHA'YA SÖZ")
+    "ch9_c4_wanda_vow" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "SON GECE · WANDA'YA SÖZ")
+    "ch9_c4_alone_vow" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RAIN_NEON, "HELICARRIER YALNIZ NÖBET")
+
+    // ── BÖLÜM 10: YILDIZLARIN KIRILDIĞI GECE (SEZON FİNALİ) ────────────────
+    "ch10_c1_lead_avengers" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "MANHATTAN SAVAŞI · KOMUTAN")
+    "ch10_c1_natasha_tower" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RED_ALARM, "KULE ÇEKİRDEĞİ BASKINI")
+    "ch10_c1_solo_meteor" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "MAVİ METEOR TAARRUZU")
+    "ch10_c2_justice", "ch10_c2_shatter_empire" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RED_ALARM, "KAFES PROTOKOLÜ ÇÖKTÜ")
+    "ch10_c2_white_eye_erase" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "BEYAZ GÖZ HÜKMÜ")
+    "ch10_c3_branch_ship", "ch10_c4a_steal_crystal", "ch10_c4a_shatter_core" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "ANA GEMİ ÇEKİRDEĞİ")
+    "ch10_c3_branch_manhattan", "ch10_c4b_wanda_seal" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.COSMIC_STORM, "14 KASIM 2006 HAYALETİ")
+    "ch10_c4b_white_eye_shatter" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "İLLÜZYON KIRAN")
+    "ch10_c5_time_blink", "ch10_c5_white_eye_fear", "ch10_c5_avengers_combo" -> ChoiceVisualSpec(R.drawable.img_game_rooftop_arena, ChoiceAtmosphereMode.COSMIC_STORM, "AVENGERS KULESİ ÇATI DÜELLOSU")
+    "ch10_c6_shatter_banish", "ch10_c6_absorb_seal", "ch10_c6_rewind_city" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "MUTLAK UYANIŞ · 60 SANİYE")
+    "ch10_c7_vanguard" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.GOLDEN_DAWN, "FİNAL A · KOZMİK KOMUTAN")
+    "ch10_c7_twin_stars" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "FİNAL B · GÖLGE VE IŞIK")
+    "ch10_c7_shield_reborn" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.GOLDEN_DAWN, "FİNAL C · KOZMİK NÖBET")
+    "ch10_c8_open_s2", "ch10_c8_seal_s2" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "2. SEZON · KIRIK ZAMAN SİNYALİ")
+
+    // ── BÖLÜM 11: ESKİ DOSTLAR, YENİ GECE (2. SEZON AÇILIŞI) ───────────────
+    "ch11_c1_share_unease", "ch11_c1_keep_stoic" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.GOLDEN_DAWN, "2. SEZON AÇILIŞI · KULE")
+    "ch11_c2_wanda_comfort" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.BLIZZARD_SNOW, "SOKOVİA KARI · WANDA")
+    "ch11_c2_clint_shield" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.BLIZZARD_SNOW, "SOKOVİA · CLİNT KURTARIŞI")
+    "ch11_c2_tony_scepter" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.COSMIC_STORM, "LOKİ'NİN ASASI · MİMAR İZİ")
+    "ch11_c3_mjolnir_pure" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.GOLDEN_DAWN, "MJOLNİR İKİ MİLİMETRE OYNADI")
+    "ch11_c3_mjolnir_cheat" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "MJOLNİR ŞİMŞEĞİ")
+    "ch11_c3_mjolnir_heart" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.WHITE_EYE, "KADİM RÜNLERİN YANKISI")
+    "ch11_c3_mjolnir_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "NATASHA İLE ZARİF PAS")
+    "ch11_c3_mjolnir_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "WANDA İLE TERAS PASI")
+    "ch11_c4_romance_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "BALKON · NATASHA İLK KIVILCIM")
+    "ch11_c4_romance_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "TERAS · WANDA İLK KIVILCIM")
+    "ch11_c4_brotherhood_team" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.GOLDEN_DAWN, "AVENGERS KARDEŞLİĞİ")
+    "ch11_c5_intercept_ultron" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "ULTRON · MİMAR TOHUMU")
+    "ch11_c5_protect_allies", "ch11_c5_chase_scepter" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.RED_ALARM, "ULTRON PARTİ SALDIRISI")
+
+    // ── BÖLÜM 12: ÇATLAYAN GÜVEN ───────────────────────────────────────────
+    "ch12_c1_hold_tony_accountable", "ch12_c1_bridge_tony", "ch12_c1_focus_architect" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RED_ALARM, "STARK İLE HESAPLAŞMA")
+    "ch12_c2_promise_pietro", "ch12_c2_tactical_caution" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "PİETRO MAXİMOFF İZİ")
+    "ch12_c3_stealth_flank" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "AFRİKA GÖLGE SIZMASI")
+    "ch12_c3_wanda_front", "ch12_c3_front_vanguard" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "AFRİKA HURDA TERSANESİ")
+    "ch12_c4_pietro_mercy", "ch12_c4_pietro_knockback" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "GÜMÜŞ ŞİMŞEKLE ÇARPIŞMA")
+
+    // ── BÖLÜM 13: DONMUŞ ZAMAN VE KÂBUSLAR ─────────────────────────────────
+    "ch13_c1_defy_architect", "ch13_c1_question_2006", "ch13_c1_cold_silence" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.WHITE_EYE, "ASIL MİMAR İLE YÜZ YÜZE")
+    "ch13_c2_wake_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.WHITE_EYE, "NATASHA'YI KÂBUSTAN KURTARDIN")
+    "ch13_c2_shield_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "WANDA İÇİN FEDAKÂRLIK")
+    "ch13_c2_wake_steve_thor" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "KAPTAN VE THOR UYANDI")
+    "ch13_c3_reach_zero", "ch13_c3_defend_tony", "ch13_c3_stop_zero" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "YARA İZLİ SIFIR'IN KURTARIŞI")
+    "ch13_c4_sit_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "QUİNJET · NATASHA İLE SESSİZLİK")
+    "ch13_c4_sit_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "QUİNJET · WANDA'YA DESTEK")
+    "ch13_c4_sit_bruce_tony" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RAIN_NEON, "EKİP MORALİ · DÖNÜŞ")
+
+    // ── BÖLÜM 14: BARTON ÇİFTLİĞİ & İLK ÖPÜCÜK ────────────────────────────
+    "ch14_c1_calm_both", "ch14_c1_side_steve", "ch14_c1_side_tony" -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.GOLDEN_DAWN, "ÇİFTLİK · STEVE VE TONY")
+    "ch14_c2_tell_everything", "ch14_c2_partial_truth" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RAIN_NEON, "NİCK FURY · GÜVEN MASASI")
+    "ch14_c3_kiss_natasha", "ch14_c4_nat_promise_kofte", "ch14_c4_nat_promise_stay" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RAIN_NEON, "♥ YAĞMURLU VERANDA · İLK ÖPÜCÜK")
+    "ch14_c3_kiss_wanda", "ch14_c4_wanda_promise_pietro", "ch14_c4_wanda_promise_home" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "♥ YILDIZLI BAHÇE · İLK ÖPÜCÜK")
+    "ch14_c3_brotherhood_hearth", "ch14_c4_bro_vow_all" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.GOLDEN_DAWN, "ŞÖMİNE BAŞI · ÇELİK KARDEŞLİK")
+
+    // ── BÖLÜM 15: KIRIK DENEKLERİN SIĞINAĞI (VOSS & MİRA) ─────────────────
+    "ch15v_c1_share_pain", "ch15v_c1_mentor_control" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.GOLDEN_DAWN, "BROOKLYN SIĞINAĞI · VOSS")
+    "ch15v_c2_mira_future", "ch15v_c2_mira_power" -> ChoiceVisualSpec(R.drawable.img_ch6_istanbul_cistern, ChoiceAtmosphereMode.GOLDEN_DAWN, "YENİ HAYAT · MİRA")
+    "ch15v_c3_bring_them", "ch15v_c3_protect_home" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.ISTANBUL_EMBER, "6-B, 7-A VE 8-C · AİLE")
+    "ch15v_c4_family_vow" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.GOLDEN_DAWN, "KARDEŞLİK YEMİNİ")
+
+    // ── BÖLÜM 16: SEUL BEŞİĞİ & AYNA DÜELLOSU ──────────────────────────────
+    "ch15_c1_save_train_pietro", "ch15_c1_grab_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.COSMIC_STORM, "SEUL OTOYOLU · PİETRO DÖNDÜ")
+    "ch15_c2_challenge_hope", "ch15_c2_challenge_fury" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "SIFIR KULE'Yİ BASTI")
+    "ch15_c3_spare_zero", "ch15_c3_stun_zero" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "AYNA DÜELLOSU · ZAFER")
+    "ch15_c4_welcome_vision", "ch15_c4_guard_vision" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.GOLDEN_DAWN, "VİSİON'IN DOĞUŞU")
+
+    // ── BÖLÜM 17: VİSİON'IN GÖZLERİ & MİMAR'IN SIRRI ───────────────────────
+    "ch16_c1_trust_vision", "ch16_c1_ask_vision_zero" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.GOLDEN_DAWN, "VİSİON MJOLNİR'İ KALDIRDI")
+    "ch16_c2_accept_destiny", "ch16_c2_ask_strange_help" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.COSMIC_STORM, "DR. STRANGE · TEKİLLİK GERÇEĞİ")
+    "ch16_c3_brief_bruce_nat" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RED_ALARM, "NATASHA'NIN MORS SİNYALİ")
+    "ch16_c3_brief_twins", "ch16_c3_brief_vision_tony" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.COSMIC_STORM, "SOKOVİA HAREKAT PLANI")
+    "ch16_c4_enter_alone", "ch16_c4_enter_guarded" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.RAIN_NEON, "REVİR KAPISINDA İKİ AİDEN")
+
+    // ── BÖLÜM 18: YARA İZİNİN GERÇEĞİ ──────────────────────────────────────
+    "ch17_c1_trust_zero_ally", "ch17_c1_keep_zero_tower" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "YARA İZİNİN İTİRAFI")
+    "ch17_c2_natasha_with_bruce", "ch17_c3_bridge_civilians" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.RED_ALARM, "NATASHA KAFESTEN KURTULDU")
+    "ch17_c2_evac_with_twins", "ch17_c3_church_scout", "ch17_c4_rally_cry" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.RED_ALARM, "SOKOVİA YERDEN KOPUYOR")
+
+    // ── BÖLÜM 19: GÖLGENİN KORUYUCULARI (VOSS & MİRA AVENGERS İLE) ─────────
+    "ch19g_c1_stand_for_them", "ch19g_c1_bruce_vouch" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.GOLDEN_DAWN, "VOSS & MİRA AVENGERS MASASINDA")
+    "ch19g_c2_talk_wanda_mira" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "WANDA & MİRA · PSİKOLOJİK BAĞ")
+    "ch19g_c2_talk_bruce_vision" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.WHITE_EYE, "BRUCE & VİSİON · İNSANLIK")
+    "ch19g_c2_talk_voss_pietro" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.GOLDEN_DAWN, "VOSS & PİETRO · KARDEŞLİK")
+    "ch19g_c3_ultron_debate", "ch19g_c3_architect_warning", "ch19g_c4_depart_sokovia" -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.RED_ALARM, "SOKOVİA ÖNCESİ SON GECE")
+
+    // ── BÖLÜM 20: YÜKSELEN ŞEHİR ───────────────────────────────────────────
+    "ch18_c1_help_wanda_plaza" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "WANDA · AVENGERS'A KATILDI")
+    "ch18_c1_help_nat_clint" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.COSMIC_STORM, "GÖKYÜZÜ İSKELESİ SAVUNMASI")
+    "ch18_c1_help_vision_thor" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "ÜÇLÜ TAARRUZ · SOKOVİA")
+    "ch18_c2_battle_kiss_natasha" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "♥ NATASHA · GERİ DÖN ÖPÜCÜĞÜ")
+    "ch18_c2_battle_kiss_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.ISTANBUL_EMBER, "♥ WANDA · GERİ DÖN ÖPÜCÜĞÜ")
+    "ch18_c2_brotherhood_vow" -> ChoiceVisualSpec(R.drawable.img_game_rooftop_arena, ChoiceAtmosphereMode.GOLDEN_DAWN, "AVENGERS SAVAŞ YEMİNİ")
+    "ch18_c3_reject_architect", "ch18_c3_tap_red_controlled" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "ASIL MİMAR · ALTIN-MAVİ GÖZLER")
+    "ch18_c4_core_guardian", "ch18_c4_flank_sweeper" -> ChoiceVisualSpec(R.drawable.img_game_rooftop_arena, ChoiceAtmosphereMode.RED_ALARM, "KİLİSE ÇEKİRDEK ÇEMBERİ")
+
+    // ── BÖLÜM 21: KİLİSENİN SAVUNMASI & PİETRO'NUN KADERİ ──────────────────
+    "ch19_c1_boost_triple_beam", "ch19_c1_sweep_evac_lane" -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "DÖRTLÜ KOZMİK IŞIN")
+    "ch19_c2_focus_time", "ch19_c2_call_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "QUİNJET PUSUSU · DONAN SANİYE")
+    "ch19_c3_pietro_save", "ch19_c4_banter_pietro" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.GOLDEN_DAWN, "★ PİETRO MAXİMOFF KURTARILDI!")
+    "ch19_c3_pietro_hesitate", "ch19_c4_avenge_pietro" -> ChoiceVisualSpec(R.drawable.img_postcredits_ruined_nyc, ChoiceAtmosphereMode.RED_ALARM, "GÜMÜŞ ŞİMŞEĞİN FEDAKÂRLIĞI")
+
+    // ── BÖLÜM 22: KIRIK AYNA — SOKOVİA'NIN KALBİ ───────────────────────────
+    "ch22k_c1_calm_focus", "ch22k_c1_crimson_surge" -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.RED_ALARM, "KATEDRAL UÇURUMU · VOSS & MİRA")
+    "ch22k_c2_embrace_humanity", "ch22k_c2_burn_whisper" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.WHITE_EYE, "2006 KÂBUSUNU YENDİN")
+    "ch22k_c3_voss_mira_evac", "ch22k_c3_voss_mira_cover", "ch22k_c4_step_into_finale" -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.GOLDEN_DAWN, "6-B, 7-A VE 8-C KURTULDU!")
+
+    // ── BÖLÜM 23: DEMİRİN ÇÖKÜŞÜ VE TEK YANKI (BÜYÜK FİNAL PERDE I) ───────
+    "ch23f_c1_finisher_vision_wanda", "ch23f_c1_finisher_avengers_combo" -> ChoiceVisualSpec(R.drawable.img_postcredits_ruined_nyc, ChoiceAtmosphereMode.COSMIC_STORM, "ULTRON PRİME PARÇALANDI!")
+    "ch23f_c2_answer_compassion", "ch23f_c2_answer_defiant" -> ChoiceVisualSpec(R.drawable.img_ch1_c1_vision_trace, ChoiceAtmosphereMode.WHITE_EYE, "ULTRON'UN SON SÖZLERİ")
+    "ch23f_c3_zero_embrace", "ch23f_c3_zero_vow", "ch23f_c4_go_home" -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.GOLDEN_DAWN, "SIFIR'IN ŞAFAK VEDASI · TEK AİDEN")
+
+    // ── BÖLÜM 24: KÜLLERDEN DOĞAN YARIN (2. SEZON BÜYÜK FİNALİ!) ──────────
+    "ch24f_c1_family_forever", "ch24f_c1_protect_future" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.GOLDEN_DAWN, "VOSS & MİRA · GÜMÜŞ PUSULA")
+    "ch24f_c2_forgive_self", "ch24f_c2_carry_as_shield" -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.GOLDEN_DAWN, "2006'YA VEDA · İÇSEL BARIŞ")
+    "ch24f_c3_finale_natasha", "ch24f_c4_ready_s3_nat" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "♥ NATASHA FİNALİ · GÜN BATIMI")
+    "ch24f_c3_finale_wanda", "ch24f_c4_ready_s3_wanda" -> ChoiceVisualSpec(R.drawable.img_ch1_c4_wanda_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "♥ WANDA FİNALİ · GÖL İSKELESİ")
+    "ch24f_c3_finale_avengers", "ch24f_c4_ready_s3_team" -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.GOLDEN_DAWN, "2. SEZON BÜYÜK FİNALİ · YENİ AVENGERS")
+
+    // Smart chapter-level fallbacks for any legacy/custom saved decisions
+    else -> when (chapterNumber) {
+        1 -> when {
+            nodeId.startsWith("ch1_s1") || orderIndex == 1 -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.RAIN_NEON, "İLK TEMAS")
+            else -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RAIN_NEON, "TEKLİFİN AĞIRLIĞI")
         }
+        2 -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RAIN_NEON, "CAM MASA PAZARLIĞI")
+        3 -> ChoiceVisualSpec(R.drawable.img_ch1_c2_stealth_terrace, ChoiceAtmosphereMode.RED_ALARM, "DENEME SÜRESİ")
+        4 -> ChoiceVisualSpec(R.drawable.img_ch1_c2_direct_rift, ChoiceAtmosphereMode.RAIN_NEON, "19 NUMARALI RIHTIM")
+        5 -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.BLIZZARD_SNOW, "KIRMIZI BUZ")
+        6 -> ChoiceVisualSpec(R.drawable.img_ch6_istanbul_cistern, ChoiceAtmosphereMode.ISTANBUL_EMBER, "İSTANBUL ARŞİVİ")
+        7 -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.GOLDEN_DAWN, "BOĞAZ'DA ŞAFAK")
+        8 -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.COSMIC_STORM, "KIRIK GÖKLER")
+        9 -> ChoiceVisualSpec(R.drawable.img_game_rooftop_arena, ChoiceAtmosphereMode.BLIZZARD_SNOW, "KIYAMET AYNASI")
+        10 -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "YILDIZLARIN KIRILDIĞI GECE")
+        11 -> ChoiceVisualSpec(R.drawable.img_ch1_c5_tower_night, ChoiceAtmosphereMode.GOLDEN_DAWN, "ESKİ DOSTLAR, YENİ GECE")
+        12 -> ChoiceVisualSpec(R.drawable.img_ch1_c3_stark_faceoff, ChoiceAtmosphereMode.RED_ALARM, "ÇATLAYAN GÜVEN")
+        13 -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "DONMUŞ ZAMAN VE KÂBUSLAR")
+        14 -> ChoiceVisualSpec(R.drawable.img_ch1_c4_natasha_gaze, ChoiceAtmosphereMode.GOLDEN_DAWN, "BARTON ÇİFTLİĞİ")
+        15 -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.GOLDEN_DAWN, "KIRIK DENEKLERİN SIĞINAĞI")
+        16 -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "AYNA DÜELLOSU")
+        17 -> ChoiceVisualSpec(R.drawable.img_anim_blue_sky_2006, ChoiceAtmosphereMode.GOLDEN_DAWN, "VİSİON VE TEKİLLİK")
+        18 -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.RED_ALARM, "YARA İZİNİN GERÇEĞİ")
+        19 -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.GOLDEN_DAWN, "GÖLGENİN KORUYUCULARI")
+        20 -> ChoiceVisualSpec(R.drawable.img_anim_armada, ChoiceAtmosphereMode.RED_ALARM, "YÜKSELEN ŞEHİR")
+        21 -> ChoiceVisualSpec(R.drawable.img_anim_mutlak_uyanis, ChoiceAtmosphereMode.COSMIC_STORM, "KİLİSENİN SAVUNMASI")
+        22 -> ChoiceVisualSpec(R.drawable.img_ch5_voss_blizzard, ChoiceAtmosphereMode.RED_ALARM, "KIRIK AYNA · SOKOVİA")
+        23 -> ChoiceVisualSpec(R.drawable.img_postcredits_twin_aiden, ChoiceAtmosphereMode.COSMIC_STORM, "DEMİRİN ÇÖKÜŞÜ VE TEK YANKI")
+        else -> ChoiceVisualSpec(R.drawable.img_anim_bosphorus, ChoiceAtmosphereMode.GOLDEN_DAWN, "KÜLLERDEN DOĞAN YARIN")
     }
 }
 
@@ -295,6 +525,12 @@ fun ChapterSummaryModal(
     val slides: List<Lis2DecisionSlide> = remember(bookReadState, messages, completedChapterNumber) {
         if (bookReadState != null) {
             bookReadState.currentChapterDecisions.mapIndexed { idx, rec ->
+                val vis = resolveChapterChoiceVisual(
+                    chapterNumber = completedChapterNumber,
+                    choiceId = rec.choiceId,
+                    nodeId = rec.nodeId,
+                    orderIndex = idx + 1
+                )
                 Lis2DecisionSlide(
                     index = idx + 1,
                     nodeId = rec.nodeId,
@@ -305,17 +541,20 @@ fun ChapterSummaryModal(
                     isRelationship = rec.isRelationship,
                     secretUnlocked = rec.secretUnlocked,
                     branchTag = rec.branchTag,
-                    artworkResId = resolveChapterChoiceArtwork(
-                        chapterNumber = completedChapterNumber,
-                        choiceId = rec.choiceId,
-                        nodeId = rec.nodeId,
-                        orderIndex = idx + 1
-                    ),
+                    artworkResId = vis.artRes,
+                    atmosphere = vis.atmosphere,
+                    moodTag = vis.moodTag,
                     meaningfulImpacts = buildMeaningfulImpactLines(rec)
                 )
             }
         } else {
             messages.filter { it.role == "user" }.takeLast(6).mapIndexed { idx, msg ->
+                val vis = resolveChapterChoiceVisual(
+                    chapterNumber = completedChapterNumber,
+                    choiceId = "",
+                    nodeId = "",
+                    orderIndex = idx + 1
+                )
                 Lis2DecisionSlide(
                     index = idx + 1,
                     nodeId = "custom_${idx + 1}",
@@ -326,12 +565,9 @@ fun ChapterSummaryModal(
                     isRelationship = true,
                     secretUnlocked = null,
                     branchTag = null,
-                    artworkResId = resolveChapterChoiceArtwork(
-                        chapterNumber = completedChapterNumber,
-                        choiceId = "",
-                        nodeId = "",
-                        orderIndex = idx + 1
-                    ),
+                    artworkResId = vis.artRes,
+                    atmosphere = vis.atmosphere,
+                    moodTag = vis.moodTag,
                     meaningfulImpacts = emptyList()
                 )
             }
@@ -444,14 +680,26 @@ fun ChapterSummaryModal(
         }
     }
 
-    // Determine active background artwork for Living Ken Burns Canvas
-    @DrawableRes
-    val activeBackdropArtRes: Int? = remember(viewMode, currentIndex, slides, completedChapterNumber) {
+    // Determine active 2.5D background artwork & atmosphere for Living Cinema Depth Stage
+    val activeSlideForBackdrop: Lis2DecisionSlide? = remember(viewMode, currentIndex, slides) {
         when (viewMode) {
-            SummaryViewMode.PROMPT -> slides.firstOrNull()?.artworkResId
-            SummaryViewMode.SEQUENTIAL -> slides.getOrNull(currentIndex)?.artworkResId
-            SummaryViewMode.FINAL_GRID -> slides.lastOrNull()?.artworkResId
+            SummaryViewMode.PROMPT -> slides.firstOrNull()
+            SummaryViewMode.SEQUENTIAL -> slides.getOrNull(currentIndex)
+            SummaryViewMode.FINAL_GRID -> slides.lastOrNull()
         }
+    }
+    @DrawableRes
+    val activeBackdropArtRes: Int = activeSlideForBackdrop?.artworkResId
+        ?: resolveChapterChoiceVisual(completedChapterNumber, "", "", 1).artRes
+    val activeAtmosphere: ChoiceAtmosphereMode = activeSlideForBackdrop?.atmosphere
+        ?: ChoiceAtmosphereMode.RAIN_NEON
+    var userTiltYaw by remember { mutableFloatStateOf(0f) }
+    var selectedFlagCharacter by remember { mutableStateOf<BookCharacterId?>(null) }
+    var showStoryFlagsSheet by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = selectedFlagCharacter != null || showStoryFlagsSheet) {
+        selectedFlagCharacter = null
+        showStoryFlagsSheet = false
     }
 
     // Dynamic qualitative narrative reflection for the Overview header (no raw arcade "+11" spam)
@@ -459,7 +707,8 @@ fun ChapterSummaryModal(
         if (bookReadState == null) {
             "Verdiğin her karar bu bölümün tonunu ve geleceğini sessizce yeniden yazdı."
         } else {
-            val topChar = BookCharacterId.entries.maxByOrNull { bookReadState.bondScore(it) }
+            val topChar = BookStateRepository.unlockedCharacters(bookReadState)
+                .maxByOrNull { bookReadState.bondScore(it) }
                 ?: BookCharacterId.NATASHA
             val branchCount = bookReadState.currentChapterDecisions.count { it.isBranching }
             val secretCount = bookReadState.currentChapterDecisions.count { it.secretUnlocked != null }
@@ -471,6 +720,12 @@ fun ChapterSummaryModal(
                 BookCharacterId.CLINT -> "Clint Barton'ın samimiyeti ve keskin gözü Kule'de ilk kez güven duygusu verdi."
                 BookCharacterId.BRUCE -> "Bruce Banner kontrol mücadeleni herkesten daha yakından anladı."
                 BookCharacterId.THOR -> "Thor Odinson iradene ve kozmik gücüne içten bir saygı duydu."
+                BookCharacterId.FURY -> "Nick Fury gölgelerin ardındaki hamleni takdirle izledi ve sana duyduğu saygı arttı."
+                BookCharacterId.VOSS -> "Elias Voss senin koruyucu elinle karanlıktan çıkıp gerçek bir kardeşlik bağı kurdu."
+                BookCharacterId.MIRA -> "Mira senin rehberliğinle korkularını aştı ve kendi gücüne güvenmeye başladı."
+                BookCharacterId.PIETRO -> "Pietro Maximoff hızına ve sadakatine ilk kez gerçekten güvenmeye başladı."
+                BookCharacterId.ZERO -> "Sıfır kendi karanlık geleceğini senin gözlerinde aştığını gördü."
+                BookCharacterId.VISION -> "Vision, Zihin Taşı'nın gözünden senin insan kalbine derin bir saygı duydu."
             }
             val extra = buildList {
                 if (branchCount > 0) add("$branchCount kritik yol ayrımına girdin")
@@ -519,91 +774,138 @@ fun ChapterSummaryModal(
             .fillMaxSize()
             .zIndex(60f)
             .background(Color(0xFF070212))
-            .testTag("chapter_end_screen_root")
-    ) {
-        // ── LAYER 1: LIVING ANIMATED CHOICE-SPECIFIC BACKGROUND ARTWORK ─────
-        Crossfade(
-            targetState = activeBackdropArtRes,
-            animationSpec = tween(durationMillis = 1050, easing = FastOutSlowInEasing),
-            label = "lis2ArtworkCrossfade"
-        ) { artRes ->
-            if (artRes != null) {
-                val scale = 1.03f + kenBurnsPhase * 0.09f
-                val driftX = sin(ambientDrift * 6.283f) * 18f
-                val driftY = cos(ambientDrift * 6.283f) * 12f
-                Image(
-                    painter = painterResource(id = artRes),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            scaleX = scale
-                            scaleY = scale
-                            translationX = driftX
-                            translationY = driftY
-                        }
-                )
-            } else {
-                // Atmospheric fallback for Chapters 2–7
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(
-                                    Color(0xFF15072C),
-                                    Color(0xFF090316),
-                                    Color(0xFF0F0524),
-                                    Color(0xFF190934)
-                                )
-                            )
-                        )
+            .pointerInput(viewMode, currentIndex) {
+                detectHorizontalDragGestures(
+                    onDragEnd = { userTiltYaw = 0f },
+                    onHorizontalDrag = { _, dragAmount ->
+                        userTiltYaw = (userTiltYaw + dragAmount * 0.035f).coerceIn(-10f, 10f)
+                    }
                 )
             }
+            .testTag("chapter_end_screen_root")
+    ) {
+        // ── LAYER 1: TRUE 2.5D LIVING INTERACTIVE PARALLAX CHOICE ARTWORK ───
+        Crossfade(
+            targetState = activeBackdropArtRes,
+            animationSpec = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
+            label = "lis2ArtworkCrossfade"
+        ) { artRes ->
+            val scale = 1.03f + kenBurnsPhase * 0.04f
+            val autoYaw = sin(ambientDrift * 6.283f) * 3.0f
+            val autoPitch = cos(ambientDrift * 6.283f) * 1.8f
+            val driftX = sin(ambientDrift * 6.283f) * 10f - userTiltYaw * 1.5f
+            val driftY = cos(ambientDrift * 6.283f) * 6f
+            Image(
+                painter = painterResource(id = artRes),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = driftX
+                        translationY = driftY
+                        rotationY = (autoYaw + userTiltYaw * 0.65f).coerceIn(-12f, 12f)
+                        rotationX = autoPitch
+                        cameraDistance = 16f * density
+                    }
+            )
         }
 
         // ── LAYER 2: CINEMATIC LIFE IS STRANGE VIGNETTE & READABILITY SCRIM ─
-        val scrimDarkness = if (viewMode == SummaryViewMode.FINAL_GRID) 0.78f else 0.56f
+        val scrimDarkness = if (viewMode == SummaryViewMode.FINAL_GRID) 0.78f else 0.54f
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.verticalGradient(
                         colorStops = arrayOf(
-                            0.00f to Color(0xFF090316).copy(alpha = (scrimDarkness + 0.18f).coerceAtMost(0.92f)),
-                            0.24f to Color(0xFF0D0520).copy(alpha = (scrimDarkness - 0.18f).coerceAtLeast(0.28f)),
+                            0.00f to Color(0xFF090316).copy(alpha = (scrimDarkness + 0.16f).coerceAtMost(0.90f)),
+                            0.24f to Color(0xFF0D0520).copy(alpha = (scrimDarkness - 0.22f).coerceAtLeast(0.24f)),
                             0.52f to Color(0xFF0A0318).copy(alpha = scrimDarkness),
-                            0.82f to Color(0xFF080214).copy(alpha = (scrimDarkness + 0.22f).coerceAtMost(0.94f)),
+                            0.82f to Color(0xFF080214).copy(alpha = (scrimDarkness + 0.20f).coerceAtMost(0.93f)),
                             1.00f to Color(0xFF060210).copy(alpha = 0.96f)
                         )
                     )
                 )
         )
 
-        // ── LAYER 3: SUBTLE LIVING STARDUST & LIGHT RAIN SHIMMER OVERLAY ────
+        // ── LAYER 3: CHOICE-MATCHED 60FPS 2.5D ATMOSPHERIC VFX OVERLAY ──────
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val w = size.width
+            val h = size.height
+            val moodGlow = when (activeAtmosphere) {
+                ChoiceAtmosphereMode.WHITE_EYE -> Color(0xFFE0F2FE)
+                ChoiceAtmosphereMode.RED_ALARM -> Color(0xFFF43F5E)
+                ChoiceAtmosphereMode.BLIZZARD_SNOW -> Color(0xFF7DD3FC)
+                ChoiceAtmosphereMode.ISTANBUL_EMBER -> Color(0xFFFB923C)
+                ChoiceAtmosphereMode.COSMIC_STORM -> Color(0xFF38BDF8)
+                ChoiceAtmosphereMode.GOLDEN_DAWN -> Color(0xFFFDE047)
+                ChoiceAtmosphereMode.RAIN_NEON -> accentColor
+            }
             drawCircle(
                 brush = Brush.radialGradient(
-                    colors = listOf(accentColor.copy(alpha = 0.16f * pulseGlow), Color.Transparent),
-                    center = Offset(size.width * 0.5f, size.height * 0.22f),
-                    radius = size.width * 0.85f
+                    colors = listOf(moodGlow.copy(alpha = 0.20f * pulseGlow), Color.Transparent),
+                    center = Offset(w * 0.5f, h * 0.22f),
+                    radius = w * 0.88f
                 ),
-                radius = size.width * 0.85f,
-                center = Offset(size.width * 0.5f, size.height * 0.22f)
+                radius = w * 0.88f,
+                center = Offset(w * 0.5f, h * 0.22f)
             )
             if (motionConfig.enableAmbientLoops) {
-                for (i in 0 until 24) {
-                    val fx = ((i * 71 + 13) % 100) / 100f
-                    val fyBase = ((i * 43 + 17) % 100) / 100f
-                    val fy = (fyBase - ambientDrift * (0.24f + (i % 3) * 0.09f) + 1f) % 1f
-                    val sway = sin(ambientDrift * 6.283f + i * 0.9f) * 14f
-                    val alpha = (0.14f + (i % 4) * 0.06f) * pulseGlow
-                    drawCircle(
-                        color = if (i % 3 == 0) accentColor.copy(alpha = alpha) else Color(0xFFF5EEFF).copy(alpha = alpha),
-                        radius = (1.1f + (i % 3) * 0.6f).dp.toPx(),
-                        center = Offset(size.width * fx + sway, size.height * fy)
-                    )
+                when (activeAtmosphere) {
+                    ChoiceAtmosphereMode.WHITE_EYE -> {
+                        for (r in 0..2) {
+                            val p = (ambientDrift * 3f + r * 0.33f) % 1f
+                            drawCircle(
+                                color = Color.White.copy(alpha = (1f - p) * 0.32f),
+                                radius = 34f + p * w * 0.55f,
+                                center = Offset(w * 0.5f, h * 0.28f),
+                                style = Stroke(width = 2f)
+                            )
+                        }
+                    }
+                    ChoiceAtmosphereMode.BLIZZARD_SNOW -> {
+                        for (i in 0 until 30) {
+                            val fx = ((i * 67 + 11) % 100) / 100f
+                            val fy = (((i * 37 + 7) % 100) / 100f + ambientDrift * (1.2f + (i % 3) * 0.45f)) % 1f
+                            val sway = sin(ambientDrift * 12.56f + i) * 22f
+                            drawCircle(
+                                color = Color(0xFFE0F2FE).copy(alpha = 0.45f + (i % 3) * 0.16f),
+                                radius = (1.6f + (i % 3) * 0.9f).dp.toPx(),
+                                center = Offset((w * fx + sway + w) % w, h * fy)
+                            )
+                        }
+                    }
+                    ChoiceAtmosphereMode.RAIN_NEON, ChoiceAtmosphereMode.COSMIC_STORM -> {
+                        for (i in 0 until 26) {
+                            val fx = ((i * 73 + 19) % 100) / 100f
+                            val fy = (((i * 41 + 13) % 100) / 100f + ambientDrift * (2.6f + (i % 3) * 0.8f)) % 1f
+                            val sx = ((fx - fy * 0.12f) + 1f) % 1f * w
+                            val sy = fy * h
+                            drawLine(
+                                color = Color(0x48BAE6FD),
+                                start = Offset(sx, sy),
+                                end = Offset(sx - 5f, sy + 20f),
+                                strokeWidth = 1.4f
+                            )
+                        }
+                    }
+                    ChoiceAtmosphereMode.ISTANBUL_EMBER, ChoiceAtmosphereMode.GOLDEN_DAWN, ChoiceAtmosphereMode.RED_ALARM -> {
+                        for (i in 0 until 26) {
+                            val fx = ((i * 71 + 13) % 100) / 100f
+                            val fyBase = ((i * 43 + 17) % 100) / 100f
+                            val fy = (fyBase - ambientDrift * (0.35f + (i % 3) * 0.14f) + 1f) % 1f
+                            val sway = sin(ambientDrift * 6.283f + i * 0.9f) * 16f
+                            val alpha = (0.22f + (i % 4) * 0.08f) * pulseGlow
+                            drawCircle(
+                                color = if (i % 2 == 0) moodGlow.copy(alpha = alpha) else Color(0xFFFEF08A).copy(alpha = alpha),
+                                radius = (1.4f + (i % 3) * 0.8f).dp.toPx(),
+                                center = Offset(w * fx + sway, h * fy)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1445,84 +1747,119 @@ fun ChapterSummaryModal(
                                             .clip(RoundedCornerShape(22.dp))
                                             .background(Color(0xCC160830))
                                             .border(1.dp, cardTint.copy(alpha = 0.52f), RoundedCornerShape(22.dp))
+                                            .clickable {
+                                                currentIndex = idx
+                                                isPaused = true
+                                                stepPhase = StepPhase.RESULT_REVEALED
+                                                viewMode = SummaryViewMode.SEQUENTIAL
+                                            }
                                     ) {
                                         Column(modifier = Modifier.fillMaxWidth()) {
-                                            // Choice-Specific Painted Artwork Banner (Chapter 1)
-                                            if (card.artworkResId != null) {
+                                            // 2.5D Living Event- & Choice-Specific Artwork Banner (ALL 10 Season 1 Chapters!)
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(108.dp)
+                                                    .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
+                                            ) {
+                                                val cardScale = 1.05f + kenBurnsPhase * 0.07f
+                                                val cardTilt = sin(ambientDrift * 6.283f + idx * 1.1f) * 3.5f
+                                                Image(
+                                                    painter = painterResource(id = card.artworkResId),
+                                                    contentDescription = card.title,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .graphicsLayer {
+                                                            scaleX = cardScale
+                                                            scaleY = cardScale
+                                                            translationX = cardTilt * 2.5f
+                                                            rotationY = cardTilt
+                                                            cameraDistance = 14f * density
+                                                        }
+                                                )
                                                 Box(
                                                     modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .height(92.dp)
+                                                        .fillMaxSize()
+                                                        .background(
+                                                            Brush.verticalGradient(
+                                                                listOf(
+                                                                    Color(0x280D0420),
+                                                                    Color(0x8A13062A),
+                                                                    Color(0xEE160830)
+                                                                )
+                                                            )
+                                                        )
+                                                )
+                                                // Top-right 2.5D Scene Mood Pill
+                                                Box(
+                                                    modifier = Modifier
+                                                        .align(Alignment.TopEnd)
+                                                        .padding(8.dp)
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Color(0xB80A041C))
+                                                        .border(0.7.dp, cardTint.copy(alpha = 0.65f), RoundedCornerShape(50))
+                                                        .padding(horizontal = 8.dp, vertical = 3.dp)
                                                 ) {
-                                                    Image(
-                                                        painter = painterResource(id = card.artworkResId),
-                                                        contentDescription = card.title,
-                                                        contentScale = ContentScale.Crop,
-                                                        modifier = Modifier.fillMaxSize()
+                                                    Text(
+                                                        text = "✦ 2.5D · ${card.moodTag}",
+                                                        style = noPadTextStyle,
+                                                        fontFamily = InterFontFamily,
+                                                        color = Color(0xFFFAF6FF),
+                                                        fontSize = 8.5.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        letterSpacing = 0.6.sp
                                                     )
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .fillMaxSize()
-                                                            .background(
-                                                                Brush.verticalGradient(
-                                                                    listOf(
-                                                                        Color(0x280D0420),
-                                                                        Color(0x9913062A),
-                                                                        Color(0xEE160830)
-                                                                    )
-                                                                )
-                                                            )
-                                                    )
+                                                }
+                                                Row(
+                                                    modifier = Modifier
+                                                        .align(Alignment.BottomStart)
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
                                                     Row(
-                                                        modifier = Modifier
-                                                            .align(Alignment.BottomStart)
-                                                            .fillMaxWidth()
-                                                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                                                        modifier = Modifier.weight(1f),
                                                         verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                                     ) {
-                                                        Row(
-                                                            modifier = Modifier.weight(1f),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .size(24.dp)
+                                                                .clip(CircleShape)
+                                                                .background(cardTint.copy(alpha = 0.28f))
+                                                                .border(1.dp, cardTint.copy(alpha = 0.85f), CircleShape),
+                                                            contentAlignment = Alignment.Center
                                                         ) {
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .size(24.dp)
-                                                                    .clip(CircleShape)
-                                                                    .background(cardTint.copy(alpha = 0.28f))
-                                                                    .border(1.dp, cardTint.copy(alpha = 0.85f), CircleShape),
-                                                                contentAlignment = Alignment.Center
-                                                            ) {
-                                                                Text(
-                                                                    text = "${card.index}",
-                                                                    style = noPadTextStyle,
-                                                                    fontFamily = InterFontFamily,
-                                                                    color = Color.White,
-                                                                    fontSize = 11.sp,
-                                                                    fontWeight = FontWeight.Bold
-                                                                )
-                                                            }
                                                             Text(
-                                                                text = card.title,
-                                                                fontFamily = DisplaySerifFontFamily,
-                                                                color = Color.White,
-                                                                fontSize = 16.5.sp,
-                                                                fontWeight = FontWeight.Medium,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
-                                                        if (card.isBranching) {
-                                                            Text(
-                                                                text = "⑂ Yol Ayrımı",
+                                                                text = "${card.index}",
                                                                 style = noPadTextStyle,
                                                                 fontFamily = InterFontFamily,
-                                                                color = Color(0xFFFEF08A),
-                                                                fontSize = 10.sp,
+                                                                color = Color.White,
+                                                                fontSize = 11.sp,
                                                                 fontWeight = FontWeight.Bold
                                                             )
                                                         }
+                                                        Text(
+                                                            text = card.title,
+                                                            fontFamily = DisplaySerifFontFamily,
+                                                            color = Color.White,
+                                                            fontSize = 16.5.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                    if (card.isBranching) {
+                                                        Text(
+                                                            text = "⑂ Yol Ayrımı",
+                                                            style = noPadTextStyle,
+                                                            fontFamily = InterFontFamily,
+                                                            color = Color(0xFFFEF08A),
+                                                            fontSize = 10.sp,
+                                                            fontWeight = FontWeight.Bold
+                                                        )
                                                     }
                                                 }
                                             }
@@ -1533,56 +1870,6 @@ fun ChapterSummaryModal(
                                                     .padding(horizontal = 15.dp, vertical = 13.dp),
                                                 verticalArrangement = Arrangement.spacedBy(7.dp)
                                             ) {
-                                                if (card.artworkResId == null) {
-                                                    Row(
-                                                        modifier = Modifier.fillMaxWidth(),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.SpaceBetween
-                                                    ) {
-                                                        Row(
-                                                            modifier = Modifier.weight(1f),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(7.dp)
-                                                        ) {
-                                                            Box(
-                                                                modifier = Modifier
-                                                                    .size(22.dp)
-                                                                    .clip(CircleShape)
-                                                                    .background(cardTint.copy(alpha = 0.22f))
-                                                                    .border(0.9.dp, cardTint.copy(alpha = 0.75f), CircleShape),
-                                                                contentAlignment = Alignment.Center
-                                                            ) {
-                                                                Text(
-                                                                    text = "${card.index}",
-                                                                    style = noPadTextStyle,
-                                                                    fontFamily = InterFontFamily,
-                                                                    color = Color.White,
-                                                                    fontSize = 10.5.sp,
-                                                                    fontWeight = FontWeight.Bold
-                                                                )
-                                                            }
-                                                            Text(
-                                                                text = card.title,
-                                                                fontFamily = DisplaySerifFontFamily,
-                                                                color = Color.White,
-                                                                fontSize = 15.5.sp,
-                                                                fontWeight = FontWeight.Medium,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
-                                                            )
-                                                        }
-                                                        if (card.isBranching) {
-                                                            Text(
-                                                                text = "⑂ Yol Ayrımı",
-                                                                style = noPadTextStyle,
-                                                                fontFamily = InterFontFamily,
-                                                                color = Color(0xFFFEF08A),
-                                                                fontSize = 10.sp,
-                                                                fontWeight = FontWeight.Bold
-                                                            )
-                                                        }
-                                                    }
-                                                }
 
                                                 Text(
                                                     text = "“${card.selectedOption}”",
@@ -1632,12 +1919,15 @@ fun ChapterSummaryModal(
                                     }
                                 }
 
-                                // Active / Unlocked Multi-Axis Flags Board (only flags actually triggered so far!)
+                                // Compact Character Names & Story Flags Picker (tap any name -> sleek partial bottom sheet!)
                                 if (bookReadState != null) {
-                                    val unlockedCharFlags = remember(bookReadState.numericFlags) {
-                                        bookReadState.numericFlags.entries
-                                            .filter { it.key.startsWith("char:") && it.value != 0 }
-                                            .sortedByDescending { kotlin.math.abs(it.value) }
+                                    val unlockedChars = remember(
+                                        bookReadState.activeChapter,
+                                        bookReadState.highestCompletedChapter,
+                                        bookReadState.currentNodeId,
+                                        bookReadState.numericFlags
+                                    ) {
+                                        BookStateRepository.unlockedCharacters(bookReadState)
                                     }
                                     val unlockedStoryFlags = remember(bookReadState.numericFlags) {
                                         bookReadState.numericFlags.entries
@@ -1649,9 +1939,9 @@ fun ChapterSummaryModal(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(20.dp))
-                                            .background(Color(0xB3160830))
+                                            .background(Color(0xB8160830))
                                             .border(0.95.dp, MorCamTokens.SubtleRimGradient, RoundedCornerShape(20.dp))
-                                            .padding(15.dp),
+                                            .padding(14.dp),
                                         verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Row(
@@ -1660,7 +1950,7 @@ fun ChapterSummaryModal(
                                             horizontalArrangement = Arrangement.SpaceBetween
                                         ) {
                                             Text(
-                                                text = "AÇILAN & DEĞİŞEN BAYRAKLAR",
+                                                text = "KARAKTER BAYRAKLARI",
                                                 style = noPadTextStyle,
                                                 fontFamily = InterFontFamily,
                                                 color = Color(0xFFFEF08A),
@@ -1669,7 +1959,7 @@ fun ChapterSummaryModal(
                                                 letterSpacing = 1.1.sp
                                             )
                                             Text(
-                                                text = "${unlockedCharFlags.size + unlockedStoryFlags.size} Aktif",
+                                                text = "${unlockedChars.size} Karakter • Dokun",
                                                 style = noPadTextStyle,
                                                 fontFamily = InterFontFamily,
                                                 color = MorCamTokens.LavenderSoft,
@@ -1678,103 +1968,106 @@ fun ChapterSummaryModal(
                                             )
                                         }
 
-                                        if (unlockedCharFlags.isNotEmpty()) {
-                                            Text(
-                                                text = "Karakter Bayrakları",
-                                                style = noPadTextStyle,
-                                                fontFamily = InterFontFamily,
-                                                color = MorCamTokens.SilverLavenderBright,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            FlowRow(
-                                                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                                                verticalArrangement = Arrangement.spacedBy(7.dp)
-                                            ) {
-                                                unlockedCharFlags.forEach { (key, value) ->
-                                                    val (label, colorHex) = BookStateRepository.describeFlagKey(key)
-                                                    val chipColor = if (value < 0) Color(0xFFFCA5A5) else Color(colorHex)
-                                                    val sign = if (value > 0) "+$value" else "$value"
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .clip(RoundedCornerShape(50))
-                                                            .background(chipColor.copy(alpha = 0.15f))
-                                                            .border(0.8.dp, chipColor.copy(alpha = 0.52f), RoundedCornerShape(50))
-                                                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = label,
-                                                            style = noPadTextStyle,
-                                                            fontFamily = InterFontFamily,
-                                                            color = Color(0xFFFAF6FF),
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Medium
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                                            verticalArrangement = Arrangement.spacedBy(7.dp)
+                                        ) {
+                                            unlockedChars.forEach { charId ->
+                                                val cColor = Color(charId.accentHex)
+                                                val flagCount = remember(bookReadState.numericFlags, charId) {
+                                                    BookStateRepository.characterFlagsFor(bookReadState, charId).size
+                                                }
+                                                val chipInteraction = remember { MutableInteractionSource() }
+                                                Row(
+                                                    modifier = Modifier
+                                                        .cosmicTapSpring(chipInteraction, pressedScale = 0.94f)
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(cColor.copy(alpha = if (flagCount > 0) 0.16f else 0.08f))
+                                                        .border(
+                                                            width = 0.85.dp,
+                                                            color = cColor.copy(alpha = if (flagCount > 0) 0.65f else 0.35f),
+                                                            shape = RoundedCornerShape(50)
                                                         )
-                                                        Text(
-                                                            text = sign,
-                                                            style = noPadTextStyle,
-                                                            fontFamily = InterFontFamily,
-                                                            color = chipColor,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
+                                                        .clickable(interactionSource = chipInteraction, indication = null) {
+                                                            showStoryFlagsSheet = false
+                                                            selectedFlagCharacter = charId
+                                                        }
+                                                        .padding(start = 5.dp, end = 11.dp, top = 4.dp, bottom = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    CinematicCharacterAvatar(
+                                                        key = CharacterPortraitKey.fromBookCharacter(charId),
+                                                        size = 22.dp,
+                                                        borderWidth = 1.dp,
+                                                        borderColor = cColor
+                                                    )
+                                                    Text(
+                                                        text = charId.shortName,
+                                                        style = noPadTextStyle,
+                                                        fontFamily = InterFontFamily,
+                                                        color = Color(0xFFFAF6FF),
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                    if (flagCount > 0) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(CircleShape)
+                                                                .background(cColor.copy(alpha = 0.28f))
+                                                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = "$flagCount",
+                                                                style = noPadTextStyle,
+                                                                fontFamily = InterFontFamily,
+                                                                color = cColor,
+                                                                fontSize = 9.5.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
-                                        }
 
-                                        if (unlockedStoryFlags.isNotEmpty()) {
-                                            if (unlockedCharFlags.isNotEmpty()) MorCamDivider()
-                                            Text(
-                                                text = "Hikâye & Kozmik Bayraklar",
-                                                style = noPadTextStyle,
-                                                fontFamily = InterFontFamily,
-                                                color = MorCamTokens.SilverLavenderBright,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            FlowRow(
-                                                horizontalArrangement = Arrangement.spacedBy(7.dp),
-                                                verticalArrangement = Arrangement.spacedBy(7.dp)
-                                            ) {
-                                                unlockedStoryFlags.forEach { (key, value) ->
-                                                    val (label, colorHex) = BookStateRepository.describeFlagKey(key)
-                                                    val chipColor = if (value < 0) Color(0xFFFCA5A5) else Color(colorHex)
-                                                    val sign = if (value > 0) "+$value" else "$value"
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .clip(RoundedCornerShape(50))
-                                                            .background(chipColor.copy(alpha = 0.14f))
-                                                            .border(0.8.dp, chipColor.copy(alpha = 0.48f), RoundedCornerShape(50))
-                                                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                                    ) {
-                                                        Text(
-                                                            text = label,
-                                                            style = noPadTextStyle,
-                                                            fontFamily = InterFontFamily,
-                                                            color = Color(0xFFFAF6FF),
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Medium
-                                                        )
-                                                        Text(
-                                                            text = sign,
-                                                            style = noPadTextStyle,
-                                                            fontFamily = InterFontFamily,
-                                                            color = chipColor,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                    }
+                                            if (unlockedStoryFlags.isNotEmpty()) {
+                                                val storyChipInteraction = remember { MutableInteractionSource() }
+                                                Row(
+                                                    modifier = Modifier
+                                                        .cosmicTapSpring(storyChipInteraction, pressedScale = 0.94f)
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(Color(0x28FEF08A))
+                                                        .border(0.85.dp, Color(0x77FEF08A), RoundedCornerShape(50))
+                                                        .clickable(interactionSource = storyChipInteraction, indication = null) {
+                                                            selectedFlagCharacter = null
+                                                            showStoryFlagsSheet = true
+                                                        }
+                                                        .padding(horizontal = 11.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "✦ Evren İzleri",
+                                                        style = noPadTextStyle,
+                                                        fontFamily = InterFontFamily,
+                                                        color = Color(0xFFFEF9C3),
+                                                        fontSize = 11.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = "${unlockedStoryFlags.size}",
+                                                        style = noPadTextStyle,
+                                                        fontFamily = InterFontFamily,
+                                                        color = Color(0xFFFEF08A),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.ExtraBold
+                                                    )
                                                 }
                                             }
                                         }
 
                                         Text(
-                                            text = "✦ İlerleyen bölümlerde yeni karakter ve hikâye bayrakları (sevgi, sadakat, Kule aidiyeti, Kırmızı Göz dengesizliği vb.) seçimlerinle açılır.",
+                                            text = "✦ İsmine dokunduğun karakterin bayrakları altta açılan kompakt pencerede görünür.",
                                             fontFamily = InterFontFamily,
                                             fontStyle = FontStyle.Italic,
                                             color = MorCamTokens.LavenderSoft.copy(alpha = 0.85f),
@@ -1826,6 +2119,317 @@ fun ChapterSummaryModal(
                     }
                 }
             }
+        }
+
+        // ── PARTIAL-HEIGHT SCROLLABLE CHARACTER / STORY FLAGS BOTTOM SHEET ──
+        val isSheetOpen = bookReadState != null && (selectedFlagCharacter != null || showStoryFlagsSheet)
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isSheetOpen,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(180)),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(25f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xA6050210))
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        selectedFlagCharacter = null
+                        showStoryFlagsSheet = false
+                    }
+            )
+        }
+
+        androidx.compose.animation.AnimatedVisibility(
+            visible = isSheetOpen,
+            enter = slideInVertically(
+                initialOffsetY = { it },
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ) + fadeIn(tween(200)),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(tween(180)),
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .zIndex(26f)
+        ) {
+                if (bookReadState != null) {
+                    val activeChar = selectedFlagCharacter
+                    val sheetAccent = if (activeChar != null) Color(activeChar.accentHex) else Color(0xFFFEF08A)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .widthIn(max = 580.dp)
+                            .fillMaxHeight(0.52f)
+                            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                            .background(
+                                Brush.verticalGradient(
+                                    listOf(Color(0xFA1E0D42), Color(0xFC100525), Color(0xFF0A0318))
+                                )
+                            )
+                            .border(
+                                width = 1.25.dp,
+                                brush = Brush.linearGradient(
+                                    listOf(sheetAccent.copy(alpha = 0.85f), Color(0x66C4B5FD), Color.Transparent)
+                                ),
+                                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+                            )
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) { /* consume taps inside sheet */ }
+                            .navigationBarsPadding()
+                            .padding(horizontal = 18.dp, vertical = 12.dp)
+                    ) {
+                        // Top Drag Handle Pill
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .size(width = 40.dp, height = 4.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0x66D8B4FE))
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Sheet Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            if (activeChar != null) {
+                                CinematicCharacterAvatar(
+                                    key = CharacterPortraitKey.fromBookCharacter(activeChar),
+                                    size = 46.dp,
+                                    borderWidth = 1.5.dp,
+                                    borderColor = sheetAccent
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = activeChar.displayName,
+                                        fontFamily = DisplaySerifFontFamily,
+                                        color = Color.White,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = activeChar.roleTitle,
+                                        fontFamily = InterFontFamily,
+                                        color = sheetAccent,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            } else {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "✦ Evren & Hikâye Bayrakları",
+                                        fontFamily = DisplaySerifFontFamily,
+                                        color = Color(0xFFFEF08A),
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    Text(
+                                        text = "Seçimlerinin dünya ve psikolojik dengeler üzerindeki izi",
+                                        fontFamily = InterFontFamily,
+                                        color = MorCamTokens.LavenderMuted,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x552C1654))
+                                    .border(0.9.dp, Color(0x88D8B4FE), CircleShape)
+                                    .clickable {
+                                        selectedFlagCharacter = null
+                                        showStoryFlagsSheet = false
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Kapat",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        MorCamDivider()
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Scrollable List of ONLY this character's (or story's) flags
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(9.dp)
+                        ) {
+                            if (activeChar != null) {
+                                val flagsForChar = remember(bookReadState.numericFlags, activeChar) {
+                                    BookStateRepository.characterFlagsFor(bookReadState, activeChar)
+                                }
+                                if (flagsForChar.isEmpty()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(Color(0x40211044))
+                                            .border(0.85.dp, sheetAccent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                                            .padding(14.dp)
+                                    ) {
+                                        Text(
+                                            text = "${activeChar.displayName} hikâyeye yeni katıldı veya henüz doğrudan bir karar bayrağı tetiklenmedi. Önümüzdeki seçimlerin onunla olan bağını şekillendirecek.",
+                                            fontFamily = InterFontFamily,
+                                            color = MorCamTokens.LavenderLight,
+                                            fontSize = 12.5.sp,
+                                            lineHeight = 18.5.sp
+                                        )
+                                    }
+                                } else {
+                                    flagsForChar.forEach { (axis, value) ->
+                                        val rowColor = if (axis.isNegativeTone || value < 0) Color(0xFFFCA5A5) else Color(axis.accentHex)
+                                        val signText = if (value > 0) "+$value" else "$value"
+                                        val fillFrac = (kotlin.math.abs(value) / 12f).coerceIn(0.14f, 1f)
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(rowColor.copy(alpha = 0.11f))
+                                                .border(0.9.dp, rowColor.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                                                .padding(horizontal = 13.dp, vertical = 10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(7.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text(
+                                                    text = "${activeChar.possessiveName} ${axis.turkishLabel}",
+                                                    fontFamily = InterFontFamily,
+                                                    color = Color(0xFFFAF6FF),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(rowColor.copy(alpha = 0.22f))
+                                                        .border(0.75.dp, rowColor.copy(alpha = 0.65f), RoundedCornerShape(50))
+                                                        .padding(horizontal = 9.dp, vertical = 3.dp)
+                                                ) {
+                                                    Text(
+                                                        text = signText,
+                                                        style = noPadTextStyle,
+                                                        fontFamily = InterFontFamily,
+                                                        color = rowColor,
+                                                        fontSize = 11.5.sp,
+                                                        fontWeight = FontWeight.ExtraBold
+                                                    )
+                                                }
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(5.dp)
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(Color(0x33FFFFFF))
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth(fillFrac)
+                                                        .fillMaxHeight()
+                                                        .clip(RoundedCornerShape(50))
+                                                        .background(rowColor)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                val storyFlags = remember(bookReadState.numericFlags) {
+                                    bookReadState.numericFlags.entries
+                                        .filter { it.key.startsWith("story:") && it.value != 0 }
+                                        .sortedByDescending { kotlin.math.abs(it.value) }
+                                }
+                                storyFlags.forEach { (key, value) ->
+                                    val (label, colorHex) = BookStateRepository.describeFlagKey(key)
+                                    val rowColor = if (value < 0) Color(0xFFFCA5A5) else Color(colorHex)
+                                    val signText = if (value > 0) "+$value" else "$value"
+                                    val fillFrac = (kotlin.math.abs(value) / 12f).coerceIn(0.14f, 1f)
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(rowColor.copy(alpha = 0.11f))
+                                            .border(0.9.dp, rowColor.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+                                            .padding(horizontal = 13.dp, vertical = 10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(7.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                fontFamily = InterFontFamily,
+                                                color = Color(0xFFFAF6FF),
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(rowColor.copy(alpha = 0.22f))
+                                                    .border(0.75.dp, rowColor.copy(alpha = 0.65f), RoundedCornerShape(50))
+                                                    .padding(horizontal = 9.dp, vertical = 3.dp)
+                                            ) {
+                                                Text(
+                                                    text = signText,
+                                                    style = noPadTextStyle,
+                                                    fontFamily = InterFontFamily,
+                                                    color = rowColor,
+                                                    fontSize = 11.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(5.dp)
+                                                .clip(RoundedCornerShape(50))
+                                                .background(Color(0x33FFFFFF))
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .fillMaxWidth(fillFrac)
+                                                    .fillMaxHeight()
+                                                    .clip(RoundedCornerShape(50))
+                                                    .background(rowColor)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
         }
     }
 }

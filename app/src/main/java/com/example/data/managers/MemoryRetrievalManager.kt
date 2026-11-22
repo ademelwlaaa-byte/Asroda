@@ -29,12 +29,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.exp
 import kotlin.math.ln
-import kotlin.math.sqrt
 
 data class RagRetrievalBundle(
     val facts: List<MemoryFactEntity> = emptyList(),
@@ -100,7 +98,9 @@ data class BotMemoryIndex(
     val events: List<IndexedEvent>,
     val checkpoints: List<IndexedCheckpoint>,
     val fragments: List<IndexedFragment>,
-    val builtAtMs: Long
+    val builtAtMs: Long,
+    val avgDocLen: Float = 16f,
+    val avgFragmentDocLen: Float = 16f
 )
 
 /**
@@ -155,37 +155,14 @@ class MemoryRetrievalManager(
         vectorCache.clearAll()
     }
 
-    fun floatArrayToJson(arr: FloatArray): String {
-        val jsonArray = JSONArray()
-        for (v in arr) {
-            jsonArray.put(v.toDouble())
-        }
-        return jsonArray.toString()
-    }
+    fun floatArrayToJson(arr: FloatArray): String =
+        MemoryEngine.serializeEmbeddingToJson(arr)
 
-    fun jsonToFloatArray(str: String): FloatArray {
-        if (str.isBlank() || str == "[]") return FloatArray(0)
-        return try {
-            val arr = JSONArray(str)
-            FloatArray(arr.length()) { idx -> arr.optDouble(idx, 0.0).toFloat() }
-        } catch (_: Exception) {
-            FloatArray(0)
-        }
-    }
+    fun jsonToFloatArray(str: String): FloatArray =
+        MemoryEngine.parseEmbeddingFromJson(str) ?: FloatArray(0)
 
-    fun cosineSimilarity(v1: FloatArray, v2: FloatArray): Float {
-        if (v1.isEmpty() || v2.isEmpty() || v1.size != v2.size) return 0f
-        var dot = 0f
-        var norm1 = 0f
-        var norm2 = 0f
-        for (i in v1.indices) {
-            dot += v1[i] * v2[i]
-            norm1 += v1[i] * v1[i]
-            norm2 += v2[i] * v2[i]
-        }
-        val denom = sqrt(norm1) * sqrt(norm2)
-        return if (denom > 1e-6f) (dot / denom).coerceIn(-1f, 1f) else 0f
-    }
+    fun cosineSimilarity(v1: FloatArray, v2: FloatArray): Float =
+        MemoryEngine.cosineSimilarity(v1, v2)
 
     suspend fun computeEmbedding(text: String, apiKey: String? = null): FloatArray = withContext(Dispatchers.IO) {
         val cleanText = text.trim()
@@ -336,13 +313,25 @@ class MemoryRetrievalManager(
             )
         }
 
+        val totalDocs = indexedFacts.size + indexedEvents.size + indexedCheckpoints.size + indexedFragments.size
+        val totalLen = indexedFacts.sumOf { it.docLen } +
+            indexedEvents.sumOf { it.docLen } +
+            indexedCheckpoints.sumOf { it.docLen } +
+            indexedFragments.sumOf { it.docLen }
+        val avgDocLen = if (totalDocs > 0) (totalLen.toFloat() / totalDocs).coerceIn(4f, 200f) else 16f
+        val avgFragLen = if (indexedFragments.isNotEmpty()) {
+            (indexedFragments.sumOf { it.docLen }.toFloat() / indexedFragments.size).coerceIn(4f, 200f)
+        } else 16f
+
         val built = BotMemoryIndex(
             botId = botId,
             facts = indexedFacts,
             events = indexedEvents,
             checkpoints = indexedCheckpoints,
             fragments = indexedFragments,
-            builtAtMs = System.currentTimeMillis()
+            builtAtMs = System.currentTimeMillis(),
+            avgDocLen = avgDocLen,
+            avgFragmentDocLen = avgFragLen
         )
         vectorCache.put(botId, built)
         built
@@ -407,13 +396,14 @@ class MemoryRetrievalManager(
         queryStems: Set<String>,
         stemCounts: Map<String, Int>,
         docLen: Int,
-        idfMap: Map<String, Float>
+        idfMap: Map<String, Float>,
+        avgLen: Float = 16f
     ): Float {
         if (queryStems.isEmpty() || stemCounts.isEmpty()) return 0f
         val k1 = 1.3f
         val b = 0.65f
-        val avgLen = 16f
-        val lenNorm = (1f - b) + b * (docLen.toFloat() / avgLen)
+        val safeAvgLen = avgLen.coerceAtLeast(1f)
+        val lenNorm = (1f - b) + b * (docLen.toFloat() / safeAvgLen)
 
         var score = 0f
         var maxPossible = 0f
@@ -441,6 +431,7 @@ class MemoryRetrievalManager(
         val microId: String,
         val microLine: String,
         val semScore: Float,
+        val remoteSemScore: Float?,
         val lexScore: Float,
         val entityScore: Float,
         val extraBoost: Float,
@@ -453,6 +444,7 @@ class MemoryRetrievalManager(
             val fact: MemoryFactEntity,
             currentStoryDay: Long,
             semScore: Float,
+            remoteSemScore: Float?,
             lexScore: Float,
             entityScore: Float,
             extraBoost: Float,
@@ -462,6 +454,7 @@ class MemoryRetrievalManager(
             microId = "F${fact.id}",
             microLine = MemoryEngine.formatFactMicroIndex(fact, currentStoryDay),
             semScore = semScore,
+            remoteSemScore = remoteSemScore,
             lexScore = lexScore,
             entityScore = entityScore,
             extraBoost = extraBoost,
@@ -472,22 +465,27 @@ class MemoryRetrievalManager(
         class EventCand(
             val event: MemoryEventEntity,
             semScore: Float,
+            remoteSemScore: Float?,
             lexScore: Float,
             entityScore: Float,
-            extraBoost: Float
+            extraBoost: Float,
+            isTemporalBoosted: Boolean = false
         ) : HybridCandidate(
             microId = "E${event.id}",
             microLine = MemoryEngine.formatEventMicroIndex(event),
             semScore = semScore,
+            remoteSemScore = remoteSemScore,
             lexScore = lexScore,
             entityScore = entityScore,
             extraBoost = extraBoost,
-            directConfidence = 0f
+            directConfidence = 0f,
+            isTemporalBoosted = isTemporalBoosted
         )
 
         class CheckpointCand(
             val checkpoint: MemoryCheckpointEntity,
             semScore: Float,
+            remoteSemScore: Float?,
             lexScore: Float,
             entityScore: Float,
             extraBoost: Float
@@ -495,6 +493,7 @@ class MemoryRetrievalManager(
             microId = "C${checkpoint.checkpointNumber}",
             microLine = MemoryEngine.formatCheckpointMicroIndex(checkpoint),
             semScore = semScore,
+            remoteSemScore = remoteSemScore,
             lexScore = lexScore,
             entityScore = entityScore,
             extraBoost = extraBoost,
@@ -511,6 +510,7 @@ class MemoryRetrievalManager(
             microId = "M${fragment.id}",
             microLine = MemoryEngine.formatFragmentMicroIndex(fragment),
             semScore = semScore,
+            remoteSemScore = null,
             lexScore = lexScore,
             entityScore = entityScore,
             extraBoost = extraBoost,
@@ -519,7 +519,10 @@ class MemoryRetrievalManager(
     }
 
     /**
-     * Runs 3-channel Reciprocal Rank Fusion (RRF, k=60) over the cached bot memory index (<12 ms, 0 AI tokens).
+     * Runs 3-channel (+ optional 4th remote-dense channel) Reciprocal Rank Fusion (RRF, k=60)
+     * over the cached bot memory index (<12 ms, 0 AI tokens).
+     * Local 256-dim vectors are always ranked apples-to-apples in [semRanks]; remote 768-dim
+     * vectors are ranked independently in [remoteDenseRanks] so vector spaces never mix.
      */
     private fun rankWithRrf(
         index: BotMemoryIndex,
@@ -533,6 +536,7 @@ class MemoryRetrievalManager(
         val queryStems = TurkishTextAnalyzer.extractStems(queryText).toSet()
         val queryLocalVec = computeLocalEmbedding(queryText)
         val normQuery = TurkishTextAnalyzer.normalize(queryText)
+        val avgDocLen = index.avgDocLen
 
         val corpusStemSets = ArrayList<Set<String>>(
             index.facts.size + index.events.size + index.checkpoints.size + index.fragments.size
@@ -552,12 +556,11 @@ class MemoryRetrievalManager(
             val baseConfidence = meta.baseConfidence
             val isDisputed = baseConfidence.equals("disputed", ignoreCase = true)
 
-            val sem = if (queryRemoteVec != null && item.remoteVector != null && item.remoteVector.size == queryRemoteVec.size) {
+            val localSem = cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
+            val remoteSem = if (queryRemoteVec != null && item.remoteVector != null && item.remoteVector.size == queryRemoteVec.size) {
                 cosineSimilarity(queryRemoteVec, item.remoteVector).coerceAtLeast(0f)
-            } else {
-                cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
-            }
-            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap)
+            } else null
+            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, avgDocLen)
             val entityHit = if (mentionedEntities.any { ent ->
                 item.normalizedSubject.contains(ent) || (item.normalizedSubject.length >= 3 && ent.contains(item.normalizedSubject))
             }) 1.0f else 0f
@@ -565,16 +568,17 @@ class MemoryRetrievalManager(
                 TurkishTextAnalyzer.extractStems(item.normalizedKey).any { queryStems.contains(it) })
             ) 0.45f else 0f
 
-            // Temporal Boost (Section 4.2): Elevate matching EPHEMERAL/ARC records for "Bana dünkinden yap" etc.
+            // Temporal Boost (Section 4.2): RRF-calibrated (+1.5 RRF units) so matching EPHEMERAL/ARC
+            // records rise cleanly without swamping semantic/lexical ordering among multiple matches.
             val matchesTemporalWindow = temporalTarget != null && !isDisputed &&
                 (meta.tier == MemoryTier.EPHEMERAL || meta.tier == MemoryTier.ARC) && (
                     meta.createdStoryDay in temporalTarget.targetStoryDayMin..temporalTarget.targetStoryDayMax ||
                         (currentStoryDay <= 1L && meta.tier == MemoryTier.EPHEMERAL && meta.createdStoryDay <= 1L)
                 )
-            val temporalBoost = if (matchesTemporalWindow) 0.55f else 0f
+            val temporalBoost = if (matchesTemporalWindow) MemoryEngine.TEMPORAL_BOOST else 0f
 
             val entityChannel = entityHit + keyHit + (if (fact.userCorrected) 0.55f else 0f) +
-                (if (matchesTemporalWindow) 2.50f else 0f) - (if (isDisputed) 0.90f else 0f)
+                (if (matchesTemporalWindow) 1.25f else 0f) - (if (isDisputed) 0.90f else 0f)
             val extraBoost = (if (fact.userCorrected) 0.0045f else 0f) +
                 temporalBoost +
                 (when (baseConfidence) {
@@ -584,7 +588,8 @@ class MemoryRetrievalManager(
                 }) + recencyBoost(fact.lastConfirmedAt, now, 168.0) * 0.0018f
 
             // Direct exact-fact confidence (used exclusively by Routing Durum B)
-            val directConf = ((sem * 0.42f) + (lex.coerceAtMost(1f) * 0.44f) +
+            val effectiveSem = remoteSem ?: localSem
+            val directConf = ((effectiveSem * 0.42f) + (lex.coerceAtMost(1f) * 0.44f) +
                 (if (entityHit > 0f) 0.16f else 0f) + (if (keyHit > 0f) 0.18f else 0f) -
                 (if (isDisputed) 0.50f else 0f)).coerceIn(0f, 1f)
 
@@ -592,7 +597,8 @@ class MemoryRetrievalManager(
                 HybridCandidate.FactCand(
                     fact = fact,
                     currentStoryDay = currentStoryDay,
-                    semScore = sem,
+                    semScore = localSem,
+                    remoteSemScore = remoteSem,
                     lexScore = lex,
                     entityScore = entityChannel,
                     extraBoost = extraBoost,
@@ -605,52 +611,71 @@ class MemoryRetrievalManager(
         // Channel scoring: Living Memories (Events)
         for (item in index.events) {
             val ev = item.entity
-            val sem = if (queryRemoteVec != null && item.remoteVector != null && item.remoteVector.size == queryRemoteVec.size) {
+            val localSem = cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
+            val remoteSem = if (queryRemoteVec != null && item.remoteVector != null && item.remoteVector.size == queryRemoteVec.size) {
                 cosineSimilarity(queryRemoteVec, item.remoteVector).coerceAtLeast(0f)
-            } else {
-                cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
-            }
-            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap)
+            } else null
+            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, avgDocLen)
             val entityHit = if (
                 (item.normalizedPov.length >= 3 && mentionedEntities.any { item.normalizedPov.contains(it) || it.contains(item.normalizedPov) }) ||
                 mentionedEntities.any { ent -> ent.length >= 3 && item.normalizedText.contains(ent) }
             ) 0.95f else 0f
+            val matchesEventTemporal = temporalTarget != null && ev.storyDayIndex > 0L &&
+                ev.storyDayIndex in temporalTarget.targetStoryDayMin..temporalTarget.targetStoryDayMax
             val importanceNorm = ev.importanceScore.coerceIn(10, 100) / 100f
-            val entityChannel = entityHit + importanceNorm * 0.65f + (if (item.parsed.isStructured) 0.20f else 0f)
-            val extraBoost = importanceNorm * 0.0035f + recencyBoost(ev.timestamp, now, 120.0) * 0.0015f
+            val entityChannel = entityHit + importanceNorm * 0.65f +
+                (if (item.parsed.isStructured) 0.20f else 0f) +
+                (if (matchesEventTemporal) 0.90f else 0f)
+            val extraBoost = importanceNorm * 0.0035f +
+                (if (matchesEventTemporal) MemoryEngine.TEMPORAL_BOOST * 0.85f else 0f) +
+                recencyBoost(ev.timestamp, now, 120.0) * 0.0015f
 
-            candidates.add(HybridCandidate.EventCand(ev, sem, lex, entityChannel, extraBoost))
+            candidates.add(
+                HybridCandidate.EventCand(
+                    event = ev,
+                    semScore = localSem,
+                    remoteSemScore = remoteSem,
+                    lexScore = lex,
+                    entityScore = entityChannel,
+                    extraBoost = extraBoost,
+                    isTemporalBoosted = matchesEventTemporal
+                )
+            )
         }
 
         // Channel scoring: Scene Checkpoints
         for (item in index.checkpoints) {
             val cp = item.entity
-            val sem = if (queryRemoteVec != null && item.remoteVector != null && item.remoteVector.size == queryRemoteVec.size) {
+            val localSem = cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
+            val remoteSem = if (queryRemoteVec != null && item.remoteVector != null && item.remoteVector.size == queryRemoteVec.size) {
                 cosineSimilarity(queryRemoteVec, item.remoteVector).coerceAtLeast(0f)
-            } else {
-                cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
-            }
-            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap)
+            } else null
+            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, avgDocLen)
             val entityHit = if (mentionedEntities.any { ent -> ent.length >= 3 && item.normalizedText.contains(ent) }) 0.70f else 0f
             val extraBoost = recencyBoost(cp.timestamp, now, 168.0) * 0.0012f
-            candidates.add(HybridCandidate.CheckpointCand(cp, sem, lex, entityHit, extraBoost))
+            candidates.add(HybridCandidate.CheckpointCand(cp, localSem, remoteSem, lex, entityHit, extraBoost))
         }
 
         // Channel scoring: Archive Fragments
         for (item in index.fragments) {
             val frag = item.entity
-            val sem = cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
-            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap)
+            val localSem = cosineSimilarity(queryLocalVec, item.localVector).coerceAtLeast(0f)
+            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, avgDocLen)
             val entityHit = if (mentionedEntities.any { ent -> ent.length >= 3 && item.normalizedText.contains(ent) }) 0.55f else 0f
             val extraBoost = recencyBoost(frag.createdAt, now, 96.0) * 0.0010f
-            candidates.add(HybridCandidate.FragmentCand(frag, sem, lex, entityHit, extraBoost))
+            candidates.add(HybridCandidate.FragmentCand(frag, localSem, lex, entityHit, extraBoost))
         }
 
         if (candidates.isEmpty()) return emptyList()
 
-        // Compute independent ranks for each of the 3 RRF channels
+        // Compute independent ranks for each RRF channel (never mixing local 256d and remote 768d spaces)
         val semRanks = HashMap<String, Int>(candidates.size)
         candidates.sortedByDescending { it.semScore }.forEachIndexed { i, c -> semRanks[c.microId] = i + 1 }
+
+        val remoteDenseRanks = HashMap<String, Int>()
+        candidates.filter { it.remoteSemScore != null }
+            .sortedByDescending { it.remoteSemScore!! }
+            .forEachIndexed { i, c -> remoteDenseRanks[c.microId] = i + 1 }
 
         val lexRanks = HashMap<String, Int>(candidates.size)
         candidates.sortedByDescending { it.lexScore }.forEachIndexed { i, c -> lexRanks[c.microId] = i + 1 }
@@ -663,7 +688,8 @@ class MemoryRetrievalManager(
                 semRank = semRanks[c.microId] ?: candidates.size,
                 lexRank = lexRanks[c.microId] ?: candidates.size,
                 entityRank = entRanks[c.microId] ?: candidates.size,
-                boost = c.extraBoost
+                boost = c.extraBoost,
+                remoteDenseRank = remoteDenseRanks[c.microId]
             )
         }
 
@@ -1083,7 +1109,7 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
 
         index.fragments.map { item ->
             val sem = cosineSimilarity(queryVec, item.localVector).coerceAtLeast(0f)
-            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap)
+            val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, index.avgFragmentDocLen)
             val rec = recencyBoost(item.entity.createdAt, now, halfLifeHours = 96.0) * 0.10f
             Pair(item.entity, sem * 0.52f + lex * 0.38f + rec)
         }

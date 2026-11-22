@@ -6,9 +6,13 @@
 -keepattributes *Annotation*, Signature, InnerClasses, EnclosingMethod, SourceFile, LineNumberTable
 -keep class kotlin.Metadata { *; }
 
-# Keep all app data entities, DTOs, API models, and JSON-serialized classes
+# Keep all app data entities, DTOs, API models, book engine models, and JSON-serialized classes
 -keep class com.example.data.** { *; }
+-keep class com.example.book.** { *; }
 -keep class com.example.ui.viewmodel.** { *; }
+-keep class com.example.ui.screens.cosmic3d.** { *; }
+-keep class com.example.R$drawable { *; }
+-keep class com.example.R$raw { *; }
 
 # Keep Room database, DAOs, and generated implementations
 -keep class * extends androidx.room.RoomDatabase

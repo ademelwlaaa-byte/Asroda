@@ -1,0 +1,162 @@
+name: Build Signed Release APK
+
+on:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: "GitHub Release oluştur ve APK ekle"
+        type: boolean
+        default: false
+      release_tag:
+        description: "Release etiketi (boş bırakılırsa build.gradle.kts versionName kullanılır, örn. v3.1)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-release:
+    name: Build & Sign Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Accept Android SDK Licenses & Ensure SDK 36.1
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36.1" "build-tools;36.0.0"
+
+      - name: Setup Gradle (Cached)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Ensure Gradle Wrapper Executable & Required Jars
+        run: |
+          chmod +x ./gradlew
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "ERROR: gradle/wrapper/gradle-wrapper.jar missing!"
+            exit 1
+          fi
+          if [ ! -f app/libs/precompiled_missing.jar ]; then
+            echo "ERROR: app/libs/precompiled_missing.jar missing!"
+            exit 1
+          fi
+
+      - name: Prepare Safe .env File
+        run: |
+          if [ -n "${{ secrets.GEMINI_API_KEY }}" ]; then
+            echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" > .env
+          else
+            echo "GEMINI_API_KEY=RUNTIME_CONFIGURED_IN_APP_SETTINGS" > .env
+          fi
+          if [ ! -f .env.example ]; then
+            echo "GEMINI_API_KEY=YOUR_API_KEY_HERE" > .env.example
+          fi
+
+      - name: Decode Release Keystore from Encrypted Secrets
+        id: keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
+            echo "::error::Missing required signing secrets (KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD)!"
+            exit 1
+          fi
+          KS_PATH="$RUNNER_TEMP/asroda-release.keystore"
+          echo "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > "$KS_PATH"
+          echo "KEYSTORE_PATH=$KS_PATH" >> "$GITHUB_ENV"
+          echo "Release keystore decoded cleanly to runner temp storage."
+
+      - name: Extract App Version Metadata
+        id: version
+        run: |
+          VER_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n 1)
+          VER_CODE=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts | head -n 1)
+          VER_NAME="${VER_NAME:-1.0}"
+          VER_CODE="${VER_CODE:-1}"
+          echo "version_name=$VER_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VER_CODE" >> "$GITHUB_OUTPUT"
+          echo "Detected Asroda v${VER_NAME} (versionCode=${VER_CODE})"
+
+      - name: Build R8-Optimized Signed Release APK
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify APK Signature (V1 + V2 + V3) & Prepare Output Name
+        id: apk
+        run: |
+          SRC_APK="app/build/outputs/apk/release/app-release.apk"
+          OUT_NAME="Asroda-v${{ steps.version.outputs.version_name }}-release.apk"
+          OUT_DIR="$RUNNER_TEMP/release-output"
+          mkdir -p "$OUT_DIR"
+          cp "$SRC_APK" "$OUT_DIR/$OUT_NAME"
+
+          APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
+          "$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$OUT_NAME"
+
+          APK_SIZE=$(du -h "$OUT_DIR/$OUT_NAME" | cut -f1)
+          echo "apk_path=$OUT_DIR/$OUT_NAME" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$OUT_NAME" >> "$GITHUB_OUTPUT"
+          echo "apk_size=$APK_SIZE" >> "$GITHUB_OUTPUT"
+          echo "Signed Release APK Ready: $OUT_NAME ($APK_SIZE)"
+
+      - name: Clean Up Temporary Keystore
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/asroda-release.keystore"
+
+      - name: Upload Signed Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.apk.outputs.apk_name }}
+          path: ${{ steps.apk.outputs.apk_path }}
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish GitHub Release (on v* tag or manual Release toggle)
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.create_release == true)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${{ inputs.release_tag }}" ]; then
+            TAG="${{ inputs.release_tag }}"
+          else
+            TAG="v${{ steps.version.outputs.version_name }}"
+          fi
+
+          TITLE="Asroda ${TAG} (versionCode ${{ steps.version.outputs.version_code }})"
+          NOTES="İmzalı & R8 optimize edilmiş **Asroda ${TAG}** Release APK (${{ steps.apk.outputs.apk_size }}).\n\n- **Uygulama Kimliği:** \`com.aistudio.emochi.uczaob\`\n- **İmza:** V1 + V2 + V3 Release Keystore (\`Asroda Studio\`)\n- Önceki imzalı sürümlerin üzerine kayıtlar silinmeden doğrudan kurulabilir."
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${{ steps.apk.outputs.apk_path }}" --clobber
+          else
+            gh release create "$TAG" "${{ steps.apk.outputs.apk_path }}" \
+              --title "$TITLE" \
+              --notes "$(printf '%b' "$NOTES")" \
+              --latest
+          fi

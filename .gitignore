@@ -14,5 +14,15 @@
 .externalNativeBuild
 .cxx
 local.properties
+secrets.properties
 .env
+*.keystore
+*.jks
 debug.keystore
+asroda-release.keystore
+/app/build
+/build/
+/.idea/
+*.apk
+*.aab
+Bolumsonu.mp3

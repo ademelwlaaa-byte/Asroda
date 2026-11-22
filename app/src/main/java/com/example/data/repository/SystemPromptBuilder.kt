@@ -57,10 +57,24 @@ object SystemPromptBuilder {
         val literaryFramingMode: Boolean = false
     )
 
+    private const val MAX_PROMPT_TOKENS_STANDARD = 6_500
+    private const val MAX_PROMPT_TOKENS_COMPACT = 3_200
+
+    /** Fast Turkish/UTF-8 token estimator (~3.5 chars per token). */
+    fun estimateTokens(text: String): Int =
+        if (text.isEmpty()) 0 else maxOf(1, (text.length / 3.5).toInt())
+
+    private fun trimToTokenLimit(text: String, maxTokens: Int): String {
+        val trimmed = text.trim()
+        val maxChars = (maxTokens * 3.5).toInt().coerceAtLeast(80)
+        return if (trimmed.length <= maxChars) trimmed else trimmed.take(maxChars - 1).trimEnd() + "…"
+    }
+
     fun build(input: PromptBuildInput): String {
         val bot = input.bot
         val settings = input.settings
         val isAutoCompact = input.compactMode || input.modelContextWindowTokens <= 32_768
+        val maxPromptTokens = if (isAutoCompact) MAX_PROMPT_TOKENS_COMPACT else MAX_PROMPT_TOKENS_STANDARD
         val sb = StringBuilder(4096)
 
         val aiTitle = if (bot.mode == "universe") {
@@ -80,21 +94,22 @@ object SystemPromptBuilder {
         sb.appendLine()
         sb.appendLine("Sen '$aiTitle' rolündesin ve '$userTitle' ile Türkçe interaktif bir roman / rol yapma kurgusunun içindesin.")
 
+        val sectionCap = if (isAutoCompact) 420 else 900
         if (bot.aiPersonality.isNotBlank()) {
             sb.appendLine("\n[KARAKTER KİŞİLİĞİ, PSİKOLOJİSİ VE GEÇMİŞİ]")
-            sb.appendLine(bot.aiPersonality.trim())
+            sb.appendLine(trimToTokenLimit(bot.aiPersonality, sectionCap))
         }
         if (bot.scenario.isNotBlank()) {
             sb.appendLine("\n[SAHNE VE SENARYO]")
-            sb.appendLine(bot.scenario.trim())
+            sb.appendLine(trimToTokenLimit(bot.scenario, sectionCap))
         }
         if (bot.pinnedMemory.isNotBlank()) {
             sb.appendLine("\n[SABİTLENMİŞ HAFIZA / EVREN KURALLARI]")
-            sb.appendLine(bot.pinnedMemory.trim())
+            sb.appendLine(trimToTokenLimit(bot.pinnedMemory, if (isAutoCompact) 350 else 750))
         }
         if (bot.userCharDesc.isNotBlank()) {
             sb.appendLine("\n[KULLANICI KARAKTERİ: $userTitle]")
-            sb.appendLine(bot.userCharDesc.trim())
+            sb.appendLine(trimToTokenLimit(bot.userCharDesc, if (isAutoCompact) 260 else 500))
         }
 
         // ═══════════════════════════════════════════════════════════════════════
@@ -144,31 +159,34 @@ object SystemPromptBuilder {
         } catch (_: Exception) {}
 
         try {
-            val ws = WorldState.fromJson(bot.worldAtmosphere)
-            val hasWorldInfo = ws.meso.currentLocation.isNotBlank() ||
-                ws.meso.locationPersistentNotes.isNotBlank() ||
-                ws.micro.sceneMood.isNotBlank() ||
-                ws.macro.eraRules.isNotBlank()
-            if (hasWorldInfo || bot.mode == "universe") {
-                sb.appendLine("\n[SAHNE MEKANI VE EVREN ATMOSFERİ]")
-                if (ws.meso.currentLocation.isNotBlank()) {
-                    sb.appendLine("- Mevcut Mekan: ${ws.meso.currentLocation}")
-                }
-                if (ws.micro.sceneMood.isNotBlank()) {
-                    sb.appendLine("- Sahne Atmosferi / Olay: ${ws.micro.sceneMood} (Gerilim: ${ws.micro.sceneTension})")
-                }
-                if (ws.meso.locationPersistentNotes.isNotBlank()) {
-                    sb.appendLine("- Mekan Detayları: ${ws.meso.locationPersistentNotes}")
-                }
-                if (ws.macro.eraRules.isNotBlank()) {
-                    sb.appendLine("- Evren / Dönem Kuralları: ${ws.macro.eraRules}")
+            val rawWorld = bot.worldAtmosphere.trim()
+            if (rawWorld.isNotBlank() || bot.mode == "universe") {
+                val ws = WorldState.fromJson(rawWorld)
+                val isDefaultStub = rawWorld.isBlank() &&
+                    ws.meso.currentLocation == "Oda" &&
+                    ws.micro.sceneMood == "sakin" &&
+                    ws.meso.locationPersistentNotes.isBlank()
+                if (!isDefaultStub || bot.mode == "universe") {
+                    sb.appendLine("\n[SAHNE MEKANI VE EVREN ATMOSFERİ]")
+                    if (ws.meso.currentLocation.isNotBlank()) {
+                        sb.appendLine("- Mevcut Mekan: ${ws.meso.currentLocation}")
+                    }
+                    if (ws.micro.sceneMood.isNotBlank()) {
+                        sb.appendLine("- Sahne Atmosferi / Olay: ${ws.micro.sceneMood} (Gerilim: ${ws.micro.sceneTension})")
+                    }
+                    if (ws.meso.locationPersistentNotes.isNotBlank()) {
+                        sb.appendLine("- Mekan Detayları: ${ws.meso.locationPersistentNotes}")
+                    }
+                    if (ws.macro.eraRules.isNotBlank()) {
+                        sb.appendLine("- Evren / Dönem Kuralları: ${ws.macro.eraRules}")
+                    }
                 }
             }
         } catch (_: Exception) {}
 
         if (bot.storyNotes.isNotBlank()) {
             sb.appendLine("\n[GÜNCEL HİKAYE DURUMU VE SAHNE NOTLARI]")
-            sb.appendLine(bot.storyNotes.trim())
+            sb.appendLine(trimToTokenLimit(bot.storyNotes, if (isAutoCompact) 260 else 550))
         }
 
         if (!input.consistencyNote.isNullOrBlank()) {
@@ -187,13 +205,19 @@ object SystemPromptBuilder {
         val fragmentLimit = if (isAutoCompact) 2 else 5
         val starredLimit = if (isAutoCompact) 2 else 4
 
+        // Reserve room for P3 (rules ~480 tok) + P5 (state contract ~85 tok) + closing notice
+        val p4TokenCeiling = (maxPromptTokens - 650).coerceAtLeast(1200)
+        fun hasBudgetFor(line: String): Boolean = estimateTokens(sb.toString()) + estimateTokens(line) <= p4TokenCeiling
+
         if (input.relevantFacts.isNotEmpty()) {
             sb.appendLine("\n[NEURAL VAULT — KESİN HAFIZA (Değişirse #ID ile güncelle/sil; ★ kullanıcı kilididir)]")
             input.relevantFacts.take(factLimit).forEach { f ->
-                sb.appendLine(MemoryEngine.formatFactForPrompt(f, bot.storyDayCounter))
+                val line = MemoryEngine.formatFactForPrompt(f, bot.storyDayCounter)
+                if (hasBudgetFor(line)) sb.appendLine(line)
             }
             if (!isAutoCompact) {
-                sb.appendLine("Not: Araç desteği yoksa kalıcı bilgi değişiminde yanıt sonuna [ACTIVE_MEMORY_CALL: save_memory(content=\"...\", category=\"fact\", key=\"...\", subject=\"...\")|update_memory(memoryId=\"#ID\", newContent=\"...\")|delete_memory(memoryId=\"#ID\", reason=\"...\")] ekleyebilirsin.")
+                val toolHint = "Not: Araç desteği yoksa kalıcı bilgi değişiminde yanıt sonuna [ACTIVE_MEMORY_CALL: save_memory(content=\"...\", category=\"fact\", key=\"...\", subject=\"...\")|update_memory(memoryId=\"#ID\", newContent=\"...\")|delete_memory(memoryId=\"#ID\", reason=\"...\")] ekleyebilirsin."
+                if (hasBudgetFor(toolHint)) sb.appendLine(toolHint)
             }
         }
         if (input.starredAnchorMessages.isNotEmpty()) {
@@ -202,26 +226,45 @@ object SystemPromptBuilder {
                 val speaker = if (starred.role == "user") userTitle else aiTitle
                 val snippet = starred.text.replace(Regex("\\s+"), " ").trim().take(210)
                 if (snippet.isNotBlank()) {
-                    sb.appendLine("- ★ [$speaker]: $snippet")
+                    val line = "- ★ [$speaker]: $snippet"
+                    if (hasBudgetFor(line)) sb.appendLine(line)
                 }
             }
         }
         if (input.relevantEvents.isNotEmpty()) {
             sb.appendLine("\n[YAŞANAN ANILAR — KARAKTERLERİN GÖZÜNDEN VE SÖYLENMEMİŞ İÇ SESLERİ]")
             input.relevantEvents.take(eventLimit).forEach { ev ->
-                sb.appendLine(LivingMemoryCodec.formatForPrompt(ev, bot.storyDayCounter))
+                val line = LivingMemoryCodec.formatForPrompt(ev, bot.storyDayCounter)
+                if (hasBudgetFor(line)) sb.appendLine(line)
             }
         }
         if (input.recentCheckpoints.isNotEmpty()) {
             sb.appendLine("\n[GEÇMİŞ SAHNE ZİNCİRİ (UZUN DÖNEM HAFIZA)]")
             input.recentCheckpoints.take(checkpointLimit).forEach { cp ->
-                sb.appendLine("- ${cp.summaryText}")
+                val line = "- ${cp.summaryText}"
+                if (hasBudgetFor(line)) sb.appendLine(line)
             }
         }
         if (input.relevantFragments.isNotEmpty()) {
             sb.appendLine("\n[İLGİLİ GEÇMİŞ HAFIZA KESİTLERİ]")
             input.relevantFragments.take(fragmentLimit).forEach { frag ->
-                sb.appendLine("- ${frag.content}")
+                val line = "- ${frag.content}"
+                if (hasBudgetFor(line)) sb.appendLine(line)
+            }
+        }
+        if (input.registeredEntities.isNotEmpty()) {
+            val entityLimit = if (isAutoCompact) 4 else 8
+            val lines = input.registeredEntities.take(entityLimit).mapNotNull { ent ->
+                val name = ent.entityName.trim()
+                if (name.isBlank()) null else {
+                    val desc = ent.description.trim()
+                    if (desc.isNotBlank()) "- $name (${ent.entityType.ifBlank { "varlık" }}): ${desc.take(120)}"
+                    else "- $name (${ent.entityType.ifBlank { "varlık" }})"
+                }
+            }
+            if (lines.isNotEmpty() && hasBudgetFor(lines.first())) {
+                sb.appendLine("\n[KAYITLI ÖNEMLİ VARLIKLAR]")
+                lines.forEach { if (hasBudgetFor(it)) sb.appendLine(it) }
             }
         }
 
@@ -303,11 +346,13 @@ object SystemPromptBuilder {
         sb.appendLine("   - Önceki yanıtlarındaki aynı açılış cümlelerini ve klişe jestleri tekrarlama; her yanıt sahneyi psikolojik veya dramatik olarak bir adım ileri taşısın.")
 
         // ═══════════════════════════════════════════════════════════════════════
-        // P5 — INVISIBLE STATE CONTRACT
+        // P5 — INVISIBLE STATE CONTRACT (V3 Parser-Aligned, Active Even in Compact Mode)
         // ═══════════════════════════════════════════════════════════════════════
-        if (!input.compactMode) {
-            sb.appendLine("\n[GİZLİ DURUM SÖZLEŞMESİ — KULLANICIYA ASLA SÖZ ETME]")
-            sb.appendLine("Anlatım bittikten sonra en alt satıra tek satırlık gizli duygu/sahne güncellemesi ekle: [[STATE_JSON {\"mood\":\"<ruh_hali>\",\"intensity\":5,\"affectionDelta\":0,\"trustDelta\":0,\"tension\":\"<düşük|orta|yüksek>\"}]] (bu etiketten diyalogda asla bahsetme).")
+        sb.appendLine("\n[GİZLİ DURUM SÖZLEŞMESİ — KULLANICIYA ASLA SÖZ ETME]")
+        if (input.compactMode) {
+            sb.appendLine("Yanıt sonuna tek satır gizli durum ekle: [[STATE_JSON {\"dominant_emotion\":\"<duygu>\",\"delta\":{\"value\":0,\"reason\":\"<kısa_neden>\"}}]]")
+        } else {
+            sb.appendLine("Anlatım bittikten sonra en alt satıra tek satırlık gizli duygu/sahne güncellemesi ekle: [[STATE_JSON {\"dominant_emotion\":\"<duygu>\",\"delta\":{\"value\":0,\"reason\":\"<kısa_neden>\",\"context\":{\"setting\":\"private|public\",\"mode\":\"casual|flirt|deep|conflict\",\"tension\":\"none|conflict|crisis\"}},\"suppressed_emotion\":\"\"}]] (bu etiketten diyalogda asla bahsetme).")
         }
 
         sb.appendLine()

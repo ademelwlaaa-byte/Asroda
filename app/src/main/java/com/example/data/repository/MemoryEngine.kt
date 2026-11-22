@@ -138,15 +138,67 @@ object TurkishTextAnalyzer {
     }
 
     /**
-     * Computes normalized token-level Jaccard overlap between two texts (useful for copy-paste & dedup checks).
+     * Computes the stem-level overlap coefficient |A∩B| / min(|A|,|B|) between two texts
+     * (useful for copy-paste & dedup checks).
      */
-    fun stemOverlapRatio(sourceText: String, candidateText: String): Float {
-        val s1 = extractStems(sourceText).toSet()
-        val s2 = extractStems(candidateText).toSet()
+    fun stemOverlapRatio(sourceText: String, candidateText: String): Float =
+        overlapCoefficient(extractStems(sourceText).toSet(), extractStems(candidateText).toSet())
+
+    /** Overlap coefficient on precomputed stem sets (avoids re-tokenizing in hot loops). */
+    fun overlapCoefficient(s1: Set<String>, s2: Set<String>): Float {
         if (s1.isEmpty() || s2.isEmpty()) return 0f
-        val intersection = s1.intersect(s2).size
-        return intersection.toFloat() / minOf(s1.size, s2.size).toFloat()
+        val (small, large) = if (s1.size <= s2.size) s1 to s2 else s2 to s1
+        var intersection = 0
+        for (s in small) if (large.contains(s)) intersection++
+        return intersection.toFloat() / small.size.toFloat()
     }
+
+    /** Splits normalized text into raw word tokens (apostrophe suffix kept, e.g. "roma'da"). */
+    fun tokenize(normalizedText: String): List<String> =
+        normalizedText.split(Regex("""[^\p{L}\p{N}']+""")).filter { it.isNotBlank() }
+
+    /**
+     * Unicode-safe word-start prefix match. Unlike `String.contains`, "öp" does NOT match "köpek"
+     * and "kan" does NOT match "akan". Tokens starting with any [exceptions] prefix are ignored
+     * (e.g. "kan" vs "kanepe"). Multi-word terms are matched as phrases at a word start.
+     */
+    fun containsWordPrefix(normalizedText: String, term: String, exceptions: Collection<String> = emptyList()): Boolean {
+        if (term.isBlank() || normalizedText.isBlank()) return false
+        if (term.contains(' ')) {
+            var from = 0
+            while (true) {
+                val idx = normalizedText.indexOf(term, from)
+                if (idx < 0) return false
+                val prevOk = idx == 0 || !normalizedText[idx - 1].isLetterOrDigit()
+                if (prevOk) return true
+                from = idx + 1
+            }
+        }
+        return tokenize(normalizedText).any { tok ->
+            val bare = tok.trim('\'')
+            bare.startsWith(term) && exceptions.none { bare.startsWith(it) }
+        }
+    }
+
+    /**
+     * Matches a noun [term] as a whole word optionally followed by a Turkish case suffix
+     * ("roma", "roma'da", "romada", "romalı") but NOT unrelated words sharing the prefix ("romantik").
+     */
+    fun containsNounWithCaseSuffix(normalizedText: String, term: String): Boolean {
+        if (term.isBlank()) return false
+        if (term.contains(' ')) return containsWordPrefix(normalizedText, term)
+        return tokenize(normalizedText).any { tok ->
+            if (!tok.startsWith(term)) return@any false
+            val rest = tok.substring(term.length)
+            rest.isEmpty() || rest.startsWith('\'') || rest in NOUN_CASE_SUFFIXES
+        }
+    }
+
+    private val NOUN_CASE_SUFFIXES: Set<String> = setOf(
+        "da", "de", "ta", "te", "dan", "den", "tan", "ten", "ya", "ye", "a", "e",
+        "yı", "yi", "yu", "yü", "ı", "i", "u", "ü", "nın", "nin", "nun", "nün", "ın", "in", "un", "ün",
+        "lı", "li", "lu", "lü", "daki", "deki", "taki", "teki", "yla", "yle", "la", "le"
+    )
 }
 
 /**
@@ -484,21 +536,43 @@ data class TemporalTarget(
 )
 
 object RelativeTimeCueResolver {
-    private val YESTERDAY_REGEX = Regex("""\b(dün|dünkü|dünki|dünkinden|dünkü\w*|dünki\w*)\b""")
-    private val RECENT_DAYS_REGEX = Regex("""\b(evvelsi\s+gün|iki\s+gün\s+önce|geçen\s+gün|geçen\s+günkü|geçen\s+seferki|geçen\s+sefer)\b""")
-    private val SAME_DAY_OR_ANAPHORIC_REGEX = Regex("""\b(sabahki|az\s+önceki|bugünkü|deminki|aynısından|aynısı|ondan\s+yap|ondan\s+getir|yine\s+ondan)\b""")
+    // Explicit Unicode word boundaries: `\b` is ASCII-only on modern JDKs (19+) and silently fails
+    // after Turkish letters (e.g. "aynısı", "dünkü"), so we never rely on it here.
+    private const val WB_L = """(?<![\p{L}\p{N}])"""
+    private const val WB_R = """(?![\p{L}\p{N}])"""
+
+    // "dün", "dünkü", "dünkünden", "dünkinden", "dünden", "dünü" — but NEVER "dünya" / "Dündar".
+    private val YESTERDAY_REGEX = Regex("""${WB_L}dün(kü(n(ü|den|e|de))?|ki(n(i|den|e|de))?|den|e|ü)?$WB_R""")
+    private val TWO_DAYS_AGO_REGEX = Regex("""${WB_L}(evvelsi\s+gün|evvelki\s+gün|önceki\s+gün)\p{L}*$WB_R""")
+    private val RECENT_DAYS_REGEX = Regex("""${WB_L}(geçen\s+gün|geçen\s+sefer|geçenlerde|geçen\s+akşam|geçen\s+gece)\p{L}*$WB_R""")
+    private val LAST_WEEK_REGEX = Regex("""${WB_L}(geçen\s+hafta|geçtiğimiz\s+hafta|hafta\s+başında)\p{L}*$WB_R""")
+    private val N_DAYS_AGO_REGEX = Regex("""${WB_L}(\d{1,2}|bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on)\s+gün\s+(önce|evvel)\p{L}*$WB_R""")
+    private val SAME_DAY_OR_ANAPHORIC_REGEX = Regex(
+        """${WB_L}(sabahki|öğlenki|akşamki|az\s+önceki|biraz\s+önceki|bugünkü|deminki|aynısından|aynısını|aynısı|ondan\s+yap|ondan\s+getir|yine\s+ondan|bir\s+daha\s+ondan)$WB_R"""
+    )
+
+    private val NUMBER_WORDS = mapOf(
+        "bir" to 1, "iki" to 2, "üç" to 3, "dört" to 4, "beş" to 5,
+        "altı" to 6, "yedi" to 7, "sekiz" to 8, "dokuz" to 9, "on" to 10
+    )
 
     fun resolveTemporalTarget(userText: String, currentStoryDay: Long): TemporalTarget? {
         if (userText.isBlank()) return null
         val t = TurkishTextAnalyzer.normalize(userText)
         val safeDay = currentStoryDay.coerceAtLeast(1L)
+        fun day(offset: Long) = (safeDay - offset).coerceAtLeast(1L)
+
+        N_DAYS_AGO_REGEX.find(t)?.let { m ->
+            val raw = m.groupValues[1]
+            val n = (raw.toIntOrNull() ?: NUMBER_WORDS[raw] ?: 0).toLong()
+            if (n in 1L..60L) return TemporalTarget(day(n + 1L), day((n - 1L).coerceAtLeast(1L)), true)
+        }
         return when {
-            YESTERDAY_REGEX.containsMatchIn(t) ->
-                TemporalTarget((safeDay - 1L).coerceAtLeast(1L), (safeDay - 1L).coerceAtLeast(1L), true)
-            RECENT_DAYS_REGEX.containsMatchIn(t) ->
-                TemporalTarget((safeDay - 3L).coerceAtLeast(1L), (safeDay - 1L).coerceAtLeast(1L), true)
-            SAME_DAY_OR_ANAPHORIC_REGEX.containsMatchIn(t) ->
-                TemporalTarget((safeDay - 1L).coerceAtLeast(1L), safeDay, true)
+            YESTERDAY_REGEX.containsMatchIn(t) -> TemporalTarget(day(1L), day(1L), true)
+            TWO_DAYS_AGO_REGEX.containsMatchIn(t) -> TemporalTarget(day(3L), day(2L), true)
+            LAST_WEEK_REGEX.containsMatchIn(t) -> TemporalTarget(day(10L), day(4L), true)
+            RECENT_DAYS_REGEX.containsMatchIn(t) -> TemporalTarget(day(3L), day(1L), true)
+            SAME_DAY_OR_ANAPHORIC_REGEX.containsMatchIn(t) -> TemporalTarget(day(1L), safeDay, true)
             else -> null
         }
     }
@@ -518,15 +592,45 @@ object MemoryEngine {
         CO_PILOTED_DEEP("Ortak Hibrit + AI • Derin")
     }
 
+    /** RRF smoothing constant (Cormack et al. 2009). */
+    const val RRF_K = 60f
+
+    /**
+     * One "RRF unit" = the score a single channel awards to its #1 ranked document (1 / (k + 1)).
+     * EVERY additive boost in the ranker is expressed in these units so no boost can silently
+     * swamp the rank-fusion signal (previously a raw +0.55 boost was ~20x the whole RRF score).
+     */
+    const val RRF_UNIT = 1f / (RRF_K + 1f)
+
+    /** Temporal-cue boost ("Bana dünkinden yap"): ≈ 1.5 top-ranks. Strong, but relevance still orders matches. */
+    const val TEMPORAL_BOOST = RRF_UNIT * 1.5f
+
+    /** Max rank in the optional remote dense channel that still contributes (classic RRF depth cutoff). */
+    const val REMOTE_DENSE_RANK_CUTOFF = 20
+
     /**
      * Reciprocal Rank Fusion (k = 60) eliminating raw score scale mismatches across
      * Semantic, Morphological BM25, and Entity/Salience channels.
+     *
+     * [remoteDenseRank] is an OPTIONAL 4th channel ranked only among records that carry a
+     * remote (e.g. Gemini 768-dim) embedding. It never mixes vector spaces inside one sort:
+     * the local channel always compares 256-dim vectors with 256-dim vectors. Records outside
+     * the remote list (or beyond [REMOTE_DENSE_RANK_CUTOFF]) simply receive no contribution.
      */
-    fun rrfScore(semRank: Int, lexRank: Int, entityRank: Int, boost: Float = 0f): Float {
-        val k = 60f
-        return (1f / (k + semRank.coerceAtLeast(1))) * 1.15f +
-            (1f / (k + lexRank.coerceAtLeast(1))) * 1.00f +
-            (1f / (k + entityRank.coerceAtLeast(1))) * 0.85f +
+    fun rrfScore(
+        semRank: Int,
+        lexRank: Int,
+        entityRank: Int,
+        boost: Float = 0f,
+        remoteDenseRank: Int? = null
+    ): Float {
+        val remote = if (remoteDenseRank != null && remoteDenseRank in 1..REMOTE_DENSE_RANK_CUTOFF) {
+            (1f / (RRF_K + remoteDenseRank)) * 0.60f
+        } else 0f
+        return (1f / (RRF_K + semRank.coerceAtLeast(1))) * 1.15f +
+            (1f / (RRF_K + lexRank.coerceAtLeast(1))) * 1.00f +
+            (1f / (RRF_K + entityRank.coerceAtLeast(1))) * 0.85f +
+            remote +
             boost
     }
 
@@ -589,6 +693,28 @@ object MemoryEngine {
     }
 
     /**
+     * Contextual significance markers, matched at WORD START (never as raw substrings) so that
+     * "öp" no longer fires on "köpek", "kan" on "akan"/"kanepe", "kod" on "kodaman", etc.
+     */
+    private val CONTEXTUAL_SIGNIFICANCE_MARKERS: List<String> = listOf(
+        "gizli", "kanıt", "dosya", "şifreli", "şifre", "sır", "güven", "ilk kez",
+        "sakla", "çal", "silah", "bıçak", "tabanca", "yara", "sargı", "kan", "itiraf",
+        "yemin", "anahtar", "tehlike", "ihanet", "aşk", "aşık", "öp", "ağla", "söz", "yüzük",
+        "mektup", "kod", "operasyon", "görev", "plan", "zehir", "ilaç", "küs", "kavga",
+        "geri çekilmedi", "elini elinin", "yirmi yıl", "makarna", "sarımsak", "kremalı",
+        "mantar", "pizza", "suşi", "çorba", "biftek", "tatlı", "pasta", "salata",
+        "köfte", "kebap", "omlet", "tost", "şarap", "viski", "ramen", "kahve", "espresso",
+        "latte", "ceket", "mont", "elbise", "kıyafet", "gömlek", "ağrıyor", "ağrı",
+        "ateş", "hasta", "sehpa", "bıraktı", "unuttu", "alerji", "fobi"
+    )
+
+    /** Word-start prefixes that share a marker's letters but carry unrelated meaning. */
+    private val SIGNIFICANCE_PREFIX_EXCEPTIONS: List<String> = listOf(
+        "kanepe", "kanal", "kanat", "kanaat", "kanun", "kanser", "kantin", "kano",
+        "çalış", "çalkala", "planet", "planör", "kodaman", "sözlük", "montaj", "pastel"
+    )
+
+    /**
      * Code-side Contextual Selectivity safety gate (Section 2):
      * Rejects importance <= 2 and trivial mundane physical choreography ("elini masaya koydu",
      * "pencereden baktı", "derin nefes aldı", bare "yemek yedi") UNLESS the sentence carries
@@ -602,18 +728,7 @@ object MemoryEngine {
         val norm = TurkishTextAnalyzer.normalize("$key $trimmedVal")
         val normVal = TurkishTextAnalyzer.normalize(trimmedVal)
 
-        val contextualSignificanceMarkers = listOf(
-            "gizli", "kanıt", "dosya", "şifreli", "şifre", "sır", "güven", "ilk kez",
-            "sakla", "çal", "silah", "bıçak", "tabanca", "yara", "sargı", "kan", "itiraf",
-            "yemin", "anahtar", "tehlike", "ihanet", "aşk", "öp", "ağla", "söz", "yüzük",
-            "mektup", "kod", "operasyon", "görev", "plan", "zehir", "ilaç", "küs", "kavga",
-            "geri çekilmedi", "elini elinin", "yirmi yıl", "makarna", "sarımsak", "kremalı",
-            "mantar", "pizza", "suşi", "çorba", "biftek", "tatlı", "pasta", "salata",
-            "köfte", "kebap", "omlet", "tost", "şarap", "viski", "ramen", "kahve", "espresso",
-            "latte", "ceket", "mont", "elbise", "kıyafet", "gömlek", "ağrıyor", "ağrı",
-            "ateşi", "hasta", "sehpada", "bıraktı", "unuttu", "alerji", "fobi"
-        )
-        if (contextualSignificanceMarkers.any { norm.contains(it) }) {
+        if (CONTEXTUAL_SIGNIFICANCE_MARKERS.any { TurkishTextAnalyzer.containsWordPrefix(norm, it, SIGNIFICANCE_PREFIX_EXCEPTIONS) }) {
             return false
         }
 
@@ -668,7 +783,10 @@ object MemoryEngine {
         fun addFeature(feature: String, weight: Float) {
             val h1 = feature.hashCode()
             val h2 = (h1 * 0x5bd1e995) xor (h1 ushr 15)
-            val bucket = abs(h1) % dims
+            // abs(Int.MIN_VALUE) is still negative, so the old `abs(h1) % dims` could yield a
+            // negative index for non-power-of-two dims. The double-mod keeps EVERY existing bucket
+            // identical (stored 256-dim vectors stay valid) while being safe for any dims.
+            val bucket = ((abs(h1) % dims) + dims) % dims
             val sign = if ((h2 and 1) == 0) 1f else -1f
             vec[bucket] += sign * weight
         }
@@ -825,6 +943,9 @@ object MemoryEngine {
         return userText.trim().length >= 24 && aiReply.trim().length >= 140
     }
 
+    // ── Vector helpers: SINGLE source of truth (MemoryRetrievalManager & EmochiRepository delegate here) ──
+
+    /** Parses a stored JSON float array. Returns null for blank, malformed, or non-finite payloads. */
     fun parseEmbeddingFromJson(jsonStr: String): FloatArray? {
         if (jsonStr.isBlank() || jsonStr == "[]") return null
         return try {
@@ -832,7 +953,9 @@ object MemoryEngine {
             if (arr.length() == 0) return null
             val floats = FloatArray(arr.length())
             for (i in 0 until arr.length()) {
-                floats[i] = arr.getDouble(i).toFloat()
+                val v = arr.getDouble(i).toFloat()
+                if (!v.isFinite()) return null
+                floats[i] = v
             }
             floats
         } catch (_: Exception) {
@@ -843,7 +966,7 @@ object MemoryEngine {
     fun serializeEmbeddingToJson(embedding: FloatArray): String {
         val arr = JSONArray()
         for (f in embedding) {
-            arr.put(f.toDouble())
+            arr.put(if (f.isFinite()) f.toDouble() else 0.0)
         }
         return arr.toString()
     }
@@ -859,44 +982,129 @@ object MemoryEngine {
             n2 += v2[i] * v2[i]
         }
         val denom = sqrt(n1) * sqrt(n2)
-        return if (denom > 1e-6f) (dot / denom).coerceIn(-1f, 1f) else 0f
+        if (denom <= 1e-6f) return 0f
+        val sim = dot / denom
+        return if (sim.isFinite()) sim.coerceIn(-1f, 1f) else 0f
     }
 
+    // ── Contradiction detection ──────────────────────────────────────────────────
+
+    /**
+     * Mutually exclusive value groups: if the old and new values each mention a DIFFERENT
+     * member of the same group, they contradict ("evli" vs "boşandı", "İstanbul" vs "İzmir").
+     */
+    private val EXCLUSIVE_GROUPS: List<List<String>> = listOf(
+        listOf("evli", "bekar", "bekâr", "boşandı", "boşanmış", "dul", "nişanlı"),
+        listOf("sevgili", "ayrıldı", "ayrılmış", "eski sevgili"),
+        listOf("öğrenci", "mezun"),
+        listOf("yaşıyor", "hayatta", "vefat", "öldü", "ölmüş", "hayatını kaybetti"),
+        listOf("dost", "düşman", "rakip"),
+        listOf("müttefik", "hain"),
+        listOf("saklıyor", "itiraf etti", "açıkladı"),
+        listOf("işsiz", "emekli", "çalışıyor"),
+        listOf(
+            "doktor", "mühendis", "öğretmen", "avukat", "polis", "asker", "hemşire", "aşçı",
+            "pilot", "yazılımcı", "programcı", "gazeteci", "hakim", "savcı", "dedektif", "ajan",
+            "garson", "barmen", "sanatçı", "ressam", "müzisyen", "yazar", "oyuncu", "mimar",
+            "eczacı", "veteriner", "dişçi", "psikolog", "akademisyen", "profesör", "tamirci"
+        ),
+        listOf(
+            "kırmızı", "mavi", "yeşil", "sarı", "siyah", "beyaz", "mor", "pembe", "turuncu",
+            "kahverengi", "gri", "lacivert", "bordo", "turkuaz"
+        )
+    )
+
+    private val CITIES: List<String> = listOf(
+        "istanbul", "ankara", "izmir", "bursa", "antalya", "adana", "konya", "gaziantep", "mersin",
+        "eskişehir", "trabzon", "samsun", "kayseri", "diyarbakır", "erzurum", "van", "bodrum",
+        "çanakkale", "edirne", "rize", "muğla", "denizli", "malatya", "sakarya", "kocaeli",
+        "londra", "berlin", "paris", "new york", "tokyo", "moskova", "roma", "madrid", "barselona",
+        "amsterdam", "viyana", "prag", "dubai", "los angeles", "seul", "pekin", "milano", "atina",
+        "bakü", "tiflis", "kahire", "toronto", "sidney", "münih", "brüksel", "lizbon", "varşova"
+    )
+
+    /** Antonym verb pairs where the negative is NOT simply the "-me/-ma" form of the positive. */
+    private val ANTONYM_PAIRS: List<Pair<String, String>> = listOf(
+        "seviyor" to "nefret ediyor",
+        "seviyor" to "tiksiniyor",
+        "güveniyor" to "şüpheleniyor",
+        "biliyor" to "bilmiyor"
+    )
+
+    private val NEGATIVE_VERB_REGEX = Regex("""(?<![\p{L}\p{N}])(\p{L}{2,}?)(m[ıiuü]yor|m[ae]z|m[ae]d[ıi]|m[ae]m[ıi]ş)(\p{L}*)""")
+    private val POSITIVE_VERB_SUFFIX = Regex("""(ıyor|iyor|uyor|üyor|yor|ar|er|ır|ir|ur|ür|dı|di|du|dü|tı|ti|tu|tü|mış|miş|muş|müş)\p{L}*$""")
+    private val NUMBER_WITH_UNIT_REGEX = Regex("""(\d{1,4})\s*(yaş|yaşında|kilo|kg|cm|boy|yıl|yıllık|çocu)""")
+
+    /**
+     * Detects whether a new fact value contradicts an old one. Combines:
+     * 1. Mutually exclusive groups (marital/life status, professions, colors, ...).
+     * 2. Cities (word + Turkish case suffix aware: "Roma'da" ✓, "romantik" ✗).
+     * 3. Verb polarity flips ("seviyor" ↔ "sevmiyor", "güveniyor" ↔ "güvenmiyor").
+     * 4. Explicit negation via "değil" on otherwise overlapping statements.
+     * 5. Conflicting numbers on the same unit ("25 yaşında" ↔ "30 yaşında").
+     */
     fun isContradictingText(oldValue: String, newValue: String): Boolean {
         val old = TurkishTextAnalyzer.normalize(oldValue)
         val new = TurkishTextAnalyzer.normalize(newValue)
-        if (old == new) return false
+        if (old.isBlank() || new.isBlank() || old == new) return false
 
-        val opposites = listOf(
-            Pair("evli", "bekar"),
-            Pair("sevgili", "ayrıldı"),
-            Pair("öğrenci", "mezun"),
-            Pair("doktor", "mühendis"),
-            Pair("yaşıyor", "vefat"),
-            Pair("hayatta", "öldü"),
-            Pair("seviyor", "nefret ediyor"),
-            Pair("güveniyor", "güvenmiyor"),
-            Pair("dost", "düşman"),
-            Pair("müttefik", "hain"),
-            Pair("saklıyor", "itiraf etti")
-        )
+        fun has(text: String, term: String) = TurkishTextAnalyzer.containsNounWithCaseSuffix(text, term) ||
+            TurkishTextAnalyzer.containsWordPrefix(text, term)
 
-        for ((o1, o2) in opposites) {
-            if ((old.contains(o1) && new.contains(o2)) || (old.contains(o2) && new.contains(o1))) {
-                return true
+        // 1. Mutually exclusive groups
+        for (group in EXCLUSIVE_GROUPS) {
+            val oldHits = group.filter { has(old, it) }.toSet()
+            val newHits = group.filter { has(new, it) }.toSet()
+            if (oldHits.isNotEmpty() && newHits.isNotEmpty() && oldHits.intersect(newHits).isEmpty()) return true
+        }
+
+        // 2. Cities (strict noun match)
+        val oldCities = CITIES.filter { TurkishTextAnalyzer.containsNounWithCaseSuffix(old, it) }.toSet()
+        val newCities = CITIES.filter { TurkishTextAnalyzer.containsNounWithCaseSuffix(new, it) }.toSet()
+        if (oldCities.isNotEmpty() && newCities.isNotEmpty() && oldCities.intersect(newCities).isEmpty()) return true
+
+        // 3a. Explicit antonym pairs
+        for ((a, b) in ANTONYM_PAIRS) {
+            if ((has(old, a) && has(new, b)) || (has(old, b) && has(new, a))) return true
+        }
+
+        // 3b. Verb polarity flip: "X sevmiyor" vs "X seviyor" (same root, one negated)
+        if (hasPolarityFlip(old, new) || hasPolarityFlip(new, old)) return true
+
+        // 4. Explicit "değil" negation on an otherwise overlapping statement
+        val oldNeg = TurkishTextAnalyzer.containsWordPrefix(old, "değil")
+        val newNeg = TurkishTextAnalyzer.containsWordPrefix(new, "değil")
+        if (oldNeg != newNeg) {
+            val overlap = TurkishTextAnalyzer.overlapCoefficient(
+                TurkishTextAnalyzer.extractStems(old.replace("değil", " ")).toSet(),
+                TurkishTextAnalyzer.extractStems(new.replace("değil", " ")).toSet()
+            )
+            if (overlap >= 0.6f) return true
+        }
+
+        // 5. Same unit, different number
+        val oldNums = NUMBER_WITH_UNIT_REGEX.findAll(old).associate { it.groupValues[2].take(3) to it.groupValues[1] }
+        val newNums = NUMBER_WITH_UNIT_REGEX.findAll(new).associate { it.groupValues[2].take(3) to it.groupValues[1] }
+        for ((unit, n) in oldNums) {
+            val other = newNums[unit] ?: continue
+            if (other != n) return true
+        }
+        return false
+    }
+
+    /** True when [negText] contains a negated verb whose root appears positively in [posText]. */
+    private fun hasPolarityFlip(negText: String, posText: String): Boolean {
+        val posTokens = TurkishTextAnalyzer.tokenize(posText)
+        for (m in NEGATIVE_VERB_REGEX.findAll(negText)) {
+            val root = m.groupValues[1]
+            if (root.length < 3) continue
+            val positiveMatch = posTokens.any { tok ->
+                if (!tok.startsWith(root) || NEGATIVE_VERB_REGEX.matches(tok)) return@any false
+                val suffix = tok.substring(root.length)
+                suffix.isNotEmpty() && POSITIVE_VERB_SUFFIX.containsMatchIn(suffix)
             }
+            if (positiveMatch) return true
         }
-
-        val cities = listOf(
-            "istanbul", "ankara", "izmir", "bursa", "antalya", "londra",
-            "berlin", "paris", "new york", "tokyo", "moskova", "roma"
-        )
-        val oldCity = cities.firstOrNull { old.contains(it) }
-        val newCity = cities.firstOrNull { new.contains(it) }
-        if (oldCity != null && newCity != null && oldCity != newCity) {
-            return true
-        }
-
         return false
     }
 
@@ -1014,23 +1222,26 @@ object MemoryEngine {
         val selectedEvents = mutableListOf<MemoryEventEntity>()
         val selectedCheckpoints = mutableListOf<MemoryCheckpointEntity>()
         val selectedFragments = mutableListOf<MemoryFragmentEntity>()
-        val seenFingerprints = mutableListOf<String>()
+        val seenFingerprints = mutableListOf<Pair<String, Set<String>>>()
 
-        fun isRedundant(text: String): Boolean {
+        fun acceptIfUnique(text: String): Boolean {
             val norm = TurkishTextAnalyzer.normalize(text)
-            return seenFingerprints.any { existing ->
-                existing == norm || TurkishTextAnalyzer.stemOverlapRatio(existing, norm) >= 0.80f
+            val stems = TurkishTextAnalyzer.extractStems(norm).toSet()
+            val redundant = seenFingerprints.any { (existingNorm, existingStems) ->
+                existingNorm == norm || TurkishTextAnalyzer.overlapCoefficient(existingStems, stems) >= 0.80f
             }
+            if (redundant) return false
+            seenFingerprints.add(norm to stems)
+            return true
         }
 
-        // 1. Neural Vault Facts (high information density per token — up to 40% of budget)
+        // 1. Neural Vault Facts (high information density per token — up to 42% of budget)
         val factsBudget = (maxTokens * 0.42f).toInt()
         for (f in facts) {
             val rep = "${f.subject} ${f.key} ${f.value}"
             val cost = maxOf(6, (rep.length / 3.5).toInt())
-            if (currentTokenCount + cost <= factsBudget && !isRedundant(rep)) {
+            if (currentTokenCount + cost <= factsBudget && acceptIfUnique(rep)) {
                 selectedFacts.add(f)
-                seenFingerprints.add(TurkishTextAnalyzer.normalize(rep))
                 currentTokenCount += cost
             }
         }
@@ -1040,9 +1251,8 @@ object MemoryEngine {
         for (e in events) {
             val searchable = LivingMemoryCodec.toSearchableText(e.description)
             val cost = maxOf(14, (searchable.length / 3.3).toInt())
-            if (currentTokenCount + cost <= eventsBudget && !isRedundant(searchable)) {
+            if (currentTokenCount + cost <= eventsBudget && acceptIfUnique(searchable)) {
                 selectedEvents.add(e)
-                seenFingerprints.add(TurkishTextAnalyzer.normalize(searchable))
                 currentTokenCount += cost
             }
         }
@@ -1051,9 +1261,8 @@ object MemoryEngine {
         val checkpointBudget = (maxTokens * 0.92f).toInt()
         for (cp in checkpoints) {
             val cost = maxOf(12, (cp.summaryText.length / 3.5).toInt())
-            if (currentTokenCount + cost <= checkpointBudget && !isRedundant(cp.summaryText)) {
+            if (currentTokenCount + cost <= checkpointBudget && acceptIfUnique(cp.summaryText)) {
                 selectedCheckpoints.add(cp)
-                seenFingerprints.add(TurkishTextAnalyzer.normalize(cp.summaryText))
                 currentTokenCount += cost
             }
         }
@@ -1061,9 +1270,8 @@ object MemoryEngine {
         // 4. Searchable Archive Fragments (remaining budget)
         for (frag in fragments) {
             val cost = maxOf(8, (frag.content.length / 3.5).toInt())
-            if (currentTokenCount + cost <= maxTokens && !isRedundant(frag.content)) {
+            if (currentTokenCount + cost <= maxTokens && acceptIfUnique(frag.content)) {
                 selectedFragments.add(frag)
-                seenFingerprints.add(TurkishTextAnalyzer.normalize(frag.content))
                 currentTokenCount += cost
             }
         }

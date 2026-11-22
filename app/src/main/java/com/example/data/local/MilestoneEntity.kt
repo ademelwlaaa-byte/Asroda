@@ -1,9 +1,13 @@
 package com.example.data.local
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "milestones")
+@Entity(
+    tableName = "milestones",
+    indices = [Index(value = ["botId"])]
+)
 data class MilestoneEntity(
     @PrimaryKey val id: String,
     val botId: String,

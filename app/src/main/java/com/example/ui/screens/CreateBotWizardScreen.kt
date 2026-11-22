@@ -108,8 +108,9 @@ import com.example.util.AvatarOptimizer
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
 
 private val PERSONAL_SPARK_CHIPS = listOf(
@@ -174,8 +175,8 @@ private fun isValidIsoStoryDate(input: String): Boolean {
     if (trimmed.isEmpty()) return true
     if (!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(trimmed)) return false
     return try {
-        LocalDate.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE)
-        true
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+        sdf.parse(trimmed) != null
     } catch (_: Exception) {
         false
     }
@@ -1487,7 +1488,7 @@ fun CreateBotWizardScreen(
                                     label = "Bugünü Kullan",
                                     selected = false,
                                     onClick = {
-                                        storyStartDate = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE)
+                                        storyStartDate = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
                                     },
                                     modifier = Modifier.testTag("wizard_use_today_date_button")
                                 )

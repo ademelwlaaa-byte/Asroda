@@ -150,16 +150,17 @@ object BookAudioController {
             .setUsage(AudioAttributes.USAGE_MEDIA)
             .build()
 
-        // Primary path: explicit AudioAttributes + raw AssetFileDescriptor
+        // Primary path: explicit AudioAttributes + raw AssetFileDescriptor (guaranteed close via use {})
         try {
             val afd = context.resources.openRawResourceFd(rawResId)
             if (afd != null) {
-                val mp = MediaPlayer()
-                mp.setAudioAttributes(attrs)
-                mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                afd.close()
-                mp.prepare()
-                return mp
+                return afd.use { descriptor ->
+                    val mp = MediaPlayer()
+                    mp.setAudioAttributes(attrs)
+                    mp.setDataSource(descriptor.fileDescriptor, descriptor.startOffset, descriptor.length)
+                    mp.prepare()
+                    mp
+                }
             }
         } catch (e: Exception) {
             android.util.Log.w("BookAudioController", "AFD MediaPlayer init failed, trying MediaPlayer.create", e)
@@ -362,10 +363,39 @@ object BookAudioController {
         }
     }
 
+    @Volatile
+    private var pausedByBackground: Boolean = false
+
+    /** Pauses active chapter-end soundtrack cleanly when the host Activity moves to background (ON_STOP). */
+    fun pauseForBackground() {
+        val p = player ?: return
+        if (!isFadingOut && p.isPlaying) {
+            try {
+                p.pause()
+                pausedByBackground = true
+                _isPlayingFlow.value = false
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Resumes chapter-end soundtrack on foreground return (ON_START) only if it was paused by backgrounding. */
+    fun resumeFromBackground() {
+        if (!pausedByBackground) return
+        pausedByBackground = false
+        val p = player ?: return
+        if (!isFadingOut && !_isMutedFlow.value) {
+            try {
+                p.start()
+                _isPlayingFlow.value = true
+            } catch (_: Exception) {}
+        }
+    }
+
     fun release() {
         fadeJob?.cancel()
         isFadingOut = false
         isActivelyStarting = false
+        pausedByBackground = false
         releasePlayerInternal()
         abandonAudioFocus()
     }

@@ -50,6 +50,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -299,6 +300,87 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
         cosmicBookState.savedScrollIndex > 0
 
     var showChapterModal by remember { mutableStateOf(false) }
+    var pendingLaunchChapter by remember { mutableStateOf<Int?>(null) }
+    var showLaunchDownloadDialog by remember { mutableStateOf(false) }
+    var pendingRemoteUpdate by remember { mutableStateOf<com.example.book.BookContentPackManager.RemoteStoryUpdateInfo?>(null) }
+    var autoStartUpdateDownload by remember { mutableStateOf(false) }
+    val launchScope = rememberCoroutineScope()
+
+    fun openCosmicBookImmediately(targetChapter: Int?) {
+        if (targetChapter != null) {
+            BookStateRepository.jumpToChapter(
+                context = context,
+                chapterNumber = targetChapter,
+                forceRestartIfSame = targetChapter != cosmicBookState.activeChapter || cosmicBookState.isChapterCompleted,
+                bookId = CosmicDriftBookRegistry.BOOK_ID
+            )
+        } else if (!hasStartedCosmicBook) {
+            BookStateRepository.jumpToChapter(
+                context = context,
+                chapterNumber = 1,
+                forceRestartIfSame = false,
+                bookId = CosmicDriftBookRegistry.BOOK_ID
+            )
+        }
+        if (existingCosmicBook != null) {
+            onOpenBot(existingCosmicBook.id)
+        } else {
+            onImportPresetBot(presetMcuBook)
+        }
+    }
+
+    fun requestLaunchCosmicBook(targetChapter: Int?) {
+        pendingLaunchChapter = targetChapter
+        val prepared = com.example.book.BookContentPackManager.isCoreStoryPrepared(
+            context,
+            CosmicDriftBookRegistry.BOOK_ID
+        )
+        if (!prepared) {
+            // First time starting the story: ask user to download & prepare, then launch automatically!
+            pendingRemoteUpdate = null
+            autoStartUpdateDownload = false
+            showLaunchDownloadDialog = true
+            launchScope.launch {
+                val remote = com.example.book.BookContentPackManager.checkForRemoteUpdate(
+                    context,
+                    CosmicDriftBookRegistry.BOOK_ID
+                )
+                if (remote != null) pendingRemoteUpdate = remote
+            }
+        } else {
+            // Already downloaded: silently check for remote updates; auto-download if newer, else open immediately!
+            launchScope.launch {
+                val update = com.example.book.BookContentPackManager.checkForRemoteUpdate(
+                    context,
+                    CosmicDriftBookRegistry.BOOK_ID
+                )
+                if (update != null) {
+                    pendingRemoteUpdate = update
+                    autoStartUpdateDownload = true
+                    showLaunchDownloadDialog = true
+                } else {
+                    openCosmicBookImmediately(targetChapter)
+                }
+            }
+        }
+    }
+
+    if (showLaunchDownloadDialog) {
+        StoryLaunchDownloadDialog(
+            bookTitle = if (isEnglish) "Cosmic Drift | MCU Universe" else "Kozmik Sürükleniş · 1. & 2. Sezon",
+            remoteUpdate = pendingRemoteUpdate,
+            autoStartUpdate = autoStartUpdateDownload,
+            onReadyToOpen = {
+                showLaunchDownloadDialog = false
+                autoStartUpdateDownload = false
+                openCosmicBookImmediately(pendingLaunchChapter)
+            },
+            onDismiss = {
+                showLaunchDownloadDialog = false
+                autoStartUpdateDownload = false
+            }
+        )
+    }
 
     if (showChapterModal) {
         ChapterSelectionModal(
@@ -308,17 +390,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
             onDismiss = { showChapterModal = false },
             onSelectChapter = { chapterIndex, _ ->
                 showChapterModal = false
-                BookStateRepository.jumpToChapter(
-                    context = context,
-                    chapterNumber = chapterIndex,
-                    forceRestartIfSame = chapterIndex != cosmicBookState.activeChapter || cosmicBookState.isChapterCompleted,
-                    bookId = CosmicDriftBookRegistry.BOOK_ID
-                )
-                if (existingCosmicBook != null) {
-                    onOpenBot(existingCosmicBook.id)
-                } else {
-                    onImportPresetBot(presetMcuBook)
-                }
+                requestLaunchCosmicBook(chapterIndex)
             }
         )
     }
@@ -1100,7 +1172,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         val mainBtnScope = rememberCoroutineScope()
                         val ctaLabel = when {
                             completedChaptersCount >= totalChaptersCount ->
-                                if (isEnglish) "All 7 Done · Chapter 8 Soon" else "7 Bölüm Bitti · Bölüm 8 Yakında"
+                                if (isEnglish) "All $totalChaptersCount Done · Season 3 Soon" else "$totalChaptersCount Bölüm Bitti · 3. Sezon Yakında"
                             hasStartedCosmicBook ->
                                 if (isEnglish) "Continue · Ch. $displayChapter" else "Devam Et · Bölüm $displayChapter"
                             else ->
@@ -1184,19 +1256,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                         mainBtnScale.animateTo(0.965f, tween(80))
                                         mainBtnScale.animateTo(1f, tween(130))
                                     }
-                                    if (!hasStartedCosmicBook) {
-                                        BookStateRepository.jumpToChapter(
-                                            context = context,
-                                            chapterNumber = 1,
-                                            forceRestartIfSame = false,
-                                            bookId = CosmicDriftBookRegistry.BOOK_ID
-                                        )
-                                    }
-                                    if (existingCosmicBook != null) {
-                                        onOpenBot(existingCosmicBook.id)
-                                    } else {
-                                        onImportPresetBot(presetMcuBook)
-                                    }
+                                    requestLaunchCosmicBook(null)
                                 }
                                 .testTag("start_featured_book_button")
                                 .padding(horizontal = 20.dp),
@@ -2036,65 +2096,20 @@ fun ChapterSelectionModal(
     val progress = bookState.highestCompletedChapter
     val activeChapter = bookState.activeChapter
 
-    val chapters = remember(isEnglish) {
-        listOf(
-            BookChapterInfo(
-                index = 1,
-                openTitle = if (isEnglish) "Chapter 1: Cosmic Drift" else "Bölüm 1: Kozmik Sürükleniş",
-                openDesc = if (isEnglish) "Disappearance at age 5 in blue light, S.H.I.E.L.D. pursuit, and meeting the Avengers in New York."
-                else "Beş yaşında mavi ışıkla kayboluş, S.H.I.E.L.D. takibi ve New York'ta Avengers ile temas.",
-                startMsg = null
-            ),
-            BookChapterInfo(
-                index = 2,
-                openTitle = if (isEnglish) "Chapter 2: The Terms" else "Bölüm 2: Şartlar",
-                openDesc = if (isEnglish) "Bargaining with Tony Stark and Steve Rogers at Avengers Tower, terms, and choosing sides."
-                else "Avengers Kulesi'nde Tony Stark ve Steve Rogers ile pazarlık, şartlar ve taraf seçimi.",
-                startMsg = "Bölüm 2: Şartlar'a başla"
-            ),
-            BookChapterInfo(
-                index = 3,
-                openTitle = if (isEnglish) "Chapter 3: Probation" else "Bölüm 3: Deneme Süresi",
-                openDesc = if (isEnglish) "30-day trial period in Avengers Tower — training, trust, and the first bond."
-                else "Avengers Kulesi'nde 30 günlük deneme süresi — antrenman, güven ve ilk bağlar.",
-                startMsg = "Bölüm 3: Deneme Süresi'ne başla"
-            ),
-            BookChapterInfo(
-                index = 4,
-                openTitle = if (isEnglish) "Chapter 4: First Mission" else "Bölüm 4: İlk Görev",
-                openDesc = if (isEnglish) "Aiden's first official HYDRA operation — and an unexpected discovery at Manhattan Harbor."
-                else "Aiden'ın ilk resmi HYDRA operasyonu — ve Manhattan Limanı'nda beklenmedik bir keşif.",
-                startMsg = "Bölüm 4: İlk Görev'e başla"
-            ),
-            BookChapterInfo(
-                index = 5,
-                openTitle = if (isEnglish) "Chapter 5: Red Ice" else "Bölüm 5: Kırmızı Buz",
-                openDesc = if (isEnglish) "The Red Guardian — a mirror from the past. Who is Elias Voss and why was he sent to find you?"
-                else "Kırmızı Koruyucu — geçmişten bir ayna. Elias Voss kim ve neden seni bulmak için gönderildi?",
-                startMsg = "Bölüm 5: Kırmızı Buz'a başla"
-            ),
-            BookChapterInfo(
-                index = 6,
-                openTitle = if (isEnglish) "Chapter 6: Broken Mirror" else "Bölüm 6: Kırık Ayna",
-                openDesc = if (isEnglish) "The Istanbul archive reveals: Aiden was never a fugitive — he was a project. And Project 7-A is not over."
-                else "İstanbul arşivi ortaya koyuyor: Aiden hiçbir zaman bir kaçak değildi — o bir projeydi. Ve Proje 7-A bitmedi.",
-                startMsg = "Bölüm 6: Kırık Ayna'ya başla"
-            ),
-            BookChapterInfo(
-                index = 7,
-                openTitle = if (isEnglish) "Chapter 7: Dark Mirror" else "Bölüm 7: Karanlık Ayna",
-                openDesc = if (isEnglish) "Dr. Hale surrenders. Aiden's parents are found. And a Red Eye carrier waits in the Istanbul tunnels."
-                else "Dr. Hale teslim oluyor. Aiden'ın ailesi bulunuyor. Ve İstanbul tünellerinde bir Kırmızı Göz taşıyıcısı bekliyor.",
-                startMsg = "Bölüm 7: Karanlık Ayna'ya başla"
-            ),
-            BookChapterInfo(
-                index = 8,
-                openTitle = if (isEnglish) "Chapter 8: Coming Soon" else "Bölüm 8: Yakında",
-                openDesc = if (isEnglish) "The next chapter is in development. Stay tuned."
-                else "Sonraki bölüm yapım aşamasında. Takipte kal.",
-                startMsg = null
-            )
-        )
+    val totalPlayable = CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS
+    var selectedSeason by remember(activeChapter) { mutableIntStateOf(if (activeChapter >= 11) 2 else 1) }
+
+    val chapters = remember(isEnglish, selectedSeason) {
+        CosmicDriftBookRegistry.chapters
+            .filter { if (selectedSeason == 1) it.number <= 10 else it.number >= 11 }
+            .map { meta ->
+                BookChapterInfo(
+                    index = meta.number,
+                    openTitle = if (isEnglish) "Chapter ${meta.number}: ${meta.titleEn}" else "Bölüm ${meta.number}: ${meta.title}",
+                    openDesc = if (isEnglish) meta.descriptionEn else meta.description,
+                    startMsg = if (meta.number == 1) null else "Bölüm ${meta.number}: ${meta.title} başla"
+                )
+            }
     }
 
     val modalInfinite = rememberInfiniteTransition(label = "chModalGlow")
@@ -2233,6 +2248,48 @@ fun ChapterSelectionModal(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Season 1 / Season 2 Switcher Pills
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(
+                        1 to (if (isEnglish) "Season 1 · Ch. 1–10" else "1. Sezon · Bölüm I–X"),
+                        2 to (if (isEnglish) "Season 2 · Ch. 11–24" else "2. Sezon · Bölüm XI–XXIV")
+                    ).forEach { (seasonNum, label) ->
+                        val active = selectedSeason == seasonNum
+                        val pillAccent = if (seasonNum == 2) Color(0xFFFDE047) else Color(0xFF93C5FD)
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    if (active) pillAccent.copy(alpha = 0.22f) else Color(0x331B0E38)
+                                )
+                                .border(
+                                    width = if (active) 1.2.dp else 0.8.dp,
+                                    color = if (active) pillAccent.copy(alpha = 0.85f) else Color(0x44C4B5FD),
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable { selectedSeason = seasonNum }
+                                .padding(vertical = 8.dp, horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                fontFamily = InterFontFamily,
+                                color = if (active) Color.White else Color(0xFFC4B5FD),
+                                fontSize = 11.sp,
+                                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
                 // Progress Summary Pill
                 Box(
                     modifier = Modifier
@@ -2246,19 +2303,21 @@ fun ChapterSelectionModal(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            repeat(7) { i ->
-                                val chapterIdx = i + 1
+                        Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                            val dotStart = if (selectedSeason == 1) 1 else 11
+                            val dotCount = if (selectedSeason == 1) 10 else 14
+                            repeat(dotCount) { i ->
+                                val chapterIdx = dotStart + i
                                 val dotCompleted = chapterIdx in completedSet
                                 val dotActive = chapterIdx == activeChapter
                                 Box(
                                     modifier = Modifier
-                                        .size(if (dotCompleted || dotActive) 8.dp else 6.dp)
+                                        .size(if (dotCompleted || dotActive) 7.dp else 5.dp)
                                         .clip(CircleShape)
                                         .background(
                                             when {
                                                 dotCompleted -> Color(0xFF34D399)
-                                                dotActive -> Color(0xFFC084FC)
+                                                dotActive -> Color(0xFFFDE047)
                                                 else -> Color(0x55C4B5FD)
                                             }
                                         )
@@ -2267,13 +2326,13 @@ fun ChapterSelectionModal(
                         }
                         Text(
                             text = when {
-                                completedSet.size >= 7 -> if (isEnglish) "All 7 Chapters Completed ✦" else "7 / 7 Bölüm Tamamlandı ✦"
-                                progress >= 1 -> if (isEnglish) "${completedSet.size}/7 Done • Ch. ${(progress + 1).coerceAtMost(7)} Open" else "${completedSet.size}/7 Bitti • Bölüm ${(progress + 1).coerceAtMost(7)} Açık"
+                                completedSet.size >= totalPlayable -> if (isEnglish) "All $totalPlayable Chapters Completed ✦" else "$totalPlayable / $totalPlayable Bölüm Tamamlandı ✦"
+                                progress >= 1 -> if (isEnglish) "${completedSet.size}/$totalPlayable Done • Ch. ${(progress + 1).coerceAtMost(totalPlayable)} Open" else "${completedSet.size}/$totalPlayable Bitti • Bölüm ${(progress + 1).coerceAtMost(totalPlayable)} Açık"
                                 else -> if (isEnglish) "Not Started • Chapter 1 Open" else "Henüz Başlanmadı • Bölüm 1 Açık"
                             },
                             fontFamily = InterFontFamily,
                             color = Color(0xFFE9D5FF),
-                            fontSize = 12.sp,
+                            fontSize = 11.5.sp,
                             fontWeight = FontWeight.Medium,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -2287,29 +2346,18 @@ fun ChapterSelectionModal(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 420.dp)
+                        .heightIn(max = 400.dp)
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
-                    val chapterBandColors = listOf(
-                        Color(0xFFA855F7), // 1
-                        Color(0xFF60A5FA), // 2
-                        Color(0xFF22D3EE), // 3
-                        Color(0xFFFBBF24), // 4
-                        Color(0xFFF87171), // 5
-                        Color(0xFF34D399), // 6
-                        Color(0xFFC084FC), // 7
-                        Color(0xFF94A3B8)  // 8
-                    )
-                    val chapterDurations = CosmicDriftBookRegistry.chapters.map { "~${it.estimatedMinutes} dk" } + "—"
-
                     chapters.forEach { item ->
+                        val meta = CosmicDriftBookRegistry.chapterMeta(item.index)
                         val isCompleted = item.index in completedSet
-                        val isUnlocked = (item.index <= (progress + 1) || isCompleted || item.index == activeChapter) && item.index <= 7
-                        val isCurrent = item.index == activeChapter && item.index <= 7
-                        val isComingSoon = item.index == 8
-                        val bandColor = chapterBandColors.getOrElse(item.index - 1) { Color(0xFFA855F7) }
-                        val duration = chapterDurations.getOrElse(item.index - 1) { "—" }
+                        val isUnlocked = (item.index <= (progress + 1) || isCompleted || item.index == activeChapter) && item.index <= totalPlayable
+                        val isCurrent = item.index == activeChapter
+                        val isComingSoon = false
+                        val bandColor = Color(meta.accentHex)
+                        val duration = "~${meta.estimatedMinutes} dk"
 
                         val itemScale = remember(item.index) { Animatable(1f) }
                         val itemScope = rememberCoroutineScope()

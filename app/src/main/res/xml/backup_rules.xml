@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
+    <!-- Never upload Room SQLite database (private/NSFW chats + credentials) to Google Cloud Auto Backup -->
+    <exclude domain="database" path="." />
+
     <!-- Exclude sensitive encrypted/keystore preferences & local API credentials -->
     <exclude domain="sharedpref" path="emochi_secure_prefs.xml" />
     <exclude domain="sharedpref" path="androidx.security.crypto.master_key.xml" />
     <exclude domain="sharedpref" path="emochi_keystore_prefs.xml" />
+    <exclude domain="sharedpref" path="emochi_routine_notif_prefs.xml" />
 
     <!-- Exclude local autobackup snapshots and ephemeral caches/exports -->
     <exclude domain="file" path="emochi_autobackup.json" />

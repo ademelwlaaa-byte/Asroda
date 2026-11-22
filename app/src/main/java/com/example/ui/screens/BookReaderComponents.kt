@@ -35,7 +35,10 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -500,9 +503,77 @@ fun ManuscriptParagraphBlock(
     rawText: String,
     fontSizeSp: Float,
     chapterAccent: Color,
-    useDropCap: Boolean = false
+    useDropCap: Boolean = false,
+    isMiniGameCompleted: Boolean = false,
+    pietroSaved: Boolean = false,
+    activeVoiceCardKey: String? = null,
+    onToggleSpeakCard: ((speakerKey: String, text: String, cardKey: String) -> Unit)? = null,
+    onMiniGameVictory: () -> Unit = {}
 ) {
     val trimmed = rawText.trim()
+
+    // Interactive In-Story Special Cards, 60fps Animated Scenes & Mandatory Rooftop Boss Duel:
+    // [[ANIM|SceneId|Caption|Subtitle]], [[GAME3D|GameId|Title|Subtitle]],
+    // [[DOSSIER|Title|Body]], [[AUDIO|Title|Body]], [[ALARM|Title|Body]], [[COMMS|Speaker|Body]], [[MIND|Speaker|Body]]
+    if (trimmed.startsWith("[[") && trimmed.endsWith("]]")) {
+        val inner = trimmed.removePrefix("[[").removeSuffix("]]")
+        val parts = inner.split("|")
+        val tag = parts.firstOrNull()?.trim()?.uppercase().orEmpty()
+        when {
+            tag == "ANIM" && parts.size >= 3 -> {
+                InStoryAnimatedScene(
+                    sceneId = parts[1].trim().uppercase(),
+                    caption = parts[2].trim(),
+                    subtitle = parts.getOrNull(3)?.trim().orEmpty(),
+                    chapterAccent = chapterAccent
+                )
+                return
+            }
+            tag == "LIVE3D" && parts.size >= 4 -> {
+                LiveCharacterEncounterStage(
+                    characterKey = parts[1].trim().uppercase(),
+                    sceneId = parts[2].trim().uppercase(),
+                    title = parts[3].trim(),
+                    subtitle = parts.getOrNull(4)?.trim().orEmpty(),
+                    chapterAccent = chapterAccent
+                )
+                return
+            }
+            tag == "GAME3D" && parts.size >= 3 -> {
+                Cosmic3DRiftMiniGame(
+                    title = parts[2].trim(),
+                    subtitle = parts.getOrNull(3)?.trim()
+                        ?: "ZORUNLU SAVAŞ — Boss'u yenmeden hikayede ilerleyemezsin!",
+                    bossId = com.example.ui.screens.cosmic3d.CosmicDuelBossId.fromTag(parts[1]),
+                    pietroSaved = pietroSaved,
+                    isCompleted = isMiniGameCompleted,
+                    onVictoryUnlocked = onMiniGameVictory
+                )
+                return
+            }
+            parts.size >= 3 -> {
+                val body = parts.drop(2).joinToString("|").trim()
+                val cardTitle = parts[1].trim()
+                val cardKey = "$tag|$cardTitle|${body.hashCode()}"
+                InStoryInteractiveCard(
+                    kind = tag,
+                    title = cardTitle,
+                    body = body,
+                    fontSizeSp = fontSizeSp,
+                    chapterAccent = chapterAccent,
+                    isSpeaking = activeVoiceCardKey == cardKey,
+                    onToggleSpeak = if (onToggleSpeakCard != null && (tag == "COMMS" || tag == "AUDIO" || tag == "MIND")) {
+                        {
+                            val speakerKey = resolveVoiceSpeakerKey(cardTitle)
+                            onToggleSpeakCard(speakerKey, body, cardKey)
+                        }
+                    } else null
+                )
+                return
+            }
+        }
+    }
+
     val isPureDialogue = remember(trimmed) {
         (trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
             (trimmed.startsWith("“") && trimmed.endsWith("”"))
@@ -616,6 +687,187 @@ fun ManuscriptParagraphBlock(
         )
     }
 }
+
+/**
+ * Interactive In-Story Special Card rendered inline inside prose whenever a scene includes
+ * [[DOSSIER|...]], [[AUDIO|...]], [[ALARM|...]], [[COMMS|...]], or [[MIND|...]].
+ * Breaks up long reading stretches with tappable S.H.I.E.L.D. dossiers, audio recordings,
+ * red-alert system banners, comms transmissions, and psychic whispers.
+ */
+private fun resolveVoiceSpeakerKey(rawTitle: String): String {
+    val u = rawTitle.uppercase(java.util.Locale.ROOT)
+    return when {
+        "MİMAR" in u || "ARCHITECT" in u -> "ARCHITECT"
+        "SIFIR" in u || "YARA İZLİ" in u || "GELECEK" in u -> "ZERO"
+        "ULTRON" in u -> "ULTRON"
+        "VISION" in u || "VİZYON" in u -> "VISION"
+        "PIETRO" in u || "QUICKSILVER" in u -> "PIETRO"
+        "STRANGE" in u -> "STRANGE"
+        "VOSS" in u || "ELIAS" in u || "6-B" in u -> "VOSS"
+        "MIRA" in u || "MİRA" in u || "8-C" in u -> "MIRA"
+        "NATASHA" in u || "ROMANOFF" in u -> "NATASHA"
+        "WANDA" in u || "MAXIMOFF" in u -> "WANDA"
+        "TONY" in u || "STARK" in u -> "TONY"
+        "STEVE" in u || "ROGERS" in u -> "STEVE"
+        "THOR" in u || "ODINSON" in u -> "THOR"
+        "VAELOR" in u || "SOLUK MÜHÜR" in u -> "VAELOR"
+        "CLINT" in u || "BARTON" in u -> "STEVE"
+        "BRUCE" in u || "BANNER" in u -> "AIDEN"
+        "FURY" in u -> "THOR"
+        else -> "AIDEN"
+    }
+}
+
+@Composable
+private fun InStoryInteractiveCard(
+    kind: String,
+    title: String,
+    body: String,
+    fontSizeSp: Float,
+    chapterAccent: Color,
+    isSpeaking: Boolean = false,
+    onToggleSpeak: (() -> Unit)? = null
+) {
+    val isCollapsible = kind == "DOSSIER" || kind == "AUDIO"
+    var isExpanded by remember(kind, title) { mutableStateOf(kind != "AUDIO") }
+
+    val (badgeLabel, tintColor, bgStart, bgEnd) = when (kind) {
+        "DOSSIER" -> Quadruple("📁 GİZLİ DOSYA & HİKÂYE NOTU", Color(0xFFFDE047), Color(0xE01E1636), Color(0xE8120B24))
+        "AUDIO" -> Quadruple("🎙 SES KAYDI · DOKUNUP DİNLE", Color(0xFF38BDF8), Color(0xE00C223B), Color(0xE80A1429))
+        "ALARM" -> Quadruple("⚠ SİSTEM ALARMI", Color(0xFFF87171), Color(0xE63B0A16), Color(0xE81E0610))
+        "COMMS" -> Quadruple("📡 KAPALI DEVRE TELSİZ", Color(0xFF34D399), Color(0xDC0B2926), Color(0xE608191C))
+        "MIND" -> Quadruple("✦ ZİHİN YANKISI", Color(0xFFE879F9), Color(0xDC2C0F47), Color(0xE6160829))
+        else -> Quadruple("✦ ÖZEL KAYIT", chapterAccent, Color(0xDC20103D), Color(0xE6120826))
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 2.dp, vertical = 8.dp)
+            .morCamCosmicGlow(cornerRadius = 18.dp, glowColor = tintColor, alpha = 0.28f, blurDp = 12.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Brush.verticalGradient(listOf(bgStart, bgEnd)))
+            .border(1.dp, tintColor.copy(alpha = 0.58f), RoundedCornerShape(18.dp))
+            .then(
+                if (isCollapsible) {
+                    Modifier.clickable { isExpanded = !isExpanded }
+                } else {
+                    Modifier
+                }
+            )
+            .padding(horizontal = 15.dp, vertical = 13.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = badgeLabel,
+                fontFamily = InterFontFamily,
+                color = tintColor,
+                fontSize = 9.8.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.1.sp,
+                modifier = Modifier.weight(1f)
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                if (onToggleSpeak != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(if (isSpeaking) tintColor.copy(alpha = 0.34f) else Color(0x660B061E))
+                            .border(
+                                0.9.dp,
+                                if (isSpeaking) Color.White else tintColor.copy(alpha = 0.72f),
+                                RoundedCornerShape(50)
+                            )
+                            .clickable {
+                                if (!isExpanded) isExpanded = true
+                                onToggleSpeak()
+                            }
+                            .padding(horizontal = 9.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = if (isSpeaking) "⏹ DURDUR" else "🔊 SESLİ DİNLE",
+                            fontFamily = InterFontFamily,
+                            color = if (isSpeaking) Color.White else tintColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+                if (isCollapsible) {
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.ChevronRight,
+                        contentDescription = if (isExpanded) "Daralt" else "Aç",
+                        tint = tintColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+
+        val speakerPortrait = remember(title, kind) {
+            if (kind == "COMMS" || kind == "DOSSIER" || kind == "MIND") {
+                CharacterPortraitKey.resolveFromLabel(title)
+            } else null
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(11.dp)
+        ) {
+            if (speakerPortrait != null) {
+                CinematicCharacterAvatar(
+                    key = speakerPortrait,
+                    size = 44.dp,
+                    borderWidth = 1.3.dp,
+                    borderColor = tintColor
+                )
+            }
+            Text(
+                text = title,
+                fontFamily = DisplaySerifFontFamily,
+                color = Color(0xFFFFFFFF),
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                lineHeight = 20.sp,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        AnimatedVisibility(
+            visible = isExpanded,
+            enter = fadeIn() + expandVertically()
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(tintColor.copy(alpha = 0.28f))
+                )
+                Text(
+                    text = formatLiteraryParagraph(body),
+                    fontFamily = if (kind == "DOSSIER" || kind == "ALARM") InterFontFamily else LiterarySerifFontFamily,
+                    fontStyle = if (kind == "AUDIO" || kind == "MIND") FontStyle.Italic else FontStyle.Normal,
+                    color = Color(0xFFEBE4FA),
+                    fontSize = (fontSizeSp - 0.8f).coerceAtLeast(13.5f).sp,
+                    lineHeight = (fontSizeSp * 1.58f).sp
+                )
+            }
+        }
+    }
+}
+
+private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 /**
  * Memory Echo Inlay — surfaces hidden cross-chapter flag callbacks in an atmospheric
@@ -1119,11 +1371,57 @@ fun MorCamChapterCompleteCard(
     onNextChapter: () -> Unit,
     onRestartChapter: () -> Unit
 ) {
+    val isSeason1Finale = chapterMeta.number == 10
+    val isSeason2Finale = chapterMeta.number == 24
+    val isSeasonFinale = isSeason1Finale || isSeason2Finale
+    val chapterDecisions = remember(state.chapterDecisions, chapterMeta.number) {
+        state.chapterDecisions[chapterMeta.number].orEmpty()
+    }
+    val unlockedTitle = remember(chapterMeta.number, state.flags, chapterDecisions) {
+        when {
+            isSeason2Finale -> when {
+                state.flags["s2_romance"] == "natasha" -> "2. Sezon Efsanesi · Gölgeyle Verilen Söz (Natasha)"
+                state.flags["s2_romance"] == "wanda" -> "2. Sezon Efsanesi · Kızıl Kalbin Yankısı (Wanda)"
+                state.flags["s2_pietro_fate"] == "saved" -> "2. Sezon Efsanesi · Zamanı Büken Kurtarıcı"
+                else -> "2. Sezon Efsanesi · Demir ve Yankının Galibi"
+            }
+            isSeason1Finale -> when (state.flags["season1_ending"]) {
+                "vanguard" -> "1. Sezon Efsanesi · Avengers'ın Kozmik Komutanı"
+                "twin_stars" -> "1. Sezon Efsanesi · Gölge ve Işık (Avengers)"
+                "shield_reborn" -> "1. Sezon Efsanesi · Kozmik Nöbet Mimarı (Avengers)"
+                else -> "1. Sezon Efsanesi · Avengers'ın Kalkanı Aiden Blackwood"
+            }
+            chapterDecisions.any { it.choiceId.contains("kiss") } ->
+                "Bölüm Unvanı · Kalbin Mührü"
+            chapterDecisions.any { it.choiceId.contains("mjolnir") } ->
+                "Bölüm Unvanı · Çekicin Sınavı"
+            chapterDecisions.any { it.choiceId.contains("pietro_save") } ->
+                "Bölüm Unvanı · Gümüş Şimşeği Kurtaran"
+            chapterDecisions.any { it.choiceId.contains("white_eye") || it.choiceId.contains("probe") } ->
+                "Bölüm Unvanı · Beyaz Göz Hâkimi"
+            chapterDecisions.any { it.choiceId.contains("natasha") || it.choiceId.contains("shadow") } ->
+                "Bölüm Unvanı · Gölgenin Dili"
+            chapterDecisions.any { it.choiceId.contains("wanda") || it.choiceId.contains("echo") } ->
+                "Bölüm Unvanı · Kızıl Yankı"
+            chapterDecisions.any { it.choiceId.contains("stand_ground") || it.choiceId.contains("save_mira") } ->
+                "Bölüm Unvanı · Canavar Değil"
+            else -> "Bölüm Unvanı · Kozmik İrade"
+        }
+    }
+    val chapterSecrets = remember(chapterDecisions) {
+        chapterDecisions.mapNotNull { it.secretUnlocked }.distinct()
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 14.dp, bottom = 10.dp)
-            .morCamCosmicGlow(cornerRadius = 26.dp, glowColor = accentColor, alpha = 0.44f * glowPulse, blurDp = 18.dp)
+            .morCamCosmicGlow(
+                cornerRadius = 26.dp,
+                glowColor = if (isSeasonFinale) Color(0xFFEAB308) else accentColor,
+                alpha = 0.48f * glowPulse,
+                blurDp = 18.dp
+            )
             .clip(RoundedCornerShape(26.dp))
             .cosmicGlassSheen(cornerRadius = 26.dp, periodMs = 4600)
             .background(
@@ -1131,13 +1429,21 @@ fun MorCamChapterCompleteCard(
                     listOf(Color(0xEB281254), Color(0xF215082E), Color(0xEB1F0C42))
                 )
             )
-            .border(1.3.dp, MorCamTokens.RimGradient, RoundedCornerShape(26.dp))
+            .border(
+                width = if (isSeasonFinale) 1.6.dp else 1.3.dp,
+                brush = MorCamTokens.RimGradient,
+                shape = RoundedCornerShape(26.dp)
+            )
             .padding(horizontal = 22.dp, vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(11.dp)
     ) {
         Text(
-            text = "✦ BÖLÜM ${chapterMeta.romanNumeral} SONUNA ULAŞTIN ✦",
+            text = when {
+                isSeason2Finale -> "✦ 2. SEZON FİNALİ TAMAMLANDI ✦"
+                isSeason1Finale -> "✦ 1. SEZON FİNALİ TAMAMLANDI ✦"
+                else -> "✦ BÖLÜM ${chapterMeta.romanNumeral} SONUNA ULAŞTIN ✦"
+            },
             fontFamily = InterFontFamily,
             color = Color(0xFFFEF08A),
             fontSize = 10.5.sp,
@@ -1154,8 +1460,44 @@ fun MorCamChapterCompleteCard(
             textAlign = TextAlign.Center
         )
 
+        // Unlocked Dynamic Chapter Title / Season Finale Destiny Badge
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .background(accentColor.copy(alpha = 0.18f))
+                .border(0.9.dp, accentColor.copy(alpha = 0.65f), RoundedCornerShape(50))
+                .padding(horizontal = 14.dp, vertical = 5.dp)
+        ) {
+            Text(
+                text = "★ $unlockedTitle",
+                fontFamily = InterFontFamily,
+                color = Color(0xFFFEF9C3),
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.4.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        if (chapterSecrets.isNotEmpty()) {
+            Text(
+                text = "Açılan Gizli İz: ${chapterSecrets.joinToString(" · ")}",
+                fontFamily = InterFontFamily,
+                color = Color(0xFFFDE047),
+                fontSize = 11.sp,
+                textAlign = TextAlign.Center
+            )
+        }
+
         Text(
-            text = "Bu bölümde verdiğin kararların hikâyede bıraktığı izleri görmek ve bölümü sonlandırmak için devam et.",
+            text = when {
+                isSeason2Finale ->
+                    "2. Sezon boyunca verdiğin bütün kararları, kurtardığın hayatları, aşkının izini ve 3. Sezon'un kapısını açacak jenerik sonrası sahneyi görmek için devam et."
+                isSeason1Finale ->
+                    "1. Sezon boyunca verdiğin bütün kararların sonuçlarını, karakter bağlarını ve 2. Sezon: Demir ve Yankı'nın kapısını açacak sahneyi görmek için devam et."
+                else ->
+                    "Bu bölümde verdiğin kararların hikâyede bıraktığı izleri görmek ve bölümü sonlandırmak için devam et."
+            },
             fontFamily = LiterarySerifFontFamily,
             fontStyle = FontStyle.Italic,
             color = Color(0xFFDCCDF7),
@@ -1167,7 +1509,11 @@ fun MorCamChapterCompleteCard(
         Spacer(modifier = Modifier.height(4.dp))
 
         MorCamCapsuleButton(
-            text = "Bölümü Bitir ✦",
+            text = when {
+                isSeason2Finale -> "2. Sezon Finali & Kader Raporu ✦"
+                isSeason1Finale -> "1. Sezon Kader Raporu ✦"
+                else -> "Bölümü Bitir ✦"
+            },
             onClick = onOpenSummaryModal,
             variant = MorCamButtonVariant.Primary,
             modifier = Modifier
