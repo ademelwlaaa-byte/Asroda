@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -67,7 +69,7 @@ android {
                 keyPassword = System.getenv("KEY_PASSWORD")
                     ?: error("KEY_PASSWORD env var is required when KEYSTORE_PATH is set")
             } else if (projectReleaseKeystore.exists()) {
-                val localProps = java.util.Properties().apply {
+                val localProps = Properties().apply {
                     val lpFile = rootProject.file("local.properties")
                     if (lpFile.exists()) lpFile.inputStream().use { load(it) }
                 }
