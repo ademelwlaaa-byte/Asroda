@@ -163,7 +163,7 @@ class BackgroundMemoryMergeWorker(
             }
 
             group.forEach { merged.add(it.id) }
-            repository.invalidateMemoryCache(botId)
+            repository.invalidateMemoryCaches(botId)
             mergeCount++
         }
     }

@@ -38,6 +38,8 @@ class EmochiApplication : Application(), ImageLoaderFactory {
 
         const val OPENROUTER_REFERER = "https://emochi.app"
         const val OPENROUTER_TITLE = "Emochi"
+        const val STRICT_UTILITY_TIMEOUT_MS = 18_000
+        const val STRICT_NARRATIVE_TIMEOUT_MS = 60_000
         private const val MAX_POLICY_BODY_BYTES = 2L * 1024L * 1024L
 
         @Volatile
@@ -145,8 +147,21 @@ class EmochiApplication : Application(), ImageLoaderFactory {
         }
 
         fun createTemperatureInterceptor(): Interceptor = Interceptor { chain ->
-            val sanitizedRequest = applyTemperaturePolicy(chain.request())
-            chain.proceed(sanitizedRequest)
+            val originalReq = chain.request()
+            val callType = originalReq.header(HEADER_CALL_TYPE)
+                ?: currentCallType.get()
+                ?: CALL_TYPE_NARRATIVE
+            val isUtility = callType.equals(CALL_TYPE_UTILITY, ignoreCase = true)
+            val sanitizedRequest = applyTemperaturePolicy(originalReq)
+
+            val timedChain = if (AppFeatureFlags.isStrictApiTimeoutEnabled) {
+                val readMs = if (isUtility) STRICT_UTILITY_TIMEOUT_MS else STRICT_NARRATIVE_TIMEOUT_MS
+                chain.withReadTimeout(readMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } else {
+                // Strict timeout disabled: allow slow reasoning / local Ollama models without cutting off
+                chain.withReadTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+            }
+            timedChain.proceed(sanitizedRequest)
         }
 
         val installedTemperatureInterceptor: Interceptor = createTemperatureInterceptor()
@@ -156,6 +171,9 @@ class EmochiApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         AppFeatureFlags.init(this)
         configureLlmTemperatureInterceptor()
+        try {
+            com.example.data.managers.BackupSnapshotManager.cleanupLegacyExternalBackups(this)
+        } catch (_: Exception) {}
         try {
             com.example.work.SummarizationWorker.schedule(this)
         } catch (e: Exception) {

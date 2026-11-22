@@ -14,10 +14,13 @@ import com.example.data.local.MessageEntity
 import com.example.data.local.MilestoneEntity
 import com.example.data.local.RoutineEntity
 import com.example.data.local.SensitiveTriggerEntity
+import com.example.data.local.EmotionState
+import com.example.data.local.PersonalityProfile
+import com.example.data.local.PrimaryEmotions
+import com.example.data.local.RelationshipAxes
 import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.BaselineEmotionEngine
 import com.example.data.repository.EmochiRepository
-import com.example.data.repository.EmotionState
 import com.example.util.AppFeatureFlags
 import com.example.util.ChatExporter
 import com.example.util.ChatTtsManager
@@ -170,25 +173,22 @@ class SpecChatTtsBackupTest {
     @Test
     fun test2_cloneBot_copiesTriggersResetsCountPreservesBaselineAndNoHardcodedDate() = runBlocking {
         val customBaselineState = EmotionState(
-            mood = "temkinli",
-            intensity = 6,
-            affection = 32,
-            trust = 28,
-            tension = 68,
-            hurt = 14,
-            obsession = 5,
-            respect = 74,
-            comfort = 22
+            primaryEmotions = PrimaryEmotions(joy = 20, trust = 28, fear = 10, anger = 35, sadness = 15, anticipation = 40),
+            relationshipAxes = RelationshipAxes(affectionScore = 24, respectScore = 26, comfortScore = 22, resentmentScore = 68),
+            dominantEmotion = "temkinli"
         )
         val storedAnalysis = BaselineEmotionEngine.BaselineAnalysisResult(
+            relationshipType = "rival",
+            relationshipNote = "LLM analizi",
+            personalityProfile = PersonalityProfile.deriveFromPersonality("Aiden", "Mesafeli stratejist", "Katedral"),
+            regulationCapacity = 65,
+            difficultyMultiplier = 1.4,
             baselineEmotionState = customBaselineState,
-            worldAtmosphereMood = "gergin",
-            worldAtmosphereIntensity = 7,
-            baseAffectionDifficulty = 1.4,
-            emotionalRegulationCapacity = 65,
-            relationshipArchetype = "rival",
-            reasoningSummary = "LLM analizi",
-            source = "llm"
+            sensitiveTriggers = emptyList(),
+            speechPattern = "Ölçülü ve net",
+            confidence = 92,
+            analysisSource = "llm",
+            rawJson = ""
         )
 
         val botWithoutExplicitDate = createSampleBot(
@@ -196,7 +196,7 @@ class SpecChatTtsBackupTest {
             hasExplicitStoryDate = false,
             storyCalendarDate = "2026-11-11"
         ).copy(
-            baselineEmotionAnalysisJson = BaselineEmotionEngine.serialize(storedAnalysis),
+            baselineEmotionAnalysisJson = storedAnalysis.toCanonicalJson(),
             baselineAnalysisSource = "llm"
         )
         db.botDao().insertOrUpdate(botWithoutExplicitDate)
@@ -217,9 +217,9 @@ class SpecChatTtsBackupTest {
 
         // Stored LLM baseline emotion must be preserved on clone
         val clonedEmotion = EmotionState.fromJson(clonedNoDate.emotionState)
-        assertEquals(32, clonedEmotion.affection)
-        assertEquals(28, clonedEmotion.trust)
-        assertEquals(68, clonedEmotion.tension)
+        assertEquals(24, clonedEmotion.relationshipAxes.affectionScore)
+        assertEquals(28, clonedEmotion.primaryEmotions.trust)
+        assertEquals(68, clonedEmotion.relationshipAxes.resentmentScore)
 
         // Sensitive triggers copied with recentTriggerCount reset to 0
         val clonedTriggers = db.sensitiveTriggerDao().getTriggersForBot(clonedNoDate.id)
@@ -286,7 +286,7 @@ class SpecChatTtsBackupTest {
         db.messageDao().insertMessage(MessageEntity(id = "msg_v2_1", botId = bot.id, role = "assistant", text = "Hoş geldin.", timestamp = 1_500_000L))
         db.memoryFactDao().insertFact(MemoryFactEntity(botId = bot.id, subject = "Selin", key = "meslek", value = "Dedektif"))
         db.memoryEventDao().insertEvent(MemoryEventEntity(botId = bot.id, timestamp = 1_500_000L, description = "Katedralde anlaşma yapıldı", importanceScore = 8))
-        db.castMemberDao().insertCastMember(CastMemberEntity(botId = bot.id, name = "Elena", role = "Müttefik"))
+        db.castMemberDao().insertCastMember(CastMemberEntity(botId = bot.id, name = "Elena", role = "Müttefik", description = "Güvenilir müttefik."))
         db.sensitiveTriggerDao().insertOrUpdate(SensitiveTriggerEntity(botId = bot.id, triggerTopic = "Kayıp", sourceDescription = "Kardeşi", intensityMultiplier = 1.6))
         db.routineDao().insertRoutine(RoutineEntity(botId = bot.id, routineDescription = "Sabah koşusu", frequency = "daily"))
         db.milestoneDao().insertMilestone(MilestoneEntity(id = "${bot.id}_m1", botId = bot.id, type = "first_bond", title = "İlk Bağ", emoji = "💫", affectionAtTime = 65, trustAtTime = 60))
@@ -461,8 +461,9 @@ class SpecChatTtsBackupTest {
         assertFalse("Internal STATE_JSON must be stripped from exported text", txtOut.contains("STATE_JSON"))
 
         val mdOut = ChatExporter.buildExportContent(bot, msgs, ChatExporter.ExportFormat.MARKDOWN, ChatExporter.DateRange.LAST_24_HOURS, now)
-        assertTrue("Markdown must include H1 header", mdOut.startsWith("# Aiden"))
-        assertTrue("Markdown must include quote block", mdOut.contains("> 2 saat önceki yanıt"))
+        assertTrue("Markdown must include H1 header", mdOut.startsWith("# ✦ Aiden"))
+        assertTrue("Markdown must include metadata quote block", mdOut.contains("> **Toplam Sahne / Mesaj:** 1"))
+        assertTrue("Markdown must include assistant message text", mdOut.contains("2 saat önceki yanıt"))
         assertTrue("Markdown must include horizontal separator", mdOut.contains("---"))
 
         val jsonOut = ChatExporter.buildExportContent(bot, msgs, ChatExporter.ExportFormat.JSON, ChatExporter.DateRange.LAST_30_DAYS, now)

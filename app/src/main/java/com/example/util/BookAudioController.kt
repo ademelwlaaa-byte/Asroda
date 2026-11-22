@@ -48,6 +48,10 @@ object BookAudioController {
     val isPlaying: Boolean get() = _isPlayingFlow.value
     val isMuted: Boolean get() = _isMutedFlow.value
 
+    /** Optional hook invoked right before chapter soundtrack starts so active chat TTS stops cleanly. */
+    @Volatile
+    var onPlaybackStarted: (() -> Unit)? = null
+
     /**
      * Starts playback automatically ON from silence (0f) and smoothly ramps to full volume (1.0f)
      * over [fadeInMs] (default 1500ms).
@@ -85,6 +89,7 @@ object BookAudioController {
         releasePlayerInternal()
 
         try {
+            try { onPlaybackStarted?.invoke() } catch (_: Exception) {}
             requestAudioFocus(safeCtx)
 
             val p = createMediaPlayer(safeCtx, rawResId) ?: run {
@@ -373,6 +378,17 @@ object BookAudioController {
             try {
                 p.pause()
                 pausedByBackground = true
+                _isPlayingFlow.value = false
+            } catch (_: Exception) {}
+        }
+    }
+
+    /** Immediately pauses chapter soundtrack if playing so chat TTS never clashes with book music. */
+    fun pauseIfPlaying() {
+        val p = player ?: return
+        if (!isFadingOut && p.isPlaying) {
+            try {
+                p.pause()
                 _isPlayingFlow.value = false
             } catch (_: Exception) {}
         }

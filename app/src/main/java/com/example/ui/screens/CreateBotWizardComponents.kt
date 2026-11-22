@@ -456,7 +456,8 @@ internal fun WizardMorCamBottomDock(
     onBack: () -> Unit,
     onNext: () -> Unit,
     validationHint: String? = null,
-    onDisabledNextClick: (() -> Unit)? = null
+    onDisabledNextClick: (() -> Unit)? = null,
+    isSubmitting: Boolean = false
 ) {
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
@@ -630,9 +631,11 @@ internal fun WizardMorCamBottomDock(
                         shape = RoundedCornerShape(50)
                     )
                     .clickable(
+                        enabled = !isSubmitting,
                         interactionSource = nextInteraction,
                         indication = null,
                         onClick = {
+                            if (isSubmitting) return@clickable
                             if (canNext) onNext() else onDisabledNextClick?.invoke()
                         }
                     )
@@ -640,7 +643,7 @@ internal fun WizardMorCamBottomDock(
                     .padding(horizontal = 18.dp),
                 contentAlignment = Alignment.Center
             ) {
-                if (canNext) {
+                if (canNext && !isSubmitting) {
                     Canvas(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
@@ -659,19 +662,34 @@ internal fun WizardMorCamBottomDock(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(
-                        text = if (stepIdx == totalSteps - 1) "Botu Oluştur" else "İleri",
-                        fontFamily = DisplaySerifFontFamily,
-                        color = if (canNext) Color(0xFFFAF6FF) else Color(0x70C4B5FD),
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Icon(
-                        imageVector = if (stepIdx == totalSteps - 1) Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = null,
-                        tint = if (canNext) Color(0xFFFAF6FF) else Color(0x70C4B5FD),
-                        modifier = Modifier.size(18.dp)
-                    )
+                    if (isSubmitting) {
+                        androidx.compose.material3.CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = Color(0xFFFAF6FF)
+                        )
+                        Text(
+                            text = "Oluşturuluyor...",
+                            fontFamily = DisplaySerifFontFamily,
+                            color = Color(0xFFFAF6FF),
+                            fontSize = 15.5.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    } else {
+                        Text(
+                            text = if (stepIdx == totalSteps - 1) "Botu Oluştur" else "İleri",
+                            fontFamily = DisplaySerifFontFamily,
+                            color = if (canNext) Color(0xFFFAF6FF) else Color(0x70C4B5FD),
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Icon(
+                            imageVector = if (stepIdx == totalSteps - 1) Icons.Default.Check else Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = if (canNext) Color(0xFFFAF6FF) else Color(0x70C4B5FD),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

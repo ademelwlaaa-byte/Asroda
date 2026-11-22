@@ -185,6 +185,14 @@ fun GlobalSettingsModal(
     val motionConfig = LocalCosmicMotionConfig.current
     val currentMotionMode by CosmicMotionPreferences.mode.collectAsState()
     val refusalAutoFallback by com.example.util.AppFeatureFlags.refusalAutoFallback.collectAsState()
+    val strictApiTimeout by com.example.util.AppFeatureFlags.strictApiTimeout.collectAsState()
+    val ttsEngineMode by com.example.util.AppFeatureFlags.ttsEngineMode.collectAsState()
+    val ttsEmotionalProsody by com.example.util.AppFeatureFlags.ttsEmotionalProsody.collectAsState()
+    val ttsNeuralVoice by com.example.util.AppFeatureFlags.ttsNeuralVoice.collectAsState()
+    val aiUtilityModelsMap by com.example.util.AppFeatureFlags.aiUtilityModels.collectAsState()
+    val isSelectingUtilityKey by viewModel.isSelectingUtilityModel.collectAsState()
+    val utilitySelectionFeedback by viewModel.utilityModelSelectionMessage.collectAsState()
+    val isTurkishVoiceMissing by viewModel.isTurkishVoiceMissing.collectAsState()
     val providerHealthMap by com.example.data.managers.ProviderHealthTracker.healthSnapshot.collectAsState()
 
     val customProviders by viewModel.customProviders.collectAsState()
@@ -1049,6 +1057,9 @@ fun GlobalSettingsModal(
                                         activeApiItems.forEachIndexed { index, item ->
                                             val isFirst = index == 0
                                             val testRes = activeTestResults[item.key]
+                                            val activeUtilityModel = aiUtilityModelsMap[item.key.lowercase()]
+                                                ?: item.customEntity?.utilityModel?.takeIf { it.isNotBlank() }
+                                                ?: ""
                                             ActiveApiPriorityRow(
                                                 index = index,
                                                 totalCount = activeApiItems.size,
@@ -1057,6 +1068,15 @@ fun GlobalSettingsModal(
                                                 isTesting = testingActiveKey == item.key,
                                                 testResult = testRes,
                                                 healthState = providerHealthMap[item.key.lowercase()],
+                                                activeUtilityModel = activeUtilityModel,
+                                                isSelectingUtility = isSelectingUtilityKey == item.key,
+                                                onAiSelectUtilityModel = {
+                                                    viewModel.selectUtilityModelWithAi(
+                                                        providerKey = item.key,
+                                                        apiKeyOverride = item.apiKeyPlain.takeIf { it.isNotBlank() },
+                                                        baseUrlOverride = item.baseUrl.takeIf { it.isNotBlank() }
+                                                    )
+                                                },
                                                 onMoveUp = { moveApiItem(index, -1) },
                                                 onMoveDown = { moveApiItem(index, 1) },
                                                 onEdit = {
@@ -1090,7 +1110,16 @@ fun GlobalSettingsModal(
                                                             apiFormat = item.apiFormat
                                                         )
                                                         if (res.isSuccess) {
+                                                            com.example.data.managers.ProviderHealthTracker.resetHealth(item.key)
                                                             com.example.data.managers.ProviderHealthTracker.recordSuccess(item.key, res.latencyMs)
+                                                            if (com.example.util.AppFeatureFlags.getAiUtilityModel(item.key).isBlank()) {
+                                                                viewModel.selectUtilityModelWithAi(
+                                                                    providerKey = item.key,
+                                                                    apiKeyOverride = item.apiKeyPlain.takeIf { it.isNotBlank() },
+                                                                    baseUrlOverride = item.baseUrl.takeIf { it.isNotBlank() },
+                                                                    silent = true
+                                                                )
+                                                            }
                                                         }
                                                         activeTestResults = activeTestResults + (item.key to res)
                                                         testingActiveKey = null
@@ -1099,6 +1128,27 @@ fun GlobalSettingsModal(
                                                 onDelete = { removeApiItem(item) }
                                             )
                                         }
+                                    }
+                                }
+
+                                if (!utilitySelectionFeedback.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0x552E1065))
+                                            .border(0.9.dp, Color(0xAAD8B4FE), RoundedCornerShape(12.dp))
+                                            .clickable { viewModel.clearUtilityModelSelectionMessage() }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                                    ) {
+                                        Text(
+                                            text = utilitySelectionFeedback.orEmpty(),
+                                            color = Color(0xFFF3E8FF),
+                                            fontSize = 11.sp,
+                                            lineHeight = 15.sp,
+                                            fontFamily = InterFontFamily
+                                        )
                                     }
                                 }
 
@@ -1167,6 +1217,40 @@ fun GlobalSettingsModal(
                                         checked = refusalAutoFallback,
                                         onCheckedChange = { com.example.util.AppFeatureFlags.setRefusalAutoFallback(it) },
                                         modifier = Modifier.testTag("refusal_auto_fallback_toggle")
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(9.dp))
+                                MorCamDivider()
+                                Spacer(modifier = Modifier.height(8.dp))
+
+                                // Sistem #9: Configurable Strict API Timeout Guard
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Akıllı Zaman Aşımı Koruması (Timeout)",
+                                            color = GlobalMorCamColors.PearlText,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Text(
+                                            text = "Açıkken yanıt vermeyen API en fazla 60 sn (yardımcı çağrılar 18 sn) beklenip sıradakine geçer. Yavaş yerel/düşünen (reasoning) modellerde kapatarak süresiz bekleyebilirsin.",
+                                            color = GlobalMorCamColors.MutedLavender,
+                                            fontSize = 11.sp,
+                                            lineHeight = 14.5.sp,
+                                            fontFamily = InterFontFamily
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    GlobalMorCamSwitch(
+                                        checked = strictApiTimeout,
+                                        onCheckedChange = { com.example.util.AppFeatureFlags.setStrictApiTimeout(it) },
+                                        modifier = Modifier.testTag("strict_api_timeout_toggle")
                                     )
                                 }
                             }
@@ -1502,24 +1586,161 @@ fun GlobalSettingsModal(
                                         }
                                     }
 
-                                    // ── Mor Cam Voice Picker & Live Preview ──
+                                    // ── Sistem #11: Free 2-Tier Emotional Neural TTS Engine Selector ──
                                     Spacer(modifier = Modifier.height(14.dp))
-                                    val activeVoiceLabel = remember(selectedVoiceName, availableTtsVoices) {
-                                        if (selectedVoiceName.isBlank()) {
-                                            "Sistem Varsayılanı (${if (appLanguage == "en") "English" else "Türkçe"})"
-                                        } else {
-                                            availableTtsVoices.firstOrNull { it.name == selectedVoiceName }?.displayName
-                                                ?: selectedVoiceName.take(28)
-                                        }
-                                    }
                                     Text(
-                                        text = "Ses Seçimi (${availableTtsVoices.size} cihaz sesi)",
+                                        text = "Ses Motoru (Ücretsiz 2 Katmanlı)",
                                         color = GlobalMorCamColors.LavenderSubtext,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.SemiBold,
                                         fontFamily = InterFontFamily
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        listOf(
+                                            "neural" to "✦ Nöral Duygulu (Ücretsiz)",
+                                            "device" to "📱 Cihaz Sesi (Çevrimdışı)"
+                                        ).forEach { (modeKey, modeLabel) ->
+                                            val isSelected = ttsEngineMode == modeKey
+                                            val pillShape = RoundedCornerShape(50)
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .heightIn(min = 42.dp)
+                                                    .clip(pillShape)
+                                                    .background(
+                                                        if (isSelected) Brush.verticalGradient(listOf(Color(0xEE8B5CF6), Color(0xEE5B21B6)))
+                                                        else Brush.verticalGradient(listOf(Color(0x88241145), Color(0x88120726)))
+                                                    )
+                                                    .border(
+                                                        width = if (isSelected) 1.3.dp else 1.dp,
+                                                        brush = if (isSelected) Brush.linearGradient(listOf(Color(0xFFFDF7FF), Color(0xFFD8B4FE), Color(0xFF9333EA)))
+                                                        else Brush.linearGradient(listOf(Color(0x88D8B4FE), Color(0x448B5CF6))),
+                                                        shape = pillShape
+                                                    )
+                                                    .clickable { com.example.util.AppFeatureFlags.setTtsEngineMode(modeKey) }
+                                                    .padding(horizontal = 8.dp)
+                                                    .testTag("tts_engine_mode_$modeKey"),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(
+                                                    text = modeLabel,
+                                                    color = if (isSelected) Color.White else GlobalMorCamColors.LavenderSubtext,
+                                                    fontSize = 11.2.sp,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Duygusal Tonlama (Prosodi)",
+                                                color = GlobalMorCamColors.PearlText,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = InterFontFamily
+                                            )
+                                            Text(
+                                                text = "Botun ruh haline, fısıltı ve haykırışlara göre doğal ses tonu",
+                                                color = GlobalMorCamColors.LavenderSubtext,
+                                                fontSize = 11.sp,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                        GlobalMorCamSwitch(
+                                            checked = ttsEmotionalProsody,
+                                            onCheckedChange = { com.example.util.AppFeatureFlags.setTtsEmotionalProsody(it) },
+                                            modifier = Modifier.testTag("tts_emotional_prosody_toggle")
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    if (ttsEngineMode == "neural") {
+                                        Text(
+                                            text = "Nöral Ses Karakteri (İnsan Kalitesi • Çevrimdışı Otomatik Yedekli)",
+                                            color = GlobalMorCamColors.LavenderSubtext,
+                                            fontSize = 11.8.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            com.example.util.EdgeNeuralTtsClient.NEURAL_VOICES.forEach { nVoice ->
+                                                val isSel = ttsNeuralVoice == nVoice.id
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .clip(RoundedCornerShape(13.dp))
+                                                        .background(if (isSel) Color(0x667C3AED) else Color(0x44190A30))
+                                                        .border(
+                                                            1.dp,
+                                                            if (isSel) Color(0xFFE9D5FF) else Color(0x44A855F7),
+                                                            RoundedCornerShape(13.dp)
+                                                        )
+                                                        .clickable { com.example.util.AppFeatureFlags.setTtsNeuralVoice(nVoice.id) }
+                                                        .padding(horizontal = 11.dp, vertical = 8.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.SpaceBetween
+                                                ) {
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = "✦ ${nVoice.displayName}",
+                                                            color = Color.White,
+                                                            fontSize = 12.2.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            fontFamily = InterFontFamily
+                                                        )
+                                                        Text(
+                                                            text = nVoice.subtitle,
+                                                            color = GlobalMorCamColors.LavenderSubtext,
+                                                            fontSize = 10.5.sp,
+                                                            fontFamily = InterFontFamily
+                                                        )
+                                                    }
+                                                    if (isSel) {
+                                                        Icon(Icons.Default.Check, contentDescription = null, tint = Color(0xFFF3E8FF), modifier = Modifier.size(16.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                    }
+
+                                    // ── Mor Cam Voice Picker & Live Preview ──
+                                    val activeVoiceLabel = remember(selectedVoiceName, availableTtsVoices, ttsEngineMode, ttsNeuralVoice) {
+                                        if (ttsEngineMode == "neural") {
+                                            com.example.util.EdgeNeuralTtsClient.NEURAL_VOICES.firstOrNull { it.id == ttsNeuralVoice }?.displayName
+                                                ?: "Emel (Türkçe • Kadın)"
+                                        } else if (selectedVoiceName.isBlank()) {
+                                            "Sistem Varsayılanı (${if (appLanguage == "en") "English" else "Türkçe"})"
+                                        } else {
+                                            availableTtsVoices.firstOrNull { it.name == selectedVoiceName }?.displayName
+                                                ?: selectedVoiceName.take(28)
+                                        }
+                                    }
+                                    if (ttsEngineMode != "neural") {
+                                        Text(
+                                            text = "Cihaz Sesi Seçimi (${availableTtsVoices.size} cihaz sesi)",
+                                            color = GlobalMorCamColors.LavenderSubtext,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            fontFamily = InterFontFamily
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                    }
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1559,7 +1780,7 @@ fun GlobalSettingsModal(
 
                                         Box(
                                             modifier = Modifier
-                                                .weight(0.85f)
+                                                .weight(0.92f)
                                                 .heightIn(min = 44.dp)
                                                 .clip(RoundedCornerShape(14.dp))
                                                 .background(
@@ -1582,7 +1803,8 @@ fun GlobalSettingsModal(
                                                             voiceName = selectedVoiceName,
                                                             speed = ttsSpeed,
                                                             pitch = ttsPitch,
-                                                            languageTag = appLanguage
+                                                            languageTag = appLanguage,
+                                                            neuralVoiceId = if (ttsEngineMode == "neural") ttsNeuralVoice else null
                                                         )
                                                     }
                                                 }
@@ -1591,11 +1813,58 @@ fun GlobalSettingsModal(
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = if (isTtsSpeaking) "⏹ Durdur" else "▶ Sesi Dinle",
+                                                text = if (isTtsSpeaking) "⏹ Durdur" else "▶ Duygulu Dinle",
                                                 color = Color.White,
-                                                fontSize = 12.sp,
+                                                fontSize = 11.8.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
+                                                fontFamily = InterFontFamily
+                                            )
+                                        }
+                                    }
+
+                                    if (isTurkishVoiceMissing && ttsEngineMode == "device") {
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(Color(0x4D451A03))
+                                                .border(1.dp, Color(0xAAF59E0B), RoundedCornerShape(14.dp))
+                                                .clickable {
+                                                    try {
+                                                        val installIntent = android.content.Intent(android.speech.tts.TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
+                                                        installIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                        context.startActivity(installIntent)
+                                                    } catch (_: Exception) {
+                                                        Toast.makeText(context, "TTS dil paketi ekranı açılamadı.", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                                .padding(horizontal = 12.dp, vertical = 9.dp)
+                                                .testTag("tts_install_turkish_pack_button"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = "Türkçe Yüksek Kaliteli Cihaz Sesi İndir",
+                                                    color = Color(0xFFFDE68A),
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                                Text(
+                                                    text = "Çevrimdışı modda doğal Türkçe ses için Google TTS paketini tek dokunuşla kur.",
+                                                    color = Color(0xFFFEF3C7),
+                                                    fontSize = 10.5.sp,
+                                                    fontFamily = InterFontFamily
+                                                )
+                                            }
+                                            Text(
+                                                text = "İndir →",
+                                                color = Color.White,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
                                                 fontFamily = InterFontFamily
                                             )
                                         }
@@ -2437,6 +2706,15 @@ fun GlobalSettingsModal(
                     if (slot !in orderedApiKeys) {
                         orderedApiKeys = orderedApiKeys + slot
                     }
+                    // Sistem #9 + U2: Clear cooldown immediately and trigger AI small utility model selection
+                    com.example.data.managers.ProviderHealthTracker.resetHealth(slot)
+                    if (enteredKey.isNotBlank()) {
+                        viewModel.selectUtilityModelWithAi(
+                            providerKey = slot,
+                            apiKeyOverride = enteredKey,
+                            silent = true
+                        )
+                    }
                 } else if (existingCustom != null) {
                     viewModel.updateCustomProviderFull(
                         id = existingCustom.id,
@@ -2701,6 +2979,9 @@ private fun ActiveApiPriorityRow(
     isTesting: Boolean,
     testResult: EmochiRepository.ProviderTestResult?,
     healthState: com.example.data.managers.ProviderHealthState? = null,
+    activeUtilityModel: String = "",
+    isSelectingUtility: Boolean = false,
+    onAiSelectUtilityModel: () -> Unit = {},
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onEdit: () -> Unit,
@@ -2838,14 +3119,40 @@ private fun ActiveApiPriorityRow(
                         )
                     }
                 }
-                Text(
-                    text = item.subtitle,
-                    color = GlobalMorCamColors.MutedLavender,
-                    fontSize = 10.5.sp,
-                    fontFamily = InterFontFamily,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                // U2: AI-selected small utility/support model row for ALL providers
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.padding(top = 2.dp)
+                ) {
+                    Text(
+                        text = if (activeUtilityModel.isNotBlank()) "✦ Destek: $activeUtilityModel" else "✦ Destek: AI Otomatik",
+                        color = Color(0xFFA7F3D0),
+                        fontSize = 10.2.sp,
+                        fontWeight = FontWeight.Medium,
+                        fontFamily = InterFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0x4D5B21B6))
+                            .border(0.7.dp, Color(0xAAD8B4FE), RoundedCornerShape(8.dp))
+                            .clickable(enabled = !isSelectingUtility) { onAiSelectUtilityModel() }
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .testTag("ai_select_utility_${item.key}")
+                    ) {
+                        Text(
+                            text = if (isSelectingUtility) "Seçiyor..." else "AI Seç",
+                            color = Color(0xFFF3E8FF),
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = InterFontFamily
+                        )
+                    }
+                }
             }
 
             // Reorder controls (Up / Down)

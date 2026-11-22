@@ -34,6 +34,10 @@ object AvatarOptimizer {
         context: Context,
         imageUri: Uri
     ): Result<String> = withContext(Dispatchers.IO) {
+        var sampledBitmap: Bitmap? = null
+        var rotatedBitmap: Bitmap? = null
+        var croppedSquare: Bitmap? = null
+        var finalBitmap: Bitmap? = null
         try {
             // 1. Aşama: Görseli belleğe yüklemeden sadece boyutlarını oku
             val boundsOptions = BitmapFactory.Options().apply {
@@ -58,30 +62,33 @@ object AvatarOptimizer {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
 
-            val sampledBitmap = context.contentResolver.openInputStream(imageUri)?.use { stream ->
+            sampledBitmap = context.contentResolver.openInputStream(imageUri)?.use { stream ->
                 BitmapFactory.decodeStream(stream, null, decodeOptions)
             } ?: return@withContext Result.failure(IllegalStateException("Görsel çözümlenemedi"))
 
             // 3. Aşama: Kamera/Galeri EXIF döndürme açısını düzelt
-            val rotatedBitmap = fixExifOrientation(context, imageUri, sampledBitmap)
-            if (rotatedBitmap !== sampledBitmap) {
+            rotatedBitmap = fixExifOrientation(context, imageUri, sampledBitmap)
+            if (rotatedBitmap !== sampledBitmap && !sampledBitmap.isRecycled) {
                 sampledBitmap.recycle()
+                sampledBitmap = null
             }
 
             // 4. Aşama: Merkezden 1:1 kare kırp ve 256x256 boyutuna ölçekle
-            val croppedSquare = centerCropSquare(rotatedBitmap)
-            if (croppedSquare !== rotatedBitmap) {
+            croppedSquare = centerCropSquare(rotatedBitmap)
+            if (croppedSquare !== rotatedBitmap && !rotatedBitmap.isRecycled) {
                 rotatedBitmap.recycle()
+                rotatedBitmap = null
             }
 
-            val finalBitmap = Bitmap.createScaledBitmap(
+            finalBitmap = Bitmap.createScaledBitmap(
                 croppedSquare,
                 TARGET_AVATAR_SIZE,
                 TARGET_AVATAR_SIZE,
                 true
             )
-            if (finalBitmap !== croppedSquare) {
+            if (finalBitmap !== croppedSquare && !croppedSquare.isRecycled) {
                 croppedSquare.recycle()
+                croppedSquare = null
             }
 
             // 5. Aşama: WebP formatında sıkıştır (~12-18 KB)
@@ -89,14 +96,21 @@ object AvatarOptimizer {
             val compressFormat = webpLossyFormat()
 
             finalBitmap.compress(compressFormat, WEBP_QUALITY, outputStream)
-            finalBitmap.recycle()
-
             val webpBytes = outputStream.toByteArray()
+            if (webpBytes.isEmpty()) {
+                return@withContext Result.failure(IllegalStateException("Görsel sıkıştırılamadı"))
+            }
             val base64String = Base64.encodeToString(webpBytes, Base64.NO_WRAP)
 
             Result.success("data:image/webp;base64,$base64String")
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            listOf(finalBitmap, croppedSquare, rotatedBitmap, sampledBitmap).distinct().forEach { bmp ->
+                try {
+                    if (bmp != null && !bmp.isRecycled) bmp.recycle()
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -109,6 +123,9 @@ object AvatarOptimizer {
         context: Context,
         imageUri: Uri
     ): Result<String> = withContext(Dispatchers.IO) {
+        var sampledBitmap: Bitmap? = null
+        var rotatedBitmap: Bitmap? = null
+        var finalBitmap: Bitmap? = null
         try {
             val boundsOptions = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
@@ -132,16 +149,17 @@ object AvatarOptimizer {
                 inPreferredConfig = Bitmap.Config.RGB_565
             }
 
-            val sampledBitmap = context.contentResolver.openInputStream(imageUri)?.use { stream ->
+            sampledBitmap = context.contentResolver.openInputStream(imageUri)?.use { stream ->
                 BitmapFactory.decodeStream(stream, null, decodeOptions)
             } ?: return@withContext Result.failure(IllegalStateException("Arka plan görseli çözümlenemedi"))
 
-            val rotatedBitmap = fixExifOrientation(context, imageUri, sampledBitmap)
-            if (rotatedBitmap !== sampledBitmap) {
+            rotatedBitmap = fixExifOrientation(context, imageUri, sampledBitmap)
+            if (rotatedBitmap !== sampledBitmap && !sampledBitmap.isRecycled) {
                 sampledBitmap.recycle()
+                sampledBitmap = null
             }
 
-            val finalBitmap = if (rotatedBitmap.width > MAX_BG_WIDTH || rotatedBitmap.height > MAX_BG_HEIGHT) {
+            finalBitmap = if (rotatedBitmap.width > MAX_BG_WIDTH || rotatedBitmap.height > MAX_BG_HEIGHT) {
                 val scale = min(
                     MAX_BG_WIDTH.toFloat() / rotatedBitmap.width.toFloat(),
                     MAX_BG_HEIGHT.toFloat() / rotatedBitmap.height.toFloat()
@@ -149,7 +167,10 @@ object AvatarOptimizer {
                 val targetW = (rotatedBitmap.width * scale).toInt().coerceAtLeast(1)
                 val targetH = (rotatedBitmap.height * scale).toInt().coerceAtLeast(1)
                 Bitmap.createScaledBitmap(rotatedBitmap, targetW, targetH, true).also {
-                    if (it !== rotatedBitmap) rotatedBitmap.recycle()
+                    if (it !== rotatedBitmap && !rotatedBitmap.isRecycled) {
+                        rotatedBitmap.recycle()
+                        rotatedBitmap = null
+                    }
                 }
             } else {
                 rotatedBitmap
@@ -161,14 +182,21 @@ object AvatarOptimizer {
             val filename = "bg_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.webp"
             val outputFile = File(imagesDir, filename)
 
+            val bmpToSave = finalBitmap
+                ?: return@withContext Result.failure(IllegalStateException("Görsel işlenemedi."))
             FileOutputStream(outputFile).use { out ->
-                finalBitmap.compress(webpLossyFormat(), BG_WEBP_QUALITY, out)
+                bmpToSave.compress(webpLossyFormat(), BG_WEBP_QUALITY, out)
             }
-            finalBitmap.recycle()
 
             Result.success(Uri.fromFile(outputFile).toString())
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            listOf(finalBitmap, rotatedBitmap, sampledBitmap).distinct().forEach { bmp ->
+                try {
+                    if (bmp != null && !bmp.isRecycled) bmp.recycle()
+                } catch (_: Exception) {}
+            }
         }
     }
 

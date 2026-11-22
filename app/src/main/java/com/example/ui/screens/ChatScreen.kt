@@ -2811,112 +2811,6 @@ fun ChatScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                errorMessage?.let { err ->
-                    androidx.compose.animation.AnimatedVisibility(
-                        visible = true,
-                        modifier = Modifier.padding(top = topInsetPadding),
-                        enter = androidx.compose.animation.slideInVertically(
-                            animationSpec = tween(280, easing = FastOutSlowInEasing)
-                        ) { -it } + fadeIn(tween(200)),
-                        exit = androidx.compose.animation.slideOutVertically(
-                            animationSpec = tween(220)
-                        ) { -it } + fadeOut(tween(160))
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .cosmicShakeOnTrigger(err)
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(Color(0xCC3D1018), Color(0xCC1F0A10))
-                                    )
-                                )
-                                .border(
-                                    BorderStroke(
-                                        1.dp,
-                                        Brush.linearGradient(
-                                            listOf(Color(0xFFF87171), Color(0xFFDC2626), Color(0xFFF87171))
-                                        )
-                                    ),
-                                    RoundedCornerShape(14.dp)
-                                )
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0x30F87171)),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            contentDescription = null,
-                                            tint = EmochiError,
-                                            modifier = Modifier.size(14.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = err,
-                                        color = EmochiError,
-                                        fontSize = 12.sp,
-                                        lineHeight = 16.sp,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    if (onRetryFromBanner != null) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0x40F87171))
-                                                .border(1.dp, Color(0x60F87171), RoundedCornerShape(8.dp))
-                                                .clickable { onRetryFromBanner(); onClearError() }
-                                                .padding(horizontal = 10.dp, vertical = 5.dp)
-                                        ) {
-                                            Text(
-                                                text = "Tekrar",
-                                                color = EmochiError,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(28.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0x25F87171))
-                                            .clickable { onClearError() },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Close,
-                                            contentDescription = "Kapat",
-                                            tint = EmochiError,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
                 // Message region with a rich, multi-stop atmospheric fade under the top header bar and bottom bar!
                 LazyColumn(
                     state = listState,
@@ -4092,6 +3986,117 @@ fun ChatScreen(
                     val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
                     val itemsFromEnd = totalItems - 1 - lastVisibleItem.index
                     itemsFromEnd >= 3
+                }
+            }
+
+            // U4: Floating error banner overlay anchored under top header — never pushes LazyColumn down or collides with DstIn fade mask
+            androidx.compose.animation.AnimatedVisibility(
+                visible = !errorMessage.isNullOrBlank(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = topInsetPadding + 6.dp, start = 12.dp, end = 12.dp)
+                    .zIndex(20f),
+                enter = androidx.compose.animation.slideInVertically(
+                    animationSpec = tween(260, easing = FastOutSlowInEasing)
+                ) { -it } + fadeIn(tween(180)),
+                exit = androidx.compose.animation.slideOutVertically(
+                    animationSpec = tween(200)
+                ) { -it } + fadeOut(tween(150))
+            ) {
+                val err = errorMessage.orEmpty()
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .cosmicShakeOnTrigger(err)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(
+                            Brush.linearGradient(
+                                listOf(Color(0xEB3B0D1D), Color(0xEB1D0819))
+                            )
+                        )
+                        .border(
+                            BorderStroke(
+                                1.dp,
+                                Brush.linearGradient(
+                                    listOf(Color(0xFFFCA5A5), Color(0xFFDC2626), Color(0xFFFCA5A5))
+                                )
+                            ),
+                            RoundedCornerShape(16.dp)
+                        )
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .testTag("chat_floating_error_banner")
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x38F87171)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = null,
+                                    tint = EmochiError,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = err,
+                                color = Color(0xFFFECACA),
+                                fontSize = 12.sp,
+                                lineHeight = 16.sp,
+                                maxLines = 4,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (onRetryFromBanner != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0x4DF87171))
+                                        .border(1.dp, Color(0x88FCA5A5), RoundedCornerShape(10.dp))
+                                        .clickable { onRetryFromBanner(); onClearError() }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = "Tekrar",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x30F87171))
+                                    .clickable { onClearError() },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "Kapat",
+                                    tint = Color(0xFFFECACA),
+                                    modifier = Modifier.size(13.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

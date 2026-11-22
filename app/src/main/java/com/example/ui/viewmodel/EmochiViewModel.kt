@@ -80,12 +80,72 @@ class EmochiViewModel @JvmOverloads constructor(
 
     val providerFallbackLog = repository.providerFallbackLog
 
+    private val _isSelectingUtilityModel = MutableStateFlow<String?>(null)
+    val isSelectingUtilityModel: StateFlow<String?> = _isSelectingUtilityModel.asStateFlow()
+
+    private val _utilityModelSelectionMessage = MutableStateFlow<String?>(null)
+    val utilityModelSelectionMessage: StateFlow<String?> = _utilityModelSelectionMessage.asStateFlow()
+
+    fun clearUtilityModelSelectionMessage() {
+        _utilityModelSelectionMessage.value = null
+    }
+
+    fun selectUtilityModelWithAi(
+        providerKey: String,
+        apiKeyOverride: String? = null,
+        baseUrlOverride: String? = null,
+        silent: Boolean = false
+    ) {
+        viewModelScope.launch {
+            if (!silent) {
+                _isSelectingUtilityModel.value = providerKey
+                _utilityModelSelectionMessage.value = null
+            }
+            try {
+                val res = repository.selectUtilityModelWithAi(
+                    providerKey = providerKey,
+                    apiKeyOverride = apiKeyOverride
+                )
+                if (!silent) {
+                    val info = res.reasoning.ifBlank { if (res.source == "ai") "AI seçti" else "Otomatik" }
+                    _utilityModelSelectionMessage.value = if (res.selectedModel.isNotBlank()) {
+                        "✦ ${res.selectedModel} ($info)"
+                    } else {
+                        info
+                    }
+                }
+            } catch (e: Exception) {
+                if (!silent) {
+                    _utilityModelSelectionMessage.value = "Destek modeli seçilemedi: ${e.message}"
+                }
+            } finally {
+                if (!silent && _isSelectingUtilityModel.value == providerKey) {
+                    _isSelectingUtilityModel.value = null
+                }
+            }
+        }
+    }
+
     suspend fun testLlm7Connection(): EmochiRepository.ProviderTestResult {
-        return repository.testLlm7Connection()
+        val res = repository.testLlm7Connection()
+        if (res.isSuccess) {
+            com.example.data.managers.ProviderHealthTracker.resetHealth("llm7")
+            if (AppFeatureFlags.getAiUtilityModel("llm7").isBlank()) {
+                selectUtilityModelWithAi("llm7", silent = true)
+            }
+        }
+        return res
     }
 
     suspend fun testPollinationsConnection(modelName: String = "openai"): EmochiRepository.ProviderTestResult {
-        return repository.testPollinationsConnection(modelName)
+        val res = repository.testPollinationsConnection(modelName)
+        if (res.isSuccess) {
+            com.example.data.managers.ProviderHealthTracker.resetHealth("pollinations")
+            if (AppFeatureFlags.getAiUtilityModel("pollinations").isBlank()) {
+                selectUtilityModelWithAi("pollinations", silent = true)
+            }
+        }
+        return res
     }
 
     suspend fun fetchNvidiaModels(apiKey: String): List<String> {
@@ -166,7 +226,14 @@ class EmochiViewModel @JvmOverloads constructor(
     }
 
     suspend fun testOvhConnection(modelName: String = "Meta-Llama-3_3-70B-Instruct"): EmochiRepository.ProviderTestResult {
-        return repository.testOvhConnection(modelName)
+        val res = repository.testOvhConnection(modelName)
+        if (res.isSuccess) {
+            com.example.data.managers.ProviderHealthTracker.resetHealth("ovh")
+            if (AppFeatureFlags.getAiUtilityModel("ovh").isBlank()) {
+                selectUtilityModelWithAi("ovh", silent = true)
+            }
+        }
+        return res
     }
 
     suspend fun fetchModelsForEndpoint(baseUrl: String, apiKey: String): List<String> {
@@ -205,6 +272,9 @@ class EmochiViewModel @JvmOverloads constructor(
             )
             val newId = repository.insertCustomProvider(entity)
             com.example.data.managers.ProviderHealthTracker.resetHealth("custom_$newId")
+            if (cleanUtil.isBlank()) {
+                selectUtilityModelWithAi("custom_$newId", silent = true)
+            }
             onSaved(newId)
         }
     }
@@ -342,6 +412,14 @@ class EmochiViewModel @JvmOverloads constructor(
     val isSpeaking: StateFlow<Boolean> = ttsManager.isSpeaking
     val speakingMessageId: StateFlow<String?> = ttsManager.speakingMessageId
     val availableTtsVoices: StateFlow<List<com.example.util.ChatTtsManager.TtsVoiceOption>> = ttsManager.availableVoices
+    val isTurkishVoiceMissing: StateFlow<Boolean> = ttsManager.isTurkishVoiceMissing
+
+    private fun currentBotEmotionState(): com.example.data.local.EmotionState? {
+        val raw = (activeBot.value ?: _immediateBotCache.value)?.emotionState
+        return if (!raw.isNullOrBlank()) {
+            try { com.example.data.local.EmotionState.fromJson(raw) } catch (_: Exception) { null }
+        } else null
+    }
 
     private fun maybeAutoSpeakReply(messageId: String, fullText: String) {
         val settings = userSettings.value ?: return
@@ -350,7 +428,13 @@ class EmochiViewModel @JvmOverloads constructor(
         }
     }
 
-    fun speakMessage(messageId: String, text: String, speed: Float? = null, pitch: Float? = null) {
+    fun speakMessage(
+        messageId: String,
+        text: String,
+        speed: Float? = null,
+        pitch: Float? = null,
+        emotionState: com.example.data.local.EmotionState? = null
+    ) {
         if (ttsManager.speakingMessageId.value == messageId && ttsManager.isSpeaking.value) {
             ttsManager.stop()
             return
@@ -367,7 +451,8 @@ class EmochiViewModel @JvmOverloads constructor(
             pitch = effPitch,
             voiceName = voiceName,
             languageTag = lang,
-            readActions = AppFeatureFlags.isTtsReadActionsEnabled
+            readActions = AppFeatureFlags.isTtsReadActionsEnabled,
+            emotionState = emotionState ?: currentBotEmotionState()
         )
     }
 
@@ -375,12 +460,19 @@ class EmochiViewModel @JvmOverloads constructor(
         speakMessage(messageId = "tts_legacy_global", text = text, speed = speed, pitch = pitch)
     }
 
-    fun previewTtsVoice(voiceName: String, speed: Float, pitch: Float, languageTag: String = "tr") {
+    fun previewTtsVoice(
+        voiceName: String,
+        speed: Float,
+        pitch: Float,
+        languageTag: String = "tr",
+        neuralVoiceId: String? = null
+    ) {
         ttsManager.previewVoice(
             voiceName = voiceName,
             speed = speed,
             pitch = pitch,
-            languageTag = languageTag
+            languageTag = languageTag,
+            neuralVoiceId = neuralVoiceId
         )
     }
 
@@ -545,46 +637,82 @@ class EmochiViewModel @JvmOverloads constructor(
         _baselineAnalysisState.value = BaselineAnalysisUiState.Idle
     }
 
+    private val wizardSubmitLock = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private val _isCreatingBot = MutableStateFlow(false)
+    val isCreatingBot: StateFlow<Boolean> = _isCreatingBot.asStateFlow()
+
+    private val _wizardSubmitError = MutableStateFlow<String?>(null)
+    val wizardSubmitError: StateFlow<String?> = _wizardSubmitError.asStateFlow()
+
+    fun clearWizardSubmitError() {
+        _wizardSubmitError.value = null
+    }
+
     fun createBotFromWizard(
         bot: BotEntity,
         triggers: List<com.example.data.local.SensitiveTriggerEntity> = emptyList(),
-        onComplete: () -> Unit = {}
+        onComplete: () -> Unit = {},
+        onFailure: (String) -> Unit = {}
     ) {
+        // Sistem #3: Double-submit lock — concurrent clicks create strictly 1 bot
+        if (!wizardSubmitLock.compareAndSet(false, true)) return
+        _isCreatingBot.value = true
+        _wizardSubmitError.value = null
+
         viewModelScope.launch {
             try {
                 _isSending.value = true
-                repository.saveBot(bot)
-
-                // Always persist user-confirmed triggers anchored strictly to bot.id
                 val cleanTriggers = triggers
                     .filter { it.triggerTopic.isNotBlank() }
                     .map { it.copy(botId = bot.id) }
-                if (cleanTriggers.isNotEmpty()) {
-                    try { repository.saveSensitiveTriggers(bot.id, cleanTriggers) } catch (_: Exception) {}
-                }
 
-                // In Universe mode, mirror cleaned KeyCharacters into CastMemberEntity rows (0 extra tokens)
-                if (bot.mode == "universe") {
-                    try { repository.syncWizardCastMembers(bot) } catch (_: Exception) {}
-                }
-
-                val openingMsg = MessageEntity(
-                    id = UUID.randomUUID().toString(),
-                    botId = bot.id,
-                    role = "assistant",
-                    text = repository.resolveOpeningText(bot),
-                    timestamp = System.currentTimeMillis()
-                )
-                repository.saveMessage(openingMsg)
+                // Single atomic Room transaction: Bot + Triggers + CastMembers + OpeningMessage
+                repository.createBotAtomic(bot = bot, baselineTriggers = cleanTriggers)
 
                 resetBaselineAnalysisState()
                 setActiveBotId(bot.id)
                 _uiState.value = UiState.Chat(bot.id)
                 onComplete()
             } catch (e: Exception) {
-                _errorMessage.value = "Bot oluşturulamadı: ${e.message}"
+                val msg = "Bot oluşturulamadı: ${e.message ?: "Veritabanı hatası"}"
+                _wizardSubmitError.value = msg
+                _errorMessage.value = msg
+                onFailure(msg)
             } finally {
                 _isSending.value = false
+                _isCreatingBot.value = false
+                wizardSubmitLock.set(false)
+            }
+        }
+    }
+
+    fun reanalyzeBotBaselineInSettings(
+        bot: BotEntity,
+        overwriteLiveEmotion: Boolean,
+        onDone: (Result<BotEntity>) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val (analyzedBot, result) = repository.runBaselineAnalysis(
+                    bot = bot,
+                    forceReanalyze = true,
+                    userEditedFields = emptySet()
+                )
+                val finalBot = if (overwriteLiveEmotion) {
+                    analyzedBot
+                } else {
+                    // Keep active live chat emotionState while updating baseline metadata & profile
+                    analyzedBot.copy(
+                        emotionState = bot.emotionState,
+                        previousEmotionState = bot.previousEmotionState
+                    )
+                }
+                repository.saveBot(finalBot)
+                repository.persistBaselineTriggers(finalBot.id, result.sensitiveTriggers)
+                onDone(Result.success(finalBot))
+            } catch (e: Exception) {
+                onDone(Result.failure(e))
             }
         }
     }
@@ -1231,6 +1359,8 @@ class EmochiViewModel @JvmOverloads constructor(
             worldAtmosphere = """{"mood":"sakin","intensity":5,"currentEvent":""}""",
             updatedAt = now
         )
+        // U1: Permanently mark template/preset-origin bots so they can NEVER be published as public
+        AppFeatureFlags.markTemplateOriginBot(botToSave.id)
         val initialOpeningMsg = MessageEntity(
             id = UUID.randomUUID().toString(),
             botId = botToSave.id,
@@ -1323,39 +1453,81 @@ class EmochiViewModel @JvmOverloads constructor(
             if (previous != null) {
                 if (previous.customApiKey != sanitized.customApiKey || previous.geminiModel != sanitized.geminiModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("gemini")
+                    if (sanitized.customApiKey.isNotBlank() && previous.customApiKey != sanitized.customApiKey) {
+                        selectUtilityModelWithAi("gemini", silent = true)
+                    }
                 }
                 if (previous.groqApiKey != sanitized.groqApiKey || previous.groqModel != sanitized.groqModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("groq")
+                    if (sanitized.groqApiKey.isNotBlank() && previous.groqApiKey != sanitized.groqApiKey) {
+                        selectUtilityModelWithAi("groq", silent = true)
+                    }
                 }
                 if (previous.openaiApiKey != sanitized.openaiApiKey || previous.openaiModel != sanitized.openaiModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("openai")
+                    if (sanitized.openaiApiKey.isNotBlank() && previous.openaiApiKey != sanitized.openaiApiKey) {
+                        selectUtilityModelWithAi("openai", silent = true)
+                    }
                 }
                 if (previous.claudeApiKey != sanitized.claudeApiKey || previous.claudeModel != sanitized.claudeModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("claude")
+                    if (sanitized.claudeApiKey.isNotBlank() && previous.claudeApiKey != sanitized.claudeApiKey) {
+                        selectUtilityModelWithAi("claude", silent = true)
+                    }
                 }
                 if (previous.openRouterApiKey != sanitized.openRouterApiKey || previous.openRouterModel != sanitized.openRouterModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("openrouter")
+                    if (sanitized.openRouterApiKey.isNotBlank() && previous.openRouterApiKey != sanitized.openRouterApiKey) {
+                        selectUtilityModelWithAi("openrouter", silent = true)
+                    }
                 }
                 if (previous.nvidiaApiKey != sanitized.nvidiaApiKey || previous.nvidiaModel != sanitized.nvidiaModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("nvidia")
+                    if (sanitized.nvidiaApiKey.isNotBlank() && previous.nvidiaApiKey != sanitized.nvidiaApiKey) {
+                        selectUtilityModelWithAi("nvidia", silent = true)
+                    }
                 }
                 if (previous.mistralApiKey != sanitized.mistralApiKey || previous.mistralModel != sanitized.mistralModel) {
                     com.example.data.managers.ProviderHealthTracker.resetHealth("mistral")
+                    if (sanitized.mistralApiKey.isNotBlank() && previous.mistralApiKey != sanitized.mistralApiKey) {
+                        selectUtilityModelWithAi("mistral", silent = true)
+                    }
                 }
             }
         }
     }
 
     suspend fun testOpenRouterConnection(apiKey: String, modelName: String = "deepseek/deepseek-chat"): EmochiRepository.ProviderTestResult {
-        return repository.testOpenRouterConnection(apiKey, modelName)
+        val res = repository.testOpenRouterConnection(apiKey, modelName)
+        if (res.isSuccess) {
+            com.example.data.managers.ProviderHealthTracker.resetHealth("openrouter")
+            if (AppFeatureFlags.getAiUtilityModel("openrouter").isBlank()) {
+                selectUtilityModelWithAi("openrouter", apiKeyOverride = apiKey, silent = true)
+            }
+        }
+        return res
     }
 
     suspend fun testNvidiaConnection(apiKey: String, modelName: String = ""): EmochiRepository.ProviderTestResult {
-        return repository.testNvidiaConnection(apiKey, modelName)
+        val res = repository.testNvidiaConnection(apiKey, modelName)
+        if (res.isSuccess) {
+            com.example.data.managers.ProviderHealthTracker.resetHealth("nvidia")
+            if (AppFeatureFlags.getAiUtilityModel("nvidia").isBlank()) {
+                selectUtilityModelWithAi("nvidia", apiKeyOverride = apiKey, silent = true)
+            }
+        }
+        return res
     }
 
     suspend fun testMistralConnection(apiKey: String, modelName: String = "mistral-large-latest"): EmochiRepository.ProviderTestResult {
-        return repository.testMistralConnection(apiKey, modelName)
+        val res = repository.testMistralConnection(apiKey, modelName)
+        if (res.isSuccess) {
+            com.example.data.managers.ProviderHealthTracker.resetHealth("mistral")
+            if (AppFeatureFlags.getAiUtilityModel("mistral").isBlank()) {
+                selectUtilityModelWithAi("mistral", apiKeyOverride = apiKey, silent = true)
+            }
+        }
+        return res
     }
 
     suspend fun exportBackupJson(includeApiKeys: Boolean = false): String {

@@ -259,6 +259,11 @@ fun BotSettingsModal(
     var showEmotionControlModal by remember { mutableStateOf(false) }
     var showSystemPromptSheet by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var showReanalyzeBaselineConfirm by remember { mutableStateOf(false) }
+    var isReanalyzingBaseline by remember { mutableStateOf(false) }
+    val canPublishBot = remember(bot.id, bot.isTemplate) {
+        com.example.data.repository.EmochiRepository.isBotPublishable(bot)
+    }
 
     val lastSystemPrompt by viewModel.lastSystemPrompt.collectAsState()
     val activeMessages by viewModel.activeMessages.collectAsState()
@@ -328,7 +333,7 @@ fun BotSettingsModal(
             proactiveEnabled = proactiveEnabled,
             avatarUrl = avatarUrl,
             chatBgUrl = chatBgUrl,
-            isPublic = isPublic,
+            isPublic = if (canPublishBot) isPublic else false,
             pinnedMemory = pinnedMemory.trim(),
             storyNotes = storyNotes.trim(),
             memoryNotes = memoryNotes.trim(),
@@ -962,12 +967,27 @@ fun BotSettingsModal(
                                     onCheckedChange = { proactiveEnabled = it }
                                 )
                                 MorCamSubtleTrayDivider()
-                                MorCamGlassToggleRow(
-                                    title = if (isPublic) "Görünürlük: Herkese Açık" else "Görünürlük: Özel",
-                                    subtitle = if (filterCount == 0) "Filtre Durumu: Kesintisiz / Temiz" else "Filtre Durumu: $filterCount içerik uyarısı",
-                                    checked = isPublic,
-                                    onCheckedChange = { isPublic = it }
-                                )
+                                if (canPublishBot) {
+                                    MorCamGlassToggleRow(
+                                        title = if (isPublic) "Görünürlük: Herkese Açık" else "Görünürlük: Özel",
+                                        subtitle = if (filterCount == 0) "Filtre Durumu: Kesintisiz / Temiz" else "Filtre Durumu: $filterCount içerik uyarısı",
+                                        checked = isPublic,
+                                        onCheckedChange = { isPublic = it }
+                                    )
+                                } else {
+                                    MorCamGlassToggleRow(
+                                        title = "Görünürlük: Özel (Kilitli)",
+                                        subtitle = "Şablon ve başlangıç botları herkese açık yapılamaz.",
+                                        checked = false,
+                                        onCheckedChange = {
+                                            Toast.makeText(
+                                                context,
+                                                "Şablon ve başlangıç botları herkese açık yapılamaz.",
+                                                Toast.LENGTH_SHORT
+                                            ).show()
+                                        }
+                                    )
+                                }
                             }
 
                             Spacer(modifier = Modifier.height(14.dp))
@@ -1180,6 +1200,94 @@ fun BotSettingsModal(
                                             placeholder = "Örn: Gece Yarısı",
                                             singleLine = true,
                                             modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+                            MorCamHairlineDivider()
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Sistem #2: Optional Re-analyze Baseline Psychology Action (safe confirmation before overwriting live chat emotions)
+                            MorCamIconChoicePill(
+                                icon = Icons.Default.AutoAwesome,
+                                label = if (isReanalyzingBaseline) "Psikoloji Analiz Ediliyor..." else "Başlangıç Psikolojisini Yeniden Analiz Et",
+                                isSelected = false,
+                                onClick = {
+                                    if (!isReanalyzingBaseline) {
+                                        showReanalyzeBaselineConfirm = true
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("bot_settings_reanalyze_baseline_btn")
+                            )
+
+                            if (showReanalyzeBaselineConfirm) {
+                                MorCamDialogShell(
+                                    onDismissRequest = { showReanalyzeBaselineConfirm = false },
+                                    title = "Psikoloji Profilini Yenile",
+                                    subtitle = "Karakterin güncel kişilik ve senaryosuna göre başlangıç psikoloji profili, bağlanma stili ve hassas tetikleyicileri yeniden hesaplanacak.",
+                                    icon = Icons.Default.AutoAwesome
+                                ) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Text(
+                                            text = "Aktif sohbetin mevcut duygu durumunu korumak mı istersin, yoksa başlangıç duygularıyla sıfırlamak mı?",
+                                            fontFamily = InterFontFamily,
+                                            color = MorCamTokens.LavenderLight,
+                                            fontSize = 12.5.sp,
+                                            lineHeight = 18.sp
+                                        )
+                                        MorCamCapsuleButton(
+                                            text = "Aktif Duyguyu Koru, Profili Yenile",
+                                            onClick = {
+                                                showReanalyzeBaselineConfirm = false
+                                                isReanalyzingBaseline = true
+                                                viewModel.reanalyzeBotBaselineInSettings(
+                                                    bot = buildUpdatedBotEntity(),
+                                                    overwriteLiveEmotion = false
+                                                ) { result ->
+                                                    isReanalyzingBaseline = false
+                                                    result.onSuccess {
+                                                        Toast.makeText(context, "Başlangıç psikolojisi yenilendi (canlı duygular korundu) ✦", Toast.LENGTH_SHORT).show()
+                                                    }.onFailure { err ->
+                                                        Toast.makeText(context, "Analiz hatası: ${err.message}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            },
+                                            variant = MorCamButtonVariant.Primary,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        MorCamCapsuleButton(
+                                            text = "Canlı Duyguları da Sıfırla & Yenile",
+                                            onClick = {
+                                                showReanalyzeBaselineConfirm = false
+                                                isReanalyzingBaseline = true
+                                                viewModel.reanalyzeBotBaselineInSettings(
+                                                    bot = buildUpdatedBotEntity(),
+                                                    overwriteLiveEmotion = true
+                                                ) { result ->
+                                                    isReanalyzingBaseline = false
+                                                    result.onSuccess { updatedBot ->
+                                                        localEmotionState = EmotionState.fromJson(updatedBot.emotionState)
+                                                        Toast.makeText(context, "Psikoloji ve canlı duygular yeniden hesaplandı ✦", Toast.LENGTH_SHORT).show()
+                                                    }.onFailure { err ->
+                                                        Toast.makeText(context, "Analiz hatası: ${err.message}", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                }
+                                            },
+                                            variant = MorCamButtonVariant.Secondary,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        MorCamCapsuleButton(
+                                            text = "Vazgeç",
+                                            onClick = { showReanalyzeBaselineConfirm = false },
+                                            variant = MorCamButtonVariant.Secondary,
+                                            modifier = Modifier.fillMaxWidth()
                                         )
                                     }
                                 }

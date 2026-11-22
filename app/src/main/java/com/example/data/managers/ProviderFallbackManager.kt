@@ -12,9 +12,11 @@ import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.EmochiRepository
 import com.example.data.repository.ProviderFallbackLogEntry
 import com.example.util.AppFeatureFlags
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
@@ -24,6 +26,7 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -41,6 +44,77 @@ class ProviderFallbackManager(
     enum class ExecutionMode {
         NARRATIVE,
         UTILITY
+    }
+
+    data class ResolvedTimeoutConfig(
+        val readTimeoutMs: Long,
+        val callTimeoutMs: Long,
+        val maxFallbackAttempts: Int,
+        val strictEnabled: Boolean
+    )
+
+    data class AiUtilityModelSelectionResult(
+        val providerKey: String,
+        val selectedModel: String,
+        val source: String, // "ai" | "auto_fallback"
+        val availableCount: Int,
+        val reasoning: String = ""
+    )
+
+    companion object {
+        const val STRICT_UTILITY_TIMEOUT_MS = 18_000L
+        const val STRICT_UTILITY_MAX_ATTEMPTS = 2
+        const val STRICT_NARRATIVE_TIMEOUT_MS = 60_000L
+        const val UNLIMITED_SAFETY_CALL_TIMEOUT_MS = 300_000L
+
+        /**
+         * Resolves effective per-call timeout & fallback limits based on [AppFeatureFlags.isStrictApiTimeoutEnabled].
+         * - When `true`: UTILITY = 18s (max 2 fallback attempts), NARRATIVE = 60s (full chain).
+         * - When `false`: readTimeout = 0 (unlimited), generous 300s safety cap so reasoning/local models finish cleanly.
+         */
+        fun resolveTimeoutConfig(
+            mode: ExecutionMode,
+            requestedTimeoutMs: Long? = null,
+            strictOverride: Boolean? = null
+        ): ResolvedTimeoutConfig {
+            val strict = strictOverride ?: AppFeatureFlags.isStrictApiTimeoutEnabled
+            if (!strict) {
+                return ResolvedTimeoutConfig(
+                    readTimeoutMs = 0L,
+                    callTimeoutMs = UNLIMITED_SAFETY_CALL_TIMEOUT_MS,
+                    maxFallbackAttempts = Int.MAX_VALUE,
+                    strictEnabled = false
+                )
+            }
+            return when (mode) {
+                ExecutionMode.UTILITY -> {
+                    val effectiveMs = if (requestedTimeoutMs != null && requestedTimeoutMs > 0L) {
+                        minOf(requestedTimeoutMs, STRICT_UTILITY_TIMEOUT_MS)
+                    } else {
+                        STRICT_UTILITY_TIMEOUT_MS
+                    }
+                    ResolvedTimeoutConfig(
+                        readTimeoutMs = effectiveMs,
+                        callTimeoutMs = effectiveMs,
+                        maxFallbackAttempts = STRICT_UTILITY_MAX_ATTEMPTS,
+                        strictEnabled = true
+                    )
+                }
+                ExecutionMode.NARRATIVE -> {
+                    val effectiveMs = if (requestedTimeoutMs != null && requestedTimeoutMs > 0L) {
+                        minOf(requestedTimeoutMs, STRICT_NARRATIVE_TIMEOUT_MS)
+                    } else {
+                        STRICT_NARRATIVE_TIMEOUT_MS
+                    }
+                    ResolvedTimeoutConfig(
+                        readTimeoutMs = effectiveMs,
+                        callTimeoutMs = effectiveMs,
+                        maxFallbackAttempts = Int.MAX_VALUE,
+                        strictEnabled = true
+                    )
+                }
+            }
+        }
     }
 
     /** Coroutine-cooperative OkHttp execution: cancels the underlying socket immediately on timeout/cancellation. */
@@ -174,12 +248,19 @@ class ProviderFallbackManager(
 
                 val primarySelected = settings.selectedProvider.lowercase().trim()
                 val isUtility = resolvedCallType.equals(com.example.EmochiApplication.CALL_TYPE_UTILITY, ignoreCase = true)
+                val effectiveMode = if (isUtility) ExecutionMode.UTILITY else ExecutionMode.NARRATIVE
+                val timeoutCfg = resolveTimeoutConfig(effectiveMode)
+                val boundedCandidates = if (timeoutCfg.maxFallbackAttempts < candidates.size) {
+                    candidates.take(timeoutCfg.maxFallbackAttempts)
+                } else {
+                    candidates
+                }
                 val refusalGuardEnabled = !isUtility && AppFeatureFlags.isRefusalAutoFallbackEnabled
 
                 var lastError: Exception? = null
                 var lastRefusalResult: ModelResponseResult? = null
 
-                for ((idx, providerKey) in candidates.withIndex()) {
+                for ((idx, providerKey) in boundedCandidates.withIndex()) {
                     val layer = idx + 1
                     val customEntity = if (providerKey.startsWith("custom_")) {
                         providerKey.removePrefix("custom_").toLongOrNull()?.let { customMap[it] }
@@ -215,39 +296,90 @@ class ProviderFallbackManager(
 
                     val startMs = System.currentTimeMillis()
                     try {
-                        val candidateResult = if (customExecutor != null) {
-                            customExecutor.invoke(providerKey, resolvedModel, systemPrompt, messages, if (!isUtility) tools else emptyList())
-                        } else {
-                            val adapter = LLMAdapterFactory.createAdapter(
-                                providerKey,
-                                resolvedModel,
-                                settings,
-                                customEntity,
-                                buildConfigGeminiKey
-                            )
-                            val effectiveTools = if (!isUtility && adapter.supportsFunctionCalling()) tools else emptyList()
-                            val llmResp = adapter.sendMessage(systemPrompt, messages, effectiveTools)
-                            ModelResponseResult(
-                                text = llmResp.text,
-                                toolCalls = llmResp.toolCalls ?: emptyList(),
-                                promptTokens = llmResp.usage?.promptTokens ?: 0L,
-                                candidateTokens = llmResp.usage?.candidateTokens ?: 0L,
-                                usedProvider = llmResp.usedProvider.ifBlank { providerKey }
-                            )
+                        suspend fun invokeOnce(requestTools: List<MemoryToolDefinition>): ModelResponseResult {
+                            val callBlock: suspend () -> ModelResponseResult = {
+                                if (customExecutor != null) {
+                                    customExecutor.invoke(providerKey, resolvedModel, systemPrompt, messages, requestTools)
+                                } else {
+                                    val adapter = LLMAdapterFactory.createAdapter(
+                                        providerKey,
+                                        resolvedModel,
+                                        settings,
+                                        customEntity,
+                                        buildConfigGeminiKey
+                                    )
+                                    val effectiveTools = if (!isUtility && adapter.supportsFunctionCalling()) requestTools else emptyList()
+                                    val llmResp = adapter.sendMessage(systemPrompt, messages, effectiveTools)
+                                    ModelResponseResult(
+                                        text = llmResp.text,
+                                        toolCalls = llmResp.toolCalls ?: emptyList(),
+                                        promptTokens = llmResp.usage?.promptTokens ?: 0L,
+                                        candidateTokens = llmResp.usage?.candidateTokens ?: 0L,
+                                        usedProvider = llmResp.usedProvider.ifBlank { providerKey }
+                                    )
+                                }
+                            }
+                            return if (timeoutCfg.strictEnabled && timeoutCfg.callTimeoutMs > 0L) {
+                                withTimeout(timeoutCfg.callTimeoutMs) { callBlock() }
+                            } else {
+                                withTimeout(timeoutCfg.callTimeoutMs) { callBlock() }
+                            }
                         }
-                        val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
-                        val cleanText = EmochiRepository.cleanEmotionTags(candidateResult.text)
 
-                        if (cleanText.isBlank() && candidateResult.toolCalls.isEmpty() && candidateResult.text.isBlank()) {
+                        fun extractVisibleNarrative(raw: String): String {
+                            val withoutThink = raw
+                                .replace(Regex("""(?is)<think>.*?</think>"""), "")
+                                .replace(Regex("""(?is)<reasoning>.*?</reasoning>"""), "")
+                                .replace(Regex("""(?is)<think>.*$"""), "")
+                                .replace(Regex("""(?is)<reasoning>.*$"""), "")
+                                .trim()
+                            if (withoutThink.isBlank()) return ""
+                            return EmochiRepository.cleanEmotionTags(withoutThink).trim()
+                        }
+
+                        val initialTools = if (!isUtility) tools else emptyList()
+                        var candidateResult = invokeOnce(initialTools)
+                        var cleanText = extractVisibleNarrative(candidateResult.text)
+
+                        // Fix U3: Recover from tool-only or blank/think-only/tag-only responses!
+                        // 1) If the model called save_memory/toolCalls or emitted only <think>/tags with no
+                        //    visible narrative text, do a single clean tool-free retry on the SAME provider
+                        //    while preserving any captured toolCalls.
+                        // 2) If still blank after retry, trigger EMPTY_RESPONSE fallback to the next provider!
+                        if (!isUtility && cleanText.isBlank()) {
+                            val preservedTools = candidateResult.toolCalls
+                            val followUp = try {
+                                invokeOnce(emptyList())
+                            } catch (ce: CancellationException) {
+                                throw ce
+                            } catch (_: Exception) {
+                                null
+                            }
+                            if (followUp != null) {
+                                val followClean = extractVisibleNarrative(followUp.text)
+                                if (followClean.isNotBlank()) {
+                                    candidateResult = followUp.copy(
+                                        toolCalls = if (followUp.toolCalls.isNotEmpty()) followUp.toolCalls else preservedTools,
+                                        promptTokens = candidateResult.promptTokens + followUp.promptTokens,
+                                        candidateTokens = candidateResult.candidateTokens + followUp.candidateTokens
+                                    )
+                                    cleanText = followClean
+                                }
+                            }
+                        }
+
+                        val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+
+                        if (cleanText.isBlank()) {
                             ProviderHealthTracker.recordFailure(
                                 providerKey = providerKey,
                                 failureType = ProviderFailureType.EMPTY_RESPONSE,
-                                errorMessage = "Boş yanıt döndü"
+                                errorMessage = "Boş veya yalnızca etiket içeren yanıt döndü"
                             )
                             throw IllegalStateException("Sağlayıcı ($providerKey) boş yanıt döndürdü.")
                         }
 
-                        // Configurable OOC Censorship / Moralizing Protection
+                        // Configurable OOC Censorship / Moralizing Protection (0s lockout, current-turn only)
                         if (refusalGuardEnabled && cleanText.isNotBlank()) {
                             val refusalCheck = RefusalDetector.detectOocRefusal(cleanText)
                             if (refusalCheck.isRefusal) {
@@ -257,7 +389,7 @@ class ProviderFallbackManager(
                                     errorMessage = refusalCheck.matchedReason
                                 )
                                 lastRefusalResult = candidateResult
-                                val hasNextProvider = idx < candidates.lastIndex
+                                val hasNextProvider = idx < boundedCandidates.lastIndex
                                 onLogFallback(
                                     ProviderFallbackLogEntry(
                                         providerName = "$providerKey ($resolvedModel)",
@@ -283,6 +415,9 @@ class ProviderFallbackManager(
                             )
                         )
                         return@withContext candidateResult
+                    } catch (ce: CancellationException) {
+                        // CRITICAL: User/scope cancellation must NEVER penalize provider health or trigger cooldown
+                        throw ce
                     } catch (e: Exception) {
                         lastError = e
                         val failureType = ProviderHealthTracker.classifyFailure(errorMessage = e.message)
@@ -325,7 +460,7 @@ class ProviderFallbackManager(
         userMessage: String,
         buildConfigGeminiKey: String,
         maxTokens: Int = 420,
-        timeoutMs: Long = 5000L
+        timeoutMs: Long = STRICT_UTILITY_TIMEOUT_MS
     ): ModelResponseResult = withContext(Dispatchers.IO) {
         val customList = try {
             customProviderDao.getAllProviders()
@@ -334,18 +469,25 @@ class ProviderFallbackManager(
         }
         val customMap = customList.associateBy { it.id }
         val chain = buildProviderChain(settings, customMap, buildConfigGeminiKey)
-        val candidates = ProviderHealthTracker.selectOrderedCandidates(chain)
+        val timeoutCfg = resolveTimeoutConfig(ExecutionMode.UTILITY, timeoutMs)
+        val rawCandidates = ProviderHealthTracker.selectOrderedCandidates(chain)
+        val candidates = if (timeoutCfg.maxFallbackAttempts < rawCandidates.size) {
+            rawCandidates.take(timeoutCfg.maxFallbackAttempts)
+        } else {
+            rawCandidates
+        }
 
         // Share RetrofitClient's singleton ConnectionPool & Dispatcher via newBuilder() — zero pool leaks
+        val connectMs = if (timeoutCfg.strictEnabled) timeoutCfg.readTimeoutMs else 30_000L
         val clientBuilder = RetrofitClient.okHttpClient.newBuilder()
-            .connectTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .readTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .writeTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            .callTimeout(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .connectTimeout(connectMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .readTimeout(timeoutCfg.readTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .writeTimeout(connectMs, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .callTimeout(timeoutCfg.callTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
 
         val tempInterceptor = com.example.EmochiApplication.installedTemperatureInterceptor
         if (tempInterceptor == null || clientBuilder.interceptors().none { it === tempInterceptor }) {
-            clientBuilder.addInterceptor(com.example.EmochiApplication.createTemperatureInterceptor())
+            clientBuilder.interceptors().add(0, com.example.EmochiApplication.createTemperatureInterceptor())
         }
         val externalInterceptor = RetrofitClient.customInterceptor
         if (externalInterceptor != null &&
@@ -402,6 +544,8 @@ class ProviderFallbackManager(
                         return@withContext parsed
                     }
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (e: Exception) {
                 lastError = e
                 if (e.message?.startsWith("Utility HTTP ") != true) {
@@ -920,5 +1064,338 @@ class ProviderFallbackManager(
         } catch (_: Exception) {
             emptyList<String>()
         }
+    }
+
+    /**
+     * Fetches the live model list for ANY built-in or custom provider, falling back to curated
+     * text/chat models when a provider does not expose a `/models` endpoint (e.g. Anthropic).
+     */
+    suspend fun fetchModelsForProvider(
+        providerKey: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?,
+        buildConfigGeminiKey: String
+    ): List<String> = withContext(Dispatchers.IO) {
+        val key = providerKey.lowercase(Locale.ROOT).trim()
+        val live: List<String> = when {
+            key == "gemini" -> fetchGeminiModels(settings.customApiKey.ifBlank { buildConfigGeminiKey })
+            key == "groq" -> fetchModelsFromOpenAiCompatibleEndpoint("https://api.groq.com/openai/v1", settings.groqApiKey)
+            key == "openai" -> fetchModelsFromOpenAiCompatibleEndpoint("https://api.openai.com/v1", settings.openaiApiKey)
+            key == "openrouter" -> fetchModelsFromOpenAiCompatibleEndpoint("https://openrouter.ai/api/v1", settings.openRouterApiKey)
+            key == "nvidia" -> fetchModelsFromOpenAiCompatibleEndpoint("https://integrate.api.nvidia.com/v1", settings.nvidiaApiKey)
+            key == "mistral" -> fetchModelsFromOpenAiCompatibleEndpoint("https://api.mistral.ai/v1", settings.mistralApiKey)
+            key == "pollinations" -> fetchModelsFromOpenAiCompatibleEndpoint("https://text.pollinations.ai/openai", "")
+            key == "ovh" -> fetchModelsFromOpenAiCompatibleEndpoint("https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "")
+            key == "llm7" -> fetchModelsFromOpenAiCompatibleEndpoint("https://api.llm7.io/v1", "")
+            customEntity != null -> {
+                val decrypted = try {
+                    com.example.util.KeystoreEncryptionManager.decrypt(customEntity.apiKeyEncrypted).trim()
+                } catch (_: Exception) {
+                    com.example.util.SecureApiKeyVault.decrypt(customEntity.apiKeyEncrypted).trim()
+                }
+                if (customEntity.apiFormat.equals("gemini", ignoreCase = true) ||
+                    customEntity.baseUrl.contains("generativelanguage.googleapis.com", ignoreCase = true)
+                ) {
+                    fetchGeminiModels(decrypted)
+                } else {
+                    fetchModelsFromOpenAiCompatibleEndpoint(customEntity.baseUrl, decrypted)
+                }
+            }
+            else -> emptyList()
+        }
+
+        val cleaned = filterTextChatCandidates(live)
+        if (cleaned.isNotEmpty()) return@withContext cleaned
+
+        // Curated catalog fallback so AI still chooses the optimal small model even if /models is restricted
+        curatedCatalogForProvider(key, settings, customEntity)
+    }
+
+    private suspend fun fetchGeminiModels(apiKey: String): List<String> {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isBlank() || cleanKey == "MY_GEMINI_API_KEY") return emptyList()
+        return try {
+            val req = Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/models?pageSize=100")
+                .header("x-goog-api-key", cleanKey)
+                .get()
+                .build()
+            RetrofitClient.okHttpClient.newCall(req).awaitResponse().use { resp ->
+                if (!resp.isSuccessful) return emptyList()
+                val body = resp.body?.string().orEmpty()
+                val arr = JSONObject(body).optJSONArray("models") ?: return emptyList()
+                val list = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val methods = obj.optJSONArray("supportedGenerationMethods")
+                    var supportsGenerate = false
+                    if (methods != null) {
+                        for (m in 0 until methods.length()) {
+                            if (methods.optString(m).equals("generateContent", ignoreCase = true)) {
+                                supportsGenerate = true
+                                break
+                            }
+                        }
+                    }
+                    if (!supportsGenerate) continue
+                    val name = obj.optString("name", "").removePrefix("models/").trim()
+                    if (name.isNotBlank()) list.add(name)
+                }
+                list.sorted()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun filterTextChatCandidates(raw: List<String>): List<String> {
+        val excluded = listOf(
+            "embed", "embedding", "whisper", "tts", "audio", "transcribe", "moderation",
+            "dall-e", "imagen", "flux", "sdxl", "stable-diffusion", "rerank", "bge-",
+            "clip", "vision-only", "guard", "shield", "aqa", "gecko", "bison"
+        )
+        return raw.filter { id ->
+            val lower = id.lowercase(Locale.ROOT)
+            excluded.none { bad -> lower.contains(bad) }
+        }.distinct()
+    }
+
+    private fun curatedCatalogForProvider(
+        providerKey: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?
+    ): List<String> = when (providerKey) {
+        "gemini" -> listOf("gemini-2.5-flash-lite", "gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash")
+        "groq" -> listOf("llama-3.1-8b-instant", "gemma2-9b-it", "llama-3.3-70b-versatile", "openai/gpt-oss-20b", "openai/gpt-oss-120b")
+        "openai" -> listOf("gpt-4.1-nano", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4o")
+        "claude" -> listOf("claude-3-5-haiku-latest", "claude-3-5-haiku-20241022", "claude-3-haiku-20240307", "claude-3-5-sonnet-20241022")
+        "openrouter" -> listOf(
+            "google/gemini-2.0-flash-lite-001",
+            "openai/gpt-4o-mini",
+            "meta-llama/llama-3.1-8b-instruct:free",
+            "mistralai/mistral-small-3.1-24b-instruct:free",
+            "deepseek/deepseek-chat"
+        )
+        "nvidia" -> listOf("meta/llama-3.1-8b-instruct", "google/gemma-2-9b-it", "mistralai/mistral-7b-instruct-v0.3", "meta/llama-3.3-70b-instruct")
+        "mistral" -> listOf("ministral-8b-latest", "mistral-small-latest", "open-mistral-nemo", "mistral-large-latest")
+        "pollinations" -> listOf("openai-fast", "mistral", "openai", "llama")
+        "ovh" -> listOf("Llama-3.2-3B-Instruct", "Meta-Llama-3_1-8B-Instruct", "Mistral-7B-Instruct-v0.3", "Meta-Llama-3_3-70B-Instruct")
+        "llm7" -> listOf("gpt-4o-mini", "default", "mistral-small")
+        else -> listOfNotNull(customEntity?.modelName?.takeIf { it.isNotBlank() }, settings.selectedModel.takeIf { it.isNotBlank() }).distinct()
+    }
+
+    /**
+     * Asks the AI itself to choose the best fast, low-cost, JSON-capable small utility/support model
+     * for ANY built-in or custom provider, and persists the choice in [AppFeatureFlags] (plus Room for custom providers).
+     */
+    suspend fun selectUtilityModelWithAi(
+        providerKey: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?,
+        buildConfigGeminiKey: String,
+        candidateModelsOverride: List<String>? = null,
+        aiChooserOverride: (suspend (systemPrompt: String, userPrompt: String) -> String)? = null
+    ): AiUtilityModelSelectionResult = withContext(Dispatchers.IO) {
+        val key = providerKey.lowercase(Locale.ROOT).trim()
+        val candidates = (candidateModelsOverride ?: fetchModelsForProvider(key, settings, customEntity, buildConfigGeminiKey))
+            .filter { it.isNotBlank() }
+            .distinct()
+
+        if (candidates.isEmpty()) {
+            val fallback = EmochiRepository.resolveUtilityModel(key, settings, customEntity)
+            return@withContext AiUtilityModelSelectionResult(
+                providerKey = key,
+                selectedModel = fallback,
+                source = "auto_fallback",
+                availableCount = 0,
+                reasoning = "Model listesi alınamadı, varsayılan destek modeli kullanıldı."
+            )
+        }
+
+        // Prioritize small/fast candidates at the top of the prompt list (max 45 models to stay ultra-cheap)
+        val promptPool = candidates
+            .sortedByDescending { scoreSmallUtilityCandidate(it) }
+            .take(45)
+
+        val sysPrompt = """
+Sen bir LLM model seçicisisin. Görevin, verilen sağlayıcı model listesi içinden arka plan yardımcı görevleri (hafıza çıkarma, duygu analizi, RAG seçimi, kısa JSON üretimi) için EN İYİ küçük, hızlı, düşük maliyetli ve JSON uyumlu destek modelini seçmek.
+KURALLAR:
+- Büyük/yavaş/pahalı/reasoning-only modelleri (örn. 70b+, pro, opus, r1, o1, o3, large) mümkünse seçme; varsa flash-lite, mini, nano, haiku, 3b, 7b, 8b, 9b, instant, small, fast gibi modelleri tercih et.
+- YALNIZCA listedeki birebir model adını seç.
+- SADECE geçerli tek satır JSON döndür: {"model":"<birebir_model_id>","reason":"<kısa Türkçe neden>"}
+        """.trimIndent()
+
+        val userPrompt = buildString {
+            appendLine("Sağlayıcı: $key")
+            appendLine("Mevcut Modeller:")
+            promptPool.forEach { appendLine("- $it") }
+        }
+
+        var chosenModel: String? = null
+        var chosenReason = ""
+        var source = "auto_fallback"
+
+        val aiRaw = try {
+            if (aiChooserOverride != null) {
+                aiChooserOverride(sysPrompt, userPrompt)
+            } else {
+                // Prefer calling the provider itself first using its main/default model, else fallback chain
+                val directResult = callProviderDirectlyForModelPick(
+                    providerKey = key,
+                    settings = settings,
+                    customEntity = customEntity,
+                    buildConfigGeminiKey = buildConfigGeminiKey,
+                    systemPrompt = sysPrompt,
+                    userPrompt = userPrompt
+                )
+                directResult ?: executeUtilityRequest(
+                    settings = settings,
+                    systemPrompt = sysPrompt,
+                    userMessage = userPrompt,
+                    buildConfigGeminiKey = buildConfigGeminiKey,
+                    maxTokens = 140,
+                    timeoutMs = 12_000L
+                ).text
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            null
+        }
+
+        if (!aiRaw.isNullOrBlank()) {
+            val parsed = parseAiUtilityModelSelection(aiRaw, candidates)
+            if (parsed != null) {
+                chosenModel = parsed.first
+                chosenReason = parsed.second
+                source = "ai"
+            }
+        }
+
+        val finalModel = chosenModel ?: promptPool.first()
+        val finalReason = chosenReason.ifBlank {
+            if (source == "ai") "AI tarafından hızlı ve düşük maliyetli destek modeli olarak seçildi."
+            else "Hızlı küçük model profili otomatik seçildi."
+        }
+
+        AppFeatureFlags.setAiUtilityModel(key, finalModel, source)
+        if (customEntity != null) {
+            try {
+                val smallJson = JSONArray(promptPool.take(10)).toString()
+                customProviderDao.updateProvider(
+                    customEntity.copy(
+                        utilityModel = finalModel,
+                        utilityModelSource = if (source == "ai") "ai_selected" else "auto_detected",
+                        detectedSmallModels = smallJson
+                    )
+                )
+            } catch (_: Exception) {}
+        }
+
+        AiUtilityModelSelectionResult(
+            providerKey = key,
+            selectedModel = finalModel,
+            source = source,
+            availableCount = candidates.size,
+            reasoning = finalReason
+        )
+    }
+
+    private suspend fun callProviderDirectlyForModelPick(
+        providerKey: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?,
+        buildConfigGeminiKey: String,
+        systemPrompt: String,
+        userPrompt: String
+    ): String? {
+        val mainModel = when (providerKey) {
+            "gemini" -> EmochiRepository.sanitizeModelName(settings.geminiModel.ifBlank { "gemini-2.0-flash" })
+            "groq" -> EmochiRepository.sanitizeModelName(settings.groqModel.ifBlank { "llama-3.1-8b-instant" })
+            "openai" -> settings.openaiModel.ifBlank { "gpt-4o-mini" }
+            "claude" -> settings.claudeModel.ifBlank { "claude-3-5-haiku-latest" }
+            "openrouter" -> settings.openRouterModel.ifBlank { "deepseek/deepseek-chat" }
+            "nvidia" -> settings.nvidiaModel.ifBlank { "meta/llama-3.1-8b-instruct" }
+            "mistral" -> settings.mistralModel.ifBlank { "mistral-small-latest" }
+            "pollinations" -> settings.pollinationsModel.ifBlank { "openai" }
+            "ovh" -> settings.ovhModel.ifBlank { "Meta-Llama-3_3-70B-Instruct" }
+            "llm7" -> "default"
+            else -> customEntity?.modelName.orEmpty().ifBlank { return null }
+        }
+        val (req, format) = buildUtilityHttpRequest(
+            providerKey = providerKey,
+            model = mainModel,
+            settings = settings,
+            customEntity = customEntity,
+            buildConfigGeminiKey = buildConfigGeminiKey,
+            systemPrompt = systemPrompt,
+            userMessage = userPrompt,
+            maxTokens = 140
+        ) ?: return null
+
+        return try {
+            val client = RetrofitClient.okHttpClient.newBuilder()
+                .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(12, java.util.concurrent.TimeUnit.SECONDS)
+                .callTimeout(14, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            client.newCall(req).awaitResponse().use { resp ->
+                if (!resp.isSuccessful) return null
+                val body = resp.body?.string().orEmpty()
+                parseUtilityHttpResponse(body, format, providerKey).text.takeIf { it.isNotBlank() }
+            }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun parseAiUtilityModelSelection(
+        raw: String,
+        candidates: List<String>
+    ): Pair<String, String>? {
+        val cleaned = raw
+            .replace(Regex("```(?:json)?|```", RegexOption.IGNORE_CASE), "")
+            .trim()
+        val candidateByLower = candidates.associateBy { it.lowercase(Locale.ROOT) }
+
+        val start = cleaned.indexOf('{')
+        val end = cleaned.lastIndexOf('}')
+        if (start >= 0 && end > start) {
+            try {
+                val obj = JSONObject(cleaned.substring(start, end + 1))
+                val picked = obj.optString("model", "").trim()
+                val reason = obj.optString("reason", "").trim()
+                val exact = candidateByLower[picked.lowercase(Locale.ROOT)]
+                    ?: candidates.firstOrNull { it.equals(picked.removePrefix("models/"), ignoreCase = true) }
+                if (exact != null) return exact to reason
+            } catch (_: Exception) {}
+        }
+
+        // Plain-text rescue if the model replied with a bare model ID
+        val matched = candidates.firstOrNull { cand ->
+            cleaned.contains(cand, ignoreCase = true)
+        }
+        return matched?.let { it to "" }
+    }
+
+    private fun scoreSmallUtilityCandidate(modelId: String): Int {
+        val m = modelId.lowercase(Locale.ROOT)
+        var score = 0
+        if (m.contains("flash-lite")) score += 120
+        if (m.contains("nano")) score += 110
+        if (m.contains("mini")) score += 100
+        if (m.contains("haiku")) score += 100
+        if (m.contains("instant")) score += 95
+        if (m.contains("fast")) score += 90
+        if (m.contains("flash")) score += 85
+        if (m.contains("small") || m.contains("ministral")) score += 85
+        if (m.contains("8b") || m.contains("9b") || m.contains("7b") || m.contains("3b") || m.contains("4b")) score += 80
+        if (m.contains(":free")) score += 25
+        if (m.contains("70b") || m.contains("120b") || m.contains("405b")) score -= 60
+        if (m.contains("opus") || m.contains("pro") || m.contains("large") || m.contains("ultra")) score -= 45
+        if (m.contains("thinking") || m.contains("-r1") || m.contains("reasoner") || m.contains("o1") || m.contains("o3")) score -= 70
+        return score
     }
 }

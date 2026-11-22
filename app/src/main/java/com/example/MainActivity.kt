@@ -70,6 +70,13 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onStop() {
+        super.onStop()
+        // Sistem #11: Stop active TTS & background book music cleanly when app enters background
+        viewModel.stopSpeaking()
+        com.example.util.BookAudioController.pauseIfPlaying()
+    }
 }
 
 private fun uiStateDepth(state: UiState): Int = when (state) {
@@ -127,16 +134,25 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
             }
 
             is UiState.SetupWizard -> {
+                val isCreatingBot by viewModel.isCreatingBot.collectAsStateWithLifecycle()
+                val wizardSubmitError by viewModel.wizardSubmitError.collectAsStateWithLifecycle()
                 CreateBotWizardScreen(
                     baselineAnalysisState = baselineAnalysisState,
+                    isSubmitting = isCreatingBot,
+                    submitError = wizardSubmitError,
+                    onClearSubmitError = { viewModel.clearWizardSubmitError() },
                     onBack = {
+                        viewModel.clearWizardSubmitError()
                         viewModel.resetBaselineAnalysisState()
                         viewModel.openMenu()
                     },
-                    onFinish = { newBot, triggers ->
-                        viewModel.createBotFromWizard(newBot, triggers) {
-                            // Opened automatically
-                        }
+                    onFinish = { newBot, triggers, onDone ->
+                        viewModel.createBotFromWizard(
+                            bot = newBot,
+                            triggers = triggers,
+                            onComplete = { onDone(true) },
+                            onFailure = { onDone(false) }
+                        )
                     },
                     onGenerateOpening = { draft, forceRegenerate, toneHint ->
                         viewModel.generateOpeningForWizard(draft, forceRegenerate, toneHint)

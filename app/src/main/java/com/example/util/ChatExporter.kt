@@ -7,20 +7,25 @@ import androidx.core.content.FileProvider
 import com.example.data.local.BotEntity
 import com.example.data.local.MessageEntity
 import com.example.data.repository.EmochiRepository
-import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileOutputStream
+import java.io.OutputStreamWriter
+import java.io.StringWriter
+import java.io.Writer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Centralized, crash-free (FileProvider + SAF) chat & backup exporter.
+ * Centralized, streaming, OOM-safe & crash-free (FileProvider + SAF) chat & backup exporter.
  *
- * - Supports `.txt`, `.md` (literary novel format), and `.json`.
- * - Never sends huge chat transcripts or backup JSON via `Intent.EXTRA_TEXT` (avoids
- *   Android Binder `TransactionTooLargeException`). Always writes to `cacheDir/exports/`
- *   and shares via `FileProvider` `Intent.EXTRA_STREAM`.
+ * - Streams `.txt`, `.md` (literary novel format), and `.json` message-by-message through a
+ *   [BufferedWriter] so 1,500+ message chats never allocate giant monolithic strings in RAM.
+ * - Never sends chat transcripts or backup JSON via `Intent.EXTRA_TEXT` (avoids Android Binder
+ *   `TransactionTooLargeException`). Always writes to `cacheDir/exports/` and shares via
+ *   `FileProvider` `Intent.EXTRA_STREAM`.
  * - Automatically purges stale temporary export files older than 24 hours.
  */
 object ChatExporter {
@@ -40,13 +45,15 @@ object ChatExporter {
 
     private const val EXPORTS_DIR_NAME = "exports"
     private const val DEFAULT_STALE_EXPORT_AGE_MS = 24L * 60L * 60L * 1000L
+    private const val BUFFER_SIZE_BYTES = 16 * 1024
 
     private val trLocale: Locale = Locale.forLanguageTag("tr-TR")
 
-    private fun formatDateTime(timestampMs: Long): String {
-        val sdf = SimpleDateFormat("dd.MM.yyyy HH:mm", trLocale)
-        return sdf.format(Date(timestampMs))
-    }
+    private fun createDateTimeFormatter(): SimpleDateFormat =
+        SimpleDateFormat("dd.MM.yyyy HH:mm", trLocale)
+
+    private fun formatDateTime(timestampMs: Long): String =
+        createDateTimeFormatter().format(Date(timestampMs))
 
     private fun formatFileStamp(timestampMs: Long = System.currentTimeMillis()): String {
         val sdf = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
@@ -81,6 +88,28 @@ object ChatExporter {
         return "emochi_${safeTitle}_${formatFileStamp(nowMs)}.${format.extension}"
     }
 
+    /**
+     * Streams formatted export directly into any [Writer] (file, SAF stream, or in-memory writer)
+     * one message at a time with O(1) memory overhead.
+     */
+    fun writeExportToWriter(
+        writer: Writer,
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        format: ExportFormat,
+        dateRange: DateRange,
+        nowMs: Long = System.currentTimeMillis()
+    ) {
+        val filtered = filterByRange(messages, dateRange, nowMs)
+        val buffered = if (writer is BufferedWriter) writer else BufferedWriter(writer, BUFFER_SIZE_BYTES)
+        when (format) {
+            ExportFormat.TEXT -> streamTextExport(buffered, bot, filtered, nowMs)
+            ExportFormat.MARKDOWN -> streamMarkdownExport(buffered, bot, filtered, nowMs)
+            ExportFormat.JSON -> streamJsonExport(buffered, bot, filtered, nowMs)
+        }
+        buffered.flush()
+    }
+
     fun buildExportContent(
         bot: BotEntity,
         messages: List<MessageEntity>,
@@ -88,12 +117,31 @@ object ChatExporter {
         dateRange: DateRange,
         nowMs: Long = System.currentTimeMillis()
     ): String {
-        val filtered = filterByRange(messages, dateRange, nowMs)
-        return when (format) {
-            ExportFormat.TEXT -> buildTextExport(bot, filtered, nowMs)
-            ExportFormat.MARKDOWN -> buildMarkdownExport(bot, filtered, nowMs)
-            ExportFormat.JSON -> buildJsonExport(bot, filtered, nowMs)
+        val sw = StringWriter()
+        writeExportToWriter(sw, bot, messages, format, dateRange, nowMs)
+        return sw.toString()
+    }
+
+    /**
+     * Streams chat export directly to a file inside `cacheDir/exports/` without holding the entire
+     * output string in RAM. Also cleans up stale export files older than 24 hours.
+     */
+    fun exportToFile(
+        context: Context,
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        format: ExportFormat,
+        dateRange: DateRange,
+        nowMs: Long = System.currentTimeMillis()
+    ): File {
+        cleanupOldExports(context, nowMs = nowMs)
+        val fileName = suggestedFileName(bot, format, nowMs)
+        val cacheDir = File(context.cacheDir, EXPORTS_DIR_NAME).also { it.mkdirs() }
+        val file = File(cacheDir, fileName)
+        BufferedWriter(OutputStreamWriter(FileOutputStream(file), Charsets.UTF_8), BUFFER_SIZE_BYTES).use { writer ->
+            writeExportToWriter(writer, bot, messages, format, dateRange, nowMs)
         }
+        return file
     }
 
     /**
@@ -116,7 +164,7 @@ object ChatExporter {
     }
 
     /**
-     * Writes formatted chat export directly to a user-selected SAF [Uri].
+     * Streams formatted chat export directly to a user-selected SAF [Uri] using [BufferedWriter].
      */
     fun exportToUri(
         context: Context,
@@ -127,10 +175,10 @@ object ChatExporter {
         dateRange: DateRange
     ): Boolean {
         return try {
-            val content = buildExportContent(bot, messages, format, dateRange)
             context.contentResolver.openOutputStream(uri)?.use { stream ->
-                stream.write(content.toByteArray(Charsets.UTF_8))
-                stream.flush()
+                BufferedWriter(OutputStreamWriter(stream, Charsets.UTF_8), BUFFER_SIZE_BYTES).use { writer ->
+                    writeExportToWriter(writer, bot, messages, format, dateRange)
+                }
             } ?: return false
             true
         } catch (_: Exception) {
@@ -139,8 +187,8 @@ object ChatExporter {
     }
 
     /**
-     * Shares the chat export safely via `FileProvider` (`Intent.EXTRA_STREAM`) so arbitrarily
-     * long conversations never hit `TransactionTooLargeException`.
+     * Shares the chat export safely via `FileProvider` (`Intent.EXTRA_STREAM`) using streaming file I/O
+     * so arbitrarily long conversations never hit OOM or `TransactionTooLargeException`.
      */
     fun export(
         context: Context,
@@ -149,13 +197,7 @@ object ChatExporter {
         format: ExportFormat,
         dateRange: DateRange
     ): File {
-        cleanupOldExports(context)
-        val content = buildExportContent(bot, messages, format, dateRange)
-        val fileName = suggestedFileName(bot, format)
-        val cacheDir = File(context.cacheDir, EXPORTS_DIR_NAME).also { it.mkdirs() }
-        val file = File(cacheDir, fileName)
-        file.writeText(content, Charsets.UTF_8)
-
+        val file = exportToFile(context, bot, messages, format, dateRange)
         val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val displayTitle = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName
 
@@ -186,7 +228,10 @@ object ChatExporter {
         val cacheDir = File(context.cacheDir, EXPORTS_DIR_NAME).also { it.mkdirs() }
         val safeFileName = if (fileName.endsWith(".json")) fileName else "$fileName.json"
         val file = File(cacheDir, safeFileName)
-        file.writeText(jsonContent, Charsets.UTF_8)
+        BufferedWriter(OutputStreamWriter(FileOutputStream(file), Charsets.UTF_8), BUFFER_SIZE_BYTES).use { writer ->
+            writer.write(jsonContent)
+            writer.flush()
+        }
 
         val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
@@ -201,88 +246,106 @@ object ChatExporter {
         return file
     }
 
-    private fun buildTextExport(bot: BotEntity, messages: List<MessageEntity>, nowMs: Long): String {
+    private fun streamTextExport(
+        out: BufferedWriter,
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        nowMs: Long
+    ) {
         val displayTitle = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName
         val userLabel = bot.userCharName.ifBlank { "Sen" }
-        val sb = StringBuilder()
-        sb.appendLine("═══════════════════════════════════════")
-        sb.appendLine("  Emochi — $displayTitle")
-        sb.appendLine("  Dışa aktarıldı: ${formatDateTime(nowMs)}")
-        sb.appendLine("  Toplam mesaj: ${messages.size}")
-        sb.appendLine("═══════════════════════════════════════")
-        sb.appendLine()
+        val fmt = createDateTimeFormatter()
+
+        out.write("═══════════════════════════════════════\n")
+        out.write("  Emochi — $displayTitle\n")
+        out.write("  Dışa aktarıldı: ${fmt.format(Date(nowMs))}\n")
+        out.write("  Toplam mesaj: ${messages.size}\n")
+        out.write("═══════════════════════════════════════\n\n")
+
         for (msg in messages) {
             val sender = if (msg.role == "assistant") displayTitle else userLabel
-            val time = formatDateTime(msg.timestamp)
+            val time = fmt.format(Date(msg.timestamp))
             val starPrefix = if (msg.isStarred) "★ " else ""
-            sb.appendLine("[$time] $starPrefix$sender")
-            sb.appendLine(EmochiRepository.cleanEmotionTags(msg.text))
-            sb.appendLine()
+            out.write("[$time] $starPrefix$sender\n")
+            out.write(EmochiRepository.cleanEmotionTags(msg.text))
+            out.write("\n\n")
         }
-        return sb.toString()
     }
 
-    private fun buildMarkdownExport(bot: BotEntity, messages: List<MessageEntity>, nowMs: Long): String {
+    private fun streamMarkdownExport(
+        out: BufferedWriter,
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        nowMs: Long
+    ) {
         val displayTitle = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName
         val userLabel = bot.userCharName.ifBlank { "Sen" }
-        val sb = StringBuilder()
-        sb.appendLine("# ✦ $displayTitle")
-        sb.appendLine()
-        sb.appendLine("> **Dışa Aktarım Tarihi:** ${formatDateTime(nowMs)}  ")
-        sb.appendLine("> **Toplam Sahne / Mesaj:** ${messages.size}")
+        val fmt = createDateTimeFormatter()
+
+        out.write("# ✦ $displayTitle\n\n")
+        out.write("> **Dışa Aktarım Tarihi:** ${fmt.format(Date(nowMs))}  \n")
+        out.write("> **Toplam Sahne / Mesaj:** ${messages.size}\n")
         if (bot.scenario.isNotBlank()) {
-            sb.appendLine("> **Senaryo:** ${bot.scenario.replace("\n", " ").take(240)}")
+            out.write("> **Senaryo:** ${bot.scenario.replace("\n", " ").take(240)}\n")
         }
-        sb.appendLine()
-        sb.appendLine("---")
-        sb.appendLine()
+        out.write("\n---\n\n")
+
         for (msg in messages) {
             val sender = if (msg.role == "assistant") displayTitle else userLabel
-            val time = formatDateTime(msg.timestamp)
+            val time = fmt.format(Date(msg.timestamp))
             val starMark = if (msg.isStarred) " ★" else ""
             val reactionMark = if (msg.reaction.isNotBlank()) " · ${msg.reaction}" else ""
-            sb.appendLine("### $sender$starMark")
-            sb.appendLine("*$time$reactionMark*")
-            sb.appendLine()
+            out.write("### $sender$starMark\n")
+            out.write("*$time$reactionMark*\n\n")
             val cleanText = EmochiRepository.cleanEmotionTags(msg.text)
             if (msg.role == "user") {
                 cleanText.lines().forEach { line ->
-                    sb.appendLine("> $line")
+                    out.write("> $line\n")
                 }
             } else {
-                sb.appendLine(cleanText)
+                out.write(cleanText)
+                out.write("\n")
             }
-            sb.appendLine()
-            sb.appendLine("---")
-            sb.appendLine()
+            out.write("\n---\n\n")
         }
-        return sb.toString()
     }
 
-    private fun buildJsonExport(bot: BotEntity, messages: List<MessageEntity>, nowMs: Long): String {
+    private fun streamJsonExport(
+        out: BufferedWriter,
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        nowMs: Long
+    ) {
         val displayTitle = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName
-        val root = JSONObject()
-        root.put("exportedAt", formatDateTime(nowMs))
-        root.put("exportedAtEpochMs", nowMs)
-        root.put("botId", bot.id)
-        root.put("botName", displayTitle)
-        root.put("botMode", bot.mode)
-        root.put("userCharName", bot.userCharName)
-        root.put("messageCount", messages.size)
-        val arr = JSONArray()
-        for (msg in messages) {
+        val fmt = createDateTimeFormatter()
+
+        out.write("{\n")
+        out.write("  \"version\": 2,\n")
+        out.write("  \"exportedAt\": ${JSONObject.quote(fmt.format(Date(nowMs)))},\n")
+        out.write("  \"exportedAtEpochMs\": $nowMs,\n")
+        out.write("  \"botId\": ${JSONObject.quote(bot.id)},\n")
+        out.write("  \"botName\": ${JSONObject.quote(displayTitle)},\n")
+        out.write("  \"botMode\": ${JSONObject.quote(bot.mode)},\n")
+        out.write("  \"userCharName\": ${JSONObject.quote(bot.userCharName)},\n")
+        out.write("  \"messageCount\": ${messages.size},\n")
+        out.write("  \"messages\": [")
+        if (messages.isNotEmpty()) out.write("\n")
+
+        messages.forEachIndexed { index, msg ->
             val obj = JSONObject()
             obj.put("id", msg.id)
             obj.put("role", msg.role)
             obj.put("text", EmochiRepository.cleanEmotionTags(msg.text))
             obj.put("timestamp", msg.timestamp)
-            obj.put("timestampFormatted", formatDateTime(msg.timestamp))
+            obj.put("timestampFormatted", fmt.format(Date(msg.timestamp)))
             obj.put("provider", msg.provider ?: "")
             obj.put("isStarred", msg.isStarred)
             obj.put("reaction", msg.reaction)
-            arr.put(obj)
+            out.write("    ")
+            out.write(obj.toString())
+            if (index < messages.lastIndex) out.write(",")
+            out.write("\n")
         }
-        root.put("messages", arr)
-        return root.toString(2)
+        out.write(if (messages.isNotEmpty()) "  ]\n}\n" else "]\n}\n")
     }
 }

@@ -1030,8 +1030,8 @@ class MemoryEmotionRegressionTest {
         val clonedCharEmotions = db.characterEmotionDao().getEmotionsForBot(newBotId)
         assertTrue("Character emotions must be empty for cloned bot", clonedCharEmotions.isEmpty())
 
-        // 5. Calendar & Counters reset
-        assertEquals("storyCalendarDate must reset to 2026-08-29", "2026-08-29", clonedBot.storyCalendarDate)
+        // 5. Calendar & Counters reset (no hardcoded 2026-08-29 when hasExplicitStoryDate=false)
+        assertEquals("storyCalendarDate must reset to empty when no explicit date was declared", "", clonedBot.storyCalendarDate)
         assertEquals("storyDayCounter must reset to 1", 1L, clonedBot.storyDayCounter)
         assertEquals("currentAge must reset to initialAge (20)", 20, clonedBot.currentAge)
 

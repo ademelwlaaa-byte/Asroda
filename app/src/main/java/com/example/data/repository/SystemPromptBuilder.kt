@@ -54,7 +54,8 @@ object SystemPromptBuilder {
         val totalMessageCount: Int = 0,
         val modelContextWindowTokens: Int = 128_000,
         val compactMode: Boolean = false,
-        val literaryFramingMode: Boolean = false
+        val literaryFramingMode: Boolean = false,
+        val graphResolutionNote: String? = null
     )
 
     private const val MAX_PROMPT_TOKENS_STANDARD = 6_500
@@ -209,11 +210,18 @@ object SystemPromptBuilder {
         val p4TokenCeiling = (maxPromptTokens - 650).coerceAtLeast(1200)
         fun hasBudgetFor(line: String): Boolean = estimateTokens(sb.toString()) + estimateTokens(line) <= p4TokenCeiling
 
+        if (!input.graphResolutionNote.isNullOrBlank()) {
+            val cleanGraph = input.graphResolutionNote.trim()
+            val graphBlock = "\n[İLİŞKİ AĞI GERÇEĞİ]\n$cleanGraph"
+            sb.appendLine(graphBlock)
+        }
+
         if (input.relevantFacts.isNotEmpty()) {
             sb.appendLine("\n[NEURAL VAULT — KESİN HAFIZA (Değişirse #ID ile güncelle/sil; ★ kullanıcı kilididir)]")
             input.relevantFacts.take(factLimit).forEach { f ->
                 val line = MemoryEngine.formatFactForPrompt(f, bot.storyDayCounter)
-                if (hasBudgetFor(line)) sb.appendLine(line)
+                val isProtected = f.userCorrected || MemoryLifecycleCodec.parse(f.confidence).tier == MemoryTier.CORE
+                if (isProtected || hasBudgetFor(line)) sb.appendLine(line)
             }
             if (!isAutoCompact) {
                 val toolHint = "Not: Araç desteği yoksa kalıcı bilgi değişiminde yanıt sonuna [ACTIVE_MEMORY_CALL: save_memory(content=\"...\", category=\"fact\", key=\"...\", subject=\"...\")|update_memory(memoryId=\"#ID\", newContent=\"...\")|delete_memory(memoryId=\"#ID\", reason=\"...\")] ekleyebilirsin."

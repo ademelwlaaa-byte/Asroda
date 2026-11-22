@@ -46,7 +46,8 @@ data class RagRetrievalBundle(
     val missQueriesUsed: List<String> = emptyList(),
     val topHybridConfidence: Float = 0f,
     val hybridConfidenceGap: Float = 0f,
-    val temporalTargetMatched: Boolean = false
+    val temporalTargetMatched: Boolean = false,
+    val graphResolutionNote: String? = null
 )
 
 data class IndexedFact(
@@ -712,19 +713,30 @@ class MemoryRetrievalManager(
         activeCastNames: List<String> = emptyList(),
         apiKey: String? = null,
         modelContextWindowTokens: Int = 128_000,
-        aiSelector: (suspend (systemPrompt: String, userPrompt: String) -> String)? = null
+        aiSelector: (suspend (systemPrompt: String, userPrompt: String) -> String)? = null,
+        graphResolver: (suspend (String) -> String?)? = null
     ): RagRetrievalBundle = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val index = getOrBuildBotIndex(bot.id)
         val lastUserMsg = recentMessages.lastOrNull { it.role == "user" }?.text.orEmpty().trim()
         val (expandedQuery, mentionedEntities) = buildExpandedQuery(recentMessages, activeCastNames)
 
+        // Live Knowledge Graph → RAG Bridge (<2 ms local traversal)
+        val resolvedGraphNote: String? = if (graphResolver != null && lastUserMsg.isNotBlank()) {
+            try {
+                graphResolver(lastUserMsg)?.trim()?.takeIf { it.isNotBlank() }
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+
         val totalRecords = index.facts.size + index.events.size + index.checkpoints.size + index.fragments.size
         if (totalRecords == 0) {
             recordRouteMode(bot.id, MemoryEngine.RagRouteMode.HYBRID_FAST)
             return@withContext RagRetrievalBundle(
                 expandedQuery = expandedQuery.take(300),
-                routeMode = MemoryEngine.RagRouteMode.HYBRID_FAST
+                routeMode = MemoryEngine.RagRouteMode.HYBRID_FAST,
+                graphResolutionNote = resolvedGraphNote
             )
         }
 
@@ -733,7 +745,7 @@ class MemoryRetrievalManager(
 
         // ── ROUTE 1A: Trivial Casual Message (0 AI tokens, <10 ms) ───────────────
         // Never shortcut when a relative-time/anaphoric reference is present!
-        if (temporalTarget == null && lastUserMsg.isNotBlank() && MemoryEngine.isTrivialCasualMessage(lastUserMsg)) {
+        if (temporalTarget == null && resolvedGraphNote == null && lastUserMsg.isNotBlank() && MemoryEngine.isTrivialCasualMessage(lastUserMsg)) {
             val pinnedFacts = index.facts
                 .map { it.entity }
                 .filter { it.userCorrected && !MemoryLifecycleCodec.isDisputed(it.confidence) }
@@ -749,7 +761,8 @@ class MemoryRetrievalManager(
                 events = emptyList(),
                 checkpoints = latestCheckpoint,
                 fragments = emptyList(),
-                maxTokens = budget
+                maxTokens = budget,
+                graphResolutionNote = resolvedGraphNote
             )
             recordRouteMode(bot.id, MemoryEngine.RagRouteMode.HYBRID_FAST)
             return@withContext RagRetrievalBundle(
@@ -761,7 +774,8 @@ class MemoryRetrievalManager(
                 estimatedTokens = packed.estimatedTokens,
                 routeMode = MemoryEngine.RagRouteMode.HYBRID_FAST,
                 aiSelectorInvoked = false,
-                temporalTargetMatched = false
+                temporalTargetMatched = false,
+                graphResolutionNote = resolvedGraphNote
             )
         }
 
@@ -803,7 +817,8 @@ class MemoryRetrievalManager(
                 events = emptyList(),
                 checkpoints = latestCp,
                 fragments = emptyList(),
-                maxTokens = budget
+                maxTokens = budget,
+                graphResolutionNote = resolvedGraphNote
             )
             recordRouteMode(bot.id, MemoryEngine.RagRouteMode.HYBRID_FAST)
             return@withContext RagRetrievalBundle(
@@ -817,7 +832,8 @@ class MemoryRetrievalManager(
                 aiSelectorInvoked = false,
                 topHybridConfidence = topFactConf,
                 hybridConfidenceGap = factGap,
-                temporalTargetMatched = false
+                temporalTargetMatched = false,
+                graphResolutionNote = resolvedGraphNote
             )
         }
 
@@ -969,7 +985,8 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
             events = selectedEvents.values.toList(),
             checkpoints = orderedCheckpoints,
             fragments = selectedFragments.values.toList(),
-            maxTokens = dynamicBudget
+            maxTokens = dynamicBudget,
+            graphResolutionNote = resolvedGraphNote
         )
 
         recordRouteMode(bot.id, finalRouteMode)
@@ -985,7 +1002,8 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
             missQueriesUsed = missQueries,
             topHybridConfidence = topFactConf,
             hybridConfidenceGap = factGap,
-            temporalTargetMatched = temporalTarget != null
+            temporalTargetMatched = temporalTarget != null,
+            graphResolutionNote = resolvedGraphNote
         )
     }
 
@@ -997,7 +1015,8 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
         recentMessages: List<MessageEntity>,
         activeCastNames: List<String> = emptyList(),
         apiKey: String? = null,
-        maxTokens: Int = MemoryEngine.MAX_MEMORY_PROMPT_TOKENS
+        maxTokens: Int = MemoryEngine.MAX_MEMORY_PROMPT_TOKENS,
+        graphResolver: (suspend (String) -> String?)? = null
     ): RagRetrievalBundle = withContext(Dispatchers.IO) {
         val bundle = retrieveCoPilotedContext(
             bot = bot,
@@ -1005,7 +1024,8 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
             activeCastNames = activeCastNames,
             apiKey = apiKey,
             modelContextWindowTokens = if (maxTokens <= 650) 32_768 else 128_000,
-            aiSelector = null
+            aiSelector = null,
+            graphResolver = graphResolver
         )
         if (bundle.estimatedTokens <= maxTokens) {
             bundle
@@ -1015,7 +1035,8 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
                 events = bundle.events,
                 checkpoints = bundle.checkpoints,
                 fragments = bundle.fragments,
-                maxTokens = maxTokens
+                maxTokens = maxTokens,
+                graphResolutionNote = bundle.graphResolutionNote
             )
             bundle.copy(
                 facts = repacked.facts,

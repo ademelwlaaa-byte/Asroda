@@ -169,6 +169,11 @@ object BaselineEmotionEngine {
         val sceneMood: String = ""
     )
 
+    enum class BaselineSource {
+        AI_ANALYZED,
+        LOCAL_HEURISTIC
+    }
+
     // ── Analysis result ───────────────────────────────────────────────────────
 
     data class BaselineAnalysisResult(
@@ -185,6 +190,15 @@ object BaselineEmotionEngine {
         val rawJson: String = "",
         val universeAtmosphere: UniverseAtmosphereSeed? = null
     ) {
+        val source: BaselineSource
+            get() = if (analysisSource.equals("keyword", ignoreCase = true) ||
+                analysisSource.equals("local", ignoreCase = true) ||
+                analysisSource.equals("heuristic", ignoreCase = true)
+            ) {
+                BaselineSource.LOCAL_HEURISTIC
+            } else {
+                BaselineSource.AI_ANALYZED
+            }
         /**
          * Lossless canonical JSON serializer so ALL user edits in Step 5
          * (relationshipType, Big Five, attachmentStyle, axes, triggers, regulationCapacity,
@@ -460,14 +474,16 @@ Kullanıcı tanımı: $safeUserDesc
             rawProfile.copy(attachmentStyle = reconciledAttach) to reconciledAxes
         }
 
-        // ── Dominant emotion ──────────────────────────────────────────────────
-        val rawDom = try { root.optString("dominantEmotion", "nötr") } catch (_: Exception) { "nötr" }
+        // ── Dominant emotion (sanitized & reconciled) ─────────────────────────
+        val rawDom = try {
+            sanitizeDominantEmotion(root.optString("dominantEmotion", "nötr"), primaryEmotions)
+        } catch (_: Exception) { "nötr" }
         val dominantEmotion = if (parsedSource == "user_edited") rawDom else reconcileDominantEmotion(rawDom, primaryEmotions)
 
         // ── Speech pattern ────────────────────────────────────────────────────
-        val speechPattern = try { root.optString("speechStyle", root.optString("speech_pattern", "Doğal ve samimi")) } catch (_: Exception) { "Doğal ve samimi" }
+        val speechPattern = try { root.optString("speechStyle", root.optString("speech_pattern", "Doğal ve samimi")).ifBlank { "Doğal ve samimi" } } catch (_: Exception) { "Doğal ve samimi" }
 
-        // ── Sensitive triggers (up to 3) ──────────────────────────────────────
+        // ── Sensitive triggers (up to 3, strictly clamped multiplier 1.2..2.5) ─
         val triggers = try {
             val arr = root.optJSONArray("sensitiveTriggers") ?: root.optJSONArray("sensitive_triggers")
             val raw = mutableListOf<SensitiveTriggerEntity>()
@@ -476,14 +492,21 @@ Kullanıcı tanımı: $safeUserDesc
                     val o = arr.optJSONObject(i) ?: continue
                     val topic = o.optString("topic", "").trim()
                     if (topic.isBlank()) continue
-                    val reaction = o.optString("reaction", o.optString("description", "Karakter geçmişi"))
-                    val severity = safeInt(o, "severity", 3).coerceIn(1, 5)
-                    val mult = 1.0 + (severity - 1) * 0.4
+                    val reaction = o.optString("reaction", o.optString("description", "Karakter geçmişi")).trim().ifBlank { "Karakter geçmişi" }
+                    val explicitMult = safeDouble(o, "intensityMultiplier", Double.NaN)
+                        .takeIf { it.isFinite() }
+                        ?: safeDouble(o, "multiplier", Double.NaN).takeIf { it.isFinite() }
+                    val mult = if (explicitMult != null) {
+                        explicitMult.coerceIn(1.2, 2.5)
+                    } else {
+                        val severity = safeInt(o, "severity", 3).coerceIn(1, 5)
+                        (1.2 + (severity - 1) * 0.325).coerceIn(1.2, 2.5)
+                    }
                     raw.add(SensitiveTriggerEntity(
                         botId = botId,
                         triggerTopic = topic,
                         sourceDescription = reaction,
-                        intensityMultiplier = mult.coerceIn(1.2, 3.0),
+                        intensityMultiplier = mult,
                         recentTriggerCount = 0
                     ))
                 }
@@ -751,13 +774,44 @@ Kullanıcı tanımı: $safeUserDesc
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
+    private val ALLOWED_DOMINANT_EMOTION_TOKENS = setOf(
+        "nötr", "sakin", "ilgili", "meraklı", "temkinli", "şüpheci", "tetikte", "soğuk", "mesafeli",
+        "neşeli", "mutlu", "sevecen", "sevinçli", "coşkulu", "şen", "sıcak", "samimi", "tutkulu",
+        "romantik", "korumacı", "şefkatli", "alaycı", "iğneleyici", "gururlu", "otoriter", "sabırlı",
+        "öfkeli", "sinirli", "kızgın", "düşmanca", "gergin", "kıskanç",
+        "hüzünlü", "üzgün", "kırgın", "buruk", "özlemli", "melankolik", "çatışmalı",
+        "korkmuş", "tedirgin", "kaygılı", "şaşkın", "tiksinmiş", "saygılı", "işbirlikçi", "yol gösterici"
+    )
+
+    fun sanitizeDominantEmotion(raw: String, emotions: PrimaryEmotions): String {
+        val cleaned = raw.trim().replace(Regex("""[^\p{L}\s-]"""), "").trim().take(36)
+        if (cleaned.isNotBlank()) {
+            val lower = cleaned.lowercase(Locale("tr", "TR"))
+            val matchesWhitelist = ALLOWED_DOMINANT_EMOTION_TOKENS.any { token -> lower.contains(token) }
+            if (matchesWhitelist) return cleaned
+        }
+        return when {
+            emotions.anger >= 60 -> "öfkeli"
+            emotions.sadness >= 60 -> "hüzünlü"
+            emotions.fear >= 55 -> "tedirgin"
+            emotions.joy >= 60 -> "neşeli"
+            emotions.trust >= 70 -> "sıcak ve samimi"
+            emotions.disgust >= 55 -> "mesafeli"
+            else -> "nötr"
+        }
+    }
+
     private fun safeInt(obj: JSONObject, key: String, default: Int): Int {
         val v = obj.opt(key) ?: return default
         return when (v) {
             is Int    -> v
-            is Long   -> v.toInt()
-            is Double -> v.toInt()
-            is String -> v.trim().toIntOrNull() ?: default
+            is Long   -> v.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
+            is Double -> if (v.isFinite()) v.roundToInt() else default
+            is Float  -> if (v.isFinite()) v.roundToInt() else default
+            is String -> {
+                val trimmed = v.trim()
+                trimmed.toIntOrNull() ?: trimmed.toDoubleOrNull()?.takeIf { it.isFinite() }?.roundToInt() ?: default
+            }
             else      -> default
         }
     }
@@ -765,10 +819,11 @@ Kullanıcı tanımı: $safeUserDesc
     private fun safeDouble(obj: JSONObject, key: String, default: Double): Double {
         val v = obj.opt(key) ?: return default
         return when (v) {
-            is Double -> v
+            is Double -> if (v.isFinite()) v else default
+            is Float  -> if (v.isFinite()) v.toDouble() else default
             is Int    -> v.toDouble()
             is Long   -> v.toDouble()
-            is String -> v.trim().toDoubleOrNull() ?: default
+            is String -> v.trim().toDoubleOrNull()?.takeIf { it.isFinite() } ?: default
             else      -> default
         }
     }
@@ -776,9 +831,10 @@ Kullanıcı tanımı: $safeUserDesc
     fun normalizeAttachment(raw: String): String {
         val lower = raw.trim().lowercase(Locale("tr", "TR"))
         return when {
-            lower.contains("fearful") || lower.contains("disorganized") || lower.contains("korkulu") || lower.contains("düzensiz") -> "fearful_avoidant"
-            lower.contains("anxious") || lower.contains("kaygılı") -> "anxious"
-            lower.contains("avoidant") || lower.contains("kaçınan") -> "avoidant"
+            lower == "fearful_avoidant" || lower.contains("fearful") || lower.contains("disorganized") || lower.contains("korkulu") || lower.contains("düzensiz") -> "fearful_avoidant"
+            lower == "anxious" || lower.contains("anxious") || lower.contains("kaygılı") -> "anxious"
+            lower == "avoidant" || lower.contains("avoidant") || lower.contains("kaçınan") -> "avoidant"
+            lower == "secure" || lower.contains("secure") || lower.contains("güvenli") -> "secure"
             else -> "secure"
         }
     }

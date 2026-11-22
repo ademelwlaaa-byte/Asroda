@@ -1026,7 +1026,7 @@ fun BotListScreen(
                     }
                     "discover" -> {
                         val publicBots = remember(botList) {
-                            botList.filter { it.isPublic }
+                            botList.filter { it.isPublic && com.example.data.repository.EmochiRepository.isBotPublishable(it) }
                         }
                         DiscoverTabContent(
                             botList = publicBots,

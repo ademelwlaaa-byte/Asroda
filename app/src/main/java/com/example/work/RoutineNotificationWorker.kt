@@ -43,16 +43,23 @@ class RoutineNotificationWorker(
             val req = PeriodicWorkRequestBuilder<RoutineNotificationWorker>(
                 24, TimeUnit.HOURS
             ).addTag(WORK_TAG).build()
-            WorkManager.getInstance(context)
-                .enqueueUniquePeriodicWork(
-                    WORK_TAG,
-                    ExistingPeriodicWorkPolicy.KEEP,
-                    req
-                )
+            try {
+                WorkManager.getInstance(context)
+                    .enqueueUniquePeriodicWork(
+                        WORK_TAG,
+                        ExistingPeriodicWorkPolicy.KEEP,
+                        req
+                    )
+            } catch (_: IllegalStateException) {
+                // WorkManager may be uninitialized in isolated JVM/Robolectric unit tests
+            }
         }
 
         fun cancel(context: Context) {
-            WorkManager.getInstance(context).cancelAllWorkByTag(WORK_TAG)
+            try {
+                WorkManager.getInstance(context).cancelAllWorkByTag(WORK_TAG)
+            } catch (_: IllegalStateException) {
+            }
         }
 
         /**

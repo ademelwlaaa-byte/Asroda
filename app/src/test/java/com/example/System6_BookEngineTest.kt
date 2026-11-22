@@ -113,10 +113,15 @@ class System6_BookEngineTest {
             override val chapters: List<BookChapterMeta> = listOf(
                 BookChapterMeta(
                     number = 1,
+                    romanNumeral = "I",
                     title = "Bölüm 1: Yeni Evren",
+                    titleEn = "Chapter 1: New Universe",
                     subtitle = "Test başlangıcı",
-                    startNodeId = "tb_s1",
+                    description = "Test bölümü açıklaması",
+                    descriptionEn = "Test chapter description",
                     estimatedMinutes = 5,
+                    accentHex = 0xFF9333EAL,
+                    startNodeId = "tb_s1",
                     sceneCount = 2,
                     decisionCount = 1
                 )
@@ -134,7 +139,7 @@ class System6_BookEngineTest {
                         BookChoiceDef(
                             id = "tb_c1",
                             label = "Kapıyı aç",
-                            subtitle = "İçeri adım at",
+                            toneHint = "Cesur",
                             nextNodeId = "tb_s2",
                             effect = BookChoiceEffect(
                                 impactSummary = "Kapı açıldı.",

@@ -166,11 +166,12 @@ internal fun WizardBaselineReviewStep(
     val res = analysisResult ?: return
 
     // 1. Top Psychological Summary Card (Source badge + confidence + relationshipNote + universe atmosphere)
-    val effectiveSource = if (userEditedFields.isNotEmpty()) "user_edited" else res.analysisSource
-    val (sourceBadge, sourceColor) = when (effectiveSource) {
-        "llm" -> Pair("✦ Yapay Zeka Analizi", Color(0xFFE9D5FF))
-        "keyword" -> Pair("✦ Otomatik Tahmin", Color(0xFFC4B5FD))
-        else -> Pair("✦ Düzenlendi", Color(0xFFFAF5FF))
+    val isAiAnalyzed = res.source == BaselineEmotionEngine.BaselineSource.AI_ANALYZED
+    val isUserEdited = userEditedFields.isNotEmpty()
+    val (sourceBadge, sourceColor, showQuickRefresh) = when {
+        isUserEdited -> Triple("✦ Kişiselleştirilmiş Profil", Color(0xFFFAF5FF), false)
+        isAiAnalyzed -> Triple("✦ AI Psikoloji Profili", Color(0xFFE9D5FF), false)
+        else -> Triple("⚡ Hızlı Yerel Profil — AI ile Yenile", Color(0xFFFDE68A), true)
     }
 
     WizardMorCamSectionCard(
@@ -186,9 +187,13 @@ internal fun WizardBaselineReviewStep(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(50))
-                    .background(Color(0x5C3B1A74))
-                    .border(1.dp, sourceColor.copy(alpha = 0.72f), RoundedCornerShape(50))
+                    .background(if (showQuickRefresh) Color(0x52451A03) else Color(0x5C3B1A74))
+                    .border(1.dp, sourceColor.copy(alpha = 0.78f), RoundedCornerShape(50))
+                    .then(
+                        if (showQuickRefresh) Modifier.clickable { onReanalyzeClick() } else Modifier
+                    )
                     .padding(horizontal = 12.dp, vertical = 5.dp)
+                    .testTag("wizard_baseline_source_badge")
             ) {
                 Text(
                     text = sourceBadge,

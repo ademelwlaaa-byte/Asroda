@@ -124,7 +124,7 @@ fun BotCardItem(
         else -> bot.aiName.ifBlank { "Karakter" }
     }
     val hue = MoodColors.getMoodHue(if (isUniverse) "curious" else "calm")
-    val isTemplate = bot.isTemplate || bot.id.startsWith("starter_") || bot.id.startsWith("preset_")
+    val isTemplate = !com.example.data.repository.EmochiRepository.isBotPublishable(bot)
 
     var isMenuExpanded by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }

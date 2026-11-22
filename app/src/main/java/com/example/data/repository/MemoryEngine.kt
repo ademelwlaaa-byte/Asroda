@@ -1215,7 +1215,8 @@ object MemoryEngine {
         events: List<MemoryEventEntity>,
         checkpoints: List<MemoryCheckpointEntity> = emptyList(),
         fragments: List<MemoryFragmentEntity> = emptyList(),
-        maxTokens: Int = MAX_MEMORY_PROMPT_TOKENS
+        maxTokens: Int = MAX_MEMORY_PROMPT_TOKENS,
+        graphResolutionNote: String? = null
     ): FilteredMemoryResult {
         var currentTokenCount = 0
         val selectedFacts = mutableListOf<MemoryFactEntity>()
@@ -1223,32 +1224,87 @@ object MemoryEngine {
         val selectedCheckpoints = mutableListOf<MemoryCheckpointEntity>()
         val selectedFragments = mutableListOf<MemoryFragmentEntity>()
         val seenFingerprints = mutableListOf<Pair<String, Set<String>>>()
+        val seenFactIds = HashSet<Long>()
 
         fun acceptIfUnique(text: String): Boolean {
             val norm = TurkishTextAnalyzer.normalize(text)
+            if (norm.isBlank()) return false
             val stems = TurkishTextAnalyzer.extractStems(norm).toSet()
             val redundant = seenFingerprints.any { (existingNorm, existingStems) ->
-                existingNorm == norm || TurkishTextAnalyzer.overlapCoefficient(existingStems, stems) >= 0.80f
+                existingNorm == norm ||
+                    (stems.isNotEmpty() && existingStems.isNotEmpty() &&
+                        TurkishTextAnalyzer.overlapCoefficient(existingStems, stems) >= 0.80f)
             }
             if (redundant) return false
             seenFingerprints.add(norm to stems)
             return true
         }
 
-        // 1. Neural Vault Facts (high information density per token — up to 42% of budget)
-        val factsBudget = (maxTokens * 0.42f).toInt()
-        for (f in facts) {
+        // 0. Priority #1: Live Knowledge Graph resolution note (highest priority, reserves its tokens & deduplicates)
+        if (!graphResolutionNote.isNullOrBlank()) {
+            val cleanGraph = graphResolutionNote.trim()
+            currentTokenCount += maxOf(8, (cleanGraph.length / 3.5).toInt())
+            // Seed each line of the graph note into deduplication fingerprints so duplicate facts/events are skipped
+            cleanGraph.lines().filter { it.isNotBlank() }.forEach { line ->
+                val norm = TurkishTextAnalyzer.normalize(line)
+                val stems = TurkishTextAnalyzer.extractStems(norm).toSet()
+                if (norm.isNotBlank()) seenFingerprints.add(norm to stems)
+            }
+        }
+
+        // Partition facts so Priority #2 (Pinned / CORE) ALWAYS survive tight <=32K ceilings,
+        // while preserving original RRF / AI-selected ranking order among kept facts.
+        val indexedUniqueFacts = mutableListOf<Pair<Int, MemoryFactEntity>>()
+        facts.forEachIndexed { idx, f ->
+            if (f.id == 0L || seenFactIds.add(f.id)) {
+                indexedUniqueFacts.add(idx to f)
+            }
+        }
+        val protectedIndexed = mutableListOf<Pair<Int, MemoryFactEntity>>()
+        val regularIndexed = mutableListOf<Pair<Int, MemoryFactEntity>>()
+        for (pair in indexedUniqueFacts) {
+            val f = pair.second
+            val tier = MemoryLifecycleCodec.parse(f.confidence).tier
+            if (f.userCorrected || tier == MemoryTier.CORE) {
+                protectedIndexed.add(pair)
+            } else {
+                regularIndexed.add(pair)
+            }
+        }
+
+        val keptIndexed = mutableListOf<Pair<Int, MemoryFactEntity>>()
+
+        // 1A. Protected Pinned & CORE Facts — NEVER dropped even on tight <=32K context ceilings
+        for (pair in protectedIndexed) {
+            val f = pair.second
             val rep = "${f.subject} ${f.key} ${f.value}"
-            val cost = maxOf(6, (rep.length / 3.5).toInt())
-            if (currentTokenCount + cost <= factsBudget && acceptIfUnique(rep)) {
-                selectedFacts.add(f)
+            if (acceptIfUnique(rep)) {
+                val cost = maxOf(6, (rep.length / 3.5).toInt())
+                keptIndexed.add(pair)
                 currentTokenCount += cost
             }
         }
 
+        // 1B. Regular RAG Top-K Facts (up to 48% of budget, trimmed from lowest RRF rank upward)
+        val factsBudget = maxOf(currentTokenCount, (maxTokens * 0.48f).toInt())
+        for (pair in regularIndexed) {
+            val f = pair.second
+            val rep = "${f.subject} ${f.key} ${f.value}"
+            val cost = maxOf(6, (rep.length / 3.5).toInt())
+            if (currentTokenCount + cost <= factsBudget && acceptIfUnique(rep)) {
+                keptIndexed.add(pair)
+                currentTokenCount += cost
+            }
+        }
+
+        // Restore exact RRF / AI-selected priority order among all kept facts
+        keptIndexed.sortedBy { it.first }.forEach { selectedFacts.add(it.second) }
+
         // 2. Living Multi-POV Memories (deep emotional & plot milestones — up to 78% cumulative)
         val eventsBudget = (maxTokens * 0.78f).toInt()
+        val seenEventIds = HashSet<Long>()
         for (e in events) {
+            if (e.id != 0L && !seenEventIds.add(e.id)) continue
             val searchable = LivingMemoryCodec.toSearchableText(e.description)
             val cost = maxOf(14, (searchable.length / 3.3).toInt())
             if (currentTokenCount + cost <= eventsBudget && acceptIfUnique(searchable)) {

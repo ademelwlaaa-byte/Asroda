@@ -182,39 +182,80 @@ private fun isValidIsoStoryDate(input: String): Boolean {
     }
 }
 
+private const val WIZARD_DRAFT_PREFS = "emochi_wizard_draft_v1"
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun CreateBotWizardScreen(
     baselineAnalysisState: EmochiViewModel.BaselineAnalysisUiState = EmochiViewModel.BaselineAnalysisUiState.Idle,
+    isSubmitting: Boolean = false,
+    submitError: String? = null,
+    onClearSubmitError: () -> Unit = {},
     onBack: () -> Unit,
-    onFinish: (BotEntity, List<SensitiveTriggerEntity>) -> Unit,
+    onFinish: (BotEntity, List<SensitiveTriggerEntity>, (Boolean) -> Unit) -> Unit,
     onGenerateOpening: suspend (BotEntity, Boolean, String) -> String,
     onAnalyzeBaseline: (BotEntity, Boolean, Set<String>) -> Unit = { _, _, _ -> },
     onCancelBaseline: () -> Unit = {}
 ) {
-    // Fixed single draftBotId across the entire wizard lifecycle (fixes orphaned triggers bug)
-    val draftBotId = rememberSaveable { UUID.randomUUID().toString() }
+    val context = LocalContext.current
+    val draftPrefs = remember(context) {
+        context.applicationContext.getSharedPreferences(WIZARD_DRAFT_PREFS, android.content.Context.MODE_PRIVATE)
+    }
 
-    var stepIdx by rememberSaveable { mutableIntStateOf(0) }
-    var mode by rememberSaveable { mutableStateOf("personal") }
-    var aiName by rememberSaveable { mutableStateOf("") }
-    var aiPersonality by rememberSaveable { mutableStateOf("") }
-    var avatarUrl by rememberSaveable { mutableStateOf("") }
-    var pinnedMemory by rememberSaveable { mutableStateOf("") }
-    var scenario by rememberSaveable { mutableStateOf("") }
-    var universeName by rememberSaveable { mutableStateOf("") }
-    var userCharName by rememberSaveable { mutableStateOf("") }
-    var userCharDesc by rememberSaveable { mutableStateOf("") }
-    var openingMessage by rememberSaveable { mutableStateOf("") }
-    var selectedOpeningTone by rememberSaveable { mutableStateOf("dramatic") }
-    var writingStyle by rememberSaveable { mutableStateOf("rp") }
-    var intensity by rememberSaveable { mutableStateOf("normal") }
-    var isPublic by rememberSaveable { mutableStateOf(false) } // Default: Sadece Bana Özel
-    var enableOoc by rememberSaveable { mutableStateOf(true) }
-    var isNsfw by rememberSaveable { mutableStateOf(true) }
-    var storyStartDate by rememberSaveable { mutableStateOf("") }
-    var keyCharactersSerialized by rememberSaveable { mutableStateOf("[]") }
+    // Fixed single draftBotId across the entire wizard lifecycle (fixes orphaned triggers bug)
+    val draftBotId = rememberSaveable {
+        draftPrefs.getString("draftBotId", null)?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+    }
+
+    var stepIdx by rememberSaveable { mutableIntStateOf(draftPrefs.getInt("stepIdx", 0).coerceIn(0, 5)) }
+    var mode by rememberSaveable { mutableStateOf(draftPrefs.getString("mode", "personal") ?: "personal") }
+    var aiName by rememberSaveable { mutableStateOf(draftPrefs.getString("aiName", "") ?: "") }
+    var aiPersonality by rememberSaveable { mutableStateOf(draftPrefs.getString("aiPersonality", "") ?: "") }
+    var avatarUrl by rememberSaveable { mutableStateOf(draftPrefs.getString("avatarUrl", "") ?: "") }
+    var pinnedMemory by rememberSaveable { mutableStateOf(draftPrefs.getString("pinnedMemory", "") ?: "") }
+    var scenario by rememberSaveable { mutableStateOf(draftPrefs.getString("scenario", "") ?: "") }
+    var universeName by rememberSaveable { mutableStateOf(draftPrefs.getString("universeName", "") ?: "") }
+    var userCharName by rememberSaveable { mutableStateOf(draftPrefs.getString("userCharName", "") ?: "") }
+    var userCharDesc by rememberSaveable { mutableStateOf(draftPrefs.getString("userCharDesc", "") ?: "") }
+    var openingMessage by rememberSaveable { mutableStateOf(draftPrefs.getString("openingMessage", "") ?: "") }
+    var selectedOpeningTone by rememberSaveable { mutableStateOf(draftPrefs.getString("selectedOpeningTone", "dramatic") ?: "dramatic") }
+    var writingStyle by rememberSaveable { mutableStateOf(draftPrefs.getString("writingStyle", "rp") ?: "rp") }
+    var intensity by rememberSaveable { mutableStateOf(draftPrefs.getString("intensity", "normal") ?: "normal") }
+    var isPublic by rememberSaveable { mutableStateOf(draftPrefs.getBoolean("isPublic", false)) } // Default: Sadece Bana Özel
+    var enableOoc by rememberSaveable { mutableStateOf(draftPrefs.getBoolean("enableOoc", true)) }
+    var isNsfw by rememberSaveable { mutableStateOf(draftPrefs.getBoolean("isNsfw", true)) }
+    var storyStartDate by rememberSaveable { mutableStateOf(draftPrefs.getString("storyStartDate", "") ?: "") }
+    var keyCharactersSerialized by rememberSaveable { mutableStateOf(draftPrefs.getString("keyCharactersSerialized", "[]") ?: "[]") }
     var showPinnedMemorySection by rememberSaveable { mutableStateOf(false) }
+
+    fun saveWizardDraftToPrefs() {
+        draftPrefs.edit()
+            .putString("draftBotId", draftBotId)
+            .putInt("stepIdx", stepIdx)
+            .putString("mode", mode)
+            .putString("aiName", aiName)
+            .putString("aiPersonality", aiPersonality)
+            .putString("avatarUrl", avatarUrl)
+            .putString("pinnedMemory", pinnedMemory)
+            .putString("scenario", scenario)
+            .putString("universeName", universeName)
+            .putString("userCharName", userCharName)
+            .putString("userCharDesc", userCharDesc)
+            .putString("openingMessage", openingMessage)
+            .putString("selectedOpeningTone", selectedOpeningTone)
+            .putString("writingStyle", writingStyle)
+            .putString("intensity", intensity)
+            .putBoolean("isPublic", isPublic)
+            .putBoolean("enableOoc", enableOoc)
+            .putBoolean("isNsfw", isNsfw)
+            .putString("storyStartDate", storyStartDate)
+            .putString("keyCharactersSerialized", keyCharactersSerialized)
+            .apply()
+    }
+
+    fun clearWizardDraftPrefs() {
+        draftPrefs.edit().clear().apply()
+    }
 
     val keyCharacters = remember(keyCharactersSerialized) {
         deserializeWizardKeyCharacters(keyCharactersSerialized)
@@ -238,14 +279,16 @@ fun CreateBotWizardScreen(
     var reviewAxes by remember { mutableStateOf<Map<String, Int>>(emptyMap()) }
 
     var isGeneratingOpening by remember { mutableStateOf(false) }
+    var isProcessingAvatar by remember { mutableStateOf(false) }
+    var localSubmitLock by remember { mutableStateOf(false) }
     var genError by remember { mutableStateOf<String?>(null) }
     var validationHint by remember { mutableStateOf<String?>(null) }
     var showExitConfirmDialog by remember { mutableStateOf(false) }
 
+    val effectiveSubmitting = isSubmitting || localSubmitLock
     val isAnalyzing = baselineAnalysisState is EmochiViewModel.BaselineAnalysisUiState.Loading
 
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
     val scrollState = rememberScrollState()
     val frostedBackdropState = com.example.util.rememberFrostedBackdrop(
         key = "gothic_manor_${R.drawable.img_botlist_gothic_wisteria_bg}",
@@ -259,23 +302,28 @@ fun CreateBotWizardScreen(
     )
     val frostedBackdrop = frostedBackdropState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
 
-    // Zero-permission Android Photo Picker -> OOM-safe 256x256 Micro-WebP (~15 KB Base64)
+    // Zero-permission Android Photo Picker -> OOM-safe 256x256 Micro-WebP (~15 KB Base64) on Dispatchers.IO with loading indicator
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         uri?.let { inputUri ->
             scope.launch {
-                AvatarOptimizer.processAvatarToMicroWebPBase64(context, inputUri)
-                    .onSuccess { microWebPBase64 ->
-                        avatarUrl = microWebPBase64
-                    }
-                    .onFailure {
-                        Toast.makeText(
-                            context,
-                            "Görsel işlenemedi, lütfen başka bir fotoğraf seçin.",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
+                isProcessingAvatar = true
+                try {
+                    AvatarOptimizer.processAvatarToMicroWebPBase64(context, inputUri)
+                        .onSuccess { microWebPBase64 ->
+                            avatarUrl = microWebPBase64
+                        }
+                        .onFailure {
+                            Toast.makeText(
+                                context,
+                                "Görsel okunamadı, lütfen başka bir fotoğraf seçin",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                } finally {
+                    isProcessingAvatar = false
+                }
             }
         }
     }
@@ -574,21 +622,30 @@ fun CreateBotWizardScreen(
                 WizardMorCamBottomDock(
                     stepIdx = stepIdx,
                     totalSteps = totalSteps,
-                    canNext = canNext,
+                    canNext = canNext && !effectiveSubmitting,
+                    isSubmitting = effectiveSubmitting,
                     frostedBackdrop = frostedBackdrop,
                     scrollSync = scrollState.value,
                     glowAlpha = pulseGlowAlpha,
-                    validationHint = validationHint,
+                    validationHint = submitError ?: validationHint,
                     onDisabledNextClick = {
-                        validationHint = computeMissingHint()
+                        if (!effectiveSubmitting) {
+                            validationHint = computeMissingHint()
+                        }
                     },
-                    onBack = { handleBackAction() },
+                    onBack = {
+                        if (!effectiveSubmitting) handleBackAction()
+                    },
                     onNext = {
+                        if (effectiveSubmitting) return@WizardMorCamBottomDock
                         when {
                             stepIdx < totalSteps - 1 -> {
+                                saveWizardDraftToPrefs()
                                 advanceToStep(stepIdx + 1)
                             }
                             else -> {
+                                localSubmitLock = true
+                                onClearSubmitError()
                                 val base = buildCurrentDraft(cleanBlankCast = true)
                                 val res = analysisResult
                                 val finalTriggers = if (reviewTriggers.isNotEmpty()) {
@@ -643,7 +700,16 @@ fun CreateBotWizardScreen(
                                 } else {
                                     base
                                 }
-                                onFinish(finalBot, finalTriggers)
+                                onFinish(finalBot, finalTriggers) { succeeded ->
+                                    localSubmitLock = false
+                                    if (succeeded) {
+                                        // Sistem #3: Draft cleared ONLY after atomic DB transaction succeeds
+                                        clearWizardDraftPrefs()
+                                    } else {
+                                        // Preserve user work on DB error
+                                        saveWizardDraftToPrefs()
+                                    }
+                                }
                             }
                         }
                     }
@@ -806,12 +872,15 @@ fun CreateBotWizardScreen(
                                     title = "Bot Profil Fotoğrafı",
                                     emptySubtitle = "Galeriden özel bir portre veya kapak seçin.",
                                     avatarUrl = avatarUrl,
+                                    isProcessing = isProcessingAvatar,
                                     frostedBackdrop = frostedBackdrop,
                                     scrollSync = scrollState.value,
                                     onPickClick = {
-                                        photoPickerLauncher.launch(
-                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                        )
+                                        if (!isProcessingAvatar) {
+                                            photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }
                                     },
                                     onRemoveClick = { avatarUrl = "" }
                                 )
@@ -895,12 +964,15 @@ fun CreateBotWizardScreen(
                                     title = "Evren Kapak Görseli",
                                     emptySubtitle = "Dünyanızın atmosferini yansıtan bir kapak seçin.",
                                     avatarUrl = avatarUrl,
+                                    isProcessing = isProcessingAvatar,
                                     frostedBackdrop = frostedBackdrop,
                                     scrollSync = scrollState.value,
                                     onPickClick = {
-                                        photoPickerLauncher.launch(
-                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                        )
+                                        if (!isProcessingAvatar) {
+                                            photoPickerLauncher.launch(
+                                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                            )
+                                        }
                                     },
                                     onRemoveClick = { avatarUrl = "" }
                                 )
@@ -1626,59 +1698,89 @@ fun CreateBotWizardScreen(
             }
         }
 
-        // Accidental Exit Confirmation Dialog
+        // Sistem #3: 3-Option Draft Protection Dialog on Step 1 BackHandler
         if (showExitConfirmDialog) {
             MorCamDialogShell(
                 onDismissRequest = { showExitConfirmDialog = false },
-                title = "Taslağı Bırak?",
-                subtitle = "Henüz botu oluşturmadın. Çıkarsan girdiğin bilgiler kaybolacak."
+                title = "Taslağı Kaydetmek İster misin?",
+                subtitle = "Henüz botu oluşturmadın. Taslağı kaydedip sonra kaldığın yerden devam edebilirsin."
             ) {
                 Spacer(Modifier.height(14.dp))
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .fillMaxWidth()
                             .height(46.dp)
                             .clip(RoundedCornerShape(50))
-                            .background(Color(0x552E1559))
-                            .border(1.dp, Color(0xAAE9D5FF), RoundedCornerShape(50))
-                            .clickable { showExitConfirmDialog = false }
-                            .testTag("wizard_exit_continue_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = "Devam Et",
-                            fontFamily = LiterarySerifFontFamily,
-                            color = Color(0xFFFAF6FF),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(46.dp)
-                            .clip(RoundedCornerShape(50))
-                            .background(Color(0x887F1D1D))
-                            .border(1.dp, Color(0xCCFDA4AF), RoundedCornerShape(50))
+                            .background(Brush.horizontalGradient(listOf(Color(0xAA7C3AED), Color(0xAA5B21B6))))
+                            .border(1.dp, Color(0xFFE9D5FF), RoundedCornerShape(50))
                             .clickable {
                                 showExitConfirmDialog = false
+                                saveWizardDraftToPrefs()
                                 onCancelBaseline()
                                 onBack()
                             }
-                            .testTag("wizard_exit_discard_button"),
+                            .testTag("wizard_exit_save_draft_button"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Taslağı Bırak",
+                            text = "Taslağı Kaydet & Çık",
                             fontFamily = LiterarySerifFontFamily,
-                            color = Color(0xFFFFE4E6),
+                            color = Color.White,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold
                         )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0x552E1559))
+                                .border(1.dp, Color(0xAAE9D5FF), RoundedCornerShape(50))
+                                .clickable { showExitConfirmDialog = false }
+                                .testTag("wizard_exit_continue_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Devam Et",
+                                fontFamily = LiterarySerifFontFamily,
+                                color = Color(0xFFFAF6FF),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0x887F1D1D))
+                                .border(1.dp, Color(0xCCFDA4AF), RoundedCornerShape(50))
+                                .clickable {
+                                    showExitConfirmDialog = false
+                                    clearWizardDraftPrefs()
+                                    onCancelBaseline()
+                                    onBack()
+                                }
+                                .testTag("wizard_exit_discard_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "Taslağı Sil",
+                                fontFamily = LiterarySerifFontFamily,
+                                color = Color(0xFFFFE4E6),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }
@@ -1691,6 +1793,7 @@ private fun WizardAvatarPickerCard(
     title: String,
     emptySubtitle: String,
     avatarUrl: String,
+    isProcessing: Boolean = false,
     frostedBackdrop: ImageBitmap,
     scrollSync: Int,
     onPickClick: () -> Unit,
@@ -1701,6 +1804,7 @@ private fun WizardAvatarPickerCard(
         scrollSync = scrollSync,
         modifier = Modifier
             .clickable(
+                enabled = !isProcessing,
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
                 onClick = onPickClick
@@ -1729,19 +1833,27 @@ private fun WizardAvatarPickerCard(
                     ),
                 contentAlignment = Alignment.Center
             ) {
-                BotAvatarImage(
-                    avatarUrl = avatarUrl.takeIf { it.isNotBlank() },
-                    contentDescription = title,
-                    modifier = Modifier.fillMaxSize(),
-                    fallback = {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = null,
-                            tint = Color(0xFFEDE9FE),
-                            modifier = Modifier.size(28.dp)
-                        )
-                    }
-                )
+                if (isProcessing) {
+                    androidx.compose.material3.CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 2.2.dp,
+                        color = Color(0xFFE9D5FF)
+                    )
+                } else {
+                    BotAvatarImage(
+                        avatarUrl = avatarUrl.takeIf { it.isNotBlank() },
+                        contentDescription = title,
+                        modifier = Modifier.fillMaxSize(),
+                        fallback = {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = Color(0xFFEDE9FE),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(15.dp))
@@ -1756,10 +1868,10 @@ private fun WizardAvatarPickerCard(
                 )
                 Spacer(modifier = Modifier.height(3.dp))
                 Text(
-                    text = if (avatarUrl.isNotBlank()) {
-                        "Görsel seçildi • Değiştirmek için dokun"
-                    } else {
-                        emptySubtitle
+                    text = when {
+                        isProcessing -> "Görsel optimize ediliyor..."
+                        avatarUrl.isNotBlank() -> "Görsel seçildi • Değiştirmek için dokun"
+                        else -> emptySubtitle
                     },
                     fontFamily = InterFontFamily,
                     color = Color(0xFFCBBCEE),

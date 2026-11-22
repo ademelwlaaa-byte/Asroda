@@ -119,7 +119,10 @@ data class BackupSnapshot(
     val sensitiveTriggers: List<com.example.data.local.SensitiveTriggerEntity> = emptyList(),
     val routines: List<com.example.data.local.RoutineEntity> = emptyList(),
     val entityRelations: List<com.example.data.local.EntityRelationEntity> = emptyList(),
-    val milestones: List<com.example.data.local.MilestoneEntity> = emptyList()
+    val milestones: List<com.example.data.local.MilestoneEntity> = emptyList(),
+    val customProviders: List<com.example.data.local.CustomProviderEntity> = emptyList(),
+    val pendingReappraisals: List<com.example.data.local.PendingReappraisalEntity> = emptyList(),
+    val archivedMemories: List<com.example.data.local.ArchivedMemoryEntity> = emptyList()
 )
 
 data class BackupImportSummary(
@@ -607,43 +610,66 @@ class EmochiRepository(
             return sanitizeModelName(raw)
         }
 
+        const val USER_CUSTOM_TRIGGER_PREFIX = "[USER] "
+
+        /**
+         * Starter bots, template bots, interactive books, and bots created/cloned from templates
+         * are NEVER allowed to be published publicly ("Herkese Açık olamaz").
+         */
+        fun isBotPublishable(bot: BotEntity): Boolean {
+            if (bot.isTemplate) return false
+            if (bot.mode.equals("book", ignoreCase = true)) return false
+            val idLower = bot.id.lowercase(java.util.Locale.ROOT)
+            if (idLower.startsWith("starter_") ||
+                idLower.startsWith("preset_") ||
+                idLower.startsWith("book_") ||
+                idLower.startsWith("aiden_") ||
+                idLower.startsWith("tpl_")
+            ) {
+                return false
+            }
+            if (com.example.util.AppFeatureFlags.isTemplateOriginBot(bot.id)) return false
+            return true
+        }
+
         // ─── Utility Model Resolution ────────────────────────────────────────────
         // Single source of truth for which model handles cheap background tasks
         // (character classification, query rewriting, re-rank, checkpoint summarization,
         //  near-duplicate checks, inconsistency detection).
-        // Custom Provider path: tries utilityModel → auto-detected small model → main model.
+        // Now supports AI-selected small support models for ALL built-in & custom providers!
         fun resolveUtilityModel(
             providerKey: String,
             settings: UserSettingsEntity,
             customProvider: com.example.data.local.CustomProviderEntity? = null
         ): String {
-            return when (providerKey.lowercase()) {
+            val normalizedKey = providerKey.lowercase(java.util.Locale.ROOT).trim()
+            // 1. AI-selected small utility model (applies to ALL built-in & custom providers!)
+            val aiSelected = com.example.util.AppFeatureFlags.getAiUtilityModel(normalizedKey)
+            if (!aiSelected.isNullOrBlank()) {
+                return aiSelected
+            }
+            return when (normalizedKey) {
                 "groq" -> "openai/gpt-oss-20b"
                 "openai" -> "gpt-4o-mini"
                 "claude" -> "claude-3-haiku-20240307"
                 "mistral" -> "mistral-small-latest"
                 "gemini" -> "gemini-2.0-flash"
-                "openrouter" -> settings.openRouterModel.ifBlank { "deepseek/deepseek-chat" }
-                "nvidia" -> "deepseek-ai/deepseek-v4-flash"
-                "pollinations" -> "openai"
-                "ovh" -> "meta-llama/Meta-Llama-3-70B-Instruct"
-                "llm7" -> "default"
+                "openrouter" -> "google/gemini-2.0-flash-lite-001"
+                "nvidia" -> "meta/llama-3.1-8b-instruct"
+                "pollinations" -> "openai-fast"
+                "ovh" -> "Llama-3.2-3B-Instruct"
+                "llm7" -> "gpt-4o-mini"
                 else -> {
                     // Custom Provider: manual override wins, then auto-detected, then main model
                     val manual = customProvider?.utilityModel?.takeIf { it.isNotBlank() }
                     if (manual != null) {
-                        android.util.Log.d("resolveUtilityModel", "[custom] Manual utility model: $manual")
                         return manual
                     }
                     val autoDetected = customProvider?.let { parseDetectedSmallModels(it.detectedSmallModels).firstOrNull() }
                     if (autoDetected != null) {
-                        android.util.Log.d("resolveUtilityModel", "[custom] Auto-detected utility model: $autoDetected")
                         return autoDetected
                     }
-                    val mainModel = customProvider?.modelName?.takeIf { it.isNotBlank() }
-                        ?: "gpt-4o-mini"
-                    android.util.Log.d("resolveUtilityModel", "[custom] Fallback to main model: $mainModel")
-                    mainModel
+                    customProvider?.modelName?.takeIf { it.isNotBlank() } ?: "gpt-4o-mini"
                 }
             }
         }
@@ -936,25 +962,78 @@ class EmochiRepository(
         db.characterEmotionDao().insertOrUpdate(entity)
 
     suspend fun saveBot(bot: BotEntity) {
-        val previousBot = try { botDao.getBotById(bot.id) } catch (_: Exception) { null }
-        botDao.insertOrUpdate(bot)
-        if (previousBot != null && previousBot.chatBgUrl.isNotBlank() && previousBot.chatBgUrl != bot.chatBgUrl) {
+        val safeBot = if (isBotPublishable(bot)) bot else bot.copy(isPublic = false)
+        val previousBot = try { botDao.getBotById(safeBot.id) } catch (_: Exception) { null }
+        botDao.insertOrUpdate(safeBot)
+        if (previousBot != null && previousBot.chatBgUrl.isNotBlank() && previousBot.chatBgUrl != safeBot.chatBgUrl) {
             context?.let { ctx ->
                 com.example.util.ImageStorageManager.deleteLocalBackgroundIfOwned(ctx, previousBot.chatBgUrl)
             }
         }
         try {
-            extractAndSaveRoutinesFromBotPersonality(bot.id, bot.aiPersonality, bot.scenario)
+            extractAndSaveRoutinesFromBotPersonality(safeBot.id, safeBot.aiPersonality, safeBot.scenario)
         } catch (_: Exception) {}
         try {
-            val keyChars = parseKeyCharacters(bot.keyCharactersJson)
+            val keyChars = parseKeyCharacters(safeBot.keyCharactersJson)
             for (kc in keyChars) {
                 if (!kc.id.startsWith("auto_")) {
-                    ensureKeyCharacterMirroredAsCastMember(bot.id, kc)
+                    ensureKeyCharacterMirroredAsCastMember(safeBot.id, kc)
                 }
             }
         } catch (_: Exception) {}
         autoBackupToStorage()
+    }
+
+    /**
+     * Atomically creates a new bot together with its idempotent baseline sensitive triggers,
+     * extracted routines, universe cast mirrors, and opening message inside a single Room
+     * transaction. If anything throws, nothing is half-committed and the wizard draft stays safe.
+     */
+    suspend fun createBotAtomic(
+        bot: BotEntity,
+        baselineTriggers: List<com.example.data.local.SensitiveTriggerEntity> = emptyList(),
+        createOpeningMessage: Boolean = true
+    ): BotEntity = withContext(Dispatchers.IO) {
+        val safeBot = if (isBotPublishable(bot)) bot else bot.copy(isPublic = false)
+        db.withTransaction {
+            botDao.insertOrUpdate(safeBot)
+
+            if (baselineTriggers.isNotEmpty()) {
+                persistBaselineTriggersInTx(safeBot.id, baselineTriggers)
+            }
+
+            try {
+                extractAndSaveRoutinesFromBotPersonality(safeBot.id, safeBot.aiPersonality, safeBot.scenario)
+            } catch (_: Exception) {}
+
+            try {
+                val keyChars = parseKeyCharacters(safeBot.keyCharactersJson)
+                for (kc in keyChars) {
+                    if (!kc.id.startsWith("auto_")) {
+                        ensureKeyCharacterMirroredAsCastMember(safeBot.id, kc)
+                    }
+                }
+            } catch (_: Exception) {}
+
+            if (createOpeningMessage) {
+                val existingMsgs = messageDao.getMessagesForBotList(safeBot.id)
+                if (existingMsgs.isEmpty()) {
+                    val openingText = resolveOpeningText(safeBot)
+                    messageDao.insertMessage(
+                        MessageEntity(
+                            id = UUID.randomUUID().toString(),
+                            botId = safeBot.id,
+                            role = "assistant",
+                            text = openingText,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
+        invalidateMemoryCaches(safeBot.id)
+        autoBackupToStorage()
+        safeBot
     }
 
     suspend fun getUnifiedCastMembers(botId: String): List<CastMemberEntity> {
@@ -973,6 +1052,10 @@ class EmochiRepository(
     suspend fun cloneBot(sourceBotId: String): BotEntity? {
         val original = botDao.getBotById(sourceBotId) ?: return null
         val newBotId = UUID.randomUUID().toString()
+        val sourcePublishable = isBotPublishable(original)
+        if (!sourcePublishable) {
+            com.example.util.AppFeatureFlags.markTemplateOriginBot(newBotId)
+        }
 
         // 1. Filter manually added characters from keyCharactersJson
         // (auto-detected ones were tagged with "auto_" or added into keyCharacters with auto_ prefix)
@@ -989,6 +1072,8 @@ class EmochiRepository(
         val clonedBot = original.copy(
             id = newBotId,
             aiName = original.aiName,
+            isPublic = if (sourcePublishable) original.isPublic else false,
+            isTemplate = false,
             keyCharactersJson = newKeyCharactersJson,
             pinnedMemory = "",
             storyNotes = "",
@@ -1357,7 +1442,7 @@ class EmochiRepository(
             // Clear in-memory summarization, regenerate & RAG vector caches so next turn starts cleanly
             lastSummarizedMessageCount.remove(botId)
             resetRegenerateCount(botId)
-            managers.memoryRetrievalManager.invalidateBotCache(botId)
+            invalidateMemoryCaches(botId)
             autoBackupToStorage()
         }
         return rewound
@@ -1465,6 +1550,13 @@ class EmochiRepository(
             }
         }
 
+        // U1: Starter and template-origin bots can NEVER be public — migrate any previously public ones to private
+        for (b in existingBots) {
+            if (b.isPublic && !isBotPublishable(b)) {
+                botDao.insertOrUpdate(b.copy(isPublic = false))
+            }
+        }
+
         if (existingBots.isEmpty()) {
             val aylaBaseline = EmotionState.calculateBaselineEmotionState(
                 aiName = "Ayla",
@@ -1489,7 +1581,7 @@ class EmochiRepository(
                 intensity = "normal",
                 customLength = "default",
                 isNsfw = true,
-                isPublic = true,
+                isPublic = false,
                 isTemplate = true,
                 emotionState = aylaBaseline,
                 previousEmotionState = aylaBaseline,
@@ -1528,7 +1620,7 @@ class EmochiRepository(
                 intensity = "normal",
                 customLength = "default",
                 isNsfw = true,
-                isPublic = true,
+                isPublic = false,
                 isTemplate = true,
                 emotionState = aetheriaBaseline,
                 previousEmotionState = aetheriaBaseline,
@@ -1733,8 +1825,16 @@ class EmochiRepository(
     fun getLastRagRouteModeForBot(botId: String): MemoryEngine.RagRouteMode =
         managers.memoryRetrievalManager.getLastRouteModeForBot(botId)
 
-    fun invalidateMemoryCache(botId: String) {
+    /**
+     * Single centralized cache-invalidation entry point guaranteed on every memory mutation
+     * (insert, update, delete, pin toggle, rewind, backup import, and background merge).
+     */
+    fun invalidateMemoryCaches(botId: String) {
         managers.memoryRetrievalManager.invalidateBotCache(botId)
+    }
+
+    fun invalidateMemoryCache(botId: String) {
+        invalidateMemoryCaches(botId)
     }
 
     suspend fun getArchivedMemories(botId: String): List<ArchivedMemoryEntity> = withContext(Dispatchers.IO) {
@@ -1759,13 +1859,20 @@ class EmochiRepository(
             ),
             preserveLockFlag = true
         )
+        invalidateMemoryCaches(fact.botId)
     }
 
     /**
      * Natural Forgetting Engine (MemoryLifecycleReaper — Section 3.1):
      * Pure local (<2 ms, 0 AI tokens) reaper that soft-archives expired EPHEMERAL and ARC memories
      * into ArchivedMemoryEntity(archivedReason = "natural_decay_ttl") and immediately evicts them
-     * from MemoryVectorCache. Never touches ★ userCorrected or CORE entries.
+     * from MemoryVectorCache.
+     *
+     * Hard Immunity Lock:
+     *  - `isPinned` (`fact.userCorrected == true`)
+     *  - `CORE` tier (`meta.tier == MemoryTier.CORE`)
+     *  - Records recently referenced within the last 30 turns (`accessCount > 0` and touched within active window)
+     * are NEVER archived by `natural_decay_ttl`.
      */
     suspend fun reapExpiredMemories(
         botId: String,
@@ -1778,10 +1885,18 @@ class EmochiRepository(
 
         var reapedCount = 0
         for (fact in activeFacts) {
-            // ★ user-locked and CORE facts are NEVER automatically forgotten
+            // ★ user-locked (isPinned) and CORE facts are NEVER automatically forgotten
             if (fact.userCorrected) continue
             val meta = MemoryLifecycleCodec.parse(fact.confidence)
             if (meta.tier == MemoryTier.CORE) continue
+
+            // Recently referenced records (recalled in current/recent 30-turn window) are protected from TTL reaping
+            val recentlyReferenced = meta.tier != MemoryTier.DISCARD &&
+                meta.accessCount > 0 && (
+                    (meta.lastAccessStoryDay > 0L && (safeDay - meta.lastAccessStoryDay) <= 1L) ||
+                        (meta.expiresMessageIndex > 0 && currentMessageCount > 0 && (currentMessageCount - meta.expiresMessageIndex) <= 30 && meta.lastAccessStoryDay >= meta.createdStoryDay)
+                )
+            if (recentlyReferenced) continue
 
             val shouldForget = when (meta.tier) {
                 MemoryTier.DISCARD -> true
@@ -1817,7 +1932,7 @@ class EmochiRepository(
         }
 
         if (reapedCount > 0) {
-            invalidateMemoryCache(botId)
+            invalidateMemoryCaches(botId)
         }
         reapedCount
     }
@@ -4567,27 +4682,66 @@ $aiChar: ${latestAiReply.take(850)}
             )
             baselineResultCache[cacheKey] = anchoredResult
 
-            // Persist triggers to SensitiveTriggerEntity table
+            // Persist triggers idempotently inside a Room transaction (preserves manual user triggers, dedupes max 3)
             try {
-                sensitiveTriggerDao.deleteTriggersForBot(bot.id)
-                for (trigger in anchoredResult.sensitiveTriggers) {
-                    sensitiveTriggerDao.insertOrUpdate(trigger)
-                }
+                persistBaselineTriggers(bot.id, anchoredResult.sensitiveTriggers)
             } catch (_: Exception) {}
 
             val updatedBot = buildUpdatedBotFromBaseline(bot, anchoredResult, newHash, userEditedFields)
             updatedBot to anchoredResult
         }
 
-    suspend fun saveSensitiveTriggers(botId: String, triggers: List<com.example.data.local.SensitiveTriggerEntity>) {
-        withContext(kotlinx.coroutines.Dispatchers.IO) {
-            sensitiveTriggerDao.deleteTriggersForBot(botId)
-            for (t in triggers) {
-                if (t.triggerTopic.isNotBlank()) {
-                    sensitiveTriggerDao.insertOrUpdate(t.copy(botId = botId))
-                }
-            }
+    private suspend fun persistBaselineTriggersInTx(
+        botId: String,
+        triggers: List<com.example.data.local.SensitiveTriggerEntity>
+    ) {
+        val existing = sensitiveTriggerDao.getTriggersForBot(botId)
+        val preservedManual = existing.filter {
+            it.sourceDescription.startsWith(USER_CUSTOM_TRIGGER_PREFIX)
         }
+        val manualTopics = preservedManual
+            .map { it.triggerTopic.trim().lowercase(java.util.Locale("tr", "TR")) }
+            .toSet()
+
+        val dedupedAuto = triggers
+            .filter { it.triggerTopic.isNotBlank() }
+            .distinctBy { it.triggerTopic.trim().lowercase(java.util.Locale("tr", "TR")) }
+            .filter { it.triggerTopic.trim().lowercase(java.util.Locale("tr", "TR")) !in manualTopics }
+            .take(3)
+
+        sensitiveTriggerDao.deleteTriggersForBot(botId)
+        for (manual in preservedManual) {
+            sensitiveTriggerDao.insertOrUpdate(manual.copy(id = 0L, botId = botId))
+        }
+        for (auto in dedupedAuto) {
+            sensitiveTriggerDao.insertOrUpdate(
+                auto.copy(
+                    id = 0L,
+                    botId = botId,
+                    triggerTopic = auto.triggerTopic.trim(),
+                    intensityMultiplier = auto.intensityMultiplier.coerceIn(1.2, 2.5),
+                    recentTriggerCount = 0
+                )
+            )
+        }
+    }
+
+    /**
+     * Idempotently replaces ONLY auto-generated baseline sensitive triggers inside a single
+     * `db.withTransaction`, deduplicating by normalized Turkish topic (max 3) while keeping
+     * any manually added `[USER] ` triggers intact.
+     */
+    suspend fun persistBaselineTriggers(
+        botId: String,
+        triggers: List<com.example.data.local.SensitiveTriggerEntity>
+    ) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        db.withTransaction {
+            persistBaselineTriggersInTx(botId, triggers)
+        }
+    }
+
+    suspend fun saveSensitiveTriggers(botId: String, triggers: List<com.example.data.local.SensitiveTriggerEntity>) {
+        persistBaselineTriggers(botId, triggers)
     }
 
     /**
@@ -7345,20 +7499,66 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         apiKey = getBuildConfigKey()
     )
 
-    suspend fun deleteMemoryFact(id: Long) =
-        managers.memoryRetrievalManager.deleteMemoryFact(id)
+    suspend fun deleteMemoryFact(id: Long, botId: String? = null) {
+        managers.memoryRetrievalManager.deleteMemoryFact(id, botId)
+        if (!botId.isNullOrBlank()) invalidateMemoryCaches(botId)
+    }
 
-    suspend fun deleteMemoryEvent(id: Long) =
-        managers.memoryRetrievalManager.deleteMemoryEvent(id)
+    suspend fun deleteMemoryEvent(id: Long, botId: String? = null) {
+        managers.memoryRetrievalManager.deleteMemoryEvent(id, botId)
+        if (!botId.isNullOrBlank()) invalidateMemoryCaches(botId)
+    }
 
-    suspend fun updateMemoryFact(fact: MemoryFactEntity) =
+    suspend fun updateMemoryFact(fact: MemoryFactEntity) {
         managers.memoryRetrievalManager.updateMemoryFact(fact)
+        invalidateMemoryCaches(fact.botId)
+    }
 
-    suspend fun updateMemoryEvent(event: MemoryEventEntity) =
+    suspend fun updateMemoryEvent(event: MemoryEventEntity) {
         managers.memoryRetrievalManager.updateMemoryEvent(event)
+        invalidateMemoryCaches(event.botId)
+    }
 
-    suspend fun deleteAllAutoMemories(botId: String) =
+    suspend fun deleteAllAutoMemories(botId: String) {
         managers.memoryRetrievalManager.deleteAllAutoMemories(botId)
+        invalidateMemoryCaches(botId)
+    }
+
+    fun validateBackupJson(jsonStr: String): BackupSnapshotManager.BackupValidationResult =
+        backupSnapshotManager.validateBackupJson(jsonStr)
+
+    suspend fun selectUtilityModelWithAi(
+        providerKey: String,
+        customProviderId: Long? = null,
+        apiKeyOverride: String? = null
+    ): com.example.data.managers.ProviderFallbackManager.AiUtilityModelSelectionResult {
+        val baseSettings = getOrCreateSettings()
+        val settings = if (!apiKeyOverride.isNullOrBlank()) {
+            when (providerKey.trim().lowercase(java.util.Locale.ROOT)) {
+                "gemini" -> baseSettings.copy(customApiKey = apiKeyOverride)
+                "groq" -> baseSettings.copy(groqApiKey = apiKeyOverride)
+                "openai" -> baseSettings.copy(openaiApiKey = apiKeyOverride)
+                "claude" -> baseSettings.copy(claudeApiKey = apiKeyOverride)
+                "openrouter" -> baseSettings.copy(openRouterApiKey = apiKeyOverride)
+                "nvidia" -> baseSettings.copy(nvidiaApiKey = apiKeyOverride)
+                "mistral" -> baseSettings.copy(mistralApiKey = apiKeyOverride)
+                else -> baseSettings
+            }
+        } else baseSettings
+
+        val resolvedCustomId = customProviderId ?: if (providerKey.startsWith("custom_")) {
+            providerKey.removePrefix("custom_").toLongOrNull()
+        } else null
+        val customEntity = resolvedCustomId?.let {
+            try { db.customProviderDao().getProviderById(it) } catch (_: Exception) { null }
+        }
+        return managers.providerFallbackManager.selectUtilityModelWithAi(
+            providerKey = providerKey,
+            settings = settings,
+            customEntity = customEntity,
+            buildConfigGeminiKey = getBuildConfigKey()
+        )
+    }
 
     // --- System Prompt & AI Generation ---
 
@@ -7379,7 +7579,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         recentSceneText: String = "",
         activeRoutineHint: String = "",
         modelContextWindowTokens: Int = 128_000,
-        literaryFramingMode: Boolean = false
+        literaryFramingMode: Boolean = false,
+        graphResolutionNote: String? = null
     ): String {
         val consistencyNote = pendingConsistencyNoteMap.remove(bot.id)
         val decayNote = pendingDecayNoteMap.remove(bot.id)
@@ -7403,7 +7604,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 totalMessageCount = totalMessageCount,
                 modelContextWindowTokens = modelContextWindowTokens,
                 compactMode = compactMode,
-                literaryFramingMode = literaryFramingMode
+                literaryFramingMode = literaryFramingMode,
+                graphResolutionNote = graphResolutionNote
             )
         )
     }
@@ -7474,6 +7676,11 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                     maxTokens = 180,
                     timeoutMs = 2400L
                 )
+            },
+            graphResolver = { userQuery ->
+                detectAndResolveGraphQuery(updatedBot.id, userQuery)
+                    ?.promptExplanation
+                    ?.takeIf { it.isNotBlank() }
             }
         )
 
@@ -7514,7 +7721,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             recentSceneText = recentSceneText,
             activeRoutineHint = activeRoutineHint,
             modelContextWindowTokens = modelContextWindow,
-            literaryFramingMode = literaryFramingMode
+            literaryFramingMode = literaryFramingMode,
+            graphResolutionNote = ragBundle.graphResolutionNote
         )
 
         // Wire UserSentimentAnalyzer into live replies (chat mode always; personal non-intense on NEGATIVE/WITHDRAWN)

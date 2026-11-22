@@ -202,9 +202,9 @@ class MemoryRagTenOutOfTenTest {
         assertEquals("integer", saveTool.properties["importance"]?.type)
         assertEquals("integer", saveTool.properties["ttl_days"]?.type)
 
-        val geminiSave = MemoryToolRegistry.toGeminiTools().first().functionDeclarations.first { it.name == "save_memory" }
-        assertEquals("INTEGER", geminiSave.parameters.properties["importance"]?.type)
-        assertEquals("INTEGER", geminiSave.parameters.properties["ttl_days"]?.type)
+        val geminiSave = MemoryToolRegistry.toGeminiTools().first().functionDeclarations?.first { it.name == "save_memory" }
+        assertEquals("INTEGER", geminiSave?.parameters?.properties?.get("importance")?.type)
+        assertEquals("INTEGER", geminiSave?.parameters?.properties?.get("ttl_days")?.type)
 
         assertEquals(8, MemoryToolRegistry.parseIntArg(8.0, 5))
         assertEquals(3, MemoryToolRegistry.parseIntArg("3.0", 0))
