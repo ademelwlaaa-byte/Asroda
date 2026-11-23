@@ -1,10 +1,15 @@
 package com.example
 
 import android.content.Context
+import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.example.data.api.ModelResponseResult
+import com.example.data.local.AppDatabase
 import com.example.data.local.CustomProviderEntity
+import com.example.data.local.MessageEntity
 import com.example.data.local.UserSettingsEntity
 import com.example.data.managers.ProviderFallbackManager
+import com.example.data.managers.ProviderHealthTracker
 import com.example.data.repository.EmochiRepository
 import com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine
 import com.example.util.AppFeatureFlags
@@ -168,6 +173,86 @@ class V32SystemsAuditFixesTest {
             )
         } finally {
             AppFeatureFlags.clearAiUtilityModel(providerKey)
+        }
+    }
+
+    @Test
+    fun customProvider_usesOwnModelNameInStreamAndFallbackEvenWhenPlaceholderModelPassed() = runBlocking {
+        ProviderHealthTracker.resetAll()
+        AppFeatureFlags.setSseStreaming(true)
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        try {
+            val insertedId = db.customProviderDao().insertProvider(
+                CustomProviderEntity(
+                    label = "My Custom RU Proxy",
+                    baseUrl = "https://custom-proxy.example.com/v1",
+                    apiKeyEncrypted = "plain_or_enc",
+                    modelName = "deepseek/deepseek-v3.2-special",
+                    apiFormat = "openai"
+                )
+            )
+            val providerKey = "custom_$insertedId"
+            val settings = UserSettingsEntity(
+                selectedProvider = providerKey,
+                enableAutoFallback = false
+            )
+            val userMsg = MessageEntity(id = "u_custom", botId = "b_custom", role = "user", text = "Selam", timestamp = 1L)
+
+            val repo = EmochiRepository(db, context)
+            assertEquals(
+                "resolveEffectiveModelForProvider must resolve the custom provider's real modelName",
+                "deepseek/deepseek-v3.2-special",
+                repo.resolveEffectiveModelForProvider(settings)
+            )
+
+            var streamCapturedModel = ""
+            var nonStreamCapturedModel = ""
+            val manager = ProviderFallbackManager(
+                customProviderDao = db.customProviderDao(),
+                onLogFallback = {},
+                customExecutor = { pKey, resolvedModel, _, _, _ ->
+                    nonStreamCapturedModel = resolvedModel
+                    ModelResponseResult(text = "Merhaba yanıtı", usedProvider = pKey)
+                },
+                customStreamExecutor = { pKey, resolvedModel, _, _, onToken, _ ->
+                    streamCapturedModel = resolvedModel
+                    onToken("Merhaba akış yanıtı")
+                    ModelResponseResult(text = "Merhaba akış yanıtı", usedProvider = pKey)
+                }
+            )
+
+            // Even if a caller passes placeholder "gemini-2.0-flash", customEntity.modelName MUST win!
+            manager.executeChatStream(
+                model = "gemini-2.0-flash",
+                settings = settings,
+                systemPrompt = "Sys",
+                messages = listOf(userMsg),
+                buildConfigGeminiKey = "",
+                onVisibleDelta = { _, _ -> }
+            )
+            assertEquals(
+                "executeChatStream MUST send customEntity.modelName instead of gemini-2.0-flash",
+                "deepseek/deepseek-v3.2-special",
+                streamCapturedModel
+            )
+
+            manager.executeWithFallback(
+                model = "gemini-2.0-flash",
+                settings = settings,
+                systemPrompt = "Sys",
+                messages = listOf(userMsg),
+                buildConfigGeminiKey = ""
+            )
+            assertEquals(
+                "executeWithFallback MUST send customEntity.modelName instead of gemini-2.0-flash",
+                "deepseek/deepseek-v3.2-special",
+                nonStreamCapturedModel
+            )
+        } finally {
+            ProviderHealthTracker.resetAll()
+            db.close()
         }
     }
 }

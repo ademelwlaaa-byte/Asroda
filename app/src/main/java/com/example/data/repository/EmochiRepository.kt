@@ -6002,7 +6002,7 @@ $aiChar: ${latestAiReply.take(850)}
         olderMessages: List<MessageEntity>
     ): BotEntity {
         val settings = getOrCreateSettings()
-        val effectiveModel = getEffectiveModelForProvider(settings)
+        val effectiveModel = resolveEffectiveModelForProvider(settings)
 
         val aiName = if (bot.mode == "universe") bot.universeName else bot.aiName
         val userLabel = bot.userCharName.ifBlank { "Kullanıcı" }
@@ -8701,13 +8701,29 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         val currentStoryDayKey: String
     )
 
+    suspend fun resolveEffectiveModelForProvider(settings: UserSettingsEntity): String {
+        val provider = settings.selectedProvider.lowercase().trim()
+        if (provider.startsWith("custom_")) {
+            val cid = provider.removePrefix("custom_").toLongOrNull()
+            if (cid != null) {
+                val customModel = try {
+                    db.customProviderDao().getProviderById(cid)?.modelName?.trim()
+                } catch (_: Exception) {
+                    null
+                }
+                if (!customModel.isNullOrBlank()) return customModel
+            }
+        }
+        return getEffectiveModelForProvider(settings)
+    }
+
     private suspend fun prepareNarrativeTurnContext(
         bot: BotEntity,
         messages: List<MessageEntity>,
         literaryFramingMode: Boolean
     ): PreparedNarrativeTurn {
         val settings = getOrCreateSettings()
-        val effectiveModel = getEffectiveModelForProvider(settings)
+        val effectiveModel = resolveEffectiveModelForProvider(settings)
         val (updatedBot, contextMessages) = prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
 
         val castMembers = try { getCastMembersForBot(updatedBot.id) } catch (_: Exception) { emptyList() }
@@ -9028,7 +9044,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
     ): String = withContext(Dispatchers.IO) {
         if (!forceRegenerate && bot.openingMessage.isNotBlank()) return@withContext bot.openingMessage
         val settings = getOrCreateSettings()
-        val effectiveModel = getEffectiveModelForProvider(settings)
+        val effectiveModel = resolveEffectiveModelForProvider(settings)
         val sysPrompt = buildSystemPrompt(bot, settings, compactMode = true)
         val toneInstruction = when (toneHint.trim().lowercase()) {
             "dramatic", "dramatik & gerilimli" -> "Ton: Dramatik, yüksek gerilimli ve atmosferik olsun."
@@ -9067,7 +9083,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
     suspend fun updateMemorySummaries(bot: BotEntity, messages: List<MessageEntity>) = withContext(Dispatchers.IO) {
         if (messages.size < 16) return@withContext
         val settings = getOrCreateSettings()
-        val effectiveModel = getEffectiveModelForProvider(settings)
+        val effectiveModel = resolveEffectiveModelForProvider(settings)
         try {
             prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
         } catch (_: Exception) {}

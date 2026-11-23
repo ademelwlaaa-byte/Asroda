@@ -385,9 +385,13 @@ class ProviderFallbackManager(
                     } else null
 
                     val resolvedModel = when {
-                        isUtility -> EmochiRepository.sanitizeModelName(
-                            EmochiRepository.resolveUtilityModel(providerKey, settings, customEntity)
-                        )
+                        isUtility -> {
+                            val utilRaw = EmochiRepository.resolveUtilityModel(providerKey, settings, customEntity)
+                            if (customEntity != null) utilRaw.trim() else EmochiRepository.sanitizeModelName(utilRaw)
+                        }
+                        customEntity != null -> customEntity.modelName.trim().ifBlank {
+                            EmochiRepository.sanitizeModelName(model)
+                        }
                         idx == 0 && providerKey == primarySelected && model.isNotBlank() ->
                             EmochiRepository.sanitizeModelName(model)
                         providerKey == "groq" -> EmochiRepository.sanitizeModelName(settings.groqModel.ifBlank { "openai/gpt-oss-120b" })
@@ -400,7 +404,6 @@ class ProviderFallbackManager(
                         providerKey == "pollinations" -> settings.pollinationsModel.ifBlank { "openai" }
                         providerKey == "ovh" -> settings.ovhModel.ifBlank { "Meta-Llama-3_3-70B-Instruct" }
                         providerKey == "llm7" -> "default"
-                        customEntity != null -> customEntity.modelName
                         else -> "gemini-2.0-flash"
                     }
 
@@ -696,6 +699,9 @@ class ProviderFallbackManager(
                     } else null
 
                     val resolvedModel = when {
+                        customEntity != null -> customEntity.modelName.trim().ifBlank {
+                            EmochiRepository.sanitizeModelName(model)
+                        }
                         idx == 0 && providerKey == primarySelected && model.isNotBlank() ->
                             EmochiRepository.sanitizeModelName(model)
                         providerKey == "groq" -> EmochiRepository.sanitizeModelName(settings.groqModel.ifBlank { "openai/gpt-oss-120b" })
@@ -708,7 +714,6 @@ class ProviderFallbackManager(
                         providerKey == "pollinations" -> settings.pollinationsModel.ifBlank { "openai" }
                         providerKey == "ovh" -> settings.ovhModel.ifBlank { "Meta-Llama-3_3-70B-Instruct" }
                         providerKey == "llm7" -> "default"
-                        customEntity != null -> customEntity.modelName
                         else -> "gemini-2.0-flash"
                     }
 
@@ -951,8 +956,8 @@ class ProviderFallbackManager(
                         lastError = refusalAbort
                         continue
                     } catch (e: Exception) {
-                        // HTTP 400 before first token: model may reject `stream: true` -> retry same provider non-stream once
-                        if (!firstTokenFired && e is SseStreamParser.SseHttpException && e.httpCode == 400) {
+                        // HTTP 400/422 before first token: model may reject `stream: true` -> retry same provider non-stream once
+                        if (!firstTokenFired && e is SseStreamParser.SseHttpException && (e.httpCode == 400 || e.httpCode == 422)) {
                             val nonStreamFallback = try {
                                 executeSingleProviderNonStream(
                                     providerKey = providerKey,
@@ -1140,25 +1145,17 @@ class ProviderFallbackManager(
             }
             customEntity != null -> {
                 val cleanBase = customEntity.baseUrl.trim().trimEnd('/')
-                apiKey = try {
-                    com.example.util.KeystoreEncryptionManager.decrypt(customEntity.apiKeyEncrypted).trim()
-                } catch (_: Exception) {
-                    ""
-                }
+                apiKey = decryptCustomApiKey(customEntity.apiKeyEncrypted)
                 val fmt = customEntity.apiFormat.lowercase().trim()
                 when {
                     fmt == "anthropic" || cleanBase.contains("anthropic.com") -> return null
                     fmt == "gemini" || cleanBase.contains("generativelanguage.googleapis.com") -> {
                         format = SseStreamParser.SseFormat.GEMINI
-                        url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse"
+                        url = resolveGeminiEndpointUrl(cleanBase, model, stream = true)
                     }
                     else -> {
                         format = SseStreamParser.SseFormat.OPENAI
-                        url = when {
-                            cleanBase.endsWith("/chat/completions") -> cleanBase
-                            cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") -> "$cleanBase/chat/completions"
-                            else -> "$cleanBase/v1/chat/completions"
-                        }
+                        url = resolveOpenAiChatCompletionsUrl(cleanBase)
                     }
                 }
             }
@@ -1319,9 +1316,8 @@ class ProviderFallbackManager(
                 providerKey.removePrefix("custom_").toLongOrNull()?.let { customMap[it] }
             } else null
 
-            val utilityModel = EmochiRepository.sanitizeModelName(
-                EmochiRepository.resolveUtilityModel(providerKey, settings, customEntity)
-            )
+            val rawUtilityModel = EmochiRepository.resolveUtilityModel(providerKey, settings, customEntity)
+            val utilityModel = if (customEntity != null) rawUtilityModel.trim() else EmochiRepository.sanitizeModelName(rawUtilityModel)
 
             val startMs = System.currentTimeMillis()
             try {
@@ -1451,25 +1447,17 @@ class ProviderFallbackManager(
             }
             customEntity != null -> {
                 val cleanBase = customEntity.baseUrl.trim().trimEnd('/')
-                apiKey = try {
-                    com.example.util.KeystoreEncryptionManager.decrypt(customEntity.apiKeyEncrypted).trim()
-                } catch (_: Exception) {
-                    ""
-                }
+                apiKey = decryptCustomApiKey(customEntity.apiKeyEncrypted)
                 val fmt = customEntity.apiFormat.lowercase().trim()
                 if (fmt == "anthropic" || cleanBase.contains("anthropic.com")) {
                     format = "anthropic"
                     url = if (cleanBase.endsWith("/messages")) cleanBase else "$cleanBase/v1/messages"
                 } else if (fmt == "gemini" || cleanBase.contains("generativelanguage.googleapis.com")) {
                     format = "gemini"
-                    url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent"
+                    url = resolveGeminiEndpointUrl(cleanBase, model, stream = false)
                 } else {
                     format = "openai"
-                    url = when {
-                        cleanBase.endsWith("/chat/completions") -> cleanBase
-                        cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") -> "$cleanBase/chat/completions"
-                        else -> "$cleanBase/v1/chat/completions"
-                    }
+                    url = resolveOpenAiChatCompletionsUrl(cleanBase)
                 }
             }
             else -> return null
@@ -1639,7 +1627,7 @@ class ProviderFallbackManager(
             // 1. Google Gemini native REST test
             if (format == "gemini" || cleanUrl.contains("generativelanguage.googleapis.com")) {
                 val safeModel = EmochiRepository.sanitizeModelName(modelName.ifBlank { "gemini-2.0-flash" })
-                val geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/$safeModel:generateContent"
+                val geminiUrl = resolveGeminiEndpointUrl(cleanUrl, safeModel, stream = false)
                 val payload = JSONObject().apply {
                     put(
                         "contents",
@@ -1746,16 +1734,7 @@ class ProviderFallbackManager(
             }
 
             // 3. OpenAI-compatible Chat Completions test (OpenAI, Groq, OpenRouter, DeepSeek, OVH, Pollinations, LLM7, Ollama, etc.)
-            val endpoint = when {
-                cleanUrl.endsWith("/chat/completions") -> cleanUrl
-                cleanUrl.contains("pollinations.ai") -> cleanUrl
-                cleanUrl.endsWith("/v1") ||
-                    cleanUrl.endsWith("/v4") ||
-                    cleanUrl.endsWith("/openai") ||
-                    cleanUrl.contains("models.inference.ai.azure.com") ||
-                    cleanUrl.contains("api.perplexity.ai") -> "$cleanUrl/chat/completions"
-                else -> "$cleanUrl/v1/chat/completions"
-            }
+            val endpoint = resolveOpenAiChatCompletionsUrl(cleanUrl)
 
             val payload = JSONObject().apply {
                 put("model", modelName.ifBlank { "openai" })
@@ -1828,6 +1807,51 @@ class ProviderFallbackManager(
                 errorMessage = e.message ?: "Bağlantı kurulamadı",
                 latencyMs = System.currentTimeMillis() - startMs
             )
+        }
+    }
+
+    private fun decryptCustomApiKey(encrypted: String): String {
+        val raw = encrypted.trim()
+        if (raw.isBlank()) return ""
+        return try {
+            com.example.util.KeystoreEncryptionManager.decrypt(raw).trim()
+        } catch (_: Exception) {
+            try {
+                com.example.util.SecureApiKeyVault.decrypt(raw).trim()
+            } catch (_: Exception) {
+                ""
+            }
+        }
+    }
+
+    private fun resolveOpenAiChatCompletionsUrl(baseUrl: String): String {
+        val cleanUrl = baseUrl.trim().trimEnd('/')
+        return when {
+            cleanUrl.endsWith("/chat/completions") -> cleanUrl
+            cleanUrl.contains("pollinations.ai") -> cleanUrl
+            cleanUrl.endsWith("/v1") ||
+                cleanUrl.endsWith("/v2") ||
+                cleanUrl.endsWith("/v3") ||
+                cleanUrl.endsWith("/v4") ||
+                cleanUrl.endsWith("/openai") ||
+                cleanUrl.contains("models.inference.ai.azure.com") ||
+                cleanUrl.contains("api.perplexity.ai") -> "$cleanUrl/chat/completions"
+            else -> "$cleanUrl/v1/chat/completions"
+        }
+    }
+
+    private fun resolveGeminiEndpointUrl(baseUrl: String, model: String, stream: Boolean): String {
+        val cleanBase = baseUrl.trim().trimEnd('/')
+        val suffix = if (stream) ":streamGenerateContent?alt=sse" else ":generateContent"
+        val cleanModel = model.trim().removePrefix("models/")
+        if (cleanBase.isBlank() || cleanBase.contains("generativelanguage.googleapis.com", ignoreCase = true)) {
+            return "https://generativelanguage.googleapis.com/v1beta/models/$cleanModel$suffix"
+        }
+        return when {
+            cleanBase.contains(":generateContent") || cleanBase.contains(":streamGenerateContent") -> cleanBase
+            cleanBase.endsWith("/models") -> "$cleanBase/$cleanModel$suffix"
+            cleanBase.endsWith("/v1beta") || cleanBase.endsWith("/v1") -> "$cleanBase/models/$cleanModel$suffix"
+            else -> "$cleanBase/v1beta/models/$cleanModel$suffix"
         }
     }
 
