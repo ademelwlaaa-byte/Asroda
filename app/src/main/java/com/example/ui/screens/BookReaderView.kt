@@ -294,7 +294,8 @@ fun BookReaderView(
 
     DisposableEffect(Unit) {
         onDispose {
-            BookAudioController.stopAndRelease()
+            // Preserve smooth 2-second fade-out when leaving reader instead of hard-cutting audio
+            BookAudioController.stopIfNotAlreadyFading(fadeOutMs = 2000L)
         }
     }
 
@@ -446,13 +447,13 @@ fun BookReaderView(
             }
     }
 
-    // Pause chapter-end soundtrack smoothly on background (ON_PAUSE 250ms fade) and resume on ON_RESUME (300ms fade) if not manually muted
+    // Pause chapter-end soundtrack smoothly on background (ON_STOP 250ms fade) and resume on ON_START (300ms fade) so split-screen/dialogs don't cut music
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> BookAudioController.pauseForBackground(fadeOutMs = 250L)
-                Lifecycle.Event.ON_RESUME -> BookAudioController.resumeFromBackground(fadeInMs = 300L)
+                Lifecycle.Event.ON_STOP -> BookAudioController.pauseForBackground(fadeOutMs = 250L)
+                Lifecycle.Event.ON_START -> BookAudioController.resumeFromBackground(fadeInMs = 300L)
                 else -> {}
             }
         }

@@ -103,7 +103,7 @@ object EdgeNeuralTtsClient {
 
     /** Optional test hook for deterministic offline/error/fallback verification in Robolectric tests. */
     @Volatile
-    var synthesizerOverride: (suspend (voiceId: String, ssml: String) -> ByteArray?)? = null
+    internal var synthesizerOverride: (suspend (voiceId: String, ssml: String) -> ByteArray?)? = null
 
     /**
      * Synthesizes [ssml] into an MP3 [File] stored in the 15 MB LRU cache.
@@ -142,7 +142,7 @@ object EdgeNeuralTtsClient {
         }
 
         try {
-            val tmp = File(cacheDir, "$cacheKey.tmp")
+            val tmp = File(cacheDir, "$cacheKey.${UUID.randomUUID()}.tmp")
             tmp.writeBytes(audioBytes)
             if (!tmp.renameTo(cachedFile)) {
                 tmp.copyTo(cachedFile, overwrite = true)

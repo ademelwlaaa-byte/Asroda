@@ -93,6 +93,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.zIndex
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -579,6 +580,11 @@ fun GlobalSettingsModal(
     // ═══════════════════════════════════════════════════════════════════════════
     // FULL-SCREEN MOR NEON COSMIC GLASS OVERLAY (1:1 REFERENCE ACCURACY)
     // ═══════════════════════════════════════════════════════════════════════════
+    androidx.activity.compose.BackHandler(
+        enabled = !showCatalogSearch && configuringCatalogSpec == null && !showCustomApiDialog && !showFreeKeylessSheet
+    ) {
+        onDismiss()
+    }
     CompositionLocalProvider(
         LocalAetheriaRootSize provides modalRootSizeState,
         LocalAetheriaRootPos provides modalRootPosState
@@ -586,6 +592,7 @@ fun GlobalSettingsModal(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .zIndex(50f)
             .onGloballyPositioned { coords ->
                 if (coords.isAttached) {
                     if (modalRootSizeState.value != coords.size) {
@@ -717,12 +724,12 @@ fun GlobalSettingsModal(
                     }
                 }
 
-                // ── 2. FOUR NEON GLASS PILL TABS (EXACT REFERENCE PLATES) ──
+                // ── 2. FOUR NEON GLASS PILL TABS (RESPONSIVE FOR ALL PHONE WIDTHS) ──
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 14.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     val tabs = listOf(
                         Triple("API", Icons.Default.Bolt, 0.88f),
@@ -757,23 +764,23 @@ fun GlobalSettingsModal(
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                horizontalArrangement = Arrangement.spacedBy(3.dp)
                             ) {
                                 Icon(
                                     imageVector = tabIcon,
                                     contentDescription = null,
                                     tint = if (selected) Color.White else Color(0xFFB784FF),
-                                    modifier = Modifier.size(14.dp)
+                                    modifier = Modifier.size(13.dp)
                                 )
                                 Text(
                                     text = label,
                                     color = if (selected) Color.White else Color(0xFFDFD5F5),
-                                    fontSize = 11.5.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                     fontFamily = InterFontFamily,
                                     maxLines = 1,
                                     softWrap = false,
-                                    overflow = TextOverflow.Clip
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -1058,8 +1065,8 @@ fun GlobalSettingsModal(
                                         activeApiItems.forEachIndexed { index, item ->
                                             val isFirst = index == 0
                                             val testRes = activeTestResults[item.key]
-                                            val activeUtilityModel = aiUtilityModelsMap[item.key.lowercase()]
-                                                ?: item.customEntity?.utilityModel?.takeIf { it.isNotBlank() }
+                                            val activeUtilityModel = item.customEntity?.utilityModel?.takeIf { it.isNotBlank() }
+                                                ?: aiUtilityModelsMap[item.key.lowercase()]?.takeIf { it.isNotBlank() }
                                                 ?: ""
                                             ActiveApiPriorityRow(
                                                 index = index,
@@ -1113,7 +1120,8 @@ fun GlobalSettingsModal(
                                                         if (res.isSuccess) {
                                                             com.example.data.managers.ProviderHealthTracker.resetHealth(item.key)
                                                             com.example.data.managers.ProviderHealthTracker.recordSuccess(item.key, res.latencyMs)
-                                                            if (com.example.util.AppFeatureFlags.getAiUtilityModel(item.key).isBlank()) {
+                                                            val hasManualCustomUtil = !item.customEntity?.utilityModel.isNullOrBlank()
+                                                            if (!hasManualCustomUtil && com.example.util.AppFeatureFlags.getAiUtilityModel(item.key).isBlank()) {
                                                                 viewModel.selectUtilityModelWithAi(
                                                                     providerKey = item.key,
                                                                     apiKeyOverride = item.apiKeyPlain.takeIf { it.isNotBlank() },
@@ -2733,7 +2741,14 @@ fun GlobalSettingsModal(
                 viewModel.testCustomProviderConnection(baseUrl, resolvedKey, model, format)
             },
             onFetchModels = { baseUrl, key ->
-                viewModel.fetchModelsForEndpoint(baseUrl, key)
+                val resolvedKey = if (key.isBlank() && existingCustom != null) {
+                    try {
+                        com.example.util.KeystoreEncryptionManager.decrypt(existingCustom.apiKeyEncrypted)
+                    } catch (_: Exception) {
+                        ""
+                    }
+                } else key
+                viewModel.fetchModelsForEndpoint(baseUrl, resolvedKey)
             },
             onConfirm = { enteredKey, chosenModel, supportsTools ->
                 val slot = spec.builtinSlot
@@ -2833,7 +2848,14 @@ fun GlobalSettingsModal(
                 viewModel.testCustomProviderConnection(baseUrl, resolvedKey, model, format)
             },
             onFetchModels = { baseUrl, key ->
-                viewModel.fetchModelsForEndpoint(baseUrl, key)
+                val resolvedKey = if (key.isBlank() && editing != null) {
+                    try {
+                        com.example.util.KeystoreEncryptionManager.decrypt(editing.apiKeyEncrypted)
+                    } catch (_: Exception) {
+                        ""
+                    }
+                } else key
+                viewModel.fetchModelsForEndpoint(baseUrl, resolvedKey)
             },
             onSave = { label, baseUrl, key, model, format, supportsTools, utilityModel, detectedSmallModelsJson ->
                 if (editing != null) {

@@ -13,9 +13,11 @@ import com.example.data.local.EmotionState
 import com.example.data.repository.EmochiRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -83,7 +85,9 @@ class ChatTtsManager(context: Context) {
     @Volatile
     private var pendingSpeakRequest: PendingSpeakRequest? = null
 
+    @Volatile
     private var audioFocusRequest: AudioFocusRequest? = null
+    private val audioFocusLock = Any()
 
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
@@ -163,7 +167,7 @@ class ChatTtsManager(context: Context) {
 
                 override fun onDone(utteranceId: String?) {
                     if (utteranceId != null && utteranceId == activeFinalUtteranceId) {
-                        clearSpeakingState()
+                        ttsScope.launch { clearSpeakingState() }
                     }
                 }
 
@@ -171,14 +175,14 @@ class ChatTtsManager(context: Context) {
                 override fun onError(utteranceId: String?) {
                     val session = activeSessionId
                     if (utteranceId == null || (session != null && utteranceId.startsWith(session))) {
-                        clearSpeakingState()
+                        ttsScope.launch { clearSpeakingState() }
                     }
                 }
 
                 override fun onError(utteranceId: String?, errorCode: Int) {
                     val session = activeSessionId
                     if (utteranceId == null || (session != null && utteranceId.startsWith(session))) {
-                        clearSpeakingState()
+                        ttsScope.launch { clearSpeakingState() }
                     }
                 }
             })
@@ -285,7 +289,8 @@ class ChatTtsManager(context: Context) {
         voiceName: String = "",
         languageTag: String = "tr",
         readActions: Boolean = AppFeatureFlags.isTtsReadActionsEnabled,
-        emotionState: EmotionState? = null
+        emotionState: EmotionState? = null,
+        overrideNeuralVoiceId: String? = null
     ): Boolean {
         val segments = EmotionalTtsProsodyEngine.buildProsodySegments(
             rawText = rawText,
@@ -318,7 +323,8 @@ class ChatTtsManager(context: Context) {
                 deviceVoiceName = voiceName,
                 languageTag = languageTag,
                 readActions = readActions,
-                emotionState = emotionState
+                emotionState = emotionState,
+                overrideNeuralVoiceId = overrideNeuralVoiceId
             )
             return true
         }
@@ -345,7 +351,8 @@ class ChatTtsManager(context: Context) {
         deviceVoiceName: String,
         languageTag: String,
         readActions: Boolean,
-        emotionState: EmotionState?
+        emotionState: EmotionState?,
+        overrideNeuralVoiceId: String? = null
     ) {
         val sessionId = "emochi_neural_${UUID.randomUUID().toString().take(8)}"
         activeSessionId = sessionId
@@ -355,24 +362,33 @@ class ChatTtsManager(context: Context) {
         _isSpeaking.value = true
         requestAudioFocus()
 
-        val preferredNeuralVoice = resolveNeuralVoiceId(languageTag)
+        val preferredNeuralVoice = overrideNeuralVoiceId?.takeIf { it.isNotBlank() }
+            ?: resolveNeuralVoiceId(languageTag)
+        val xmlLang = if (preferredNeuralVoice.startsWith("en-", ignoreCase = true)) "en-US" else "tr-TR"
         val batches = EmotionalTtsProsodyEngine.batchSegmentsForNeural(segments)
 
         activeNeuralJob = ttsScope.launch {
             var anyPlayed = false
+            var prefetchedNext: Deferred<File?>? = null
             try {
-                for (batch in batches) {
+                for (idx in batches.indices) {
                     if (activeSessionId != sessionId) return@launch
-                    val ssml = EmotionalTtsProsodyEngine.buildSsml(
-                        voiceName = preferredNeuralVoice,
-                        segments = batch,
-                        xmlLang = if (preferredNeuralVoice.startsWith("en-", ignoreCase = true)) "en-US" else "tr-TR"
-                    )
-                    val mp3File = EdgeNeuralTtsClient.synthesizeToCachedMp3(
-                        context = appContext,
-                        voiceId = preferredNeuralVoice,
-                        ssml = ssml
-                    )
+                    val mp3File: File? = if (prefetchedNext != null) {
+                        val deferred = prefetchedNext
+                        prefetchedNext = null
+                        deferred.await()
+                    } else {
+                        val ssml = EmotionalTtsProsodyEngine.buildSsml(
+                            voiceName = preferredNeuralVoice,
+                            segments = batches[idx],
+                            xmlLang = xmlLang
+                        )
+                        EdgeNeuralTtsClient.synthesizeToCachedMp3(
+                            context = appContext,
+                            voiceId = preferredNeuralVoice,
+                            ssml = ssml
+                        )
+                    }
                     if (activeSessionId != sessionId) return@launch
 
                     if (mp3File == null) {
@@ -392,6 +408,23 @@ class ChatTtsManager(context: Context) {
                             return@launch
                         } else {
                             break
+                        }
+                    }
+
+                    // Prefetch batch N+1 asynchronously while batch N plays so there is zero gap!
+                    if (idx + 1 < batches.size) {
+                        val nextBatch = batches[idx + 1]
+                        prefetchedNext = async(Dispatchers.IO) {
+                            val nextSsml = EmotionalTtsProsodyEngine.buildSsml(
+                                voiceName = preferredNeuralVoice,
+                                segments = nextBatch,
+                                xmlLang = xmlLang
+                            )
+                            EdgeNeuralTtsClient.synthesizeToCachedMp3(
+                                context = appContext,
+                                voiceId = preferredNeuralVoice,
+                                ssml = nextSsml
+                            )
                         }
                     }
 
@@ -420,8 +453,10 @@ class ChatTtsManager(context: Context) {
                     clearSpeakingState()
                 }
             } catch (ce: CancellationException) {
+                prefetchedNext?.cancel()
                 throw ce
             } catch (_: Exception) {
+                prefetchedNext?.cancel()
                 if (!anyPlayed && activeSessionId == sessionId) {
                     speakWithDeviceEngine(
                         messageId = messageId,
@@ -588,9 +623,7 @@ class ChatTtsManager(context: Context) {
         emotionState: EmotionState? = null,
         neuralVoiceId: String? = null
     ): Boolean {
-        if (!neuralVoiceId.isNullOrBlank()) {
-            AppFeatureFlags.setTtsNeuralVoice(neuralVoiceId)
-        }
+        // Do NOT silently overwrite the user's persisted neural voice preference during preview!
         val sampleText = if (languageTag.lowercase(Locale.ROOT).startsWith("en")) {
             "*She leans closer by the violet window...* \"Hello! This is how Emochi reads stories with real emotion.\""
         } else {
@@ -608,7 +641,8 @@ class ChatTtsManager(context: Context) {
                 primaryEmotions = com.example.data.local.PrimaryEmotions(joy = 60, trust = 75),
                 relationshipAxes = com.example.data.local.RelationshipAxes(affectionScore = 82),
                 dominantEmotion = "romantik"
-            )
+            ),
+            overrideNeuralVoiceId = neuralVoiceId
         )
     }
 
@@ -711,44 +745,48 @@ class ChatTtsManager(context: Context) {
 
     private fun requestAudioFocus() {
         val am = audioManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .build()
+        synchronized(audioFocusLock) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+                    val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                .build()
+                        )
+                        .setOnAudioFocusChangeListener(focusChangeListener)
+                        .setWillPauseWhenDucked(false)
+                        .build()
+                    audioFocusRequest = req
+                    am.requestAudioFocus(req)
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.requestAudioFocus(
+                        focusChangeListener,
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
                     )
-                    .setOnAudioFocusChangeListener(focusChangeListener)
-                    .setWillPauseWhenDucked(false)
-                    .build()
-                audioFocusRequest = req
-                am.requestAudioFocus(req)
-            } else {
-                @Suppress("DEPRECATION")
-                am.requestAudioFocus(
-                    focusChangeListener,
-                    AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
-                )
+                }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
     }
 
     private fun abandonAudioFocus() {
         val am = audioManager ?: return
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
-                audioFocusRequest = null
-            } else {
-                @Suppress("DEPRECATION")
-                am.abandonAudioFocus(focusChangeListener)
+        synchronized(audioFocusLock) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { am.abandonAudioFocusRequest(it) }
+                    audioFocusRequest = null
+                } else {
+                    @Suppress("DEPRECATION")
+                    am.abandonAudioFocus(focusChangeListener)
+                }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
     }
 

@@ -288,7 +288,10 @@ class EmochiViewModel @JvmOverloads constructor(
             )
             val newId = repository.insertCustomProvider(entity)
             com.example.data.managers.ProviderHealthTracker.resetHealth("custom_$newId")
-            if (cleanUtil.isBlank()) {
+            if (cleanUtil.isNotBlank()) {
+                // Persist user's explicit manual small model so UI badges & resolver NEVER overwrite it with auto!
+                com.example.util.AppFeatureFlags.setAiUtilityModel("custom_$newId", cleanUtil, "manual")
+            } else {
                 selectUtilityModelWithAi("custom_$newId", silent = true)
             }
             onSaved(newId)
@@ -346,6 +349,12 @@ class EmochiViewModel @JvmOverloads constructor(
             )
             repository.updateCustomProvider(updated)
             com.example.data.managers.ProviderHealthTracker.resetHealth("custom_$id")
+            if (finalUtil.isNotBlank()) {
+                // Always sync manual small model into AppFeatureFlags so old auto-selected model is replaced!
+                com.example.util.AppFeatureFlags.setAiUtilityModel("custom_$id", finalUtil, "manual")
+            } else {
+                com.example.util.AppFeatureFlags.clearAiUtilityModel("custom_$id")
+            }
             val currentSettings = repository.getOrCreateSettings()
             if (currentSettings.selectedProvider == "custom_$id") {
                 updateSettings(currentSettings.copy(selectedModel = modelName.trim()))

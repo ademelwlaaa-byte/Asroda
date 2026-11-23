@@ -644,7 +644,14 @@ class EmochiRepository(
             customProvider: com.example.data.local.CustomProviderEntity? = null
         ): String {
             val normalizedKey = providerKey.lowercase(java.util.Locale.ROOT).trim()
-            // 1. AI-selected small utility model (applies to ALL built-in & custom providers!)
+            // 0. For Custom Providers, an explicit MANUAL utility model ALWAYS wins over any AI/auto-selected value!
+            if (customProvider != null) {
+                val manual = customProvider.utilityModel.trim()
+                if (manual.isNotBlank() && (customProvider.utilityModelSource.equals("manual", ignoreCase = true) || customProvider.utilityModelSource.isBlank())) {
+                    return manual
+                }
+            }
+            // 1. AI-selected small utility model (applies to ALL built-in & custom providers when not manually overridden!)
             val aiSelected = com.example.util.AppFeatureFlags.getAiUtilityModel(normalizedKey)
             if (!aiSelected.isNullOrBlank()) {
                 return aiSelected

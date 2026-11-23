@@ -14,6 +14,8 @@ import com.example.data.repository.ProviderFallbackLogEntry
 import com.example.util.AppFeatureFlags
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -26,6 +28,7 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
+import java.net.SocketTimeoutException
 import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -84,6 +87,80 @@ class ProviderFallbackManager(
         const val STRICT_NARRATIVE_TIMEOUT_MS = 60_000L
         const val UNLIMITED_SAFETY_CALL_TIMEOUT_MS = 300_000L
 
+        internal fun parseActiveChatModelsFromJson(rawBody: String): List<String> {
+            val body = rawBody.trim()
+            if (body.isBlank()) return emptyList()
+
+            val arr: JSONArray = when {
+                body.startsWith("[") -> JSONArray(body)
+                body.startsWith("{") -> {
+                    val obj = JSONObject(body)
+                    obj.optJSONArray("data")
+                        ?: obj.optJSONArray("models")
+                        ?: return emptyList()
+                }
+                else -> return emptyList()
+            }
+
+            val inactiveStatuses = setOf("inactive", "deprecated", "disabled", "archived", "deleted", "offline", "decommissioned")
+            val nonChatTypes = setOf("embedding", "embeddings", "image", "audio", "speech", "tts", "stt", "whisper", "rerank", "moderation", "video")
+            val nonChatIdTokens = listOf(
+                "whisper", "tts", "dall-e", "dalle", "embed", "embedding", "bge-", "e5-",
+                "rerank", "moderation", "omni-moderation", "llama-guard", "prompt-guard", "shieldgemma",
+                "realtime", "transcribe", "speech", "imagen", "veo-", "sora", "flux", "sdxl",
+                "stable-diffusion", "babbage-002", "davinci-002", "text-davinci", "text-curie",
+                "text-babbage", "text-ada", "ocr", "clip-", "lyria", "music-", "audio-preview",
+                "playai-tts", "distil-whisper", "canopylabs/orpheus"
+            )
+
+            val result = LinkedHashSet<String>()
+            for (i in 0 until arr.length()) {
+                val item = arr.opt(i) ?: continue
+                if (item is String) {
+                    val id = item.trim()
+                    if (id.isNotBlank() && nonChatIdTokens.none { id.lowercase(Locale.ROOT).contains(it) }) {
+                        result.add(id)
+                    }
+                    continue
+                }
+                val obj = item as? JSONObject ?: continue
+                val rawId = (obj.optString("id").ifBlank { obj.optString("name") }).trim()
+                    .removePrefix("models/")
+                if (rawId.isBlank()) continue
+
+                // 1. Exclude explicitly inactive / deprecated / decommissioned models
+                if (obj.has("active") && !obj.optBoolean("active", true)) continue
+                if (obj.has("enabled") && !obj.optBoolean("enabled", true)) continue
+                if (obj.optBoolean("deprecated", false)) continue
+                if (obj.optString("deprecation").isNotBlank()) continue
+                val status = obj.optString("status").lowercase(Locale.ROOT).trim()
+                if (status in inactiveStatuses) continue
+
+                // 2. Exclude non-chat model types (embeddings, image, audio, rerank, moderation)
+                val modelType = obj.optString("type").lowercase(Locale.ROOT).trim()
+                if (modelType in nonChatTypes) continue
+                val arch = obj.optJSONObject("architecture")
+                val outMods = arch?.optJSONArray("output_modalities")
+                if (outMods != null && outMods.length() > 0) {
+                    var hasTextOut = false
+                    for (m in 0 until outMods.length()) {
+                        if (outMods.optString(m).equals("text", ignoreCase = true)) {
+                            hasTextOut = true
+                            break
+                        }
+                    }
+                    if (!hasTextOut) continue
+                }
+
+                // 3. Exclude non-chat model IDs (whisper, tts, embedding, guard, image, audio, legacy)
+                val lowerId = rawId.lowercase(Locale.ROOT)
+                if (nonChatIdTokens.any { lowerId.contains(it) }) continue
+
+                result.add(rawId)
+            }
+            return result.sorted()
+        }
+
         /**
          * Resolves effective per-call timeout & fallback limits based on [AppFeatureFlags.isStrictApiTimeoutEnabled].
          * - When `true`: UTILITY = 18s (max 2 fallback attempts), NARRATIVE = 60s (full chain).
@@ -135,6 +212,7 @@ class ProviderFallbackManager(
     }
 
     /** Coroutine-cooperative OkHttp execution: cancels the underlying socket immediately on timeout/cancellation. */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun Call.awaitResponse(): Response = suspendCancellableCoroutine { cont ->
         cont.invokeOnCancellation {
             try {
@@ -148,9 +226,15 @@ class ProviderFallbackManager(
 
             override fun onResponse(call: Call, response: Response) {
                 if (cont.isActive) {
-                    cont.resume(response)
+                    cont.resume(response) {
+                        try {
+                            response.close()
+                        } catch (_: Throwable) {}
+                    }
                 } else {
-                    response.close()
+                    try {
+                        response.close()
+                    } catch (_: Throwable) {}
                 }
             }
         })
@@ -356,10 +440,19 @@ class ProviderFallbackManager(
                                     )
                                 }
                             }
-                            return if (timeoutCfg.strictEnabled && timeoutCfg.callTimeoutMs > 0L) {
-                                withTimeout(timeoutCfg.callTimeoutMs) { callBlock() }
+                            return if (timeoutCfg.callTimeoutMs > 0L) {
+                                try {
+                                    withTimeout(timeoutCfg.callTimeoutMs) { callBlock() }
+                                } catch (tce: TimeoutCancellationException) {
+                                    // Convert provider timeout into a normal SocketTimeoutException so
+                                    // the fallback loop records the timeout and advances to the next provider
+                                    // instead of aborting the entire chain as a user CancellationException.
+                                    throw SocketTimeoutException(
+                                        "Sağlayıcı zaman aşımı ($providerKey, ${timeoutCfg.callTimeoutMs}ms): ${tce.message ?: "timeout"}"
+                                    )
+                                }
                             } else {
-                                withTimeout(timeoutCfg.callTimeoutMs) { callBlock() }
+                                callBlock()
                             }
                         }
 
@@ -1759,9 +1852,12 @@ class ProviderFallbackManager(
     ): List<String> = withContext(Dispatchers.IO) {
         try {
             val cleanBase = baseUrl.trim().trimEnd('/')
+                .removeSuffix("/chat/completions")
+                .removeSuffix("/completions")
+                .trimEnd('/')
             val modelsUrl = when {
                 cleanBase.endsWith("/models") -> cleanBase
-                cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") -> "$cleanBase/models"
+                cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") || cleanBase.endsWith("/v1beta") -> "$cleanBase/models"
                 else -> "$cleanBase/v1/models"
             }
             val reqBuilder = Request.Builder().url(modelsUrl).get()
@@ -1774,14 +1870,8 @@ class ProviderFallbackManager(
             }
             RetrofitClient.okHttpClient.newCall(reqBuilder.build()).awaitResponse().use { resp ->
                 if (!resp.isSuccessful) return@withContext emptyList<String>()
-                val body = resp.body?.string().orEmpty()
-                val arr = JSONObject(body).optJSONArray("data") ?: return@withContext emptyList<String>()
-                val result = mutableListOf<String>()
-                for (i in 0 until arr.length()) {
-                    val id = arr.optJSONObject(i)?.optString("id")?.trim().orEmpty()
-                    if (id.isNotBlank()) result.add(id)
-                }
-                result.sorted()
+                val body = resp.body?.string().orEmpty().trim()
+                parseActiveChatModelsFromJson(body)
             }
         } catch (_: Exception) {
             emptyList<String>()

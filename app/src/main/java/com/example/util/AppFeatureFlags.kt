@@ -207,6 +207,23 @@ object AppFeatureFlags {
         _aiUtilityModels.value = updated
     }
 
+    fun clearAiUtilityModel(providerKey: String) {
+        val norm = providerKey.trim().lowercase(Locale.ROOT)
+        if (norm.isBlank()) return
+        val sp = prefs
+        if (sp != null) {
+            sp.edit()
+                .remove("$KEY_AI_UTIL_MODEL_PREFIX$norm")
+                .remove("$KEY_AI_UTIL_SOURCE_PREFIX$norm")
+                .apply()
+        }
+        memoryStringOverrides.remove("$KEY_AI_UTIL_MODEL_PREFIX$norm")
+        memoryStringOverrides.remove("$KEY_AI_UTIL_SOURCE_PREFIX$norm")
+        val updated = _aiUtilityModels.value.toMutableMap()
+        updated.remove(norm)
+        _aiUtilityModels.value = updated
+    }
+
     fun clearAiUtilityModels() {
         val sp = prefs
         if (sp != null) {

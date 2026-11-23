@@ -26,3 +26,6 @@ asroda-release.keystore
 *.apk
 *.aab
 Bolumsonu.mp3
+public/assets/aistudio/*.txt
+public/assets/aistudio/*.jpg
+public/assets/aistudio/*.png

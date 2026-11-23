@@ -8,8 +8,11 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Base64
-import com.example.data.local.AppDatabase
-import com.example.util.SecureApiKeyVault
+import com.example.data.local.EmotionState
+import com.example.data.local.PrimaryEmotions
+import com.example.data.local.RelationshipAxes
+import com.example.util.EdgeNeuralTtsClient
+import com.example.util.EmotionalTtsProsodyEngine
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -366,34 +369,31 @@ class CosmicCharacterVoiceEngine(
             }
         }
 
-        val neuralCacheMp3 = neuralCacheFileFor(speakerKey, text, "mp3")
-        if (neuralCacheMp3.exists() && neuralCacheMp3.length() > 1024L) {
-            playFileClip(neuralCacheMp3, myGen)
-            return
-        }
-        val neuralCacheWav = neuralCacheFileFor(speakerKey, text, "wav")
-        if (neuralCacheWav.exists() && neuralCacheWav.length() > 1024L) {
-            playFileClip(neuralCacheWav, myGen)
+        // Fast-path: If already cached via free Edge Neural TTS, play immediately!
+        val freeNeuralCacheMp3 = neuralCacheFileFor(speakerKey, text, "mp3")
+        if (freeNeuralCacheMp3.exists() && freeNeuralCacheMp3.length() > 1024L) {
+            playFileClip(freeNeuralCacheMp3, myGen)
             return
         }
 
         val cacheFile = cacheFileFor(speakerKey, text)
 
-        // Fast-path: If already studio-mastered in disk cache, play immediately!
+        // Fast-path: If already studio-mastered in offline disk cache, play immediately!
         if (cacheFile.exists() && cacheFile.length() > 1024L) {
             playFileClip(cacheFile, myGen)
             return
         }
 
-        // Synthesize REAL Neural Cinema AI Voice (OpenAI gpt-4o-mini-tts / Gemini 2.5 Flash TTS) first!
-        // Falls back cleanly to multi-beat Studio DSP offline engine only when no API key is configured or offline.
+        // Tier 2 (100% FREE, ZERO API KEY): Synthesize via EdgeNeuralTtsClient + EmotionalTtsProsodyEngine
+        // with per-character Turkish/Multilingual neural voices and emotional SSML prosody!
+        // Falls back silently to Tier 3 (offline Studio DSP) only if completely offline.
         synthExecutor.execute {
             if (released || muted || myGen != speakGeneration.get()) return@execute
 
-            val neuralFile = trySynthesizeNeuralCinemaVoice(speakerKey, text, neuralCacheMp3, neuralCacheWav)
+            val freeNeuralFile = trySynthesizeFreeNeuralVoice(speakerKey, text, freeNeuralCacheMp3)
             if (released || muted || myGen != speakGeneration.get()) return@execute
-            if (neuralFile != null && neuralFile.exists() && neuralFile.length() > 1024L) {
-                playFileClip(neuralFile, myGen)
+            if (freeNeuralFile != null && freeNeuralFile.exists() && freeNeuralFile.length() > 1024L) {
+                playFileClip(freeNeuralFile, myGen)
                 return@execute
             }
 
@@ -414,46 +414,92 @@ class CosmicCharacterVoiceEngine(
 
     private fun neuralCacheFileFor(speakerKey: String, text: String, ext: String): File {
         val digest = MessageDigest.getInstance("SHA-1")
-            .digest("NEURAL_V4|${speakerKey.uppercase(Locale.ROOT)}|$text".toByteArray(Charsets.UTF_8))
+            .digest("FREE_NEURAL_V5|${speakerKey.uppercase(Locale.ROOT)}|$text".toByteArray(Charsets.UTF_8))
             .take(10)
             .joinToString("") { "%02x".format(it) }
-        return File(cacheDir, "ai_${speakerKey.lowercase(Locale.ROOT)}_$digest.$ext")
+        return File(cacheDir, "free_${speakerKey.lowercase(Locale.ROOT)}_$digest.$ext")
+    }
+
+    internal data class FreeNeuralCastSpec(
+        val voiceId: String,
+        val baseRate: Float,
+        val basePitch: Float,
+        val dominantEmotion: String
+    )
+
+    internal fun resolveFreeNeuralCast(speakerKey: String): FreeNeuralCastSpec {
+        return when (speakerKey.uppercase(Locale.ROOT)) {
+            "NATASHA" -> FreeNeuralCastSpec("tr-TR-EmelNeural", 0.94f, 0.94f, "romantik")
+            "WANDA" -> FreeNeuralCastSpec("en-US-AvaMultilingualNeural", 0.95f, 0.98f, "huzunlu")
+            "MIRA" -> FreeNeuralCastSpec("tr-TR-EmelNeural", 1.03f, 1.06f, "umutlu")
+            "STEVE" -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 0.95f, 0.92f, "kararli")
+            "TONY" -> FreeNeuralCastSpec("en-US-AndrewMultilingualNeural", 1.06f, 1.02f, "neseli")
+            "PIETRO" -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 1.11f, 1.06f, "heyecanli")
+            "VISION" -> FreeNeuralCastSpec("en-US-AndrewMultilingualNeural", 0.92f, 0.96f, "sakin")
+            "THOR" -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 0.91f, 0.87f, "kararli")
+            "VOSS" -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 0.93f, 0.90f, "gergin")
+            "TWIN_AIDEN", "ZERO", "SIFIR" -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 0.89f, 0.88f, "huzunlu")
+            "ULTRON" -> FreeNeuralCastSpec("en-US-AndrewMultilingualNeural", 0.91f, 0.84f, "ofkeli")
+            "ARCHITECT", "MIMAR", "VAELOR" -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 0.85f, 0.80f, "gergin")
+            else -> FreeNeuralCastSpec("tr-TR-AhmetNeural", 0.99f, 0.98f, "kararli")
+        }
     }
 
     /**
-     * Tier 2: REAL Acted Neural Cinema Voice Acting via official documented APIs using the user's
-     * own saved OpenAI (`gpt-4o-mini-tts`) or Gemini (`gemini-2.5-flash-preview-tts`) key from Settings!
-     * Eliminates flat robotic Android/Google Translate TTS completely and caches audio offline forever.
+     * Tier 2 (100% FREE, ZERO API KEY): Synthesizes expressive Turkish character dialogue
+     * via [EdgeNeuralTtsClient] + [EmotionalTtsProsodyEngine] SSML prosody, then caches
+     * the MP3 permanently on disk for instant offline replay.
      */
-    private fun trySynthesizeNeuralCinemaVoice(
+    private fun trySynthesizeFreeNeuralVoice(
         speakerKey: String,
         text: String,
-        outMp3: File,
-        outWav: File
+        outMp3: File
     ): File? {
-        val (openaiKey, geminiKey) = resolveUserApiKeys()
-        if (openaiKey.isNotBlank()) {
-            if (synthesizeViaOpenAiNeuralTts(openaiKey, speakerKey, text, outMp3)) return outMp3
-        }
-        if (geminiKey.isNotBlank()) {
-            if (synthesizeViaGeminiNeuralTts(geminiKey, speakerKey, text, outWav)) return outWav
-        }
-        return null
-    }
-
-    private fun resolveUserApiKeys(): Pair<String, String> {
         return try {
-            val rawSettings = runBlocking {
-                AppDatabase.getInstance(appContext).userSettingsDao().getUserSettings()
-            } ?: return "" to ""
-            val decrypted = SecureApiKeyVault.decryptSettingsKeys(rawSettings)
-            val openai = decrypted.openaiApiKey.trim()
-            val gemini = decrypted.customApiKey.trim().takeIf { it.startsWith("AIza") }
-                ?: decrypted.backupApiKey.trim().takeIf { it.startsWith("AIza") }
-                ?: ""
-            openai to gemini
+            val cast = resolveFreeNeuralCast(speakerKey)
+            val syntheticEmotion = EmotionState(
+                primaryEmotions = PrimaryEmotions(joy = 40, trust = 65),
+                relationshipAxes = RelationshipAxes(affectionScore = 60),
+                dominantEmotion = cast.dominantEmotion
+            )
+            val segments = EmotionalTtsProsodyEngine.buildProsodySegments(
+                rawText = text,
+                emotionState = syntheticEmotion,
+                baseSpeed = cast.baseRate,
+                basePitch = cast.basePitch,
+                readActions = true,
+                emotionalProsodyEnabled = true,
+                maxChunkChars = 500
+            )
+            if (segments.isEmpty()) return null
+            val xmlLang = if (cast.voiceId.startsWith("en-", ignoreCase = true)) "en-US" else "tr-TR"
+            val ssml = EmotionalTtsProsodyEngine.buildSsml(
+                voiceName = cast.voiceId,
+                segments = segments,
+                xmlLang = xmlLang
+            )
+            val cachedEdgeMp3 = runBlocking {
+                EdgeNeuralTtsClient.synthesizeToCachedMp3(
+                    context = appContext,
+                    voiceId = cast.voiceId,
+                    ssml = ssml,
+                    timeoutMs = 5_500L
+                )
+            } ?: return null
+
+            if (cachedEdgeMp3.exists() && cachedEdgeMp3.length() > 1024L) {
+                val tmp = File(cacheDir, "${outMp3.name}.${UUID.randomUUID()}.tmp")
+                cachedEdgeMp3.copyTo(tmp, overwrite = true)
+                if (!tmp.renameTo(outMp3)) {
+                    tmp.copyTo(outMp3, overwrite = true)
+                    tmp.delete()
+                }
+                if (outMp3.exists() && outMp3.length() > 1024L) outMp3 else cachedEdgeMp3
+            } else {
+                null
+            }
         } catch (_: Throwable) {
-            "" to ""
+            null
         }
     }
 

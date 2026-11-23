@@ -103,6 +103,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.graphics.drawscope.scale
 import kotlin.math.roundToInt
 import androidx.compose.ui.window.Dialog
@@ -763,6 +764,7 @@ private fun FullScreenMorCamSheetContainer(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .zIndex(60f)
             .background(Color(0xFF070212))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -1121,164 +1123,233 @@ internal fun ApiProviderConfigureDialog(
     var isFetchingModels by remember { mutableStateOf(false) }
     var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var fetchInfo by remember { mutableStateOf<String?>(null) }
+    var modelSearchQuery by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
     val canSave = modelName.isNotBlank() && (!spec.requiresApiKey || apiKey.isNotBlank() || isEditingExisting)
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
-    ) {
-        BoxWithConstraints(
+    val combinedModels = remember(spec.popularModels, fetchedModels) {
+        (fetchedModels + spec.popularModels).distinct()
+    }
+    val filteredModels = remember(combinedModels, modelSearchQuery) {
+        val q = modelSearchQuery.trim().lowercase()
+        if (q.isBlank()) combinedModels else combinedModels.filter { it.lowercase().contains(q) }
+    }
+
+    FullScreenMorCamSheetContainer(onDismiss = onDismiss) {
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .imePadding()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            val maxDialogHeight = (maxHeight * 0.94f).coerceAtLeast(240.dp)
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 560.dp)
-                    .fillMaxWidth()
-                    .heightIn(max = maxDialogHeight)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {}
-                    )
+            // Sticky Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                GlobalGlassCard(
+                GlobalGlassIconOrb(
                     rootSize = rootSize,
                     blurredBg = blurredBg,
-                    cornerRadius = 24.dp,
-                    highlighted = true,
-                    contentPadding = PaddingValues(16.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    onClick = onDismiss
                 ) {
-                    Column(
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Geri",
+                        tint = GlobalMorCamColors.PearlText,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = spec.name,
+                        color = GlobalMorCamColors.PearlText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = DisplaySerifFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = spec.shortDesc,
+                        color = GlobalMorCamColors.LavenderSubtext,
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.sp,
+                        fontFamily = InterFontFamily,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            // Scrollable Form Body (edge-to-edge, never clipped by keyboard or screen size)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Key input
+                GlobalGlassInputField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it; testResult = null },
+                    label = if (spec.requiresApiKey) {
+                        if (isEditingExisting && initialApiKey.isBlank()) "API Anahtarı (Değiştirmek istemiyorsan boş bırak)"
+                        else "API Anahtarı"
+                    } else "API Anahtarı (İsteğe bağlı)",
+                    placeholder = if (spec.requiresApiKey) "Anahtarını buraya yapıştır..." else "Yerel sunucuda boş bırakılabilir",
+                    isSecret = true,
+                    showSecret = showKey,
+                    onToggleSecret = { showKey = !showKey },
+                    modifier = Modifier.testTag("provider_apikey_input"),
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Key,
+                            contentDescription = null,
+                            tint = GlobalMorCamColors.BrightViolet,
+                            modifier = Modifier.size(17.dp)
+                        )
+                    }
+                )
+
+                Text(
+                    text = "Anahtar adresi: ${spec.keyHint}",
+                    color = GlobalMorCamColors.MutedLavender,
+                    fontSize = 10.5.sp,
+                    fontFamily = InterFontFamily
+                )
+
+                // Model input + Fetch models button
+                GlobalGlassInputField(
+                    value = modelName,
+                    onValueChange = { modelName = it; testResult = null },
+                    label = "Model Seçimi veya Model Kodu",
+                    placeholder = spec.defaultModel,
+                    modifier = Modifier.testTag("provider_model_input")
+                )
+
+                if (spec.apiFormat == "openai") {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Sticky Header
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0x55221242))
+                                .border(0.9.dp, Color(0x77C084FC), RoundedCornerShape(12.dp))
+                                .clickable(enabled = !isFetchingModels) {
+                                    scope.launch {
+                                        isFetchingModels = true
+                                        fetchInfo = null
+                                        val list = onFetchModels(spec.baseUrl, apiKey)
+                                        fetchedModels = list
+                                        fetchInfo = if (list.isNotEmpty()) "${list.size} aktif sohbet modeli alındı" else "Canlı liste alınamadı (elle model yazabilirsin)"
+                                        isFetchingModels = false
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 7.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = spec.name,
-                                    color = GlobalMorCamColors.PearlText,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = DisplaySerifFontFamily,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = spec.shortDesc,
-                                    color = GlobalMorCamColors.LavenderSubtext,
-                                    fontSize = 11.5.sp,
-                                    lineHeight = 15.sp,
-                                    fontFamily = InterFontFamily,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0x55180B30))
-                                    .clickable(onClick = onDismiss),
-                                contentAlignment = Alignment.Center
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Kapat",
-                                    tint = GlobalMorCamColors.PearlText,
-                                    modifier = Modifier.size(18.dp)
+                                if (isFetchingModels) {
+                                    CircularProgressIndicator(
+                                        color = GlobalMorCamColors.BrightViolet,
+                                        strokeWidth = 1.6.dp,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudDownload,
+                                        contentDescription = null,
+                                        tint = GlobalMorCamColors.BrightViolet,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Canlı Modelleri Çek",
+                                    color = GlobalMorCamColors.PearlText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = InterFontFamily
                                 )
                             }
                         }
-
-                        // Scrollable Form Body (stays cleanly above keyboard)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = false)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-
-                    // Key input
-                    GlobalGlassInputField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it; testResult = null },
-                        label = if (spec.requiresApiKey) {
-                            if (isEditingExisting && initialApiKey.isBlank()) "API Anahtarı (Değiştirmek istemiyorsan boş bırak)"
-                            else "API Anahtarı"
-                        } else "API Anahtarı (İsteğe bağlı)",
-                        placeholder = if (spec.requiresApiKey) "Anahtarını buraya yapıştır..." else "Yerel sunucuda boş bırakılabilir",
-                        isSecret = true,
-                        showSecret = showKey,
-                        onToggleSecret = { showKey = !showKey },
-                        modifier = Modifier.testTag("provider_apikey_input"),
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Key,
-                                contentDescription = null,
-                                tint = GlobalMorCamColors.BrightViolet,
-                                modifier = Modifier.size(17.dp)
+                        if (!fetchInfo.isNullOrBlank()) {
+                            Text(
+                                text = fetchInfo!!,
+                                color = GlobalMorCamColors.LavenderSubtext,
+                                fontSize = 10.5.sp,
+                                fontFamily = InterFontFamily,
+                                modifier = Modifier.weight(1f)
                             )
                         }
-                    )
+                    }
+                }
 
+                // Searchable full active models picker (NO truncation!)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        text = "Anahtar adresi: ${spec.keyHint}",
-                        color = GlobalMorCamColors.MutedLavender,
-                        fontSize = 10.5.sp,
-                        fontFamily = InterFontFamily
-                    )
-
-                    // Model input + Fetch models button
-                    GlobalGlassInputField(
-                        value = modelName,
-                        onValueChange = { modelName = it; testResult = null },
-                        label = "Model Seçimi veya Model Kodu",
-                        placeholder = spec.defaultModel,
-                        modifier = Modifier.testTag("provider_model_input")
-                    )
-
-                    // Popular models flow chips
-                    Text(
-                        text = "Popüler Modeller (Dokun & Seç):",
+                        text = if (fetchedModels.isNotEmpty()) "Aktif Modeller (Dokun & Seç):" else "Popüler Modeller (Dokun & Seç):",
                         color = GlobalMorCamColors.LavenderSubtext,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         fontFamily = InterFontFamily
                     )
+                    Text(
+                        text = "${filteredModels.size}/${combinedModels.size}",
+                        color = GlobalMorCamColors.BrightViolet,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = InterFontFamily
+                    )
+                }
+
+                if (combinedModels.size > 6) {
+                    GlobalGlassInputField(
+                        value = modelSearchQuery,
+                        onValueChange = { modelSearchQuery = it },
+                        label = "Model Ara",
+                        placeholder = "Model adına göre filtrele...",
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                tint = GlobalMorCamColors.BrightViolet,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 220.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x33120724))
+                        .border(0.8.dp, Color(0x44B794F4), RoundedCornerShape(14.dp))
+                        .padding(8.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        val combinedModels = remember(spec.popularModels, fetchedModels) {
-                            (spec.popularModels + fetchedModels.take(18)).distinct()
-                        }
-                        combinedModels.forEach { m ->
+                        filteredModels.forEach { m ->
                             val isSelected = modelName.trim() == m
                             Box(
                                 modifier = Modifier
@@ -1304,112 +1375,50 @@ internal fun ApiProviderConfigureDialog(
                             }
                         }
                     }
-
-                    if (spec.apiFormat == "openai") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0x55221242))
-                                    .border(0.9.dp, Color(0x77C084FC), RoundedCornerShape(12.dp))
-                                    .clickable(enabled = !isFetchingModels) {
-                                        scope.launch {
-                                            isFetchingModels = true
-                                            fetchInfo = null
-                                            val list = onFetchModels(spec.baseUrl, apiKey)
-                                            fetchedModels = list
-                                            fetchInfo = if (list.isNotEmpty()) "${list.size} canlı model alındı" else "Canlı liste alınamadı (elle model yazabilirsin)"
-                                            isFetchingModels = false
-                                        }
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 7.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    if (isFetchingModels) {
-                                        CircularProgressIndicator(
-                                            color = GlobalMorCamColors.BrightViolet,
-                                            strokeWidth = 1.6.dp,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.CloudDownload,
-                                            contentDescription = null,
-                                            tint = GlobalMorCamColors.BrightViolet,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                    Text(
-                                        text = "Canlı Modelleri Çek",
-                                        color = GlobalMorCamColors.PearlText,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontFamily = InterFontFamily
-                                    )
-                                }
-                            }
-                            if (!fetchInfo.isNullOrBlank()) {
-                                Text(
-                                    text = fetchInfo!!,
-                                    color = GlobalMorCamColors.LavenderSubtext,
-                                    fontSize = 10.5.sp,
-                                    fontFamily = InterFontFamily,
-                                    modifier = Modifier.padding(start = 8.dp)
-                                )
-                            }
-                        }
-                    }
-
-                        // Test Result banner
-                        testResult?.let { res ->
-                            TestResultGlassBanner(res)
-                        }
-                        }
-
-                        // Sticky Bottom Action Bar (always reachable with keyboard open)
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            GlobalGlassSecondaryButton(
-                                text = "Test Et",
-                                loading = isTesting,
-                                enabled = modelName.isNotBlank() && (!spec.requiresApiKey || apiKey.isNotBlank()),
-                                onClick = {
-                                    scope.launch {
-                                        isTesting = true
-                                        testResult = onTestConnection(spec.baseUrl, apiKey, modelName.trim(), spec.apiFormat)
-                                        isTesting = false
-                                    }
-                                },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("provider_test_button")
-                            )
-                            GlobalGlassPrimaryButton(
-                                text = if (isEditingExisting) "Güncelle" else "Ekle & Sıraya Al",
-                                enabled = canSave,
-                                onClick = {
-                                    onConfirm(
-                                        apiKey.trim(),
-                                        modelName.trim(),
-                                        testResult?.supportsFunctionCalling ?: true
-                                    )
-                                },
-                                modifier = Modifier
-                                    .weight(1.45f)
-                                    .testTag("provider_confirm_button")
-                            )
-                        }
-                    }
                 }
+
+                // Test Result banner
+                testResult?.let { res ->
+                    TestResultGlassBanner(res)
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            // Sticky Bottom Action Bar (always reachable with keyboard open)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                GlobalGlassSecondaryButton(
+                    text = "Test Et",
+                    loading = isTesting,
+                    enabled = canSave,
+                    onClick = {
+                        scope.launch {
+                            isTesting = true
+                            testResult = onTestConnection(spec.baseUrl, apiKey, modelName.trim(), spec.apiFormat)
+                            isTesting = false
+                        }
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("provider_test_button")
+                )
+                GlobalGlassPrimaryButton(
+                    text = if (isEditingExisting) "Güncelle" else "Ekle & Sıraya Al",
+                    enabled = canSave,
+                    onClick = {
+                        onConfirm(
+                            apiKey.trim(),
+                            modelName.trim(),
+                            testResult?.supportsFunctionCalling ?: true
+                        )
+                    },
+                    modifier = Modifier
+                        .weight(1.45f)
+                        .testTag("provider_confirm_button")
+                )
             }
         }
     }
@@ -1455,368 +1464,439 @@ internal fun CustomApiEditorDialog(
     var testResult by remember { mutableStateOf<EmochiRepository.ProviderTestResult?>(null) }
     var isFetching by remember { mutableStateOf(false) }
     var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var fetchInfo by remember { mutableStateOf<String?>(null) }
+    var modelSearchQuery by remember { mutableStateOf("") }
+    var modelPickTarget by remember { mutableStateOf("main") } // "main" | "utility"
     val scope = rememberCoroutineScope()
 
     val isEditing = editingProvider != null
     val canSave = baseUrl.trim().length > 8 && modelName.isNotBlank()
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
-    ) {
-        BoxWithConstraints(
+    val filteredFetchedModels = remember(fetchedModels, modelSearchQuery) {
+        val q = modelSearchQuery.trim().lowercase()
+        if (q.isBlank()) fetchedModels else fetchedModels.filter { it.lowercase().contains(q) }
+    }
+
+    FullScreenMorCamSheetContainer(onDismiss = onDismiss) {
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding()
                 .imePadding()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = onDismiss
-                )
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            contentAlignment = Alignment.Center
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            val maxDialogHeight = (maxHeight * 0.94f).coerceAtLeast(240.dp)
-            Box(
-                modifier = Modifier
-                    .widthIn(max = 560.dp)
-                    .fillMaxWidth()
-                    .heightIn(max = maxDialogHeight)
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                        onClick = {}
-                    )
+            // Sticky Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                GlobalGlassCard(
+                GlobalGlassIconOrb(
                     rootSize = rootSize,
                     blurredBg = blurredBg,
-                    cornerRadius = 24.dp,
-                    highlighted = true,
-                    contentPadding = PaddingValues(16.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    onClick = onDismiss
                 ) {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        // Sticky Header
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = if (isEditing) "Özel API'yi Düzenle" else "Özel (Custom) API Ekle",
-                                    color = GlobalMorCamColors.PearlText,
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = DisplaySerifFontFamily,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                Text(
-                                    text = "Herhangi bir OpenAI veya Anthropic uyumlu sunucuya bağlan.",
-                                    color = GlobalMorCamColors.LavenderSubtext,
-                                    fontSize = 11.5.sp,
-                                    fontFamily = InterFontFamily,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(38.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0x55180B30))
-                                    .clickable(onClick = onDismiss),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Kapat",
-                                    tint = GlobalMorCamColors.PearlText,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Geri",
+                        tint = GlobalMorCamColors.PearlText,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isEditing) "Özel API'yi Düzenle" else "Özel (Custom) API Ekle",
+                        color = GlobalMorCamColors.PearlText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = DisplaySerifFontFamily,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = "Herhangi bir OpenAI veya Anthropic uyumlu sunucuya bağlan.",
+                        color = GlobalMorCamColors.LavenderSubtext,
+                        fontSize = 11.5.sp,
+                        fontFamily = InterFontFamily,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
 
-                        // Scrollable Form Body (never clipped by soft keyboard)
-                        Column(
+            // Scrollable Form Body (full-screen edge-to-edge, never clipped by keyboard)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                GlobalGlassInputField(
+                    value = label,
+                    onValueChange = { label = it },
+                    label = "Görünen Ad",
+                    placeholder = "Ör. Kendi Proxy Sunucum, Özel DeepSeek",
+                    modifier = Modifier.testTag("custom_api_label_input")
+                )
+
+                // Protocol selector
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf("openai" to "OpenAI Uyumlu", "anthropic" to "Anthropic Uyumlu").forEach { (fmt, title) ->
+                        val selected = apiFormat == fmt
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .weight(1f, fill = false)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-
-                    GlobalGlassInputField(
-                        value = label,
-                        onValueChange = { label = it },
-                        label = "Görünen Ad",
-                        placeholder = "Ör. Kendi Proxy Sunucum, Özel DeepSeek",
-                        modifier = Modifier.testTag("custom_api_label_input")
-                    )
-
-                    // Protocol selector
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf("openai" to "OpenAI Uyumlu", "anthropic" to "Anthropic Uyumlu").forEach { (fmt, title) ->
-                            val selected = apiFormat == fmt
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .heightIn(min = 42.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (selected) Color(0xCC7C3AED) else Color(0x6615082A))
-                                    .border(
-                                        1.dp,
-                                        if (selected) Color(0xFFE9D5FF) else Color(0x55B794F4),
-                                        RoundedCornerShape(12.dp)
-                                    )
-                                    .clickable { apiFormat = fmt; testResult = null },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = title,
-                                    color = if (selected) GlobalMorCamColors.PearlText else GlobalMorCamColors.LavenderSubtext,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    fontFamily = InterFontFamily
+                                .weight(1f)
+                                .heightIn(min = 42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (selected) Color(0xCC7C3AED) else Color(0x6615082A))
+                                .border(
+                                    1.dp,
+                                    if (selected) Color(0xFFE9D5FF) else Color(0x55B794F4),
+                                    RoundedCornerShape(12.dp)
                                 )
-                            }
-                        }
-                    }
-
-                    GlobalGlassInputField(
-                        value = baseUrl,
-                        onValueChange = { baseUrl = it; testResult = null },
-                        label = "Base URL",
-                        placeholder = "https://api.orneksite.com/v1",
-                        modifier = Modifier.testTag("custom_api_url_input")
-                    )
-
-                    GlobalGlassInputField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it; testResult = null },
-                        label = if (isEditing) "Yeni API Anahtarı (Aynı kalsın istiyorsan boş bırak)" else "API Anahtarı",
-                        placeholder = "sk-...",
-                        isSecret = true,
-                        showSecret = showKey,
-                        onToggleSecret = { showKey = !showKey },
-                        modifier = Modifier.testTag("custom_api_key_input")
-                    )
-
-                    GlobalGlassInputField(
-                        value = modelName,
-                        onValueChange = { modelName = it; testResult = null },
-                        label = "Model Kodu / Adı",
-                        placeholder = "Ör. deepseek-chat, llama-3.3-70b-instruct",
-                        modifier = Modifier.testTag("custom_api_model_input")
-                    )
-
-                    if (apiFormat == "openai") {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                .clickable { apiFormat = fmt; testResult = null },
+                            contentAlignment = Alignment.Center
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0x55221242))
-                                    .border(0.9.dp, Color(0x77C084FC), RoundedCornerShape(12.dp))
-                                    .clickable(enabled = !isFetching && baseUrl.trim().length > 8) {
-                                        scope.launch {
-                                            isFetching = true
-                                            val models = onFetchModels(baseUrl.trim(), apiKey.trim())
-                                            fetchedModels = models
-                                            if (models.isNotEmpty()) {
-                                                val candidates = EmochiRepository.detectSmallModelCandidates(models)
-                                                detectedSmallModels = candidates
-                                                if (utilityModel.isBlank() && candidates.isNotEmpty()) {
-                                                    utilityModel = candidates.first()
-                                                }
-                                            }
-                                            isFetching = false
-                                        }
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 7.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    if (isFetching) {
-                                        CircularProgressIndicator(
-                                            color = GlobalMorCamColors.BrightViolet,
-                                            strokeWidth = 1.6.dp,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = Icons.Default.CloudDownload,
-                                            contentDescription = null,
-                                            tint = GlobalMorCamColors.BrightViolet,
-                                            modifier = Modifier.size(15.dp)
-                                        )
-                                    }
-                                    Text(
-                                        text = "Sunucudan Modelleri Çek",
-                                        color = GlobalMorCamColors.PearlText,
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontFamily = InterFontFamily
-                                    )
-                                }
-                            }
-                        }
-
-                        if (fetchedModels.isNotEmpty()) {
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                fetchedModels.take(14).forEach { m ->
-                                    val selected = modelName.trim() == m
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (selected) Color(0xCC7C3AED) else Color(0x6615082A))
-                                            .border(1.dp, if (selected) Color(0xFFE9D5FF) else Color(0x55B794F4), RoundedCornerShape(10.dp))
-                                            .clickable { modelName = m; testResult = null }
-                                            .padding(horizontal = 9.dp, vertical = 5.dp)
-                                    ) {
-                                        Text(m, color = GlobalMorCamColors.PearlText, fontSize = 10.5.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Optional Utility (Fast/Cheap) Model for RAG, Memory Curator & Audits
-                    GlobalGlassInputField(
-                        value = utilityModel,
-                        onValueChange = { utilityModel = it },
-                        label = "Yardımcı (Hızlı/Ucuz) Model (İsteğe Bağlı)",
-                        placeholder = "Boşsa otomatik küçük model veya ana model kullanılır",
-                        modifier = Modifier.testTag("custom_api_utility_model_input")
-                    )
-
-                    if (detectedSmallModels.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "Otomatik Algılanan Hızlı/Ucuz Modeller:",
-                                color = GlobalMorCamColors.MutedLavender,
-                                fontSize = 10.5.sp,
+                                text = title,
+                                color = if (selected) GlobalMorCamColors.PearlText else GlobalMorCamColors.LavenderSubtext,
+                                fontSize = 12.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
                                 fontFamily = InterFontFamily
-                            )
-                            FlowRow(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                detectedSmallModels.take(6).forEach { sm ->
-                                    val selected = utilityModel.trim() == sm
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(10.dp))
-                                            .background(if (selected) Color(0x9934D399) else Color(0x5515082A))
-                                            .border(
-                                                0.9.dp,
-                                                if (selected) Color(0xFFA7F3D0) else Color(0x556EE7B7),
-                                                RoundedCornerShape(10.dp)
-                                            )
-                                            .clickable { utilityModel = sm }
-                                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                                    ) {
-                                        Text(sm, color = GlobalMorCamColors.PearlText, fontSize = 10.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Keystore encryption hint
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0x441B0D36))
-                            .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(12.dp))
-                            .padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Security,
-                            contentDescription = null,
-                            tint = GlobalMorCamColors.SoftAmber,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "API anahtarın cihazda Android Keystore ile şifrelenerek yalnızca girdiğin adrese gönderilir.",
-                            color = GlobalMorCamColors.LavenderSubtext,
-                            fontSize = 10.5.sp,
-                            lineHeight = 14.sp,
-                            fontFamily = InterFontFamily
-                        )
-                    }
-
-                        testResult?.let { TestResultGlassBanner(it) }
-                        }
-
-                        // Sticky Bottom Action Bar
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            GlobalGlassSecondaryButton(
-                                text = "Test Et",
-                                loading = isTesting,
-                                enabled = canSave,
-                                onClick = {
-                                    scope.launch {
-                                        isTesting = true
-                                        testResult = onTestConnection(baseUrl.trim(), apiKey.trim(), modelName.trim(), apiFormat)
-                                        isTesting = false
-                                    }
-                                },
-                                modifier = Modifier.weight(1f)
-                            )
-                            GlobalGlassPrimaryButton(
-                                text = if (isEditing) "Güncelle" else "Kaydet & Ekle",
-                                enabled = canSave,
-                                onClick = {
-                                    val detectedJson = org.json.JSONArray(detectedSmallModels).toString()
-                                    onSave(
-                                        label.trim().ifBlank { modelName.trim() },
-                                        baseUrl.trim(),
-                                        apiKey.trim(),
-                                        modelName.trim(),
-                                        apiFormat,
-                                        testResult?.supportsFunctionCalling ?: true,
-                                        utilityModel.trim(),
-                                        detectedJson
-                                    )
-                                },
-                                modifier = Modifier
-                                    .weight(1.45f)
-                                    .testTag("custom_api_save_button")
                             )
                         }
                     }
                 }
+
+                GlobalGlassInputField(
+                    value = baseUrl,
+                    onValueChange = { baseUrl = it; testResult = null },
+                    label = "Base URL",
+                    placeholder = "https://api.orneksite.com/v1",
+                    modifier = Modifier.testTag("custom_api_url_input")
+                )
+
+                GlobalGlassInputField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it; testResult = null },
+                    label = if (isEditing) "Yeni API Anahtarı (Aynı kalsın istiyorsan boş bırak)" else "API Anahtarı",
+                    placeholder = "sk-...",
+                    isSecret = true,
+                    showSecret = showKey,
+                    onToggleSecret = { showKey = !showKey },
+                    modifier = Modifier.testTag("custom_api_key_input")
+                )
+
+                GlobalGlassInputField(
+                    value = modelName,
+                    onValueChange = { modelName = it; testResult = null },
+                    label = "Ana Model Kodu / Adı",
+                    placeholder = "Ör. deepseek-chat, llama-3.3-70b-instruct",
+                    modifier = Modifier.testTag("custom_api_model_input")
+                )
+
+                if (apiFormat == "openai") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0x55221242))
+                                .border(0.9.dp, Color(0x77C084FC), RoundedCornerShape(12.dp))
+                                .clickable(enabled = !isFetching && baseUrl.trim().length > 8) {
+                                    scope.launch {
+                                        isFetching = true
+                                        fetchInfo = null
+                                        val models = onFetchModels(baseUrl.trim(), apiKey.trim())
+                                        fetchedModels = models
+                                        if (models.isNotEmpty()) {
+                                            detectedSmallModels = EmochiRepository.detectSmallModelCandidates(models)
+                                            fetchInfo = "${models.size} aktif sohbet modeli bulundu"
+                                        } else {
+                                            fetchInfo = "Aktif model listesi alınamadı (URL/anahtar kontrol et)"
+                                        }
+                                        isFetching = false
+                                    }
+                                }
+                                .padding(horizontal = 10.dp, vertical = 7.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                if (isFetching) {
+                                    CircularProgressIndicator(
+                                        color = GlobalMorCamColors.BrightViolet,
+                                        strokeWidth = 1.6.dp,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Default.CloudDownload,
+                                        contentDescription = null,
+                                        tint = GlobalMorCamColors.BrightViolet,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Sunucudan Modelleri Çek",
+                                    color = GlobalMorCamColors.PearlText,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontFamily = InterFontFamily
+                                )
+                            }
+                        }
+                        if (!fetchInfo.isNullOrBlank()) {
+                            Text(
+                                text = fetchInfo!!,
+                                color = GlobalMorCamColors.LavenderSubtext,
+                                fontSize = 10.5.sp,
+                                fontFamily = InterFontFamily,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+
+                    if (fetchedModels.isNotEmpty()) {
+                        // Target selector: let user tap fetched models to fill EITHER Main Model OR Small/Utility Model
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            listOf("main" to "Dokununca Ana Model", "utility" to "Dokununca Küçük Model").forEach { (target, title) ->
+                                val active = modelPickTarget == target
+                                val activeBg = if (target == "main") Color(0xCC7C3AED) else Color(0xAA059669)
+                                val activeBorder = if (target == "main") Color(0xFFE9D5FF) else Color(0xFFA7F3D0)
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (active) activeBg else Color(0x5515082A))
+                                        .border(
+                                            0.9.dp,
+                                            if (active) activeBorder else Color(0x44B794F4),
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { modelPickTarget = target }
+                                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = title,
+                                        color = if (active) GlobalMorCamColors.PearlText else GlobalMorCamColors.LavenderSubtext,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                        fontFamily = InterFontFamily,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        if (fetchedModels.size > 6) {
+                            GlobalGlassInputField(
+                                value = modelSearchQuery,
+                                onValueChange = { modelSearchQuery = it },
+                                label = "Çekilen Modellerde Ara (${filteredFetchedModels.size}/${fetchedModels.size})",
+                                placeholder = "örn. llama, qwen, deepseek, mini, flash...",
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = null,
+                                        tint = GlobalMorCamColors.BrightViolet,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 220.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(Color(0x33120724))
+                                .border(0.8.dp, Color(0x44B794F4), RoundedCornerShape(14.dp))
+                                .padding(8.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            FlowRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                filteredFetchedModels.forEach { m ->
+                                    val isMain = modelName.trim() == m
+                                    val isUtil = utilityModel.trim() == m
+                                    val bgColor = when {
+                                        isMain -> Color(0xCC7C3AED)
+                                        isUtil -> Color(0x99059669)
+                                        else -> Color(0x6615082A)
+                                    }
+                                    val borderColor = when {
+                                        isMain -> Color(0xFFE9D5FF)
+                                        isUtil -> Color(0xFFA7F3D0)
+                                        else -> Color(0x55B794F4)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(bgColor)
+                                            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+                                            .clickable {
+                                                if (modelPickTarget == "utility") {
+                                                    utilityModel = m
+                                                } else {
+                                                    modelName = m
+                                                    testResult = null
+                                                }
+                                            }
+                                            .padding(horizontal = 9.dp, vertical = 5.dp)
+                                    ) {
+                                        Text(
+                                            text = when {
+                                                isMain && isUtil -> "$m (Ana+Küçük)"
+                                                isMain -> "$m (Ana)"
+                                                isUtil -> "$m (Küçük)"
+                                                else -> m
+                                            },
+                                            color = GlobalMorCamColors.PearlText,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = if (isMain || isUtil) FontWeight.Bold else FontWeight.Normal,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Optional Utility (Fast/Cheap) Model for RAG, Memory Curator & Audits
+                GlobalGlassInputField(
+                    value = utilityModel,
+                    onValueChange = { utilityModel = it },
+                    label = if (utilityModel.isNotBlank()) "Küçük / Yardımcı Model (Manuel Seçili)" else "Küçük / Yardımcı Model (İsteğe Bağlı)",
+                    placeholder = "Boş bırakılırsa otomatik küçük model seçilir",
+                    modifier = Modifier.testTag("custom_api_utility_model_input")
+                )
+
+                if (detectedSmallModels.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Önerilen Hızlı/Küçük Modeller (Dokununca Manuel Kaydedilir):",
+                            color = GlobalMorCamColors.MutedLavender,
+                            fontSize = 10.5.sp,
+                            fontFamily = InterFontFamily
+                        )
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            detectedSmallModels.forEach { sm ->
+                                val selected = utilityModel.trim() == sm
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (selected) Color(0x9934D399) else Color(0x5515082A))
+                                        .border(
+                                            0.9.dp,
+                                            if (selected) Color(0xFFA7F3D0) else Color(0x556EE7B7),
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable { utilityModel = sm }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(sm, color = GlobalMorCamColors.PearlText, fontSize = 10.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Keystore encryption hint
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x441B0D36))
+                        .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(12.dp))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = GlobalMorCamColors.SoftAmber,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = "API anahtarın cihazda Android Keystore ile şifrelenerek yalnızca girdiğin adrese gönderilir.",
+                        color = GlobalMorCamColors.LavenderSubtext,
+                        fontSize = 10.5.sp,
+                        lineHeight = 14.sp,
+                        fontFamily = InterFontFamily
+                    )
+                }
+
+                testResult?.let { TestResultGlassBanner(it) }
+
+                Spacer(modifier = Modifier.height(6.dp))
+            }
+
+            // Sticky Bottom Action Bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                GlobalGlassSecondaryButton(
+                    text = "Test Et",
+                    loading = isTesting,
+                    enabled = canSave,
+                    onClick = {
+                        scope.launch {
+                            isTesting = true
+                            testResult = onTestConnection(baseUrl.trim(), apiKey.trim(), modelName.trim(), apiFormat)
+                            isTesting = false
+                        }
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                GlobalGlassPrimaryButton(
+                    text = if (isEditing) "Güncelle" else "Kaydet & Ekle",
+                    enabled = canSave,
+                    onClick = {
+                        val detectedJson = org.json.JSONArray(detectedSmallModels).toString()
+                        onSave(
+                            label.trim().ifBlank { modelName.trim() },
+                            baseUrl.trim(),
+                            apiKey.trim(),
+                            modelName.trim(),
+                            apiFormat,
+                            testResult?.supportsFunctionCalling ?: true,
+                            utilityModel.trim(),
+                            detectedJson
+                        )
+                    },
+                    modifier = Modifier
+                        .weight(1.45f)
+                        .testTag("custom_api_save_button")
+                )
             }
         }
     }
