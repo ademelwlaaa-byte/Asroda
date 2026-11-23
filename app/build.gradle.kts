@@ -20,7 +20,16 @@ android {
         applicationId = "com.aistudio.emochi.uczaob"
         minSdk = 24
         targetSdk = 36
-        versionCode = 16
+        val baseVersionCode = 16
+        val overrideVersionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull()
+        versionCode = if (overrideVersionCode != null) {
+            require(overrideVersionCode > baseVersionCode) {
+                "versionCodeOverride ($overrideVersionCode) must be strictly greater than base versionCode ($baseVersionCode)."
+            }
+            overrideVersionCode
+        } else {
+            baseVersionCode
+        }
         versionName = "3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -94,6 +103,7 @@ android {
 
     buildTypes {
         release {
+            isDebuggable = false
             isCrunchPngs = false
             isMinifyEnabled = true
             isShrinkResources = true
@@ -134,6 +144,26 @@ android {
     dependenciesInfo {
         includeInApk = false
         includeInBundle = true
+    }
+}
+
+gradle.taskGraph.whenReady {
+    val isReleasePackaging = allTasks.any { task ->
+        val n = task.name.lowercase()
+        n.contains("assemblerelease") || n.contains("bundlerelease") || n.contains("packagerelease")
+    }
+    val enforceFixedReleaseKeystore =
+        providers.gradleProperty("requireReleaseKeystore").orNull.equals("true", ignoreCase = true) ||
+            System.getenv("CI").equals("true", ignoreCase = true)
+    if (isReleasePackaging && enforceFixedReleaseKeystore) {
+        val envKeystore = System.getenv("KEYSTORE_PATH")
+        val hasEnvKeystore = !envKeystore.isNullOrBlank() && file(envKeystore).exists()
+        val hasLocalReleaseKeystore = file("${rootDir}/asroda-release.keystore").exists()
+        if (!hasEnvKeystore && !hasLocalReleaseKeystore) {
+            throw GradleException(
+                "Release build blocked: fixed release keystore (KEYSTORE_PATH or asroda-release.keystore) is required. Falling back to debug or random keystore is prohibited."
+            )
+        }
     }
 }
 

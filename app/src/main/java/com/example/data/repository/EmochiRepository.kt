@@ -244,12 +244,17 @@ class EmochiRepository(
                 .replace(Regex("""(?is)\[\[?EMOTION_UPDATE[:\s][^\]]*\]\]?.*?\[\[?/(?:EMOTION_UPDATE)[^\]]*\]\]?"""), "")
                 // Remove any opening, closing, or standalone tags for CHARACTER_EMOTION, CAST_MEMBER, etc.
                 .replace(Regex("""(?is)\[\[?/?(?:CHARACTER_EMOTION|CAST_MEMBER|CHARACTER|WORLD_ATMOSPHERE|EMOTION_UPDATE)(?::\s*[^\]\n]+)?\]\]?"""), "")
-                .replace(Regex("""(?is)\[\[STATE_JSON\s*\{.*?\}\s*\]\]"""), "")
+                // Remove balanced [[STATE_JSON ...]] blocks even when JSON contains nested objects/arrays
+                .replace(Regex("""(?is)\[\[STATE_JSON\s*\{[\s\S]*?\}\s*\]\]"""), "")
                 .replace(Regex("""(?is)\[\[STATE\s+affectionScore=.*?\]\]"""), "")
-                .replace(Regex("""(?is)\[\[STATE.*?\]\]"""), "")
-                .replace(Regex("""(?is)\[\[MEMORY_SAVE.*?\]\]"""), "")
-                .replace(Regex("""(?is)\[ACTIVE_MEMORY_CALL:.*?\]"""), "")
-                // Strip unclosed / truncated trailing protocol blocks if model hit max_tokens mid-tag
+                .replace(Regex("""(?is)\[\[STATE[\s\S]*?\]\]"""), "")
+                .replace(Regex("""(?is)\[\[MEMORY_SAVE[\s\S]*?\]\]"""), "")
+                .replace(Regex("""(?is)\[ACTIVE_MEMORY_CALL:[^\n\]]*\]"""), "")
+                .replace(Regex("""(?is)\[ACTIVE_MEMORY_CALL:[\s\S]*?\)\]"""), "")
+                // Strip unclosed / truncated single-line or trailing protocol blocks WITHOUT eating narrative paragraphs below
+                .replace(Regex("""(?im)^[ \t]*\[\[STATE_JSON[^\n]*$"""), "")
+                .replace(Regex("""(?im)^[ \t]*\[\[STATE[^\n]*$"""), "")
+                .replace(Regex("""(?im)^[ \t]*\[ACTIVE_MEMORY_CALL[^\n]*$"""), "")
                 .replace(Regex("""(?is)\[\[STATE_JSON[\s\S]*$"""), "")
                 .replace(Regex("""(?is)\[\[STATE[\s\S]*$"""), "")
                 .replace(Regex("""(?is)\[\[?CHARACTER_EMOTION[\s\S]*$"""), "")
@@ -1032,6 +1037,82 @@ class EmochiRepository(
         safeBot
     }
 
+    /**
+     * System #6: Prepares a template/Aiden preset bot with its computed BaselineEmotion profile,
+     * heuristic sensitive triggers, explicit story calendar rules, and template-origin marker
+     * without making extra LLM calls.
+     */
+    fun prepareBotFromTemplate(
+        preset: BotEntity,
+        targetId: String? = null
+    ): Pair<BotEntity, List<com.example.data.local.SensitiveTriggerEntity>> {
+        val resolvedId = targetId?.takeIf { it.isNotBlank() } ?: if (
+            preset.id == "preset_aiden_mcu_cosmic" ||
+            (preset.id.isNotBlank() && !preset.id.startsWith("preset_"))
+        ) {
+            preset.id
+        } else {
+            UUID.randomUUID().toString()
+        }
+        val now = System.currentTimeMillis()
+        val draftBot = preset.copy(
+            id = resolvedId,
+            isPublic = false,
+            isTemplate = false,
+            totalPromptTokens = 0L,
+            totalCandidateTokens = 0L,
+            needsSummarization = false,
+            storyNotes = "",
+            memoryNotes = "",
+            storyCalendarDate = if (preset.hasExplicitStoryDate) preset.storyCalendarDate else "",
+            storyDayCounter = preset.storyDayCounter.coerceAtLeast(1L),
+            updatedAt = now
+        )
+        val baselineResult = getStoredBaselineResult(draftBot)
+        val inputHash = buildInputHash(
+            aiName = draftBot.aiName,
+            personality = draftBot.aiPersonality,
+            scenario = draftBot.scenario,
+            userCharName = draftBot.userCharName,
+            userCharDesc = draftBot.userCharDesc,
+            mode = draftBot.mode,
+            universeName = draftBot.universeName,
+            keyCharactersJson = draftBot.keyCharactersJson
+        )
+        val enrichedBot = buildUpdatedBotFromBaseline(
+            bot = draftBot,
+            result = baselineResult,
+            newHash = inputHash,
+            userEditedFields = emptySet()
+        ).copy(
+            isPublic = false,
+            isTemplate = false,
+            storyCalendarDate = if (preset.hasExplicitStoryDate) preset.storyCalendarDate else "",
+            storyDayCounter = preset.storyDayCounter.coerceAtLeast(1L),
+            updatedAt = now
+        )
+        val anchoredTriggers = baselineResult.sensitiveTriggers.map { it.copy(botId = resolvedId) }
+        return enrichedBot to anchoredTriggers
+    }
+
+    /**
+     * System #6: Atomically creates a playable bot from an Aiden/Explore template inside a single
+     * Room transaction, transferring personality, scenario, opening message, avatar, BaselineEmotion,
+     * sensitive triggers, key cast mirrors, and extracted routines.
+     */
+    suspend fun createBotFromTemplateAtomic(
+        preset: BotEntity,
+        targetId: String? = null
+    ): BotEntity {
+        val (enrichedBot, triggers) = prepareBotFromTemplate(preset, targetId)
+        com.example.util.AppFeatureFlags.markTemplateOriginBot(enrichedBot.id)
+        return createBotAtomic(
+            bot = enrichedBot,
+            baselineTriggers = triggers,
+            createOpeningMessage = true
+        )
+    }
+
     suspend fun getUnifiedCastMembers(botId: String): List<CastMemberEntity> {
         val bot = botDao.getBotById(botId)
         if (bot != null) {
@@ -1264,7 +1345,7 @@ class EmochiRepository(
         val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
         val dayCounter = bot?.storyDayCounter ?: 1L
         val calDate = bot?.storyCalendarDate.orEmpty()
-        var firstNewlyUnlocked: com.example.data.local.MilestoneEntity? = null
+        var highestNewlyUnlocked: com.example.data.local.MilestoneEntity? = null
 
         for (def in com.example.data.local.MilestoneDefinitions.all) {
             if (def.type in reached || milestoneDao.hasMilestoneKey(botId, def.type)) continue
@@ -1287,12 +1368,10 @@ class EmochiRepository(
                 )
                 milestoneDao.insertMilestone(milestone)
                 reached.add(def.type)
-                if (firstNewlyUnlocked == null) {
-                    firstNewlyUnlocked = milestone
-                }
+                highestNewlyUnlocked = milestone
             }
         }
-        return firstNewlyUnlocked
+        return highestNewlyUnlocked
     }
 
     /**
@@ -1461,6 +1540,8 @@ class EmochiRepository(
                 initialAge = bot.initialAge
             )
 
+            val restoredSceneTime = if (targetMsgCount <= 1) "" else bot.sceneTime
+
             if (lastMainHistory != null) {
                 val restoredEmotionJson = lastMainHistory.fullVectorJson
                 botDao.insertOrUpdate(
@@ -1470,6 +1551,7 @@ class EmochiRepository(
                         storyCalendarDate = restoredCalDate,
                         storyDayCounter = restoredDayCounter,
                         currentAge = restoredAge,
+                        sceneTime = restoredSceneTime,
                         lastMessageTimestamp = targetTimestamp,
                         updatedAt = targetTimestamp
                     )
@@ -1483,19 +1565,27 @@ class EmochiRepository(
                         storyCalendarDate = restoredCalDate,
                         storyDayCounter = restoredDayCounter,
                         currentAge = restoredAge,
+                        sceneTime = restoredSceneTime,
                         lastMessageTimestamp = targetTimestamp,
                         updatedAt = targetTimestamp
                     )
                 )
             }
 
-            // Reset routines whose lastMentionedStoryDate is newer than restoredCalDate
+            // Reset routines whose lastMentionedStoryDate is newer than restoredCalDate or restoredDayCounter
             try {
                 val existingRoutines = routineDao.getRoutinesForBot(botId)
                 for (routine in existingRoutines) {
-                    if (routine.lastMentionedStoryDate.isNotBlank() &&
-                        (restoredCalDate.isBlank() || routine.lastMentionedStoryDate > restoredCalDate)
-                    ) {
+                    val lastKey = routine.lastMentionedStoryDate
+                    val shouldReset = if (lastKey.isBlank()) {
+                        false
+                    } else if (lastKey.startsWith("DAY_", ignoreCase = true)) {
+                        val mentionedDay = lastKey.substringAfter("_").toLongOrNull() ?: Long.MAX_VALUE
+                        mentionedDay > restoredDayCounter || targetMsgCount <= 1
+                    } else {
+                        restoredCalDate.isBlank() || lastKey > restoredCalDate || targetMsgCount <= 1
+                    }
+                    if (shouldReset) {
                         routineDao.updateRoutine(routine.copy(lastMentionedStoryDate = ""))
                     }
                 }
@@ -3785,6 +3875,126 @@ $aiChar: ${latestAiReply.take(850)}
         }
     }
 
+    data class StoryTimeAdvanceResult(
+        val updatedBot: BotEntity,
+        val deltaDays: Int,
+        val newSceneTime: String?,
+        val decayResult: EmotionEngine.DecayResult?
+    )
+
+    /**
+     * System #15 + #14 + #21: Atomic Story-Time Advancement Cascade.
+     * Advances story time strictly on story calendar (never wall clock):
+     * 1. bot.storyDayCounter += deltaDays
+     * 2. If hasExplicitStoryDate == true -> advance storyCalendarDate via API 24 Calendar;
+     *    if hasExplicitStoryDate == false -> preserve "" (never fabricate a calendar date)
+     * 3. If deltaDays > 0 -> apply natural story-time emotional decay toward BaselineEmotion
+     * 4. If deltaDays > 0 -> check main character & cast member age/birthday updates
+     * 5. If deltaDays > 0 -> expire stale unresolved pending_reappraisals (>= 14 story days)
+     *    & reap expired memories (routines automatically unlock for the new day key)
+     * 6. Sync WorldState meso.timeOfDay + bot.sceneTime and persist cleanly.
+     */
+    suspend fun advanceStoryTime(
+        botId: String,
+        deltaDays: Int,
+        newSceneTime: String? = null,
+        currentEmotionOverride: EmotionState? = null
+    ): StoryTimeAdvanceResult? {
+        val bot = botDao.getBotById(botId) ?: return null
+        val safeDeltaDays = deltaDays.coerceIn(0, 3650)
+        val validatedScene = TimePerceptionEngine.validateSceneTime(newSceneTime)
+        if (safeDeltaDays <= 0 && validatedScene == null) return null
+
+        val effectiveDateInput = if (bot.hasExplicitStoryDate) bot.storyCalendarDate else ""
+        val (computedDate, newDayCounter, newAge) = TimePerceptionEngine.advanceCalendarDateAndCheckAge(
+            currentCalendarDateStr = effectiveDateInput,
+            currentDayCounter = bot.storyDayCounter,
+            elapsedDaysToAdd = safeDeltaDays,
+            birthDateStr = bot.birthDate,
+            initialAge = bot.initialAge
+        )
+        val finalCalendarDate = if (bot.hasExplicitStoryDate) computedDate else ""
+
+        // Step 3: Story-time natural emotional decay (ONLY when deltaDays > 0)
+        var decayResult: EmotionEngine.DecayResult? = null
+        var nextEmotionJson = bot.emotionState
+        if (safeDeltaDays > 0) {
+            val baseEmotionState = currentEmotionOverride ?: EmotionState.fromJson(bot.emotionState)
+            val baselineState = getStoredBaselineResult(bot).baselineEmotionState
+            val dr = EmotionEngine.applyNaturalEmotionalDecayWithNote(
+                currentState = baseEmotionState,
+                storyDaysSkipped = safeDeltaDays,
+                regulationCapacity = bot.emotionalRegulationCapacity,
+                baseline = baselineState
+            )
+            decayResult = dr
+            nextEmotionJson = dr.state.toJson()
+            if (dr.promptNote.isNotBlank()) {
+                pendingDecayNoteMap[botId] = dr.promptNote
+            }
+        }
+
+        // Step 6: Sync WorldState timeOfDay with sceneTime
+        val finalSceneTime = validatedScene ?: bot.sceneTime
+        val updatedWorldStateJson = if (validatedScene != null) {
+            val ws = com.example.data.local.WorldState.fromJson(bot.worldAtmosphere)
+            val prettyTimeOfDay = when (validatedScene) {
+                "sabah" -> "Sabah"
+                "öğle" -> "Öğle"
+                "akşam" -> "Akşam"
+                "gece" -> "Gece"
+                else -> ws.meso.timeOfDay
+            }
+            ws.copy(meso = ws.meso.copy(timeOfDay = prettyTimeOfDay)).toJson()
+        } else {
+            bot.worldAtmosphere
+        }
+
+        val updatedBot = bot.copy(
+            storyCalendarDate = finalCalendarDate,
+            storyDayCounter = newDayCounter,
+            currentAge = if (safeDeltaDays > 0) newAge else bot.currentAge,
+            sceneTime = finalSceneTime,
+            emotionState = nextEmotionJson,
+            worldAtmosphere = updatedWorldStateJson,
+            updatedAt = System.currentTimeMillis()
+        )
+        botDao.insertOrUpdate(updatedBot)
+
+        if (safeDeltaDays > 0) {
+            // Step 4: Cast birthday / age check
+            if (finalCalendarDate.isNotBlank()) {
+                try { updateCastMembersAgeForBot(bot.id, finalCalendarDate) } catch (_: Exception) {}
+            }
+            // Step 5a: Reap expired memories
+            try {
+                val msgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { 0 }
+                reapExpiredMemories(bot.id, newDayCounter, msgCount)
+            } catch (_: Exception) {}
+            // Step 5b: Expire unresolved pending_reappraisals older than 14 story days
+            try {
+                val activeReapps = pendingReappraisalDao.getActivePendingReappraisals(bot.id)
+                for (pr in activeReapps) {
+                    val estimatedAgeInDays = if (safeDeltaDays >= 14) {
+                        safeDeltaDays.toLong()
+                    } else {
+                        (newDayCounter - 1L).coerceAtLeast(0L)
+                    }
+                    if (safeDeltaDays >= 14 || (newDayCounter >= 15L && estimatedAgeInDays >= 14L && pr.triggeredAtMessageIndex <= 2)) {
+                        pendingReappraisalDao.update(pr.copy(expired = true, resolved = false))
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        return StoryTimeAdvanceResult(
+            updatedBot = updatedBot,
+            deltaDays = safeDeltaDays,
+            newSceneTime = validatedScene,
+            decayResult = decayResult
+        )
+    }
+
     suspend fun parseAndApplyEmotionUpdates(botId: String, rawResponse: String, userAlreadyJumped: Boolean = false): String {
         val bot = botDao.getBotById(botId) ?: return cleanEmotionTags(rawResponse)
         val settings = getOrCreateSettings()
@@ -3827,16 +4037,21 @@ $aiChar: ${latestAiReply.take(850)}
         var parsedTrustDeltaCompact = 0
         var parsedNarrativeMilestone: com.example.data.local.MilestoneEntity? = null
         var parsedCompactReappObj: org.json.JSONObject? = null
+        var naturalDecayAppliedThisTurn = false
+        var hasExplicitPrimaryFromJson = false
+        var hasExplicitAxesFromJson = false
 
         if (jsonObj != null) {
             val primObj = jsonObj.optJSONObject("primary_emotions")
             if (primObj != null) {
                 rawPrimaryEmotions = com.example.data.local.PrimaryEmotions.fromJsonObject(primObj)
+                hasExplicitPrimaryFromJson = true
             }
 
             val relObj = jsonObj.optJSONObject("relationship_axes")
             if (relObj != null) {
                 rawRelationshipAxes = com.example.data.local.RelationshipAxes.fromJsonObject(relObj)
+                hasExplicitAxesFromJson = true
             }
 
             rawPhysicalComfort = jsonObj.optInt("physicalComfortScore", current.physicalComfortScore).coerceIn(0, 100)
@@ -3923,124 +4138,85 @@ $aiChar: ${latestAiReply.take(850)}
                 parsedWorldState = com.example.data.local.WorldState.fromJson(worldObj.toString())
             }
 
-            // System #8: Unified compact "skip" (Int days OR String e.g. "sabah->gece" / "2 gün") + legacy "story_time_skip"
+            // System #15 + #14: Hybrid Dual-Channel Time Skip (Channel 1 JSON "skip"/"story_time_skip" + Channel 2 safe narrative fallback)
             runCatching {
                 val rawSkip = if (jsonObj.has("skip") && !jsonObj.isNull("skip")) jsonObj.opt("skip") else null
-                if (rawSkip != null) {
-                    var daysToSkip = 0
-                    var newSceneTime: String? = null
-                    when (rawSkip) {
-                        is Number -> daysToSkip = rawSkip.toInt().coerceIn(0, 3650)
-                        is String -> {
-                            val trimmedSkip = rawSkip.trim()
-                            if (trimmedSkip.contains("->")) {
-                                val targetPart = trimmedSkip.substringAfterLast("->").trim()
-                                newSceneTime = TimePerceptionEngine.validateSceneTime(targetPart)
-                                val parsedJump = TimePerceptionEngine.parseStoryTimeJump(trimmedSkip)
-                                daysToSkip = parsedJump.daysToAdvance
-                            } else {
-                                val parsedInt = trimmedSkip.toIntOrNull()
-                                if (parsedInt != null) {
-                                    daysToSkip = parsedInt.coerceIn(0, 3650)
-                                } else {
-                                    val parsedJump = TimePerceptionEngine.parseStoryTimeJump(trimmedSkip)
-                                    daysToSkip = parsedJump.daysToAdvance
-                                    newSceneTime = TimePerceptionEngine.validateSceneTime(trimmedSkip)
-                                }
-                            }
-                        }
-                    }
-                    if (daysToSkip > 0 && !userAlreadyJumped) {
-                        val (newDate, newDayCounter, newAge) = TimePerceptionEngine.advanceCalendarDateAndCheckAge(
-                            currentCalendarDateStr = bot.storyCalendarDate,
-                            currentDayCounter = bot.storyDayCounter,
-                            elapsedDaysToAdd = daysToSkip,
-                            birthDateStr = bot.birthDate,
-                            initialAge = bot.initialAge
-                        )
-                        botDao.insertOrUpdate(
-                            bot.copy(
-                                storyCalendarDate = newDate,
-                                storyDayCounter = newDayCounter,
-                                currentAge = newAge,
-                                sceneTime = newSceneTime ?: bot.sceneTime
-                            )
-                        )
-                        updateCastMembersAgeForBot(bot.id, newDate)
+                val storySkipObj = jsonObj.optJSONObject("story_time_skip")
+                if (storySkipObj != null && storySkipObj.optBoolean("detected", false)) {
+                    val amountStr = storySkipObj.optString("amount", "")
+                    val daysFromJson = storySkipObj.optInt("days", 0)
+                    val parsedAmt = if (amountStr.isNotBlank()) TimePerceptionEngine.parseStoryTimeJump(amountStr).daysToAdvance else 0
+                    if (daysFromJson <= 0 && parsedAmt <= 0 && amountStr.isNotBlank()) {
+                        android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] provider=${settings.selectedProvider} amount='$amountStr' raw=${rawResponse.take(120)}")
                         try {
-                            val msgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { 0 }
-                            reapExpiredMemories(bot.id, newDayCounter, msgCount)
+                            db.timePerceptionMismatchLogDao().insertLog(
+                                com.example.data.local.TimePerceptionMismatchLogEntity(
+                                    botId = botId,
+                                    userMessageText = "story_time_skip parse failure",
+                                    modelResponseText = rawResponse.take(300),
+                                    detectedTimeExpression = amountStr,
+                                    codeCalculatedDays = 0,
+                                    mismatchReason = "timeSkipParseFailure:provider=${settings.selectedProvider} amount='$amountStr'",
+                                    timestamp = System.currentTimeMillis()
+                                )
+                            )
                         } catch (_: Exception) {}
-                    } else if (newSceneTime != null) {
-                        botDao.insertOrUpdate(bot.copy(sceneTime = newSceneTime))
                     }
-                }
-            }
-
-            val storySkipObj = jsonObj.optJSONObject("story_time_skip")
-            if (storySkipObj != null && storySkipObj.optBoolean("detected", false)) {
-                val daysFromJson = storySkipObj.optInt("days", 0)
-                val amountStr = storySkipObj.optString("amount", "")
-                val daysToSkip = if (daysFromJson > 0) daysFromJson
-                    else TimePerceptionEngine.parseStoryTimeJump(amountStr).daysToAdvance
-                val sceneTimeRaw = storySkipObj.optString("scene_time", "")
-                val newSceneTime = TimePerceptionEngine.validateSceneTime(sceneTimeRaw)
-                if (daysToSkip <= 0 && amountStr.isNotBlank()) {
-                    android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] provider=${settings.selectedProvider} amount='$amountStr' raw=${rawResponse.take(120)}")
+                } else if (storySkipObj == null && rawResponse.contains("story_time_skip", ignoreCase = true)) {
+                    android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] story_time_skip field present but failed to parse. provider=${settings.selectedProvider}")
                     try {
                         db.timePerceptionMismatchLogDao().insertLog(
                             com.example.data.local.TimePerceptionMismatchLogEntity(
                                 botId = botId,
-                                userMessageText = "story_time_skip parse failure",
+                                userMessageText = "story_time_skip json missing",
                                 modelResponseText = rawResponse.take(300),
-                                detectedTimeExpression = amountStr,
+                                detectedTimeExpression = "",
                                 codeCalculatedDays = 0,
-                                mismatchReason = "timeSkipParseFailure:provider=${settings.selectedProvider} amount='$amountStr'",
+                                mismatchReason = "timeSkipParseFailure:json_missing provider=${settings.selectedProvider}",
                                 timestamp = System.currentTimeMillis()
                             )
                         )
                     } catch (_: Exception) {}
                 }
-                val shouldApplyModelJump = daysToSkip > 0 && !userAlreadyJumped
-                if (shouldApplyModelJump) {
-                    val (newDate, newDayCounter, newAge) = TimePerceptionEngine.advanceCalendarDateAndCheckAge(
-                        currentCalendarDateStr = bot.storyCalendarDate,
-                        currentDayCounter = bot.storyDayCounter,
-                        elapsedDaysToAdd = daysToSkip,
-                        birthDateStr = bot.birthDate,
-                        initialAge = bot.initialAge
+
+                val hybridSkip = TimePerceptionEngine.parseHybridSkip(
+                    rawSkipJson = rawSkip,
+                    legacyStorySkipObj = storySkipObj,
+                    narrativeText = cleanEmotionTags(rawResponse)
+                )
+                val effectiveDeltaDays = if (userAlreadyJumped) 0 else hybridSkip.daysToAdvance
+                if (effectiveDeltaDays > 0 || hybridSkip.newSceneTime != null) {
+                    val advanceRes = advanceStoryTime(
+                        botId = botId,
+                        deltaDays = effectiveDeltaDays,
+                        newSceneTime = hybridSkip.newSceneTime,
+                        currentEmotionOverride = current
                     )
-                    botDao.insertOrUpdate(
-                        bot.copy(
-                            storyCalendarDate = newDate,
-                            storyDayCounter = newDayCounter,
-                            currentAge = newAge,
-                            sceneTime = newSceneTime ?: bot.sceneTime
-                        )
-                    )
-                    updateCastMembersAgeForBot(bot.id, newDate)
-                    try {
-                        val msgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { 0 }
-                        reapExpiredMemories(bot.id, newDayCounter, msgCount)
-                    } catch (_: Exception) {}
-                } else if (newSceneTime != null) {
-                    botDao.insertOrUpdate(bot.copy(sceneTime = newSceneTime))
+                    if (advanceRes != null) {
+                        if (advanceRes.newSceneTime != null) {
+                            val prettyTime = when (advanceRes.newSceneTime) {
+                                "sabah" -> "Sabah"
+                                "öğle" -> "Öğle"
+                                "akşam" -> "Akşam"
+                                "gece" -> "Gece"
+                                else -> parsedWorldState.meso.timeOfDay
+                            }
+                            parsedWorldState = parsedWorldState.copy(
+                                meso = parsedWorldState.meso.copy(timeOfDay = prettyTime)
+                            )
+                        }
+                        if (advanceRes.decayResult != null) {
+                            naturalDecayAppliedThisTurn = true
+                            val decayed = advanceRes.decayResult.state
+                            if (!hasExplicitPrimaryFromJson) {
+                                rawPrimaryEmotions = decayed.primaryEmotions
+                            }
+                            if (!hasExplicitAxesFromJson) {
+                                rawRelationshipAxes = decayed.relationshipAxes
+                            }
+                        }
+                    }
                 }
-            } else if (storySkipObj == null && rawResponse.contains("story_time_skip", ignoreCase = true)) {
-                android.util.Log.w("TimeSkipParse", "[timeSkipParseFailureLog] story_time_skip field present but failed to parse. provider=${settings.selectedProvider}")
-                try {
-                    db.timePerceptionMismatchLogDao().insertLog(
-                        com.example.data.local.TimePerceptionMismatchLogEntity(
-                            botId = botId,
-                            userMessageText = "story_time_skip json missing",
-                            modelResponseText = rawResponse.take(300),
-                            detectedTimeExpression = "",
-                            codeCalculatedDays = 0,
-                            mismatchReason = "timeSkipParseFailure:json_missing provider=${settings.selectedProvider}",
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
-                } catch (_: Exception) {}
             }
 
             val scObj = jsonObj.optJSONObject("self_check")
@@ -4071,6 +4247,44 @@ $aiChar: ${latestAiReply.take(850)}
                     )
                 )
             } catch (_: Exception) {}
+
+            // Channel 2 safe narrative fallback when STATE_JSON is absent
+            runCatching {
+                val narrativeOnlySkip = TimePerceptionEngine.parseHybridSkip(
+                    rawSkipJson = null,
+                    legacyStorySkipObj = null,
+                    narrativeText = cleanEmotionTags(rawResponse)
+                )
+                val effectiveDeltaDays = if (userAlreadyJumped) 0 else narrativeOnlySkip.daysToAdvance
+                if (effectiveDeltaDays > 0 || narrativeOnlySkip.newSceneTime != null) {
+                    val advanceRes = advanceStoryTime(
+                        botId = botId,
+                        deltaDays = effectiveDeltaDays,
+                        newSceneTime = narrativeOnlySkip.newSceneTime,
+                        currentEmotionOverride = current
+                    )
+                    if (advanceRes != null) {
+                        if (advanceRes.newSceneTime != null) {
+                            val prettyTime = when (advanceRes.newSceneTime) {
+                                "sabah" -> "Sabah"
+                                "öğle" -> "Öğle"
+                                "akşam" -> "Akşam"
+                                "gece" -> "Gece"
+                                else -> parsedWorldState.meso.timeOfDay
+                            }
+                            parsedWorldState = parsedWorldState.copy(
+                                meso = parsedWorldState.meso.copy(timeOfDay = prettyTime)
+                            )
+                        }
+                        if (advanceRes.decayResult != null) {
+                            naturalDecayAppliedThisTurn = true
+                            val decayed = advanceRes.decayResult.state
+                            rawPrimaryEmotions = decayed.primaryEmotions
+                            rawRelationshipAxes = decayed.relationshipAxes
+                        }
+                    }
+                }
+            }
         }
 
         // 2. Personality Profile Multipliers & Multi-dimensional Clamping
@@ -4322,13 +4536,16 @@ $aiChar: ${latestAiReply.take(850)}
             pendingConsistencyNoteMap.remove(botId)
         }
 
-        // [5] Pasif mikro-sönüm: hikâye atlaması olmayan sıradan mesajlarda çok yavaş soğuma
-        val afterPassiveDecay = EmotionEngine.applyPassiveDecayPerMessage(
-            currentState = finalUpdatedState,
-            messageIndex = totalMsgCount,
-            regulationCapacity = bot.emotionalRegulationCapacity
-        )
-        val finalUpdatedStateWithDecay = afterPassiveDecay
+        // [5] Pasif mikro-sönüm: yalnızca aynı turda hikâye zamanı doğal sönümü (deltaStoryDays > 0) çalışmadıysa uygula (çift-düşüm engeli!)
+        val finalUpdatedStateWithDecay = if (naturalDecayAppliedThisTurn) {
+            finalUpdatedState
+        } else {
+            EmotionEngine.applyPassiveDecayPerMessage(
+                currentState = finalUpdatedState,
+                messageIndex = totalMsgCount,
+                regulationCapacity = bot.emotionalRegulationCapacity
+            )
+        }
 
         // 6. Record to Bot Entity, Emotion History & Self Check Failure Log
         try {
@@ -4343,7 +4560,7 @@ $aiChar: ${latestAiReply.take(850)}
                 )
             )
 
-            // [6b] Compact "cast_emo" ([{"n":"İsim","d":"duygu","v":-5..+5}]) + legacy "side_character_updates" JSON parse
+            // [6b] Compact "cast_emo" ([{"n":"İsim","d":"duygu","v":-8..+8}]) + legacy "side_character_updates" JSON parse
             val MAX_SIDE_CHAR_UPDATES = 8
             if (jsonObj != null) {
                 val sideArr = jsonObj.optJSONArray("cast_emo") ?: jsonObj.optJSONArray("side_character_updates")
@@ -4353,52 +4570,75 @@ $aiChar: ${latestAiReply.take(850)}
                             messageDao.getMessagesForBotList(botId).takeLast(4).joinToString(" ") { it.text }
                         } catch (_: Exception) { "" }
                         val confirmedCast = try {
-                            castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation }
+                            castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation && !it.isBlacklisted }
                         } catch (_: Exception) { emptyList() }
 
                         val seenNames = mutableSetOf<String>()
+                        val trLocale = java.util.Locale("tr", "TR")
                         val limit = minOf(sideArr.length(), MAX_SIDE_CHAR_UPDATES)
                         for (i in 0 until limit) {
                             val entry = sideArr.optJSONObject(i) ?: continue
                             val rawName = entry.optString("n", "").ifBlank {
                                 entry.optString("name", "").ifBlank { entry.optString("character", "") }
                             }.trim()
-                            val cleanName = cleanCharacterNameCandidate(rawName)
-                            if (cleanName.isBlank()) continue
-                            if (isMainOrUserCharacter(rawName, bot) || isMainOrUserCharacter(cleanName, bot)) continue
+                            val normalizedTurkish = CastDetectorEngine.normalizeTurkishEntityName(rawName)
+                            val cleanCandidate = normalizedTurkish.ifBlank { cleanCharacterNameCandidate(rawName) }
+                            if (cleanCandidate.isBlank()) continue
+                            if (isMainOrUserCharacter(rawName, bot) || isMainOrUserCharacter(cleanCandidate, bot)) continue
 
-                            val castMem = confirmedCast.firstOrNull { it.name.equals(cleanName, ignoreCase = true) }
+                            // Match canonical CastMember via Turkish suffix normalization + alias matching
+                            val castMem = confirmedCast.firstOrNull { member ->
+                                member.name.equals(cleanCandidate, ignoreCase = true) ||
+                                    CastDetectorEngine.matchesMemberOrAlias(cleanCandidate, listOf(rawName), member)
+                            }
                             val isCompactCastEmo = entry.has("n")
-                            val isInScene = castMem != null && (isCompactCastEmo || recentText.contains(castMem.name, ignoreCase = true))
-                            if (!isInScene) continue
+                            val isInScene = castMem != null && (
+                                isCompactCastEmo ||
+                                    recentText.contains(castMem.name, ignoreCase = true) ||
+                                    rawResponse.contains(castMem.name, ignoreCase = true)
+                                )
+                            if (!isInScene || castMem == null) continue
 
-                            val nameLower = cleanName.lowercase()
+                            val canonicalName = castMem.name.trim()
+                            val nameLower = canonicalName.lowercase(trLocale)
                             if (!seenNames.add(nameLower)) continue
 
-                            val existingCharEntity = emotionDao.getEmotionForCharacter(botId, cleanName)
+                            val existingCharEntity = emotionDao.getEmotionForCharacter(botId, canonicalName)
                             val existingState = existingCharEntity
                                 ?.let { EmotionState.fromJson(it.emotionState) }
-                                ?: EmotionState.calculateBaselineEmotionState(bot.aiName, cleanName, "")
-                            val sideRoleMult = if (castMem != null && castMem.baseAffectionDifficultyMultiplier > 0.0) {
+                                ?: EmotionState.calculateBaselineEmotionState(bot.aiName, canonicalName, "").let { base ->
+                                    base.copy(
+                                        relationshipAxes = base.relationshipAxes.copy(
+                                            affectionScore = castMem.affectionScore.coerceIn(0, 100)
+                                        )
+                                    )
+                                }
+                            val sideRoleMult = if (castMem.baseAffectionDifficultyMultiplier > 0.0) {
                                 determineEffectiveRoleMultiplier(castMem, rawResponse.take(200))
                             } else {
-                                calculateCastMemberDifficultyMultiplier("Yan Karakter", cleanName, rawResponse.take(200))
+                                calculateCastMemberDifficultyMultiplier("Yan Karakter", canonicalName, rawResponse.take(200))
                             }
 
-                            val rawAffDelta = if (entry.has("v")) entry.optInt("v", 0).coerceIn(-5, 5)
-                                else entry.optInt("affection_delta", 0)
-                            val rawTrustDelta = entry.optInt("trust_delta", 0)
+                            // Safe per-turn delta clamp [-8..+8] and final values strictly [0..100]
+                            val rawAffDelta = if (entry.has("v")) {
+                                entry.optInt("v", 0).coerceIn(-8, 8)
+                            } else {
+                                entry.optInt("affection_delta", 0).coerceIn(-8, 8)
+                            }
+                            val rawTrustDelta = entry.optInt("trust_delta", if (entry.has("v")) (rawAffDelta / 2) else 0)
+                                .coerceIn(-8, 8)
                             val moodStr = entry.optString("d", "").ifBlank {
                                 entry.optString("mood", existingState.dominantEmotion)
-                            }
-                            val sidePrevAff = existingState.affection
-                            val sidePrevDailyGain = if (castMem?.lastGainResetDate == todayStr) castMem.dailyAffectionGain else 0
-                            val sideConsecutiveCount = castMem?.consecutivePositiveCount ?: 0
-                            val sideRecoveryLock = castMem?.recoveryLockUntilMessageCount ?: 0
+                            }.trim().ifBlank { existingState.dominantEmotion }
+
+                            val sidePrevAff = existingState.affection.coerceIn(0, 100)
+                            val sidePrevDailyGain = if (castMem.lastGainResetDate == todayStr) castMem.dailyAffectionGain else 0
+                            val sideConsecutiveCount = castMem.consecutivePositiveCount
+                            val sideRecoveryLock = castMem.recoveryLockUntilMessageCount
 
                             val clampedSideAff = calculateClampedDelta(
                                 prevAffection = sidePrevAff,
-                                rawDelta = rawAffDelta.coerceIn(-50, 50),
+                                rawDelta = rawAffDelta,
                                 totalMsgCount = totalMsgCount,
                                 baseMultiplier = sideRoleMult,
                                 combinedContextMult = combinedContextMult,
@@ -4408,8 +4648,8 @@ $aiChar: ${latestAiReply.take(850)}
                                 consecutivePositiveCount = sideConsecutiveCount,
                                 regCount = regCount,
                                 isEstablishedRomantic = sidePrevAff >= 70
-                            )
-                            val clampedSideTrust = (rawTrustDelta.coerceIn(-50, 50) * sideRoleMult).toInt().coerceIn(-25, 15)
+                            ).coerceIn(-8, 8)
+                            val clampedSideTrust = (rawTrustDelta * sideRoleMult).toInt().coerceIn(-8, 8)
                             val newSideAff = (sidePrevAff + clampedSideAff).coerceIn(0, 100)
                             val newSideTrust = (existingState.trust + clampedSideTrust).coerceIn(0, 100)
 
@@ -4419,28 +4659,26 @@ $aiChar: ${latestAiReply.take(850)}
                                 relationshipAxes = existingState.relationshipAxes.copy(affectionScore = newSideAff)
                             )
                             val charEntityToSave = existingCharEntity
-                                ?.copy(characterName = cleanName, emotionState = updatedCharState.toJson())
-                                ?: CharacterEmotionEntity(botId = botId, characterName = cleanName, emotionState = updatedCharState.toJson())
+                                ?.copy(characterName = canonicalName, emotionState = updatedCharState.toJson())
+                                ?: CharacterEmotionEntity(botId = botId, characterName = canonicalName, emotionState = updatedCharState.toJson())
                             emotionDao.insertOrUpdate(charEntityToSave)
 
-                            if (castMem != null) {
-                                val sideNewConsec = if (clampedSideAff > 0) sideConsecutiveCount + 1 else 0
-                                val sideNewDaily = if (clampedSideAff > 0) sidePrevDailyGain + clampedSideAff else sidePrevDailyGain
-                                castMemberDao.updateCastMember(
-                                    castMem.copy(
-                                        affectionScore = newSideAff,
-                                        consecutivePositiveCount = sideNewConsec,
-                                        dailyAffectionGain = sideNewDaily,
-                                        lastGainResetDate = todayStr,
-                                        peakAffectionScore = maxOf(castMem.peakAffectionScore, newSideAff),
-                                        recoveryLockUntilMessageCount = sideRecoveryLock
-                                    )
+                            val sideNewConsec = if (clampedSideAff > 0) sideConsecutiveCount + 1 else 0
+                            val sideNewDaily = if (clampedSideAff > 0) sidePrevDailyGain + clampedSideAff else sidePrevDailyGain
+                            castMemberDao.updateCastMember(
+                                castMem.copy(
+                                    affectionScore = newSideAff,
+                                    consecutivePositiveCount = sideNewConsec,
+                                    dailyAffectionGain = sideNewDaily,
+                                    lastGainResetDate = todayStr,
+                                    peakAffectionScore = maxOf(castMem.peakAffectionScore, newSideAff),
+                                    recoveryLockUntilMessageCount = sideRecoveryLock
                                 )
-                            }
+                            )
                             emotionHistoryDao.insertHistory(
                                 EmotionHistoryEntity(
                                     botId = botId,
-                                    characterName = cleanName,
+                                    characterName = canonicalName,
                                     timestamp = System.currentTimeMillis(),
                                     messageIndex = totalMsgCount,
                                     affectionScore = newSideAff,
@@ -4507,10 +4745,20 @@ $aiChar: ${latestAiReply.take(850)}
                 }
             }
 
+            val legacyActiveCast = try {
+                castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation && !it.isBlacklisted }
+            } catch (_: Exception) { emptyList() }
             for (item in detectedBlocks) {
                 val rawCharName = item.rawCharName
                 val blockText = item.blockText
-                val cleanCharName = cleanCharacterNameCandidate(rawCharName)
+                val normalizedCandidate = CastDetectorEngine.normalizeTurkishEntityName(
+                    cleanCharacterNameCandidate(rawCharName)
+                ).ifBlank { cleanCharacterNameCandidate(rawCharName) }
+                val matchedCastMem = legacyActiveCast.firstOrNull { mem ->
+                    mem.name.equals(normalizedCandidate, ignoreCase = true) ||
+                        CastDetectorEngine.matchesMemberOrAlias(normalizedCandidate, listOf(rawCharName), mem)
+                }
+                val cleanCharName = matchedCastMem?.name?.trim()?.ifBlank { normalizedCandidate } ?: normalizedCandidate
 
                 if (cleanCharName.isNotBlank() && !isMainOrUserCharacter(rawCharName, bot) && !isMainOrUserCharacter(cleanCharName, bot)) {
                     ensureSideCharacterRegistered(
@@ -4523,7 +4771,7 @@ $aiChar: ${latestAiReply.take(850)}
                     val existingCharEntity = emotionDao.getEmotionForCharacter(botId, cleanCharName)
                     val existingState = existingCharEntity?.let { EmotionState.fromJson(it.emotionState) } ?: EmotionState.calculateBaselineEmotionState(bot.aiName, cleanCharName, "")
 
-                    val castMem = castMemberDao.findByName(botId, cleanCharName)
+                    val castMem = matchedCastMem ?: castMemberDao.findByName(botId, cleanCharName)
                     val sideRoleMult = if (castMem != null && castMem.baseAffectionDifficultyMultiplier > 0.0) {
                         determineEffectiveRoleMultiplier(castMem, rawResponse.take(200))
                     } else {
@@ -7764,8 +8012,23 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
     fun getDayOfWeekTurkish(dateStr: String): String =
         managers.worldStateManager.getDayOfWeekTurkish(dateStr)
 
-    suspend fun getActiveRoutineReminder(botId: String, currentStoryDate: String): RoutineEntity? =
-        managers.worldStateManager.getActiveRoutineReminder(botId, currentStoryDate)
+    fun resolveStoryDayName(currentStoryDate: String, storyDayCounter: Long = 1L): String =
+        managers.worldStateManager.resolveStoryDayName(currentStoryDate, storyDayCounter)
+
+    fun buildStoryDayKey(currentStoryDate: String, storyDayCounter: Long = 1L): String =
+        managers.worldStateManager.buildStoryDayKey(currentStoryDate, storyDayCounter)
+
+    suspend fun getActiveRoutineReminder(
+        botId: String,
+        currentStoryDate: String,
+        storyDayCounter: Long = 1L,
+        sceneTimeOfDay: String = ""
+    ): RoutineEntity? = managers.worldStateManager.getActiveRoutineReminder(
+        botId = botId,
+        currentStoryDate = currentStoryDate,
+        storyDayCounter = storyDayCounter,
+        sceneTimeOfDay = sceneTimeOfDay
+    )
 
     suspend fun markRoutineMentioned(routineId: Long, storyDate: String, botId: String) =
         managers.worldStateManager.markRoutineMentioned(routineId, storyDate, botId)
@@ -7900,13 +8163,17 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         compactMode: Boolean = false,
         recentSceneText: String = "",
         activeRoutineHint: String = "",
+        activeRoutineDayName: String = "",
+        characterEmotions: List<CharacterEmotionEntity> = emptyList(),
         modelContextWindowTokens: Int = 128_000,
         literaryFramingMode: Boolean = false,
         graphResolutionNote: String? = null,
         pendingReappraisals: List<com.example.data.local.PendingReappraisalEntity> = emptyList(),
         recentMilestones: List<com.example.data.local.MilestoneEntity> = emptyList(),
         explicitInSceneCastNames: Set<String> = emptySet(),
-        userSubtextHint: String = ""
+        userSubtextHint: String = "",
+        latestUserMessage: String = "",
+        isPureOocTurn: Boolean = false
     ): String {
         val consistencyNote = pendingConsistencyNoteMap.remove(bot.id)
         val decayNote = pendingDecayNoteMap.remove(bot.id)
@@ -7924,6 +8191,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 starredAnchorMessages = starredAnchorMessages,
                 recentSceneText = recentSceneText,
                 activeRoutineHint = activeRoutineHint,
+                activeRoutineDayName = activeRoutineDayName,
+                characterEmotions = characterEmotions,
                 consistencyNote = consistencyNote,
                 decayNote = decayNote,
                 lastMessageTimestamp = lastMessageTimestamp,
@@ -7935,7 +8204,9 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 pendingReappraisals = pendingReappraisals,
                 recentMilestones = recentMilestones,
                 explicitInSceneCastNames = explicitInSceneCastNames,
-                userSubtextHint = userSubtextHint
+                userSubtextHint = userSubtextHint,
+                latestUserMessage = latestUserMessage,
+                isPureOocTurn = isPureOocTurn
             )
         )
     }
@@ -8028,12 +8299,24 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         }
 
         val recentSceneText = contextMessages.takeLast(6).joinToString(" ") { it.text }
-        val activeRoutineHint = try {
-            val routines = routineDao.getRoutinesForBot(updatedBot.id)
-            val active = routines.firstOrNull { it.routineDescription.isNotBlank() }
-            active?.routineDescription?.trim().orEmpty()
+        val routineStoryDate = if (updatedBot.hasExplicitStoryDate) updatedBot.storyCalendarDate else ""
+        val currentStoryDayKey = buildStoryDayKey(routineStoryDate, updatedBot.storyDayCounter)
+        val activeRoutineDayName = resolveStoryDayName(routineStoryDate, updatedBot.storyDayCounter)
+        val activeRoutine = try {
+            getActiveRoutineReminder(
+                botId = updatedBot.id,
+                currentStoryDate = routineStoryDate,
+                storyDayCounter = updatedBot.storyDayCounter,
+                sceneTimeOfDay = updatedBot.sceneTime
+            )
         } catch (_: Exception) {
-            ""
+            null
+        }
+        val activeRoutineHint = activeRoutine?.routineDescription?.trim().orEmpty()
+        val liveCharacterEmotions = try {
+            emotionDao.getEmotionsForBot(updatedBot.id)
+        } catch (_: Exception) {
+            emptyList()
         }
 
         val activePendingReappraisals = try {
@@ -8102,13 +8385,17 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             totalMessageCount = messages.size,
             recentSceneText = recentSceneText,
             activeRoutineHint = activeRoutineHint,
+            activeRoutineDayName = activeRoutineDayName,
+            characterEmotions = liveCharacterEmotions,
             modelContextWindowTokens = modelContextWindow,
             literaryFramingMode = literaryFramingMode,
             graphResolutionNote = ragBundle.graphResolutionNote,
             pendingReappraisals = activePendingReappraisals,
             recentMilestones = recentMilestones,
             explicitInSceneCastNames = activeInSceneCastMap[effectiveBot.id].orEmpty(),
-            userSubtextHint = userSubtextHint
+            userSubtextHint = userSubtextHint,
+            latestUserMessage = latestUserMessageText,
+            isPureOocTurn = sentimentResult.isOocMeta
         )
 
         // Wire UserSentimentAnalyzer into live replies (chat mode always; personal non-intense on NEGATIVE/WITHDRAWN)
@@ -8153,6 +8440,17 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             )
         } catch (_: Exception) {}
         val unlockedMilestone = lastUnlockedMilestoneMap.remove(updatedBot.id)
+
+        // System #21: Mark injected routine as mentioned for the current story-day key so it never repeats same day
+        if (activeRoutine != null) {
+            try {
+                markRoutineMentioned(
+                    routineId = activeRoutine.id,
+                    storyDate = currentStoryDayKey,
+                    botId = updatedBot.id
+                )
+            } catch (_: Exception) {}
+        }
 
         // 50-Message Checkpoint Pyramid trigger (non-blocking fail-safe)
         try {

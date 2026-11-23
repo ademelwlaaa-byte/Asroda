@@ -79,6 +79,8 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
             }
 
             Result.success()
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (e: Exception) {
             Log.w("EmotionAudit", "Audit worker error for bot=$botId (attempt=$runAttemptCount): ${e.message}")
             if (runAttemptCount < 2) Result.retry() else Result.success()

@@ -11,6 +11,7 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.PeriodicWorkRequestBuilder
@@ -20,6 +21,7 @@ import com.example.R
 import com.example.data.local.AppDatabase
 import com.example.data.repository.EmochiRepository
 import com.example.util.AppFeatureFlags
+import kotlinx.coroutines.CancellationException
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Locale
@@ -33,16 +35,40 @@ class RoutineNotificationWorker(
     companion object {
         private const val TAG = "RoutineNotifWorker"
         private const val CHANNEL_ID = "routine_reminders"
-        private const val WORK_TAG = "routine_notification_daily"
+        const val WORK_TAG = "routine_notification_daily"
         private const val PREFS_NAME = "emochi_routine_notif_prefs"
         private const val NOTIF_ID_BASE = 9100
         private val TR_LOCALE = Locale("tr", "TR")
 
+        fun isQuietHours(hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): Boolean {
+            return hourOfDay >= 23 || hourOfDay < 8
+        }
+
+        fun shouldNotifyRoutine(
+            botId: String,
+            activeBotId: String?,
+            isRoutineNotifEnabled: Boolean,
+            proactiveEnabled: Boolean = true,
+            currentHourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        ): Boolean {
+            if (!isRoutineNotifEnabled) return false
+            if (!proactiveEnabled) return false
+            if (isQuietHours(currentHourOfDay)) return false
+            if (botId == activeBotId) return false
+            return true
+        }
+
         fun schedule(context: Context) {
             if (!AppFeatureFlags.isRoutineNotifEnabled) return
+            val constraints = Constraints.Builder()
+                .setRequiresBatteryNotLow(true)
+                .build()
             val req = PeriodicWorkRequestBuilder<RoutineNotificationWorker>(
                 24, TimeUnit.HOURS
-            ).addTag(WORK_TAG).build()
+            )
+                .setConstraints(constraints)
+                .addTag(WORK_TAG)
+                .build()
             try {
                 WorkManager.getInstance(context)
                     .enqueueUniquePeriodicWork(
@@ -57,7 +83,9 @@ class RoutineNotificationWorker(
 
         fun cancel(context: Context) {
             try {
-                WorkManager.getInstance(context).cancelAllWorkByTag(WORK_TAG)
+                val wm = WorkManager.getInstance(context)
+                wm.cancelUniqueWork(WORK_TAG)
+                wm.cancelAllWorkByTag(WORK_TAG)
             } catch (_: IllegalStateException) {
             }
         }
@@ -85,6 +113,9 @@ class RoutineNotificationWorker(
 
     override suspend fun doWork(): Result {
         if (!AppFeatureFlags.isRoutineNotifEnabled) return Result.success()
+        val cal = Calendar.getInstance()
+        val currentHour = cal.get(Calendar.HOUR_OF_DAY)
+        if (isQuietHours(currentHour)) return Result.success()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
@@ -94,7 +125,6 @@ class RoutineNotificationWorker(
         return try {
             val db = AppDatabase.getInstance(ctx)
             val bots = db.botDao().getAllBotsList()
-            val cal = Calendar.getInstance()
             val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
             val todayDow = cal.get(Calendar.DAY_OF_WEEK)
 
@@ -105,7 +135,15 @@ class RoutineNotificationWorker(
 
             var notifId = NOTIF_ID_BASE
             for (bot in bots) {
-                if (bot.id == EmochiRepository.activeBotId) continue
+                if (!shouldNotifyRoutine(
+                        botId = bot.id,
+                        activeBotId = EmochiRepository.activeBotId,
+                        isRoutineNotifEnabled = AppFeatureFlags.isRoutineNotifEnabled,
+                        proactiveEnabled = bot.proactiveEnabled,
+                        currentHourOfDay = currentHour
+                    )
+                ) continue
+
                 val routines = try {
                     db.routineDao().getRoutinesForBot(bot.id)
                 } catch (_: Exception) { continue }
@@ -128,7 +166,7 @@ class RoutineNotificationWorker(
                     )
 
                     val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
-                        .setSmallIcon(R.drawable.ic_vai_logo)
+                        .setSmallIcon(R.drawable.ic_notification_emochi)
                         .setContentTitle("${bot.aiName} seni bekliyor")
                         .setContentText(routine.routineDescription.take(80))
                         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -141,9 +179,11 @@ class RoutineNotificationWorker(
                 }
             }
             Result.success()
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
             Log.w(TAG, "Routine notification failed (attempt=$runAttemptCount): ${e.message}")
-            if (runAttemptCount >= 2) Result.failure() else Result.retry()
+            if (runAttemptCount < 2) Result.retry() else Result.success()
         }
     }
 

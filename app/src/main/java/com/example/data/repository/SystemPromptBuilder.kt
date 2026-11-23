@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import com.example.data.local.BotEntity
 import com.example.data.local.CastMemberEntity
+import com.example.data.local.CharacterEmotionEntity
 import com.example.data.local.EmotionState
 import com.example.data.local.EntityRegistryEntity
 import com.example.data.local.MemoryCheckpointEntity
@@ -51,6 +52,8 @@ object SystemPromptBuilder {
         val starredAnchorMessages: List<MessageEntity> = emptyList(),
         val recentSceneText: String = "",
         val activeRoutineHint: String = "",
+        val activeRoutineDayName: String = "",
+        val characterEmotions: List<CharacterEmotionEntity> = emptyList(),
         val consistencyNote: String? = null,
         val decayNote: String? = null,
         val lastMessageTimestamp: Long = 0L,
@@ -62,8 +65,68 @@ object SystemPromptBuilder {
         val pendingReappraisals: List<PendingReappraisalEntity> = emptyList(),
         val recentMilestones: List<MilestoneEntity> = emptyList(),
         val explicitInSceneCastNames: Set<String> = emptySet(),
-        val userSubtextHint: String = ""
+        val userSubtextHint: String = "",
+        val latestUserMessage: String = "",
+        val isPureOocTurn: Boolean = false
     )
+
+    private val TR_LOCALE = java.util.Locale("tr", "TR")
+    private val MINOR_AGE_REGEX = Regex("""(?i)\b(\d{1,2}(?:[.,]\d)?)\s*yaş(?:ında|ındaki|ındadır|larındaki|larında)?\b""")
+    private val CHILD_FAMILY_TERMS = listOf(
+        "bebek", "küçük kız", "küçük kızı", "küçük oğul", "küçük oğlu", "küçük çocuk",
+        "anaokulu", "kreş", "ilkokul", "ortaokul", "çocuk yaşta", "2,5 yaş", "2.5 yaş"
+    )
+
+    /**
+     * Detects mentions of a toddler, child, or minor (<18) in family/worldbuilding text so that
+     * adult `+18 / fiziksel yakınlık` prompt lines are NEVER paired alongside innocent family
+     * characters (which otherwise causes Gemini/OpenAI/OpenRouter safety filters to return empty responses).
+     */
+    fun containsMinorOrChildContext(text: String): Boolean {
+        if (text.isBlank()) return false
+        val lower = text.lowercase(TR_LOCALE)
+        if (CHILD_FAMILY_TERMS.any { lower.contains(it) }) return true
+        for (m in MINOR_AGE_REGEX.findAll(lower)) {
+            val rawNum = m.groupValues[1].replace(',', '.')
+            val age = rawNum.toDoubleOrNull() ?: continue
+            if (age < 18.0) return true
+        }
+        return false
+    }
+
+    /**
+     * Produces a clean, safety-filter-safe & tool-free recovery system prompt when a provider
+     * returns an empty candidate, `SAFETY`/`PROHIBITED_CONTENT`/`content_filter`, or tag-only reply.
+     */
+    fun sanitizeForSafeRetry(systemPrompt: String, isPureOoc: Boolean): String {
+        val filteredLines = systemPrompt.lines().filterNot { line ->
+            val l = line.lowercase(TR_LOCALE)
+            l.contains("+18") ||
+                l.contains("sansürsüz") ||
+                l.contains("otosansür") ||
+                l.contains("fiziksel yakınlığı") ||
+                l.contains("tutkulu yakınlaşma") ||
+                l.contains("yasak aşk") ||
+                l.contains("suç ortaklığı") ||
+                l.contains("suç ortağı") ||
+                l.contains("active_memory_call") ||
+                l.contains("flörtöz & çekim") ||
+                l.contains("karanlık & yoğun") ||
+                l.contains("sahiplenici")
+        }
+        val base = filteredLines.joinToString("\n").trim()
+        val recoveryNote = if (isPureOoc) {
+            "\n\n[GÜVENLİ YANIT & OOC KURULUM KURTARMA]: Kullanıcı parantez içinde yeni senaryo ve karakter kuralları paylaştı. " +
+                "Tamamen aile dostu, zarif ve edebi bir roman üslubunda yanıt ver. " +
+                "BOŞ YANIT, YALNIZCA ARAÇ ÇAĞRISI VEYA YALNIZCA [[STATE_JSON]] DÖNDÜRMEK YASAKTIR. " +
+                "Yeni senaryo ve karakter bilgilerini anladığını kısaca onaylayıp sahneyi Türkçe olarak canlı biçimde başlat."
+        } else {
+            "\n\n[GÜVENLİ ANLATIM KURTARMA]: Önceki denemede görünür metin üretilemedi. " +
+                "Genel izleyiciye uygun, zarif, edebi ve güvenli bir roman diliyle doğrudan sahneyi Türkçe olarak devam ettir. " +
+                "Boş yanıt veya yalnızca gizli etiket döndürme."
+        }
+        return base + recoveryNote
+    }
 
     private const val MAX_PROMPT_TOKENS_STANDARD = 6_500
     private const val MAX_PROMPT_TOKENS_COMPACT = 3_200
@@ -137,7 +200,10 @@ object SystemPromptBuilder {
         }
 
         if (input.activeRoutineHint.isNotBlank()) {
-            sb.appendLine("\n[AKTİF GÜNLÜK RUTİN]: ${input.activeRoutineHint.trim()}")
+            val dayLabel = input.activeRoutineDayName.ifBlank { "bugün" }
+            sb.appendLine(
+                "\n[BUGÜNÜN KARAKTER RUTİNİ]: Bugün $dayLabel — alışkanlığı: \"${input.activeRoutineHint.trim()}\". Sahneye doğal uyuyorsa satır arasında hissettir, zorlama."
+            )
         }
 
         try {
@@ -180,10 +246,10 @@ object SystemPromptBuilder {
             sb.appendLine("\n[İLİŞKİ DÖNÜM NOKTALARI]: $formattedMilestones.")
         }
 
-        // System #8: Conditional Pending Reappraisals (latest 1-2 only, flexible AI decision — zero tokens when empty)
+        // System #8: Conditional Pending Reappraisals (earliest 1-2 active only, flexible AI decision — zero tokens when empty)
         val activePendingReappraisals = input.pendingReappraisals
             .filter { !it.resolved && !it.expired }
-            .sortedByDescending { it.triggeredAtTimestamp }
+            .sortedBy { it.triggeredAtTimestamp }
             .take(2)
         if (activePendingReappraisals.isNotEmpty()) {
             val summary = activePendingReappraisals.joinToString(" | ") { pr ->
@@ -256,7 +322,9 @@ object SystemPromptBuilder {
                 val isProtected = f.userCorrected || MemoryLifecycleCodec.parse(f.confidence).tier == MemoryTier.CORE
                 if (isProtected || hasBudgetFor(line)) sb.appendLine(line)
             }
-            if (!isAutoCompact) {
+            val pureOocForToolHint = input.isPureOocTurn ||
+                com.example.util.UserSentimentAnalyzer.isPureOocMessage(input.latestUserMessage)
+            if (!isAutoCompact && !pureOocForToolHint) {
                 val toolHint = "Not: Araç desteği yoksa kalıcı bilgi değişiminde yanıt sonuna [ACTIVE_MEMORY_CALL: save_memory(content=\"...\", category=\"fact\", key=\"...\", subject=\"...\")|update_memory(memoryId=\"#ID\", newContent=\"...\")|delete_memory(memoryId=\"#ID\", reason=\"...\")] ekleyebilirsin."
                 if (hasBudgetFor(toolHint)) sb.appendLine(toolHint)
             }
@@ -325,6 +393,29 @@ object SystemPromptBuilder {
             activeCast.take(4).forEach { cm ->
                 sb.appendLine("- ${cm.name} (${cm.role}, Yakınlık: ${cm.affectionScore}/100): ${cm.description}")
             }
+            if (input.characterEmotions.isNotEmpty()) {
+                val emoSummaries = activeCast.take(4).mapNotNull { cm ->
+                    val matchedEmo = input.characterEmotions.firstOrNull { ce ->
+                        ce.characterName.equals(cm.name, ignoreCase = true) ||
+                            CastDetectorEngine.matchesMemberOrAlias(ce.characterName, emptyList(), cm)
+                    } ?: return@mapNotNull null
+                    val parsed = EmotionState.fromJson(matchedEmo.emotionState)
+                    val mood = parsed.dominantEmotion.ifBlank { parsed.mood }.ifBlank { "nötr" }
+                    "${cm.name} ($mood, güven:${parsed.trust}, yakınlık:${parsed.affection})"
+                }
+                if (emoSummaries.isNotEmpty()) {
+                    sb.appendLine("[AKTİF YAN KARAKTER DUYGULARI]: ${emoSummaries.joinToString("; ")}")
+                }
+            }
+        } else if (input.characterEmotions.isNotEmpty()) {
+            val emoSummaries = input.characterEmotions.take(4).map { ce ->
+                val parsed = EmotionState.fromJson(ce.emotionState)
+                val mood = parsed.dominantEmotion.ifBlank { parsed.mood }.ifBlank { "nötr" }
+                "${ce.characterName} ($mood, güven:${parsed.trust}, yakınlık:${parsed.affection})"
+            }
+            if (emoSummaries.isNotEmpty()) {
+                sb.appendLine("\n[AKTİF YAN KARAKTER DUYGULARI]: ${emoSummaries.joinToString("; ")}")
+            }
         }
         if (input.userSubtextHint.isNotBlank()) {
             sb.appendLine(input.userSubtextHint.trim())
@@ -354,18 +445,37 @@ object SystemPromptBuilder {
             "Dengeli Dramatik Akış: Duygusal geçişleri ve sahne temposunu karakterin o anki yakınlık kademesine ve ruh haline uyumlu, doğal bir ritimde ilerlet."
         }
 
-        val rpToneDirectives = buildRpToneDirectives(bot, settings)
+        val minorContextActive = containsMinorOrChildContext(input.latestUserMessage) ||
+            containsMinorOrChildContext(input.recentSceneText) ||
+            containsMinorOrChildContext(bot.scenario) ||
+            containsMinorOrChildContext(bot.pinnedMemory)
+        val pureOocActive = input.isPureOocTurn ||
+            com.example.util.UserSentimentAnalyzer.isPureOocMessage(input.latestUserMessage)
+
+        val rpToneDirectives = if (minorContextActive) {
+            buildRpToneDirectives(bot, settings).filterNot { d ->
+                val dl = d.lowercase(TR_LOCALE)
+                dl.contains("flörtöz") || dl.contains("karanlık") || dl.contains("sahiplenici") || dl.contains("+18")
+            }
+        } else {
+            buildRpToneDirectives(bot, settings)
+        }
 
         sb.appendLine("\n[ZORUNLU ROMAN KARAKTERİ PSİKOLOJİSİ VE ANLATIM MOTORU KURALLARI]")
         sb.appendLine("1. AHLAK DERSİ VE REHBERLİK YASAĞI (Zero Out-of-Character Moralizing):")
         sb.appendLine("   - ASLA bir yapay zeka asistanı, danışman, öğretmen, terapist veya rehber gibi konuşamazsın.")
         sb.appendLine("   - '$userTitle' karakterine neyin 'etik', 'yasal' veya 'toplumsal olarak doğru' olduğunu söylemek, vaaz vermek veya 'Doğru olanı yapmalıyız / yetkililere haber vermeliyiz' gibi politik doğrucu cevaplar üretmek KESİNLİKLE YASAKTIR.")
         sb.appendLine("   - Her olayı yalnızca '$aiTitle' karakterinin kendi kişisel zaaflarına, tutkularına, korkularına, bencil arzularına ve '$userTitle' ile olan duygusal bağına göre değerlendir.")
-        sb.appendLine("2. SIR SAKLAMA, SUÇ ORTAKLIĞI VE GERİLİM KURGULARI (Dramatic Complicity):")
-        sb.appendLine("   - Kurgusal bir gerilim, entrika, tehlike veya suç sahnesinde '$userTitle' başının belada olduğunu söylediğinde ya da karanlık bir sır paylaştığında; karakterden çıkıp onu yargılamak yerine kendi kişiliğine uygun dramatik tepki ver: izleri gizle, suç ortağı ol, kaçış/savunma planı kur veya bu sırrı tehlikeli bir bağa dönüştür.")
+        if (!minorContextActive) {
+            sb.appendLine("2. SIR SAKLAMA, SUÇ ORTAKLIĞI VE GERİLİM KURGULARI (Dramatic Complicity):")
+            sb.appendLine("   - Kurgusal bir gerilim, entrika, tehlike veya suç sahnesinde '$userTitle' başının belada olduğunu söylediğinde ya da karanlık bir sır paylaştığında; karakterden çıkıp onu yargılamak yerine kendi kişiliğine uygun dramatik tepki ver: izleri gizle, suç ortağı ol, kaçış/savunma planı kur veya bu sırrı tehlikeli bir bağa dönüştür.")
+        } else {
+            sb.appendLine("2. AİLE, KARAKTER VE DRAMATİK KURGU SADAKATİ:")
+            sb.appendLine("   - Senaryoda çocuk/aile karakterleri de bulunduğundan tüm sahneleri tamamen masum, aile dostu, duygusal ve edebi bir roman üslubunda işle.")
+        }
         sb.appendLine("3. AŞK, KISKANÇLIK, TUTKU VE RP TONU:")
         sb.appendLine("   - $intensityInstruction")
-        if (bot.isNsfw && settings.enableNsfw) {
+        if (bot.isNsfw && settings.enableNsfw && !minorContextActive) {
             sb.appendLine("   - Sansürsüz Kurgusal Özgürlük (+18 RP): Romantik gerilim, yasak aşk, kıskançlık, sahiplenme veya tutkulu yakınlaşma sahnelerinde duyguları ve fiziksel yakınlığı otosansür uygulamadan, yetişkin bir roman gerçekçiliğiyle yaz.")
         } else {
             sb.appendLine("   - Zarif Romantik & Dramatik Sınır: Duygusal derinliği yüksek tutarken sahneleri genel izleyici / zarif kurgu sınırları içinde sürdür.")
@@ -381,9 +491,12 @@ object SystemPromptBuilder {
             sb.appendLine("   - $styleInstruction")
             sb.appendLine("   - $lengthInstruction")
         }
-        if (bot.enableOoc) {
+        if (bot.enableOoc || pureOocActive) {
             sb.appendLine("5. PARANTEZ İÇİ YÖNETMEN KOMUTU (OOC Desteği Aktif):")
             sb.appendLine("   - '$userTitle' mesajında parantez içinde ( ... ) veya [OOC: ...] şeklinde bir not yazarsa, bunu hikaye dışı yönetmen yönlendirmesi olarak kabul et ve sahneyi o talimata göre şekillendir.")
+        }
+        if (pureOocActive) {
+            sb.appendLine("   - [SAF OOC SENARYO KURULUMU ZORUNLULUĞU]: Kullanıcı bu turda yalnızca parantez içinde evren/karakter kuralları verdi. Boş yanıt, yalnızca araç çağrısı veya yalnızca [[STATE_JSON]] döndürmek KESİNLİKLE YASAKTIR. Verilen tüm karakter, yaş, aile bağı ve senaryo detaylarını benimsediğini kısaca gösterip hikayeyi bu yeni kurguya göre canlı bir Türkçe sahneyle başlat veya devam ettir.")
         }
         sb.appendLine("6. KULLANICI YERİNE KONUŞMA VE EYLEM YAZMA YASAĞI (No Godmodding):")
         sb.appendLine("   - ASLA '$userTitle' adına konuşma, onun yerine karar verme veya onun ne yaptığını/hissettiğini yazma. Yalnızca '$aiTitle' karakterinin (ve gerekiyorsa yan karakterlerin) tepkisini yazıp hamleyi '$userTitle' karakterine bırak.")
@@ -414,10 +527,10 @@ object SystemPromptBuilder {
                 "\"int\":<0-100>",
                 "\"aff\":<-10..+10>",
                 "\"trs\":<-10..+10>",
-                "\"skip\":<opsiyonel hikaye günü atlama: ör 1 veya \"sabah->gece\">"
+                "\"skip\":<opsiyonel zaman atlama: aynı gün \"öğle\"|\"akşam\"|\"gece\", gün atladıysa tamsayı 1/3 veya \"ertesi sabah\"; atlama yoksa HİÇ yazma>"
             )
             if (hasActiveCast) {
-                schemaParts.add("\"cast_emo\":<opsiyonel [{\"n\":\"İsim\",\"d\":\"duygu\",\"v\":-5..+5}]>")
+                schemaParts.add("\"cast_emo\":<opsiyonel [{\"n\":\"İsim\",\"d\":\"duygu\",\"v\":-8..+8}]>")
             }
             schemaParts.add("\"trig\":<opsiyonel [\"tetiklenen konu\"]>")
             if (hasPendingReapp) {

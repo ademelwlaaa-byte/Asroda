@@ -67,6 +67,37 @@ class WorldStateManager(
         }
     }
 
+    private val orderedTurkishDays = listOf(
+        "Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"
+    )
+
+    /**
+     * Resolves the Turkish weekday for a story turn:
+     * - If an explicit storyCalendarDate ("yyyy-MM-dd") is available, uses API 24+ Calendar.
+     * - Otherwise maps storyDayCounter deterministically to Monday..Sunday.
+     */
+    fun resolveStoryDayName(currentStoryDate: String, storyDayCounter: Long = 1L): String {
+        val fromDate = getDayOfWeekTurkish(currentStoryDate)
+        if (fromDate.isNotBlank()) return fromDate
+        val idx = ((storyDayCounter - 1L).coerceAtLeast(0L) % 7L).toInt()
+        return orderedTurkishDays[idx]
+    }
+
+    /**
+     * Canonical story-day key used for routine de-duplication ("2026-11-16" or "DAY_3").
+     */
+    fun buildStoryDayKey(currentStoryDate: String, storyDayCounter: Long = 1L): String {
+        val clean = currentStoryDate.trim().take(10)
+        return if (clean.length == 10) clean else "DAY_${storyDayCounter.coerceAtLeast(1L)}"
+    }
+
+    private fun normalizeRoutineText(raw: String): String = raw
+        .trim()
+        .lowercase(turkishLocale)
+        .replace(Regex("""[^\p{L}\p{N}\s]"""), " ")
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+
     suspend fun getWorldState(botId: String): WorldState? = withContext(Dispatchers.IO) {
         val bot = botDao.getBotById(botId) ?: return@withContext null
         WorldState.fromJson(bot.worldAtmosphere)
@@ -85,45 +116,54 @@ class WorldStateManager(
         val combinedText = "$personality\n$scenario".trim()
         if (combinedText.isBlank()) return@withContext emptyList()
 
+        val wbL = """(?<![\p{L}\p{N}])"""
+        val wbR = """(?![\p{L}\p{N}])"""
         val routinePatterns = listOf(
-            Regex("""(?i)([^\n.!?]*?\bher\s+(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\b[^\n.!?]*[.!?]?)"""),
-            Regex("""(?i)([^\n.!?]*?\b(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\s+günleri\b[^\n.!?]*[.!?]?)"""),
-            Regex("""(?i)([^\n.!?]*?\b(?:her sabah|her akşam|her gece|her gün|her hafta|düzenli olarak|alışkanlık olarak)\b[^\n.!?]*[.!?]?)""")
+            Regex("""(?iu)([^\n.!?]*?${wbL}her\s+(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)${wbR}[^\n.!?]*[.!?]?)"""),
+            Regex("""(?iu)([^\n.!?]*?${wbL}(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\s+(?:günleri|sabahları|akşamları|geceleri)${wbR}[^\n.!?]*[.!?]?)"""),
+            Regex("""(?iu)([^\n.!?]*?${wbL}(?:her\s+sabah|sabahları|her\s+akşam|akşamları|her\s+gece|geceleri|her\s+gün|her\s+hafta|düzenli\s+olarak|alışkanlık\s+olarak)${wbR}[^\n.!?]*[.!?]?)""")
         )
+        val existingRoutines = routineDao.getRoutinesForBot(botId)
+        val existingByNorm = existingRoutines.associateBy { normalizeRoutineText(it.routineDescription) }.toMutableMap()
         val extracted = mutableListOf<RoutineEntity>()
-        val seenSentences = mutableSetOf<String>()
+        val seenNorms = mutableSetOf<String>()
 
         for (pattern in routinePatterns) {
             for (match in pattern.findAll(combinedText)) {
                 val sentence = match.groupValues[1].trim()
                 if (sentence.length < 10) continue
-                val normSentence = sentence.lowercase(turkishLocale)
-                if (!seenSentences.add(normSentence)) continue
+                val normSentence = normalizeRoutineText(sentence.take(160))
+                if (normSentence.isBlank() || !seenNorms.add(normSentence)) continue
+
+                val existing = existingByNorm[normSentence]
+                    ?: routineDao.findRoutineByDescription(botId, sentence.take(160))
+                if (existing != null) {
+                    extracted.add(existing)
+                    continue
+                }
 
                 val lower = sentence.lowercase(turkishLocale)
                 val matchedDayKey = dayNameMap.keys.firstOrNull { lower.contains(it) }
                 val detectedDay = matchedDayKey?.let { dayNameMap[it] }
                 val frequency = when {
                     detectedDay != null || lower.contains("her hafta") -> "weekly"
-                    lower.contains("her sabah") -> "morning"
-                    lower.contains("her akşam") || lower.contains("her gece") -> "evening"
+                    lower.contains("her sabah") || lower.contains("sabahları") -> "morning"
+                    lower.contains("her akşam") || lower.contains("akşamları") ||
+                        lower.contains("her gece") || lower.contains("geceleri") -> "evening"
                     else -> "daily"
                 }
 
-                val existing = routineDao.findRoutineByDescription(botId, sentence.take(160))
-                if (existing == null) {
-                    val entity = RoutineEntity(
-                        botId = botId,
-                        routineDescription = sentence.take(160),
-                        frequency = frequency,
-                        dayOfWeek = detectedDay,
-                        lastMentionedStoryDate = ""
-                    )
-                    val newId = routineDao.insertRoutine(entity)
-                    extracted.add(entity.copy(id = newId))
-                } else {
-                    extracted.add(existing)
-                }
+                val entity = RoutineEntity(
+                    botId = botId,
+                    routineDescription = sentence.take(160),
+                    frequency = frequency,
+                    dayOfWeek = detectedDay,
+                    lastMentionedStoryDate = ""
+                )
+                val newId = routineDao.insertRoutine(entity)
+                val saved = entity.copy(id = newId)
+                existingByNorm[normSentence] = saved
+                extracted.add(saved)
             }
         }
         extracted
@@ -131,24 +171,41 @@ class WorldStateManager(
 
     suspend fun getActiveRoutineReminder(
         botId: String,
-        currentStoryDate: String
+        currentStoryDate: String,
+        storyDayCounter: Long = 1L,
+        sceneTimeOfDay: String = ""
     ): RoutineEntity? = withContext(Dispatchers.IO) {
         val routines = routineDao.getRoutinesForBot(botId)
         if (routines.isEmpty()) return@withContext null
 
-        val todayName = getDayOfWeekTurkish(currentStoryDate)
-        routines.firstOrNull { routine ->
-            if (routine.lastMentionedStoryDate.equals(currentStoryDate, ignoreCase = true)) {
-                return@firstOrNull false
+        val dayKey = buildStoryDayKey(currentStoryDate, storyDayCounter)
+        val todayName = resolveStoryDayName(currentStoryDate, storyDayCounter)
+        val normalizedScene = sceneTimeOfDay.trim().lowercase(turkishLocale)
+
+        val candidates = routines.filter { routine ->
+            if (routine.routineDescription.isBlank()) return@filter false
+            if (routine.lastMentionedStoryDate.equals(dayKey, ignoreCase = true) ||
+                (currentStoryDate.isNotBlank() && routine.lastMentionedStoryDate.equals(currentStoryDate.trim(), ignoreCase = true))
+            ) {
+                return@filter false
             }
-            when (routine.frequency.lowercase(turkishLocale)) {
-                "weekly" -> !routine.dayOfWeek.isNullOrBlank() &&
-                    routine.dayOfWeek.equals(todayName, ignoreCase = true)
-                "daily", "morning", "evening" -> routine.dayOfWeek.isNullOrBlank() ||
-                    routine.dayOfWeek.equals(todayName, ignoreCase = true)
+            val routineDay = routine.dayOfWeek?.trim()
+            val dayMatches = routineDay.isNullOrBlank() ||
+                routineDay.equals(todayName, ignoreCase = true)
+
+            when (routine.frequency.trim().lowercase(turkishLocale)) {
+                "weekly" -> !routineDay.isNullOrBlank() &&
+                    routineDay.equals(todayName, ignoreCase = true)
+                "morning" -> dayMatches && (normalizedScene.isBlank() || normalizedScene == "sabah")
+                "evening" -> dayMatches && (normalizedScene.isBlank() || normalizedScene == "akşam" || normalizedScene == "gece")
+                "daily" -> dayMatches
                 else -> false
             }
         }
+
+        // Prioritize day-specific (weekly) routines over generic daily routines
+        candidates.firstOrNull { it.frequency.equals("weekly", ignoreCase = true) }
+            ?: candidates.firstOrNull()
     }
 
     suspend fun markRoutineMentioned(

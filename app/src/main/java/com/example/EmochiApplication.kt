@@ -184,25 +184,25 @@ class EmochiApplication : Application(), ImageLoaderFactory {
         try {
             com.example.work.SummarizationWorker.schedule(this)
         } catch (e: Exception) {
-            Log.w("EmochiApp", "SummarizationWorker schedule failed: ${e.message}")
+            if (BuildConfig.DEBUG) Log.w("EmochiApp", "SummarizationWorker schedule failed: ${e.message}")
         }
         try {
             com.example.work.BackgroundMemoryMergeWorker.schedule(this)
         } catch (e: Exception) {
-            Log.w("EmochiApp", "BackgroundMemoryMergeWorker schedule failed: ${e.message}")
+            if (BuildConfig.DEBUG) Log.w("EmochiApp", "BackgroundMemoryMergeWorker schedule failed: ${e.message}")
         }
         try {
             com.example.work.ProactiveMessageWorker.schedule(this)
             com.example.work.ProactiveMessageWorker.createNotificationChannel(this)
         } catch (e: Exception) {
-            Log.w("EmochiApp", "ProactiveMessageWorker schedule failed: ${e.message}")
+            if (BuildConfig.DEBUG) Log.w("EmochiApp", "ProactiveMessageWorker schedule failed: ${e.message}")
         }
         try {
             if (AppFeatureFlags.isRoutineNotifEnabled) {
                 com.example.work.RoutineNotificationWorker.schedule(this)
             }
         } catch (e: Exception) {
-            Log.w("EmochiApp", "RoutineNotificationWorker schedule failed: ${e.message}")
+            if (BuildConfig.DEBUG) Log.w("EmochiApp", "RoutineNotificationWorker schedule failed: ${e.message}")
         }
     }
 

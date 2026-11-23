@@ -237,6 +237,81 @@ object TimePerceptionEngine {
         }
     }
 
+    /**
+     * System #15: Hybrid Dual-Channel Time Skip Detector.
+     * - Channel 1 (Primary): [[STATE_JSON]] "skip" field (Int days or Turkish scene/jump string)
+     *   or legacy "story_time_skip" JSON object.
+     * - Channel 2 (Lightweight Local Fallback): If JSON omitted "skip", inspects non-quoted
+     *   narrative text (*...* or prose outside "..." / «...» / (...) / [...]) for clear
+     *   time-jump expressions while rejecting future promises ("Yarın sabah görüşürüz").
+     */
+    fun parseHybridSkip(
+        rawSkipJson: Any? = null,
+        legacyStorySkipObj: org.json.JSONObject? = null,
+        narrativeText: String = ""
+    ): StoryTimeJumpResult {
+        var daysToSkip = 0
+        var newSceneTime: String? = null
+
+        // Channel 1a: Compact "skip"
+        when (rawSkipJson) {
+            is Number -> {
+                daysToSkip = rawSkipJson.toInt().coerceIn(0, MAX_DAYS_PER_JUMP)
+            }
+            is String -> {
+                val trimmed = rawSkipJson.trim()
+                if (trimmed.isNotBlank()) {
+                    if (trimmed.contains("->")) {
+                        val targetPart = trimmed.substringAfterLast("->").trim()
+                        newSceneTime = validateSceneTime(targetPart)
+                        val parsedJump = parseStoryTimeJump(trimmed)
+                        daysToSkip = parsedJump.daysToAdvance
+                    } else {
+                        val asInt = trimmed.toIntOrNull()
+                        if (asInt != null) {
+                            daysToSkip = asInt.coerceIn(0, MAX_DAYS_PER_JUMP)
+                        } else {
+                            val directScene = validateSceneTime(trimmed)
+                            if (directScene != null) {
+                                newSceneTime = directScene
+                            } else {
+                                val parsedJump = parseStoryTimeJump(trimmed)
+                                daysToSkip = parsedJump.daysToAdvance
+                                newSceneTime = parsedJump.newSceneTime ?: validateSceneTime(trimmed)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Channel 1b: Legacy "story_time_skip" JSON object
+        if (daysToSkip <= 0 && newSceneTime == null && legacyStorySkipObj != null && legacyStorySkipObj.optBoolean("detected", false)) {
+            val daysFromJson = legacyStorySkipObj.optInt("days", 0)
+            val amountStr = legacyStorySkipObj.optString("amount", "")
+            val parsedFromAmount = if (amountStr.isNotBlank()) parseStoryTimeJump(amountStr) else StoryTimeJumpResult()
+            daysToSkip = if (daysFromJson > 0) daysFromJson.coerceIn(0, MAX_DAYS_PER_JUMP) else parsedFromAmount.daysToAdvance
+            newSceneTime = validateSceneTime(legacyStorySkipObj.optString("scene_time", "")) ?: parsedFromAmount.newSceneTime
+        }
+
+        if (daysToSkip > 0 || newSceneTime != null) {
+            return StoryTimeJumpResult(daysToAdvance = daysToSkip, newSceneTime = newSceneTime)
+        }
+
+        // Channel 2: Safe non-quoted narrative fallback (excludes "..." dialogue and future promises)
+        if (narrativeText.isNotBlank()) {
+            val cleanedNarrative = narrativeText
+                .replace(Regex("""\[\[STATE_JSON[\s\S]*?\]\]"""), " ")
+                .replace(Regex("""\[\[[^\]]*\]\]"""), " ")
+            val fallback = parseStoryTimeJump(cleanedNarrative)
+            if (fallback.daysToAdvance > 0 || fallback.newSceneTime != null) {
+                return fallback
+            }
+        }
+
+        return StoryTimeJumpResult()
+    }
+
     // ---------------------------------------------------------------------------
     // formatStoryDuration — merkezi süre ifade fonksiyonu (4.3)
     // Gerçek takvim ayı sınırlarını, storyCalendarDate üzerinden hesaplar.

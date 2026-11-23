@@ -6,6 +6,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.BotEntity
 import com.example.data.local.CastMemberEntity
 import com.example.data.local.EmotionState
+import com.example.data.local.MessageEntity
 import com.example.data.local.PersonalityProfile
 import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.BackupSnapshot
@@ -14,6 +15,7 @@ import com.example.data.repository.CastDetectorEngine
 import com.example.data.repository.EmochiRepository
 import com.example.data.repository.MicroAiCastMemberDto
 import com.example.data.repository.MicroAiCastResponse
+import com.example.data.repository.SystemPromptBuilder
 import com.example.ui.animation.CosmicMotionConfig
 import com.example.ui.animation.MotionIntensityMode
 import com.example.ui.animation.MotionPolicy
@@ -608,6 +610,90 @@ class Systems7_16_17_19_TenOutOfTenTest {
         assertTrue(proguardText.contains("MicroAiSentimentDto"))
         assertTrue(proguardText.contains("KeystoreEncryptionManager"))
         assertTrue(proguardText.contains("android.util.Log"))
+    }
+
+    // ── 11. Regresyon: Uzun Parantez İçi Saf OOC + Çocuk/Aile Bağlamında Boş Yanıt Koruması ──
+
+    @Test
+    fun test11_pureOocMinorContextEmptyReplyRecovery() = runBlocking {
+        val exactUserOocPrompt =
+            "(bu senaryoda Aiden şuan 20 yaşındadır sezonun başıdır. Aiden 38 milyon euro ve şuanda 10 milyon takipçisi vardır. " +
+                "medyada hem aşırı sevilir hemde baya fazla eleştirilir. zeynep Sude Oktay şarkıcı değildir köylü kızıdır rize köyünde ailesiyle yaşar. " +
+                "Benim annemin en küçük kardeşi Brianna yani benim teyzem olur. ve Brianna teyzemin 2,5 yaşındaki kızı Adriana. " +
+                "adriana 2,5 yaşındadır melek gibi bir kızdır Aiden'i çok sever bende Onu çok severim. Adriana'yı çok fazla şımartırım.)"
+
+        // 1. Single outer parenthesis OOC must be recognized as pure OOC regardless of length
+        val split = UserSentimentAnalyzer.splitIcAndOoc(exactUserOocPrompt)
+        assertTrue("Long single-paren setup must be detected as pure OOC", split.isPureOoc)
+        assertEquals("", split.icText)
+        assertTrue(split.oocDirective.contains("Adriana"))
+
+        // 2. Minor/toddler family context must be detected and suppress +18 / NSFW directives
+        assertTrue(
+            "2,5 yaşındaki kızı must activate minor/child family safety guard",
+            SystemPromptBuilder.containsMinorOrChildContext(exactUserOocPrompt)
+        )
+        val bot = createTestBot(aiName = "Aiden", userCharName = "Kullanıcı").copy(isNsfw = true)
+        val settings = UserSettingsEntity(enableNsfw = true, enableFlirty = true, enableDarkRp = true)
+        val builtPrompt = SystemPromptBuilder.build(
+            SystemPromptBuilder.PromptBuildInput(
+                bot = bot,
+                settings = settings,
+                latestUserMessage = exactUserOocPrompt,
+                isPureOocTurn = true,
+                recentSceneText = exactUserOocPrompt
+            )
+        )
+        assertFalse("NSFW +18 directive MUST be suppressed when toddler/child family context exists", builtPrompt.contains("+18 RP"))
+        assertFalse("Physical intimacy wording MUST be suppressed", builtPrompt.contains("fiziksel yakınlığı"))
+        assertTrue("Pure-OOC mandate must instruct model not to return empty/tool-only reply", builtPrompt.contains("SAF OOC SENARYO KURULUMU ZORUNLULUĞU"))
+
+        // 3. OpenAI null content must NOT parse as literal "null"
+        val parsedNull = com.example.data.api.MemoryToolRegistry.parseOpenAiToolCalls(
+            JSONObject("""{"content":null,"tool_calls":[]}""")
+        )
+        assertEquals("", parsedNull.first)
+
+        // 4. ProviderFallbackManager skips native tools on pure-OOC turn & recovers automatically from SAFETY/empty block
+        var attemptCount = 0
+        var receivedToolsOnFirstCall = -1
+        var retryHadSafeMarker = false
+        val mgr = com.example.data.managers.ProviderFallbackManager(
+            customProviderDao = db.customProviderDao(),
+            onLogFallback = {},
+            customExecutor = { _, _, sysPrompt, _, tools ->
+                attemptCount++
+                if (attemptCount == 1) {
+                    receivedToolsOnFirstCall = tools.size
+                    throw IllegalStateException("Gemini API yanıt döndürmedi (candidates boş veya filtre engelledi).")
+                } else {
+                    retryHadSafeMarker = sysPrompt.contains("GÜVENLİ YANIT & OOC KURULUM KURTARMA") && !sysPrompt.contains("+18 RP")
+                    com.example.data.api.ModelResponseResult(
+                        text = "(Kurulum anlaşıldı.) *Sezon başının serin İstanbul akşamında Aiden telefonundaki eleştiri yorumlarını kapatıp küçük Adriana'ya gülümsedi.* \"Hazır mıyız bakalım?\"",
+                        usedProvider = "gemini"
+                    )
+                }
+            }
+        )
+        val userMsg = MessageEntity(
+            id = "ooc_msg_1",
+            botId = bot.id,
+            role = "user",
+            text = exactUserOocPrompt,
+            timestamp = System.currentTimeMillis()
+        )
+        val res = mgr.executeWithFallback(
+            model = "gemini-2.5-flash",
+            settings = settings.copy(selectedProvider = "gemini", customApiKey = "AIzaSyTestKey12345678901234567890123"),
+            systemPrompt = builtPrompt,
+            messages = listOf(userMsg),
+            buildConfigGeminiKey = "",
+            tools = com.example.data.api.MemoryToolRegistry.CENTRAL_TOOLS
+        )
+        assertEquals("Pure-OOC setup must skip native tools on first narrative call", 0, receivedToolsOnFirstCall)
+        assertEquals("Should recover on same provider via safe retry", 2, attemptCount)
+        assertTrue("Retry prompt must apply safe recovery sanitizer", retryHadSafeMarker)
+        assertTrue("Recovered reply must contain visible Turkish narrative", res.text.contains("Adriana"))
     }
 
     private fun resolveProjectFile(relativeFromRepoRoot: String): File {

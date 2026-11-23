@@ -63,6 +63,8 @@ object AppFeatureFlags {
     )
 
     private var prefs: SharedPreferences? = null
+    @Volatile
+    private var appContext: Context? = null
     // In-memory override backing stores so unit tests and pre-init calls behave deterministically
     private val memoryOverrides = ConcurrentHashMap<String, Boolean>()
     private val memoryStringOverrides = ConcurrentHashMap<String, String>()
@@ -106,8 +108,9 @@ object AppFeatureFlags {
     val aiUtilityModels:      StateFlow<Map<String, String>> = _aiUtilityModels.asStateFlow()
 
     fun init(context: Context) {
-        prefs = context.applicationContext
-            .getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val ctx = context.applicationContext ?: context
+        appContext = ctx
+        prefs = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
         memoryOverrides.clear()
         memoryStringOverrides.clear()
         templateOriginBotIdsMem.clear()
@@ -141,7 +144,20 @@ object AppFeatureFlags {
     // ─── Yazma ───────────────────────────────────────────────────────────────
     fun setSseStreaming(v: Boolean)         { set(KEY_SSE_STREAMING, v);           _sseStreaming.value = v }
     fun setMemoryTimeline(v: Boolean)       { set(KEY_MEMORY_TIMELINE, v);         _memoryTimeline.value = v }
-    fun setRoutineNotif(v: Boolean)         { set(KEY_ROUTINE_NOTIF, v);           _routineNotif.value = v }
+    fun setRoutineNotif(v: Boolean, context: Context? = null) {
+        set(KEY_ROUTINE_NOTIF, v)
+        _routineNotif.value = v
+        val ctx = context?.applicationContext ?: appContext
+        if (ctx != null) {
+            runCatching {
+                if (v) {
+                    com.example.work.RoutineNotificationWorker.schedule(ctx)
+                } else {
+                    com.example.work.RoutineNotificationWorker.cancel(ctx)
+                }
+            }
+        }
+    }
     fun setSceneImage(v: Boolean)           { set(KEY_SCENE_IMAGE, v);             _sceneImage.value = v }
     fun setDynamicDifficulty(v: Boolean)    { set(KEY_DYNAMIC_DIFFICULTY, v);      _dynamicDifficulty.value = v }
     fun setMultiBotScene(v: Boolean)        { set(KEY_MULTI_BOT_SCENE, v);         _multiBotScene.value = v }
@@ -293,7 +309,7 @@ object AppFeatureFlags {
             getter = { isMemoryTimelineEnabled }, setter = ::setMemoryTimeline),
         ToggleSpec(KEY_ROUTINE_NOTIF, "Rutin Hatırlatıcıları",
             "Arka planda çalışan günlük rutin bildirimleri.",
-            getter = { isRoutineNotifEnabled }, setter = ::setRoutineNotif),
+            getter = { isRoutineNotifEnabled }, setter = { setRoutineNotif(it) }),
         ToggleSpec(KEY_TOKEN_COUNTER, "Token Sayacı",
             "Her sohbette harcanan token miktarını göster.",
             getter = { isTokenCounterEnabled }, setter = ::setTokenCounter),

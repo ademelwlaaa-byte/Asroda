@@ -19,9 +19,12 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.example.EmochiApplication
+import com.example.R
 import com.example.data.local.AppDatabase
 import com.example.data.local.MessageEntity
 import com.example.data.repository.EmochiRepository
+import kotlinx.coroutines.CancellationException
+import java.util.Calendar
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -47,16 +50,24 @@ class ProactiveMessageWorker(
             val request = PeriodicWorkRequestBuilder<ProactiveMessageWorker>(45, TimeUnit.MINUTES)
                 .setConstraints(constraints)
                 .build()
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
-            )
+            try {
+                WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+                    WORK_NAME,
+                    ExistingPeriodicWorkPolicy.KEEP,
+                    request
+                )
+            } catch (_: IllegalStateException) {}
+        }
+
+        /** Quiet hours: 23:00–08:00 local time — never disturb the user overnight. */
+        fun isQuietHours(hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): Boolean {
+            return hourOfDay >= 23 || hourOfDay < 8
         }
 
         /**
          * Pure eligibility gate (easily unit-testable) preventing infinite 45-min spam loops:
-         * - Skips active bot
+         * - Skips quiet hours (23:00–08:00)
+         * - Skips disabled bots (`proactiveEnabled == false`) and active open chat (`activeBotId`)
          * - Requires at least 1 message and >= IDLE_THRESHOLD_MS since latest message
          * - Blocks consecutive spam: max 1 unanswered assistant message within 12h, never > 2 consecutive assistant messages
          */
@@ -66,8 +77,10 @@ class ProactiveMessageWorker(
             activeBotId: String?,
             botLastMessageTimestamp: Long,
             recentMessages: List<MessageEntity>,
-            nowMs: Long
+            nowMs: Long,
+            currentHourOfDay: Int = 14
         ): Boolean {
+            if (isQuietHours(currentHourOfDay)) return false
             if (!proactiveEnabled) return false
             if (botId == activeBotId) return false
             if (recentMessages.isEmpty()) return false
@@ -105,6 +118,15 @@ class ProactiveMessageWorker(
     }
 
     override suspend fun doWork(): Result {
+        // Sistem #12: Gece rahatsız etmeme koruması (23:00–08:00) ve Android 13+ bildirim izni kontrolü
+        val currentHour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        if (isQuietHours(currentHour)) return Result.success()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(applicationContext, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return Result.success()
+        }
+
         return try {
             val db = AppDatabase.getInstance(applicationContext)
             val repository = EmochiApplication.getSharedRepository(applicationContext)
@@ -123,7 +145,8 @@ class ProactiveMessageWorker(
                         activeBotId = EmochiRepository.activeBotId,
                         botLastMessageTimestamp = bot.lastMessageTimestamp,
                         recentMessages = recentMessages,
-                        nowMs = now
+                        nowMs = now,
+                        currentHourOfDay = currentHour
                     )
                 ) continue
 
@@ -155,15 +178,19 @@ class ProactiveMessageWorker(
                         botName = bot.aiName,
                         messagePreview = replyText.take(80)
                     )
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (e: Exception) {
                     Log.w(TAG, "Proactive reply skipped for bot=${bot.id}: ${e.message}")
                 }
             }
 
             Result.success()
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
             Log.w(TAG, "Proactive worker failed (attempt=$runAttemptCount): ${e.message}")
-            if (runAttemptCount >= 3) Result.failure() else Result.retry()
+            if (runAttemptCount < 2) Result.retry() else Result.success()
         }
     }
 
@@ -199,7 +226,7 @@ Maksimum 2 cümle.
         )
 
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification_emochi)
             .setContentTitle(botName)
             .setContentText(messagePreview)
             .setStyle(NotificationCompat.BigTextStyle().bigText(messagePreview))

@@ -1018,7 +1018,11 @@ fun BotListScreen(
                     "templates" -> {
                         ExploreTabContent(
                             userSettings = userSettings,
+                            existingBots = botList,
+                            searchQuery = searchQuery,
+                            onSearchQueryChange = { searchQuery = it },
                             onImportPresetBot = onImportPresetBot,
+                            onOpenExistingBot = onOpenBot,
                             onOpenAidenMenu = { showAidenStoriesMenu = true },
                             onOpenSettings = { showGlobalSettings = true },
                             lazyListState = templatesListState

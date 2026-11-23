@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MyApplication" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/emochi_bg</item>
+        <item name="android:colorBackground">@color/emochi_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/emochi_splash_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_transparent</item>
+        <item name="android:windowSplashScreenAnimationDuration">0</item>
+    </style>
+</resources>

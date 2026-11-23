@@ -427,7 +427,21 @@ object MemoryToolRegistry {
 
     // OpenAI / Groq Response Parser
     fun parseOpenAiToolCalls(messageObj: JSONObject): Pair<String, List<ParsedMemoryToolCall>> {
-        val text = messageObj.optString("content", "") ?: ""
+        val rawContentObj = if (messageObj.isNull("content")) null else messageObj.opt("content")
+        val text = when (rawContentObj) {
+            null -> ""
+            is JSONArray -> buildString {
+                for (i in 0 until rawContentObj.length()) {
+                    val part = rawContentObj.optJSONObject(i)
+                    val partText = part?.optString("text", "").orEmpty()
+                    if (partText.isNotBlank()) {
+                        if (isNotEmpty()) append("\n")
+                        append(partText)
+                    }
+                }
+            }
+            else -> rawContentObj.toString().let { if (it.equals("null", ignoreCase = true)) "" else it }
+        }
         val toolCalls = mutableListOf<ParsedMemoryToolCall>()
 
         val toolCallsArray = messageObj.optJSONArray("tool_calls")

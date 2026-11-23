@@ -1,6 +1,8 @@
 package com.example.ui.screens
 
 import android.content.Context
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
@@ -675,36 +677,203 @@ fun AidenStoriesModal(
         map
     }
 
-    AidenStoriesModalContent(
-        aidenPresets = aidenPresets,
-        startedPresetIds = startedPresetToBotId.keys,
-        onDismiss = onDismiss,
-        onSelectPreset = { preset ->
-            val existingBotId = startedPresetToBotId[preset.id]
-            val existingBotInList = if (existingBotId != null) {
-                existingBots.firstOrNull { it.id == existingBotId }
-            } else {
-                null
-            }
+    var isLaunchingPreset by remember { mutableStateOf(false) }
+    var existingChoicePair by remember { mutableStateOf<Pair<BotEntity, BotEntity>?>(null) }
 
-            if (existingBotInList != null && onOpenExistingBot != null) {
-                // Resume directly from where the user left off!
-                onOpenExistingBot(existingBotInList.id)
-                onDismiss()
-            } else {
-                val newBotId = UUID.randomUUID().toString()
-                prefs.edit().putString("started_bot_${preset.id}", newBotId).apply()
-                startedIdsVersion++
-                val newBot = preset.copy(
-                    id = newBotId,
-                    isPublic = false,
-                    isTemplate = false
+    fun launchFreshCopy(preset: BotEntity) {
+        if (isLaunchingPreset) return
+        isLaunchingPreset = true
+        val newBotId = UUID.randomUUID().toString()
+        prefs.edit().putString("started_bot_${preset.id}", newBotId).apply()
+        startedIdsVersion++
+        val newBot = preset.copy(
+            id = newBotId,
+            isPublic = false,
+            isTemplate = false
+        )
+        onImportPresetBot?.invoke(newBot)
+        onDismiss()
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AidenStoriesModalContent(
+            aidenPresets = aidenPresets,
+            startedPresetIds = startedPresetToBotId.keys,
+            onDismiss = onDismiss,
+            onSelectPreset = { preset ->
+                if (isLaunchingPreset) return@AidenStoriesModalContent
+                val existingBotId = startedPresetToBotId[preset.id]
+                val existingBotInList = if (existingBotId != null) {
+                    existingBots.firstOrNull { it.id == existingBotId }
+                } else {
+                    null
+                }
+
+                if (existingBotInList != null && onOpenExistingBot != null) {
+                    existingChoicePair = preset to existingBotInList
+                } else {
+                    launchFreshCopy(preset)
+                }
+            }
+        )
+
+        val choice = existingChoicePair
+        if (choice != null) {
+            val (chosenPreset, existingBot) = choice
+            AidenExistingChatChoiceOverlay(
+                title = chosenPreset.universeName.ifBlank { chosenPreset.aiName },
+                isEnglish = isEnglish,
+                onDismiss = { existingChoicePair = null },
+                onContinueExisting = {
+                    if (!isLaunchingPreset) {
+                        isLaunchingPreset = true
+                        existingChoicePair = null
+                        onOpenExistingBot?.invoke(existingBot.id)
+                        onDismiss()
+                    }
+                },
+                onStartFreshCopy = {
+                    existingChoicePair = null
+                    launchFreshCopy(chosenPreset)
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AidenCoilCoverImage(
+    drawableResId: Int,
+    contentDescription: String?,
+    contentScale: ContentScale,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
+    val request = remember(context, drawableResId) {
+        ImageRequest.Builder(context)
+            .data(drawableResId)
+            .allowRgb565(true)
+            .crossfade(220)
+            .build()
+    }
+    AsyncImage(
+        model = request,
+        contentDescription = contentDescription,
+        contentScale = contentScale,
+        modifier = modifier
+    )
+}
+
+@Composable
+private fun AidenExistingChatChoiceOverlay(
+    title: String,
+    isEnglish: Boolean,
+    onDismiss: () -> Unit,
+    onContinueExisting: () -> Unit,
+    onStartFreshCopy: () -> Unit
+) {
+    val cardShape = RoundedCornerShape(26.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0x9906020E))
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onDismiss
+            )
+            .testTag("aiden_existing_chat_choice_backdrop"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth(0.86f)
+                .widthIn(max = 360.dp)
+                .clip(cardShape)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color(0xF51D0A38), Color(0xF5110622), Color(0xF51A0933))
+                    )
                 )
-                onImportPresetBot?.invoke(newBot)
-                onDismiss()
+                .border(
+                    width = 1.25.dp,
+                    brush = Brush.linearGradient(
+                        listOf(Color(0xFFF5D0FE), Color(0xFFC084FC), Color(0xFF7E22CE))
+                    ),
+                    shape = cardShape
+                )
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = {}
+                )
+                .padding(horizontal = 20.dp, vertical = 20.dp)
+                .testTag("aiden_existing_chat_choice_dialog"),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "✦ $title",
+                color = Color(0xFFF5D0FE),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = if (isEnglish) {
+                    "You already have an active chat for this story. How would you like to proceed?"
+                } else {
+                    "Bu hikâyede zaten aktif bir sohbetin var. Nasıl devam etmek istersin?"
+                },
+                color = Color(0xFFE9D5FF),
+                fontSize = 13.sp,
+                lineHeight = 18.sp
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(Color(0xFF7E22CE), Color(0xFFA855F7))
+                        )
+                    )
+                    .border(1.dp, Color(0xFFF5D0FE).copy(alpha = 0.85f), RoundedCornerShape(14.dp))
+                    .clickable(onClick = onContinueExisting)
+                    .testTag("aiden_choice_continue_existing"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isEnglish) "Continue Existing Chat" else "Mevcut Sohbete Devam Et",
+                    color = Color.White,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0x552E1065))
+                    .border(1.dp, Color(0xFFC084FC).copy(alpha = 0.72f), RoundedCornerShape(14.dp))
+                    .clickable(onClick = onStartFreshCopy)
+                    .testTag("aiden_choice_start_fresh_copy"),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (isEnglish) "Start Fresh Copy" else "Yeni Temiz Kopya Başlat",
+                    color = Color(0xFFF3E8FF),
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
-    )
+    }
 }
 
 @Composable
@@ -893,7 +1062,7 @@ fun AidenStoriesModalContent(
             contentPadding = PaddingValues(top = 0.dp, bottom = 84.dp)
         ) {
             // 1. Unified Header + Carousel Section with Lightning Flash, Breathing "Stories" Logo & 3D Pager
-            item(key = "aiden_modal_top_header_and_carousel") {
+            item(key = "aiden_modal_top_header_and_carousel", contentType = "aiden_header_carousel") {
                 Box(modifier = Modifier.fillMaxWidth()) {
                     AidenTopHeaderBanner(
                         glowPulse = glowPulse,
@@ -928,7 +1097,7 @@ fun AidenStoriesModalContent(
             }
 
             // 2. Section 1 Header: "✦ ÖNE ÇIKAN EVREN" + "5 Hikaye Mevcut"
-            item(key = "aiden_modal_featured_header") {
+            item(key = "aiden_modal_featured_header", contentType = "aiden_section_header") {
                 Spacer(modifier = Modifier.height(11.dp))
                 AidenFeaturedSectionHeader(
                     storyCount = AIDEN_CATALOG_SPECS.size,
@@ -938,7 +1107,7 @@ fun AidenStoriesModalContent(
             }
 
             // 3. Featured Main Universe Card ("ANA EVREN - Aiden Blackwood - 21 Yaş | Galatasaray")
-            item(key = "aiden_modal_featured_card") {
+            item(key = "aiden_modal_featured_card", contentType = "aiden_featured_card") {
                 AidenFeaturedUniverseCard(
                     spec = mainFeaturedSpec,
                     isStarted = startedPresetIds.contains(mainFeaturedSpec.presetId),
@@ -956,7 +1125,7 @@ fun AidenStoriesModalContent(
             }
 
             // 4. Section 2 Header: "☰ TÜM AIDEN HİKAYELERİ" + "🎲 Rastgele" Selector Button
-            item(key = "aiden_modal_all_stories_header") {
+            item(key = "aiden_modal_all_stories_header", contentType = "aiden_section_header") {
                 Spacer(modifier = Modifier.height(16.dp))
                 AidenAllStoriesSectionHeader(
                     glowPulse = glowPulse,
@@ -976,7 +1145,8 @@ fun AidenStoriesModalContent(
             //    Thematic Glowing Category Badges, and "● Devam Ediyor" / "▶ Devam Et" Smart State
             itemsIndexed(
                 items = AIDEN_CATALOG_SPECS,
-                key = { _, spec -> spec.presetId }
+                key = { _, spec -> spec.presetId },
+                contentType = { _, _ -> "aiden_story_row" }
             ) { index, spec ->
                 var itemVisible by remember(spec.presetId) { mutableStateOf(false) }
                 LaunchedEffect(spec.presetId) {
@@ -1237,20 +1407,37 @@ private fun AidenDynamicAmbientBackground(
     reactiveEmberColor: Color,
     universeWeights: FloatArray
 ) {
-    Box(modifier = Modifier.fillMaxSize()) {
-        // Layer 0: Base Dark Night-Indigo Cosmic Background with Organic Purple ("morumsu") Smoke Wisps
-        Image(
-            painter = painterResource(id = R.drawable.img_aiden_modal_true_bg_v12),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    scaleX = 1.04f
-                    scaleY = 1.04f
-                    translationY = (-scrollParallaxPx * 0.14f).coerceIn(-50f, 50f)
-                }
-        )
+    val frostedBgState = com.example.util.rememberFrostedBackdrop(
+        key = "aiden_modal_bg_${R.drawable.img_aiden_modal_true_bg_v12}",
+        drawableResId = R.drawable.img_aiden_modal_true_bg_v12,
+        targetWidth = 420,
+        maxHeight = 960,
+        blurRadius = 1,
+        blurPasses = 1,
+        violetShiftWarmPixels = false,
+        outputRgb565 = true
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(com.example.util.FrostedBackdropCache.fallbackDarkGradientBrush)
+    ) {
+        // Layer 0: Base Dark Night-Indigo Cosmic Background via centralized FrostedBackdropCache (Dispatchers.Default, RGB_565)
+        val cachedBg = frostedBgState.value
+        if (cachedBg != null) {
+            Image(
+                bitmap = cachedBg,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = 1.04f
+                        scaleY = 1.04f
+                        translationY = (-scrollParallaxPx * 0.14f).coerceIn(-50f, 50f)
+                    }
+            )
+        }
 
         // Layer 1, 2 & 3: Real-Time Universe-Synchronized Nebula, Veins & Multi-Physics Particles
         Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1630,8 +1817,8 @@ private fun AidenTopHeaderBanner(
             .fillMaxWidth()
             .aspectRatio(841f / 260f)
     ) {
-        Image(
-            painter = painterResource(id = R.drawable.img_aiden_modal_header_v12),
+        AidenCoilCoverImage(
+            drawableResId = R.drawable.img_aiden_modal_header_v12,
             contentDescription = "Aiden Blackwood Stories",
             contentScale = ContentScale.FillBounds,
             modifier = Modifier
@@ -1962,8 +2149,8 @@ private fun AidenHeroPeekingCarousel(
                         shape = RoundedCornerShape(18.dp)
                     )
             ) {
-                Image(
-                    painter = painterResource(id = bgPeekSpec.carouselDrawableRes),
+                AidenCoilCoverImage(
+                    drawableResId = bgPeekSpec.carouselDrawableRes,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -2070,8 +2257,8 @@ private fun AidenHeroPeekingCarousel(
                             }
                         )
                 ) {
-                    Image(
-                        painter = painterResource(id = spec.carouselDrawableRes),
+                    AidenCoilCoverImage(
+                        drawableResId = spec.carouselDrawableRes,
                         contentDescription = spec.carouselTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
@@ -2747,8 +2934,8 @@ private fun AidenFeaturedUniverseCard(
         }
 
         // 2. Refined v16 Photo (Left) & Full-Height Gothic Castle Spires/Clouds (Right)
-        Image(
-            painter = painterResource(id = R.drawable.img_aiden_modal_featured_clean_v16),
+        AidenCoilCoverImage(
+            drawableResId = R.drawable.img_aiden_modal_featured_clean_v16,
             contentDescription = "Aiden Blackwood",
             contentScale = ContentScale.FillBounds,
             modifier = Modifier.matchParentSize()
@@ -3433,8 +3620,8 @@ private fun AidenWideStoryRowCard(
                         shape = thumbShape
                     )
             ) {
-                Image(
-                    painter = painterResource(id = spec.thumbDrawableRes),
+                AidenCoilCoverImage(
+                    drawableResId = spec.thumbDrawableRes,
                     contentDescription = spec.title,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -3880,8 +4067,8 @@ private fun AidenFloatingStoryPreviewPopoverHost(
                                 shape = RoundedCornerShape(16.dp)
                             )
                     ) {
-                        Image(
-                            painter = painterResource(id = spec.thumbDrawableRes),
+                        AidenCoilCoverImage(
+                            drawableResId = spec.thumbDrawableRes,
                             contentDescription = spec.fullTitle,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()

@@ -199,54 +199,72 @@ object EmotionEngine {
     fun applyNaturalEmotionalDecay(
         currentState: EmotionState,
         storyDaysSkipped: Int,
-        regulationCapacity: Int = 50
-    ): EmotionState = applyNaturalEmotionalDecayWithNote(currentState, storyDaysSkipped, regulationCapacity).state
+        regulationCapacity: Int = 50,
+        baseline: EmotionState? = null
+    ): EmotionState = applyNaturalEmotionalDecayWithNote(currentState, storyDaysSkipped, regulationCapacity, baseline).state
 
     fun applyNaturalEmotionalDecayWithNote(
         currentState: EmotionState,
         storyDaysSkipped: Int,
-        regulationCapacity: Int = 50
+        regulationCapacity: Int = 50,
+        baseline: EmotionState? = null
     ): DecayResult {
         if (storyDaysSkipped <= 0) return DecayResult(currentState, "")
 
-        // Düzenleme kapasitesi sönüm hızını etkiler
+        // Düzenleme kapasitesi sönüm hızını belirler (yüksek kapasite çok daha hızlı soğur, düşük kapasite yavaş)
+        val clampedCap = regulationCapacity.coerceIn(0, 100)
         val capMult = when {
-            regulationCapacity >= 60 -> 1.20  // hızlı sönüm
-            regulationCapacity <= 30 -> 0.85  // yavaş sönüm
-            else                     -> 1.00
+            clampedCap >= 60 -> 1.25
+            clampedCap <= 30 -> 0.70
+            else             -> 0.90 + ((clampedCap - 30) / 30.0) * 0.25
         }
 
-        var anger = currentState.primaryEmotions.anger
-        var resentment = currentState.relationshipAxes.resentmentScore
-        var residue = currentState.emotionalResidue
-        var anticipation = currentState.primaryEmotions.anticipation
+        val baseAnger = (baseline?.primaryEmotions?.anger ?: 0).coerceIn(0, 100)
+        val baseFear = (baseline?.primaryEmotions?.fear ?: 0).coerceIn(0, 100)
+        val baseSurprise = (baseline?.primaryEmotions?.surprise ?: 0).coerceIn(0, 100)
+        val baseSadness = (baseline?.primaryEmotions?.sadness ?: 0).coerceIn(0, 100)
+        val baseResentment = (baseline?.relationshipAxes?.resentmentScore ?: 0).coerceIn(0, 100)
+
+        fun decayToward(currentVal: Int, targetVal: Int, baseRate: Double): Int {
+            if (currentVal <= targetVal) return currentVal.coerceIn(0, 100)
+            val diff = currentVal - targetVal
+            val step = (diff * baseRate * capMult).toInt().coerceAtLeast(if (diff > 0 && baseRate > 0.0) 1 else 0)
+            return (currentVal - step).coerceIn(targetVal, 100)
+        }
+
+        var anger = currentState.primaryEmotions.anger.coerceIn(0, 100)
+        var fear = currentState.primaryEmotions.fear.coerceIn(0, 100)
+        var surprise = currentState.primaryEmotions.surprise.coerceIn(0, 100)
+        var sadness = currentState.primaryEmotions.sadness.coerceIn(0, 100)
+        var resentment = currentState.relationshipAxes.resentmentScore.coerceIn(0, 100)
+        var residue = currentState.emotionalResidue.coerceAtLeast(0)
+        var anticipation = currentState.primaryEmotions.anticipation.coerceIn(0, 100)
+        var trust = currentState.primaryEmotions.trust.coerceIn(0, 100)
+        var affection = currentState.relationshipAxes.affectionScore.coerceIn(0, 100)
 
         val angerBefore = anger
         val resentmentBefore = resentment
 
-        // 1. Öfke sönümü (hikâye günü bazlı)
-        if (anger > 0) {
-            val baseRate = when {
-                storyDaysSkipped >= 7  -> 0.85
-                storyDaysSkipped >= 3  -> 0.60
-                storyDaysSkipped >= 1  -> 0.35
-                else                   -> 0.15
-            }
-            val angerDecay = (anger * baseRate * capMult).toInt()
-            anger = (anger - angerDecay).coerceAtLeast(0)
+        // 1. Anlık/geçici duyguların (öfke, korku/panik, ani şaşkınlık, hüzün) baz çizgisine sönümü
+        val transientRate = when {
+            storyDaysSkipped >= 7  -> 0.85
+            storyDaysSkipped >= 3  -> 0.60
+            storyDaysSkipped >= 1  -> 0.35
+            else                   -> 0.15
         }
+        anger = decayToward(anger, baseAnger, transientRate)
+        fear = decayToward(fear, baseFear, transientRate)
+        surprise = decayToward(surprise, baseSurprise, (transientRate * 1.15).coerceAtMost(0.95))
+        sadness = decayToward(sadness, baseSadness, transientRate * 0.70)
 
         // 2. Kırgınlık sönümü (öfkeden daha yavaş, daha uzun süreli)
-        if (resentment > 0) {
-            val baseRate = when {
-                storyDaysSkipped >= 14 -> 0.70
-                storyDaysSkipped >= 7  -> 0.45
-                storyDaysSkipped >= 3  -> 0.25
-                else                   -> 0.10
-            }
-            val resDecay = (resentment * baseRate * capMult).toInt()
-            resentment = (resentment - resDecay).coerceAtLeast(0)
+        val resentmentRate = when {
+            storyDaysSkipped >= 14 -> 0.70
+            storyDaysSkipped >= 7  -> 0.45
+            storyDaysSkipped >= 3  -> 0.25
+            else                   -> 0.10
         }
+        resentment = decayToward(resentment, baseResentment, resentmentRate)
 
         // 3. Duygusal artık (residue) sönümü
         if (residue > 0) {
@@ -254,20 +272,33 @@ object EmotionEngine {
             residue = (residue - residueDecay).coerceAtLeast(0)
         }
 
-        // 4. Özlem artışı: yakınlık ≥ 40 ve ≥ 3 hikâye günü geçmişse
+        // 4. Uzun vadeli bağ eksenleri (trust, affection) kısa atlamalarda ASLA sıfırlanmaz/bozulmaz;
+        //    yalnızca ≥14 hikâye günü süren çok uzun kopukluklarda çok hafif mesafelenme (-1..-3) uygula.
+        if (storyDaysSkipped >= 14) {
+            val mildDistancing = (storyDaysSkipped / 14).coerceIn(1, 3)
+            trust = (trust - mildDistancing).coerceIn(0, 100)
+            affection = (affection - mildDistancing).coerceIn(0, 100)
+        }
+
+        // 5. Özlem artışı: yakınlık ≥ 40 ve ≥ 3 hikâye günü geçmişse
         var longingAdded = 0
-        if (currentState.affection >= 40 && storyDaysSkipped >= 3) {
+        if (affection >= 40 && storyDaysSkipped >= 3) {
             longingAdded = minOf(25, storyDaysSkipped * 3)
             anticipation = (anticipation + longingAdded).coerceAtMost(90)
         }
 
         val updatedState = currentState.copy(
             primaryEmotions = currentState.primaryEmotions.copy(
-                anger = anger,
-                anticipation = anticipation
+                anger = anger.coerceIn(0, 100),
+                fear = fear.coerceIn(0, 100),
+                surprise = surprise.coerceIn(0, 100),
+                sadness = sadness.coerceIn(0, 100),
+                anticipation = anticipation.coerceIn(0, 100),
+                trust = trust.coerceIn(0, 100)
             ),
             relationshipAxes = currentState.relationshipAxes.copy(
-                resentmentScore = resentment
+                affectionScore = affection.coerceIn(0, 100),
+                resentmentScore = resentment.coerceIn(0, 100)
             ),
             emotionalResidue = residue
         )
@@ -279,6 +310,7 @@ object EmotionEngine {
         if (angerDrop >= 5) parts.add("öfke azaldı (${angerBefore}→${anger})")
         if (resDrop >= 5) parts.add("kırgınlık yumuşadı (${resentmentBefore}→${resentment})")
         if (longingAdded >= 5) parts.add("özlem arttı (+$longingAdded)")
+        if (storyDaysSkipped >= 14) parts.add("uzun ayrılık hafif mesafe oluşturdu")
 
         val note = if (parts.isNotEmpty()) {
             "Aradan $storyDaysSkipped gün geçti: ${parts.joinToString(", ")}."

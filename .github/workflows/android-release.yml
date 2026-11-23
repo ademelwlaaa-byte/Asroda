@@ -14,6 +14,10 @@ on:
         description: "Release etiketi (boş bırakılırsa build.gradle.kts versionName kullanılır, örn. v3.1)"
         type: string
         required: false
+      version_code_override:
+        description: "İsteğe bağlı yüksek versionCode değeri (boş bırakılırsa build.gradle.kts kullanılır)"
+        type: string
+        required: false
 
 permissions:
   contents: write
@@ -97,6 +101,32 @@ jobs:
           echo "version_code=$VER_CODE" >> "$GITHUB_OUTPUT"
           echo "Detected Asroda v${VER_NAME} (versionCode=${VER_CODE})"
 
+      - name: Verify Resource Integrity (PNG/WebP Headers & Zero Corruption)
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          res_root = "app/src/main/res"
+          checked = 0
+          for root, _, files in os.walk(res_root):
+              for fn in files:
+                  lower = fn.lower()
+                  if not (lower.endswith(".png") or lower.endswith(".webp")):
+                      continue
+                  path = os.path.join(root, fn)
+                  data = open(path, "rb").read()
+                  if b"\xef\xbf\xbd" in data:
+                      print(f"::error::Corrupted UTF-8 bytes (EF BF BD) found in {path}")
+                      sys.exit(1)
+                  if lower.endswith(".png") and not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                      print(f"::error::Invalid PNG header in {path}")
+                      sys.exit(1)
+                  if lower.endswith(".webp") and not (len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"):
+                      print(f"::error::Invalid WebP header in {path}")
+                      sys.exit(1)
+                  checked += 1
+          print(f"Resource integrity verified cleanly across {checked} PNG/WebP assets.")
+          PY
+
       - name: Run Mandatory Unit & Regression Tests (CI Quality Gate)
         run: |
           ./gradlew testDebugUnitTest --no-daemon --stacktrace
@@ -115,11 +145,18 @@ jobs:
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          VERSION_CODE_OVERRIDE: ${{ inputs.version_code_override }}
         run: |
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace
+          EXTRA_ARGS="-PrequireReleaseKeystore=true"
+          if [ -n "$VERSION_CODE_OVERRIDE" ]; then
+            EXTRA_ARGS="$EXTRA_ARGS -PversionCodeOverride=$VERSION_CODE_OVERRIDE"
+          fi
+          ./gradlew :app:assembleRelease $EXTRA_ARGS --no-daemon --stacktrace
 
-      - name: Verify APK Signature (V1 + V2 + V3) & Prepare Output Name
+      - name: Verify APK Signature (V1 + V2 + V3 + Cert SHA-256) & Prepare Output Name
         id: apk
+        env:
+          EXPECTED_CERT_SHA256: ${{ secrets.EXPECTED_CERT_SHA256 || vars.EXPECTED_CERT_SHA256 }}
         run: |
           SRC_APK="app/build/outputs/apk/release/app-release.apk"
           OUT_NAME="Asroda-v${{ steps.version.outputs.version_name }}-release.apk"
@@ -128,13 +165,50 @@ jobs:
           cp "$SRC_APK" "$OUT_DIR/$OUT_NAME"
 
           APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
-          "$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$OUT_NAME"
+          AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
 
+          VERIFY_OUT=$("$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$OUT_NAME")
+          echo "$VERIFY_OUT"
+
+          echo "$VERIFY_OUT" | grep -q "Verified using v1 scheme (JAR signing): true" || { echo "::error::V1 signature missing!"; exit 1; }
+          echo "$VERIFY_OUT" | grep -q "Verified using v2 scheme (APK Signature Scheme v2): true" || { echo "::error::V2 signature missing!"; exit 1; }
+          echo "$VERIFY_OUT" | grep -q "Verified using v3 scheme (APK Signature Scheme v3): true" || { echo "::error::V3 signature missing!"; exit 1; }
+
+          CERT_SHA256=$(echo "$VERIFY_OUT" | grep -m1 "Signer #1 certificate SHA-256 digest:" | awk '{print $NF}' | tr '[:upper:]' '[:lower:]' | tr -d ':')
+          if [ -z "$CERT_SHA256" ]; then
+            echo "::error::Could not extract signer certificate SHA-256 digest!"
+            exit 1
+          fi
+          if [ -n "$EXPECTED_CERT_SHA256" ]; then
+            NORM_EXPECTED=$(echo "$EXPECTED_CERT_SHA256" | tr '[:upper:]' '[:lower:]' | tr -d ': ')
+            if [ "$CERT_SHA256" != "$NORM_EXPECTED" ]; then
+              echo "::error::Certificate SHA-256 mismatch! Expected=$NORM_EXPECTED Actual=$CERT_SHA256"
+              exit 1
+            fi
+            echo "Certificate SHA-256 matched EXPECTED_CERT_SHA256 cleanly."
+          fi
+
+          BADGING=$("$AAPT2" dump badging "$OUT_DIR/$OUT_NAME" | head -n 1)
+          APK_VER_CODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+" || echo "${{ steps.version.outputs.version_code }}")
+          APK_VER_NAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+" || echo "${{ steps.version.outputs.version_name }}")
+          APK_SHA256=$(sha256sum "$OUT_DIR/$OUT_NAME" | awk '{print $1}')
           APK_SIZE=$(du -h "$OUT_DIR/$OUT_NAME" | cut -f1)
+
           echo "apk_path=$OUT_DIR/$OUT_NAME" >> "$GITHUB_OUTPUT"
           echo "apk_name=$OUT_NAME" >> "$GITHUB_OUTPUT"
           echo "apk_size=$APK_SIZE" >> "$GITHUB_OUTPUT"
-          echo "Signed Release APK Ready: $OUT_NAME ($APK_SIZE)"
+          echo "Signed Release APK Ready: $OUT_NAME ($APK_SIZE, versionCode=$APK_VER_CODE)"
+
+          {
+            echo "## Signed Release APK Verification"
+            echo "| Field | Value |"
+            echo "| :--- | :--- |"
+            echo "| **APK File** | \`$OUT_NAME\` ($APK_SIZE) |"
+            echo "| **versionName / versionCode** | \`$APK_VER_NAME\` / \`$APK_VER_CODE\` |"
+            echo "| **Signing Schemes** | V1: ✅ · V2: ✅ · V3: ✅ |"
+            echo "| **Signer Cert SHA-256** | \`$CERT_SHA256\` |"
+            echo "| **APK File SHA-256** | \`$APK_SHA256\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Clean Up Temporary Keystore
         if: always()

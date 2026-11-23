@@ -109,7 +109,7 @@ object BookChoiceParser {
         for (m in matches) {
             val inner = m.groupValues.getOrNull(1)?.trim().orEmpty()
             if (inner.isBlank()) continue
-            val lower = inner.lowercase()
+            val lower = inner.lowercase(java.util.Locale("tr", "TR"))
 
             when {
                 lower.startsWith("kilitli:") || lower.startsWith("locked:") || lower.startsWith("koşul:") || lower.startsWith("şart:") -> {

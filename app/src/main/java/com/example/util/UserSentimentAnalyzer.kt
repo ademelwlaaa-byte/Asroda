@@ -105,9 +105,9 @@ object UserSentimentAnalyzer {
     )
 
     private val RP_ACTION_REGEX = Regex("""\*[^*]{1,400}\*""")
-    private val OOC_DOUBLE_PAREN_REGEX = Regex("""\(\(([^)]{1,300})\)\)""")
-    private val OOC_BRACKET_REGEX = Regex("""(?i)\[\s*OOC\s*:?\s*([^\]]{1,300})\]""")
-    private val OOC_PAREN_REGEX = Regex("""(?i)\(\s*OOC\s*:?\s*([^)]{1,300})\)""")
+    private val OOC_DOUBLE_PAREN_REGEX = Regex("""(?s)\(\((.+?)\)\)""")
+    private val OOC_BRACKET_REGEX = Regex("""(?is)\[\s*OOC\s*:?\s*([^\]]{1,4000})\]""")
+    private val OOC_PAREN_REGEX = Regex("""(?is)\(\s*OOC\s*:?\s*([^)]{1,4000})\)""")
     private val MULTI_EXCL_REGEX = Regex("""!{2,}""")
     private val TRIPLE_EXCL_REGEX = Regex("""!{3,}""")
     private val TURKISH_NEG_VERB_SUFFIX = Regex("""(?:mıyorum|miyorum|muyorum|müyorum|madım|medim|mıyor|miyor|muyor|müyor|mam|mem|maz|mez)$""")
@@ -119,11 +119,43 @@ object UserSentimentAnalyzer {
     )
 
     /**
-     * Separates Out-Of-Character directives (((...)), [OOC: ...], (OOC: ...))
-     * from In-Character prose/dialogue.
+     * Returns true when the ENTIRE trimmed message is enclosed in a single balanced outer `(...)` pair
+     * (the exact OOC director format taught in Emochi's system prompt).
+     */
+    private fun isSingleOuterParenthesisBlock(trimmed: String): Boolean {
+        if (trimmed.length < 3 || !trimmed.startsWith('(') || !trimmed.endsWith(')')) return false
+        var depth = 0
+        for (i in trimmed.indices) {
+            when (trimmed[i]) {
+                '(' -> depth++
+                ')' -> {
+                    depth--
+                    if (depth == 0 && i < trimmed.lastIndex) return false
+                    if (depth < 0) return false
+                }
+            }
+        }
+        return depth == 0
+    }
+
+    /**
+     * Separates Out-Of-Character directives (((...)), [OOC: ...], (OOC: ...),
+     * and full-message single-parenthesis (...) director notes) from In-Character prose/dialogue.
      */
     fun splitIcAndOoc(rawText: String): OocSplit {
         if (rawText.isBlank()) return OocSplit("", "", false)
+        val trimmed = rawText.trim()
+        if (isSingleOuterParenthesisBlock(trimmed) && !trimmed.startsWith("((")) {
+            val inner = trimmed.substring(1, trimmed.length - 1).trim()
+            if (inner.isNotBlank()) {
+                return OocSplit(
+                    icText = "",
+                    oocDirective = inner,
+                    isPureOoc = true
+                )
+            }
+        }
+
         val oocParts = mutableListOf<String>()
         var remaining = rawText
 
@@ -513,7 +545,7 @@ JSON ŞEMASI:
         if (result.subtext.isNotBlank() && !result.isOocMeta) {
             parts.add("[KULLANICI ALT METNİ]: ${result.subtext.replace("\n", " ").trim().take(160)}")
         }
-        if (result.oocDirective.isNotBlank()) {
+        if (result.oocDirective.isNotBlank() && result.oocDirective.length <= 200) {
             parts.add("[KULLANICI OOC SAHNE TEMPO TERCİHİ]: ${result.oocDirective.replace("\n", " ").trim().take(160)}")
         }
         return if (parts.isEmpty()) "" else "\n" + parts.joinToString("\n")

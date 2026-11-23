@@ -86,6 +86,11 @@ class EmochiViewModel @JvmOverloads constructor(
     private val _utilityModelSelectionMessage = MutableStateFlow<String?>(null)
     val utilityModelSelectionMessage: StateFlow<String?> = _utilityModelSelectionMessage.asStateFlow()
 
+    // System #6: Double-tap idempotency guard for Aiden Stories & Templates creation
+    private val templateCreationLock = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val _isCreatingFromTemplate = MutableStateFlow(false)
+    val isCreatingFromTemplate: StateFlow<Boolean> = _isCreatingFromTemplate.asStateFlow()
+
     fun clearUtilityModelSelectionMessage() {
         _utilityModelSelectionMessage.value = null
     }
@@ -1353,33 +1358,16 @@ class EmochiViewModel @JvmOverloads constructor(
         }
     }
 
-    fun createPresetBot(preset: BotEntity) {
+    fun createPresetBot(preset: BotEntity): Boolean {
+        if (!templateCreationLock.compareAndSet(false, true)) {
+            return false
+        }
+        _isCreatingFromTemplate.value = true
         stopSpeaking()
         _errorMessage.value = null
 
-        val targetId = if (
-            preset.id == "preset_aiden_mcu_cosmic" ||
-            (preset.id.isNotBlank() && !preset.id.startsWith("preset_"))
-        ) {
-            preset.id
-        } else {
-            UUID.randomUUID().toString()
-        }
-        val now = System.currentTimeMillis()
-        val botToSave = preset.copy(
-            id = targetId,
-            isPublic = false,
-            isTemplate = false,
-            totalPromptTokens = 0L,
-            totalCandidateTokens = 0L,
-            needsSummarization = false,
-            storyNotes = "",
-            memoryNotes = "",
-            emotionState = """{"mood":"nötr","intensity":5,"affection":50,"trust":50,"tension":10}""",
-            previousEmotionState = """{"mood":"nötr","intensity":5,"affection":50,"trust":50,"tension":10}""",
-            worldAtmosphere = """{"mood":"sakin","intensity":5,"currentEvent":""}""",
-            updatedAt = now
-        )
+        val (botToSave, _) = repository.prepareBotFromTemplate(preset)
+        val now = botToSave.updatedAt
         // U1: Permanently mark template/preset-origin bots so they can NEVER be published as public
         AppFeatureFlags.markTemplateOriginBot(botToSave.id)
         val initialOpeningMsg = MessageEntity(
@@ -1397,12 +1385,14 @@ class EmochiViewModel @JvmOverloads constructor(
         _uiState.value = UiState.Chat(botToSave.id)
 
         viewModelScope.launch {
-            repository.saveBot(botToSave)
-            val existingMsgs = repository.getMessageListForBot(botToSave.id)
-            if (existingMsgs.isEmpty()) {
-                repository.saveMessage(initialOpeningMsg)
+            try {
+                repository.createBotFromTemplateAtomic(preset = preset, targetId = botToSave.id)
+            } finally {
+                _isCreatingFromTemplate.value = false
+                templateCreationLock.set(false)
             }
         }
+        return true
     }
 
     fun updateBotProfile(updatedBot: BotEntity) {

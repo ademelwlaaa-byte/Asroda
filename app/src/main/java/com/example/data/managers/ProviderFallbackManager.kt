@@ -259,6 +259,23 @@ class ProviderFallbackManager(
 
                 var lastError: Exception? = null
                 var lastRefusalResult: ModelResponseResult? = null
+                val latestUserText = messages.lastOrNull { it.role == "user" }?.text.orEmpty()
+                val isPureOocTurn = !isUtility && com.example.util.UserSentimentAnalyzer.isPureOocMessage(latestUserText)
+                var activeSystemPrompt = systemPrompt
+
+                fun isSafetyOrEmptyException(message: String?): Boolean {
+                    val m = message.orEmpty().lowercase(Locale.ROOT)
+                    return m.contains("candidates boş") ||
+                        m.contains("filtre engelledi") ||
+                        m.contains("safety") ||
+                        m.contains("prohibited_content") ||
+                        m.contains("blocklist") ||
+                        m.contains("content_filter") ||
+                        m.contains("içerik filtresi") ||
+                        m.contains("choices boş") ||
+                        m.contains("boş yanıt") ||
+                        m.contains("malformed_function_call")
+                }
 
                 for ((idx, providerKey) in boundedCandidates.withIndex()) {
                     val layer = idx + 1
@@ -296,10 +313,13 @@ class ProviderFallbackManager(
 
                     val startMs = System.currentTimeMillis()
                     try {
-                        suspend fun invokeOnce(requestTools: List<MemoryToolDefinition>): ModelResponseResult {
+                        suspend fun invokeOnce(
+                            requestTools: List<MemoryToolDefinition>,
+                            promptToUse: String = activeSystemPrompt
+                        ): ModelResponseResult {
                             val callBlock: suspend () -> ModelResponseResult = {
                                 if (customExecutor != null) {
-                                    customExecutor.invoke(providerKey, resolvedModel, systemPrompt, messages, requestTools)
+                                    customExecutor.invoke(providerKey, resolvedModel, promptToUse, messages, requestTools)
                                 } else {
                                     val adapter = LLMAdapterFactory.createAdapter(
                                         providerKey,
@@ -309,7 +329,7 @@ class ProviderFallbackManager(
                                         buildConfigGeminiKey
                                     )
                                     val effectiveTools = if (!isUtility && adapter.supportsFunctionCalling()) requestTools else emptyList()
-                                    val llmResp = adapter.sendMessage(systemPrompt, messages, effectiveTools)
+                                    val llmResp = adapter.sendMessage(promptToUse, messages, effectiveTools)
                                     ModelResponseResult(
                                         text = llmResp.text,
                                         toolCalls = llmResp.toolCalls ?: emptyList(),
@@ -327,7 +347,9 @@ class ProviderFallbackManager(
                         }
 
                         fun extractVisibleNarrative(raw: String): String {
-                            val withoutThink = raw
+                            val trimmedRaw = raw.trim()
+                            if (trimmedRaw.isBlank() || trimmedRaw.equals("null", ignoreCase = true)) return ""
+                            val withoutThink = trimmedRaw
                                 .replace(Regex("""(?is)<think>.*?</think>"""), "")
                                 .replace(Regex("""(?is)<reasoning>.*?</reasoning>"""), "")
                                 .replace(Regex("""(?is)<think>.*$"""), "")
@@ -337,22 +359,43 @@ class ProviderFallbackManager(
                             return EmochiRepository.cleanEmotionTags(withoutThink).trim()
                         }
 
-                        val initialTools = if (!isUtility) tools else emptyList()
-                        var candidateResult = invokeOnce(initialTools)
-                        var cleanText = extractVisibleNarrative(candidateResult.text)
+                        // On pure-OOC setup messages (e.g. long parenthesized worldbuilding blocks),
+                        // omit native memory tools during the narrative reply so models don't return
+                        // tool-calls-only empty content (post-turn Neural Vault Curator saves all facts).
+                        val initialTools = if (!isUtility && !isPureOocTurn) tools else emptyList()
+                        var candidateResult: ModelResponseResult? = null
+                        var firstCallException: Exception? = null
+                        try {
+                            candidateResult = invokeOnce(initialTools, activeSystemPrompt)
+                        } catch (ce: CancellationException) {
+                            throw ce
+                        } catch (e: Exception) {
+                            if (!isUtility && isSafetyOrEmptyException(e.message)) {
+                                firstCallException = e
+                            } else {
+                                throw e
+                            }
+                        }
 
-                        // Fix U3: Recover from tool-only or blank/think-only/tag-only responses!
-                        // 1) If the model called save_memory/toolCalls or emitted only <think>/tags with no
-                        //    visible narrative text, do a single clean tool-free retry on the SAME provider
-                        //    while preserving any captured toolCalls.
-                        // 2) If still blank after retry, trigger EMPTY_RESPONSE fallback to the next provider!
+                        var cleanText = candidateResult?.let { extractVisibleNarrative(it.text) }.orEmpty()
+
+                        // Multi-stage recovery:
+                        // If Call 1 returned blank/think-only/tag-only/tool-only OR threw a safety/empty filter error,
+                        // sanitize the prompt (removing +18/NSFW & ACTIVE_MEMORY_CALL triggers, adding explicit
+                        // Turkish narrative recovery instructions) and retry ONCE on the same provider without tools.
                         if (!isUtility && cleanText.isBlank()) {
-                            val preservedTools = candidateResult.toolCalls
+                            val preservedTools = candidateResult?.toolCalls.orEmpty()
+                            val safePrompt = com.example.data.repository.SystemPromptBuilder.sanitizeForSafeRetry(
+                                systemPrompt = activeSystemPrompt,
+                                isPureOoc = isPureOocTurn
+                            )
+                            activeSystemPrompt = safePrompt
                             val followUp = try {
-                                invokeOnce(emptyList())
+                                invokeOnce(emptyList(), safePrompt)
                             } catch (ce: CancellationException) {
                                 throw ce
-                            } catch (_: Exception) {
+                            } catch (retryErr: Exception) {
+                                if (firstCallException == null) firstCallException = retryErr
                                 null
                             }
                             if (followUp != null) {
@@ -360,8 +403,8 @@ class ProviderFallbackManager(
                                 if (followClean.isNotBlank()) {
                                     candidateResult = followUp.copy(
                                         toolCalls = if (followUp.toolCalls.isNotEmpty()) followUp.toolCalls else preservedTools,
-                                        promptTokens = candidateResult.promptTokens + followUp.promptTokens,
-                                        candidateTokens = candidateResult.candidateTokens + followUp.candidateTokens
+                                        promptTokens = (candidateResult?.promptTokens ?: 0L) + followUp.promptTokens,
+                                        candidateTokens = (candidateResult?.candidateTokens ?: 0L) + followUp.candidateTokens
                                     )
                                     cleanText = followClean
                                 }
@@ -370,13 +413,13 @@ class ProviderFallbackManager(
 
                         val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
 
-                        if (cleanText.isBlank()) {
+                        if (cleanText.isBlank() || candidateResult == null) {
                             ProviderHealthTracker.recordFailure(
                                 providerKey = providerKey,
                                 failureType = ProviderFailureType.EMPTY_RESPONSE,
-                                errorMessage = "Boş veya yalnızca etiket içeren yanıt döndü"
+                                errorMessage = firstCallException?.message ?: "Boş veya yalnızca etiket içeren yanıt döndü"
                             )
-                            throw IllegalStateException("Sağlayıcı ($providerKey) boş yanıt döndürdü.")
+                            throw firstCallException ?: IllegalStateException("Sağlayıcı ($providerKey) boş yanıt döndürdü.")
                         }
 
                         // Configurable OOC Censorship / Moralizing Protection (0s lockout, current-turn only)

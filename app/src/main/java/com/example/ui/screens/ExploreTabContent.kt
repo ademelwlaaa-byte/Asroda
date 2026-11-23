@@ -1,5 +1,7 @@
 
 package com.example.ui.screens
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.EmochiGradients
 import androidx.activity.compose.BackHandler
@@ -468,7 +470,11 @@ private fun Modifier.morCamInnerFrostAndMist(
 @Composable
 fun ExploreTabContent(
     userSettings: UserSettingsEntity? = null,
+    existingBots: List<BotEntity> = emptyList(),
+    searchQuery: String = "",
+    onSearchQueryChange: ((String) -> Unit)? = null,
     onImportPresetBot: ((BotEntity) -> Unit)?,
+    onOpenExistingBot: ((String) -> Unit)? = null,
     onOpenAidenMenu: (() -> Unit)? = null,
     onOpenSettings: (() -> Unit)? = null,
     lazyListState: androidx.compose.foundation.lazy.LazyListState = rememberLazyListState()
@@ -476,6 +482,8 @@ fun ExploreTabContent(
     val context = LocalContext.current
     val isEnglish = userSettings?.appLanguage == "en"
     var selectedCategory by remember { mutableStateOf("all") } // "all", "universe", "personal"
+    var isLaunchingTemplate by remember { mutableStateOf(false) }
+    var existingTemplateChoice by remember { mutableStateOf<Pair<BotEntity, BotEntity>?>(null) }
 
     val frostedManorState = com.example.util.rememberFrostedBackdrop(
         key = "gothic_manor_${R.drawable.img_templates_bg_gothic_manor}",
@@ -492,13 +500,55 @@ fun ExploreTabContent(
     val scrollSync = lazyListState.firstVisibleItemIndex * 100000 + lazyListState.firstVisibleItemScrollOffset
 
     val presets = remember(isEnglish) { getAppPresets(isEnglish) }
+    val normalizedQuery = remember(searchQuery) { searchQuery.trim().lowercase(java.util.Locale("tr", "TR")) }
 
-    val filteredPresets = remember(selectedCategory, presets) {
-        when (selectedCategory) {
+    val showAidenHeroCard = remember(selectedCategory, normalizedQuery) {
+        val catOk = selectedCategory == "all" || selectedCategory == "universe"
+        if (!catOk) false
+        else if (normalizedQuery.isBlank()) true
+        else {
+            "aiden blackwood stories galatasaray hikaye evren özel".contains(normalizedQuery)
+        }
+    }
+
+    val filteredPresets = remember(normalizedQuery, selectedCategory, presets) {
+        val byCat = when (selectedCategory) {
             "universe" -> presets.filter { it.mode == "universe" }
             "personal" -> presets.filter { it.mode == "personal" }
             else -> presets
         }
+        if (normalizedQuery.isBlank()) {
+            byCat
+        } else {
+            val trLocale = java.util.Locale("tr", "TR")
+            byCat.filter { p ->
+                p.aiName.lowercase(trLocale).contains(normalizedQuery) ||
+                    p.universeName.lowercase(trLocale).contains(normalizedQuery) ||
+                    p.scenario.lowercase(trLocale).contains(normalizedQuery) ||
+                    p.aiPersonality.lowercase(trLocale).contains(normalizedQuery)
+            }
+        }
+    }
+
+    fun findExistingBotForTemplate(preset: BotEntity): BotEntity? {
+        return existingBots.firstOrNull { bot ->
+            !bot.isTemplate && (
+                (preset.mode == "universe" && preset.universeName.isNotBlank() && bot.universeName.equals(preset.universeName, ignoreCase = true)) ||
+                    (preset.aiName.isNotBlank() && bot.aiName.equals(preset.aiName, ignoreCase = true))
+                )
+        }
+    }
+
+    fun launchFreshTemplate(preset: BotEntity) {
+        if (isLaunchingTemplate) return
+        isLaunchingTemplate = true
+        val newBot = preset.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            isPublic = false,
+            isTemplate = false
+        )
+        onImportPresetBot?.invoke(newBot)
+        isLaunchingTemplate = false
     }
 
     // ── BÖLÜM 1 & 2: Master Infinite Transitions (60 FPS, gated by MotionIntensityMode) ──
@@ -620,6 +670,7 @@ fun ExploreTabContent(
 
     val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
+    Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
         state = lazyListState,
         modifier = Modifier
@@ -629,7 +680,7 @@ fun ExploreTabContent(
         verticalArrangement = Arrangement.spacedBy(11.dp)
     ) {
         // ── 1. TOP HEADER + "Şablonlar" + LIVING 3D HERO SECTION (Always 100% Opaque & Crisp!) ──
-        item(key = "templates_top_hero") {
+        item(key = "templates_top_hero", contentType = "templates_top_hero") {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -897,7 +948,7 @@ fun ExploreTabContent(
         }
 
         // ── 2. FILTER BAR WITH LIQUID SLIDING MOR CAM INDICATOR (BÖLÜM 3.1) ────────
-        item(key = "templates_filter_bar") {
+        item(key = "templates_filter_bar", contentType = "templates_filter_bar") {
             SlidingMorCamFilterBar(
                 rootSize = rootSize,
                 frostedManorBitmap = frostedManorBitmap,
@@ -910,8 +961,8 @@ fun ExploreTabContent(
         }
 
         // ── 3. REAL TRANSLUCENT MOR CAM AIDEN BLACKWOOD STORIES HERO CARD ────────
-        if (selectedCategory == "all" || selectedCategory == "universe") {
-            item(key = "aiden_special_stories_card") {
+        if (showAidenHeroCard) {
+            item(key = "aiden_special_stories_card", contentType = "aiden_hero_card") {
                 StaggeredCascadeItem(
                     index = 0,
                     triggerKey = cascadeTrigger
@@ -930,8 +981,12 @@ fun ExploreTabContent(
         }
 
         // ── 4. REAL TRANSLUCENT MOR CAM TEMPLATE CARDS (Aria, Eldoria, Tokyo) ────
-        itemsIndexed(filteredPresets, key = { _, it -> it.id }) { idx, preset ->
-            val cascadeIdx = if (selectedCategory == "all" || selectedCategory == "universe") idx + 1 else idx
+        itemsIndexed(
+            items = filteredPresets,
+            key = { _, it -> it.id },
+            contentType = { _, _ -> "template_card" }
+        ) { idx, preset ->
+            val cascadeIdx = if (showAidenHeroCard) idx + 1 else idx
             StaggeredCascadeItem(
                 index = cascadeIdx,
                 triggerKey = cascadeTrigger
@@ -946,16 +1001,194 @@ fun ExploreTabContent(
                     radarPulse = radarPulse,
                     neonBreath = neonBreath,
                     onStartTemplate = {
-                        val newBot = preset.copy(
-                            id = java.util.UUID.randomUUID().toString(),
-                            isPublic = false,
-                            isTemplate = false
-                        )
-                        onImportPresetBot?.invoke(newBot)
+                        if (isLaunchingTemplate) return@MorCamTemplateCard
+                        val existing = findExistingBotForTemplate(preset)
+                        if (existing != null && onOpenExistingBot != null) {
+                            existingTemplateChoice = preset to existing
+                        } else {
+                            launchFreshTemplate(preset)
+                        }
                     }
                 )
             }
         }
+
+        // ── 5. MOR CAM EMPTY SEARCH / FILTER STATE ──────────────────────────────
+        if (!showAidenHeroCard && filteredPresets.isEmpty()) {
+            item(key = "templates_empty_state", contentType = "templates_empty_state") {
+                val emptyShape = RoundedCornerShape(22.dp)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 18.dp)
+                        .clip(emptyShape)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0xD81D0A38), Color(0xD8120624))
+                            )
+                        )
+                        .border(
+                            width = 1.15.dp,
+                            brush = Brush.linearGradient(
+                                listOf(Color(0xFFE9D5FF), Color(0xFFA855F7), Color(0xFF7E22CE))
+                            ),
+                            shape = emptyShape
+                        )
+                        .padding(horizontal = 20.dp, vertical = 22.dp)
+                        .testTag("templates_empty_filter_card"),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = if (isEnglish) "✦ No matching templates found" else "✦ Aramana uygun şablon bulunamadı",
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
+                        color = Color(0xFFF5D0FE),
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0xFF7E22CE), Color(0xFFA855F7))
+                                )
+                            )
+                            .border(1.dp, Color(0xFFF5D0FE).copy(alpha = 0.85f), RoundedCornerShape(50))
+                            .clickable {
+                                selectedCategory = "all"
+                                onSearchQueryChange?.invoke("")
+                            }
+                            .padding(horizontal = 22.dp)
+                            .testTag("templates_clear_filter_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (isEnglish) "Clear Filter" else "Filtreyi Temizle",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    val choice = existingTemplateChoice
+    if (choice != null) {
+        val (chosenPreset, existingBot) = choice
+        val choiceShape = RoundedCornerShape(26.dp)
+        val displayTitle = if (chosenPreset.mode == "universe") chosenPreset.universeName else chosenPreset.aiName
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0x9906020E))
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { existingTemplateChoice = null }
+                )
+                .testTag("template_existing_chat_choice_backdrop"),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth(0.86f)
+                    .clip(choiceShape)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xF51D0A38), Color(0xF5110622), Color(0xF51A0933))
+                        )
+                    )
+                    .border(
+                        width = 1.25.dp,
+                        brush = Brush.linearGradient(
+                            listOf(Color(0xFFF5D0FE), Color(0xFFC084FC), Color(0xFF7E22CE))
+                        ),
+                        shape = choiceShape
+                    )
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
+                    .testTag("template_existing_chat_choice_dialog"),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "✦ $displayTitle",
+                    color = Color(0xFFF5D0FE),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = if (isEnglish) {
+                        "You already have a chat from this template. Would you like to continue or start fresh?"
+                    } else {
+                        "Bu şablondan zaten aktif bir sohbetin var. Mevcut sohbete devam mı etmek istersin, yeni temiz kopya mı?"
+                    },
+                    color = Color(0xFFE9D5FF),
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color(0xFF7E22CE), Color(0xFFA855F7))
+                            )
+                        )
+                        .border(1.dp, Color(0xFFF5D0FE).copy(alpha = 0.85f), RoundedCornerShape(14.dp))
+                        .clickable {
+                            existingTemplateChoice = null
+                            onOpenExistingBot?.invoke(existingBot.id)
+                        }
+                        .testTag("template_choice_continue_existing"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isEnglish) "Continue Existing Chat" else "Mevcut Sohbete Devam Et",
+                        color = Color.White,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0x552E1065))
+                        .border(1.dp, Color(0xFFC084FC).copy(alpha = 0.72f), RoundedCornerShape(14.dp))
+                        .clickable {
+                            existingTemplateChoice = null
+                            launchFreshTemplate(chosenPreset)
+                        }
+                        .testTag("template_choice_start_fresh_copy"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isEnglish) "Start Fresh Copy" else "Yeni Temiz Kopya Başlat",
+                        color = Color(0xFFF3E8FF),
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
     }
 }
 
@@ -1730,8 +1963,16 @@ private fun MorCamAidenHeroCard(
                         shape = RoundedCornerShape(18.dp)
                     )
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_templates_aiden_thumb),
+                val thumbContext = LocalContext.current
+                val aidenThumbRequest = remember(thumbContext) {
+                    ImageRequest.Builder(thumbContext)
+                        .data(R.drawable.img_templates_aiden_thumb)
+                        .allowRgb565(true)
+                        .crossfade(220)
+                        .build()
+                }
+                AsyncImage(
+                    model = aidenThumbRequest,
                     contentDescription = "Aiden Blackwood",
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -2024,8 +2265,16 @@ private fun MorCamTemplateCard(
                         shape = RoundedCornerShape(16.dp)
                     )
             ) {
-                Image(
-                    painter = painterResource(id = leftDrawable),
+                val coverContext = LocalContext.current
+                val coverRequest = remember(coverContext, leftDrawable) {
+                    ImageRequest.Builder(coverContext)
+                        .data(leftDrawable)
+                        .allowRgb565(true)
+                        .crossfade(220)
+                        .build()
+                }
+                AsyncImage(
+                    model = coverRequest,
                     contentDescription = titleText,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
