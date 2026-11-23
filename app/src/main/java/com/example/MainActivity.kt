@@ -266,7 +266,9 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
                         onRewindToMessage = { msgId -> viewModel.rewindToMessage(currentBot.id, msgId) },
                         onCloneBot = { viewModel.cloneBot(currentBot.id) },
                         streamingMsgIdFlow = viewModel.streamingMsgId,
-                        streamingTextFlow = viewModel.streamingText
+                        streamingTextFlow = viewModel.streamingText,
+                        isStreamingThinkingFlow = viewModel.isStreamingThinking,
+                        onStopGeneration = { viewModel.stopGeneration() }
                     )
                 }
             }

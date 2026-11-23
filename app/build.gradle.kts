@@ -154,7 +154,7 @@ gradle.taskGraph.whenReady {
     }
     val enforceFixedReleaseKeystore =
         providers.gradleProperty("requireReleaseKeystore").orNull.equals("true", ignoreCase = true) ||
-            System.getenv("CI").equals("true", ignoreCase = true)
+            System.getenv("GITHUB_ACTIONS").equals("true", ignoreCase = true)
     if (isReleasePackaging && enforceFixedReleaseKeystore) {
         val envKeystore = System.getenv("KEYSTORE_PATH")
         val hasEnvKeystore = !envKeystore.isNullOrBlank() && file(envKeystore).exists()

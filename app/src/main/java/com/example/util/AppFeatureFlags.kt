@@ -19,6 +19,7 @@ object AppFeatureFlags {
 
     // ─── Boolean Bayraklar ────────────────────────────────────────────────────
     private const val KEY_SSE_STREAMING          = "sse_streaming"
+    const val KEY_SSE_STREAMING_ENABLED          = KEY_SSE_STREAMING
     private const val KEY_MEMORY_TIMELINE        = "memory_timeline"
     private const val KEY_ROUTINE_NOTIF          = "routine_notifications"
     private const val KEY_SCENE_IMAGE            = "scene_image_gen"

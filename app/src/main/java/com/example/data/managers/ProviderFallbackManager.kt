@@ -30,6 +30,9 @@ import java.util.Locale
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+import com.example.util.SseStreamParser
+import com.example.util.StreamingTextSanitizer
+
 class ProviderFallbackManager(
     private val customProviderDao: CustomProviderDao,
     private val onLogFallback: (ProviderFallbackLogEntry) -> Unit,
@@ -39,6 +42,14 @@ class ProviderFallbackManager(
         systemPrompt: String,
         messages: List<MessageEntity>,
         tools: List<MemoryToolDefinition>
+    ) -> ModelResponseResult)? = null,
+    private val customStreamExecutor: (suspend (
+        providerKey: String,
+        resolvedModel: String,
+        systemPrompt: String,
+        messages: List<MessageEntity>,
+        onToken: suspend (String) -> Unit,
+        onReasoning: suspend (String) -> Unit
     ) -> ModelResponseResult)? = null
 ) {
     enum class ExecutionMode {
@@ -51,6 +62,12 @@ class ProviderFallbackManager(
         val callTimeoutMs: Long,
         val maxFallbackAttempts: Int,
         val strictEnabled: Boolean
+    )
+
+    data class StreamResult(
+        val response: ModelResponseResult,
+        val visibleText: String,
+        val usedStreaming: Boolean
     )
 
     data class AiUtilityModelSelectionResult(
@@ -488,6 +505,668 @@ class ProviderFallbackManager(
                 throw lastError ?: IllegalStateException("Tüm AI sağlayıcıları yanıt vermekte başarısız oldu.")
             }
         }
+    }
+
+    /**
+     * Sistem #23: Gerçek Zamanlı Akış (SSE Streaming) + Akıllı Fallback + Gizli Etiket Kalkanı.
+     *
+     * - [AppFeatureFlags.isSseStreamingEnabled] == false ise doğrudan klasik tek-parça [executeWithFallback] yoluna düşer.
+     * - [AppFeatureFlags.isStrictApiTimeoutEnabled] bayrağına tam uyar (kapalıysa sınırsız okuma beklemesi).
+     * - İlk tokendan önce oluşan 401/403/429/5xx veya ağ hatalarında kullanıcıya yarım metin göstermeden
+     *   sıradaki yedek sağlayıcıya geçer; 400 stream reddinde aynı sağlayıcıyı non-stream dener.
+     * - Kullanıcı iptalinde ([CancellationException]) OkHttp soketini anında kapatır ve
+     *   [ProviderHealthTracker]'a 0 ceza yazar.
+     */
+    suspend fun executeChatStream(
+        model: String,
+        settings: UserSettingsEntity,
+        systemPrompt: String,
+        messages: List<MessageEntity>,
+        buildConfigGeminiKey: String,
+        tools: List<MemoryToolDefinition> = emptyList(),
+        onVisibleDelta: suspend (visibleSnapshot: String, isThinking: Boolean) -> Unit,
+        onFirstToken: () -> Unit = {},
+        onResetVisibleStream: suspend () -> Unit = {}
+    ): StreamResult {
+        if (!AppFeatureFlags.isSseStreamingEnabled) {
+            val nonStream = executeWithFallback(
+                model = model,
+                settings = settings,
+                systemPrompt = systemPrompt,
+                messages = messages,
+                buildConfigGeminiKey = buildConfigGeminiKey,
+                tools = tools,
+                executionMode = ExecutionMode.NARRATIVE
+            )
+            val clean = EmochiRepository.cleanEmotionTags(nonStream.text).ifBlank { nonStream.text.trim() }
+            onFirstToken()
+            onVisibleDelta(clean, false)
+            return StreamResult(
+                response = nonStream,
+                visibleText = clean,
+                usedStreaming = false
+            )
+        }
+
+        return com.example.EmochiApplication.withCallType(com.example.EmochiApplication.CALL_TYPE_NARRATIVE) {
+            withContext(Dispatchers.IO) {
+                val customList = try {
+                    customProviderDao.getAllProviders()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                val customMap = customList.associateBy { it.id }
+                val rawChain = buildProviderChain(settings, customMap, buildConfigGeminiKey)
+                val effectiveChain = if (settings.enableAutoFallback) rawChain else rawChain.take(1)
+                val candidates = ProviderHealthTracker.selectOrderedCandidates(effectiveChain)
+                val skippedSet = effectiveChain.filter { it !in candidates }
+                for (skippedKey in skippedSet) {
+                    val remSec = (ProviderHealthTracker.remainingCooldownMs(skippedKey) / 1000L).coerceAtLeast(1L)
+                    onLogFallback(
+                        ProviderFallbackLogEntry(
+                            providerName = skippedKey,
+                            status = "COOLDOWN_SKIP",
+                            errorMessage = "Devre kesici aktif (${remSec}s kaldı)",
+                            layer = effectiveChain.indexOf(skippedKey) + 1
+                        )
+                    )
+                }
+
+                val primarySelected = settings.selectedProvider.lowercase().trim()
+                val timeoutCfg = resolveTimeoutConfig(ExecutionMode.NARRATIVE)
+                val refusalGuardEnabled = AppFeatureFlags.isRefusalAutoFallbackEnabled
+                val latestUserText = messages.lastOrNull { it.role == "user" }?.text.orEmpty()
+                val isPureOocTurn = com.example.util.UserSentimentAnalyzer.isPureOocMessage(latestUserText)
+
+                // Shared connection pool streaming OkHttp client aligned with strict timeout flag
+                val streamClient = RetrofitClient.okHttpClient.newBuilder()
+                    .connectTimeout(30_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .writeTimeout(30_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    .readTimeout(
+                        if (timeoutCfg.strictEnabled) timeoutCfg.readTimeoutMs else 0L,
+                        java.util.concurrent.TimeUnit.MILLISECONDS
+                    )
+                    .callTimeout(
+                        if (timeoutCfg.strictEnabled) 0L else 0L, // Do not kill long streaming responses mid-generation
+                        java.util.concurrent.TimeUnit.MILLISECONDS
+                    )
+                    .build()
+
+                var lastError: Exception? = null
+                var lastRefusalResult: StreamResult? = null
+                var activeSystemPrompt = systemPrompt
+
+                for ((idx, providerKey) in candidates.withIndex()) {
+                    val layer = idx + 1
+                    val customEntity = if (providerKey.startsWith("custom_")) {
+                        providerKey.removePrefix("custom_").toLongOrNull()?.let { customMap[it] }
+                    } else null
+
+                    val resolvedModel = when {
+                        idx == 0 && providerKey == primarySelected && model.isNotBlank() ->
+                            EmochiRepository.sanitizeModelName(model)
+                        providerKey == "groq" -> EmochiRepository.sanitizeModelName(settings.groqModel.ifBlank { "openai/gpt-oss-120b" })
+                        providerKey == "openai" -> settings.openaiModel.ifBlank { "gpt-4o" }
+                        providerKey == "gemini" -> EmochiRepository.sanitizeModelName(settings.geminiModel.ifBlank { "gemini-2.0-flash" })
+                        providerKey == "claude" -> settings.claudeModel.ifBlank { "claude-3-5-sonnet-20241022" }
+                        providerKey == "openrouter" -> settings.openRouterModel.ifBlank { "deepseek/deepseek-chat" }
+                        providerKey == "nvidia" -> settings.nvidiaModel.ifBlank { "meta/llama-3.3-70b-instruct" }
+                        providerKey == "mistral" -> settings.mistralModel.ifBlank { "mistral-large-latest" }
+                        providerKey == "pollinations" -> settings.pollinationsModel.ifBlank { "openai" }
+                        providerKey == "ovh" -> settings.ovhModel.ifBlank { "Meta-Llama-3_3-70B-Instruct" }
+                        providerKey == "llm7" -> "default"
+                        customEntity != null -> customEntity.modelName
+                        else -> "gemini-2.0-flash"
+                    }
+
+                    onLogFallback(
+                        ProviderFallbackLogEntry(
+                            providerName = "$providerKey ($resolvedModel) [SSE]",
+                            status = "TRYING",
+                            layer = layer
+                        )
+                    )
+
+                    val startMs = System.currentTimeMillis()
+                    var firstTokenFired = false
+                    val sanitizer = StreamingTextSanitizer()
+                    var lastThinkingReported = false
+                    var refusalEarlyDetected = false
+                    var refusalReason = ""
+                    var totalPromptTokens = 0L
+                    var totalCandidateTokens = 0L
+
+                    suspend fun handleRawToken(rawToken: String) {
+                        if (rawToken.isEmpty()) return
+                        val delta = sanitizer.append(rawToken)
+                        if (delta.visibleDelta.isNotEmpty()) {
+                            if (!firstTokenFired) {
+                                firstTokenFired = true
+                                onFirstToken()
+                            }
+                            lastThinkingReported = delta.isThinking
+                            onVisibleDelta(sanitizer.visibleText, delta.isThinking)
+
+                            if (refusalGuardEnabled && !refusalEarlyDetected && sanitizer.visibleText.length in 90..260) {
+                                val earlyCheck = RefusalDetector.detectOocRefusal(sanitizer.visibleText)
+                                if (earlyCheck.isRefusal) {
+                                    refusalEarlyDetected = true
+                                    refusalReason = earlyCheck.matchedReason
+                                    throw StreamRefusalAbortException(earlyCheck.matchedReason)
+                                }
+                            }
+                        } else if (delta.isThinking != lastThinkingReported) {
+                            lastThinkingReported = delta.isThinking
+                            onVisibleDelta(sanitizer.visibleText, delta.isThinking)
+                        }
+                    }
+
+                    suspend fun handleReasoningToken(reasoningToken: String) {
+                        if (reasoningToken.isEmpty()) return
+                        if (!lastThinkingReported) {
+                            lastThinkingReported = true
+                            onVisibleDelta(sanitizer.visibleText, true)
+                        }
+                    }
+
+                    try {
+                        val streamResponse: ModelResponseResult = if (customStreamExecutor != null) {
+                            val res = customStreamExecutor.invoke(
+                                providerKey,
+                                resolvedModel,
+                                activeSystemPrompt,
+                                messages,
+                                { tok -> handleRawToken(tok) },
+                                { reas -> handleReasoningToken(reas) }
+                            )
+                            val finalRaw = if (sanitizer.rawFullText.isNotEmpty()) sanitizer.rawFullText else res.text
+                            res.copy(text = finalRaw)
+                        } else {
+                            val reqPair = buildNarrativeStreamHttpRequest(
+                                providerKey = providerKey,
+                                model = resolvedModel,
+                                settings = settings,
+                                customEntity = customEntity,
+                                buildConfigGeminiKey = buildConfigGeminiKey,
+                                systemPrompt = activeSystemPrompt,
+                                messages = messages
+                            )
+
+                            if (reqPair == null) {
+                                // Provider without SSE support (e.g. Anthropic) -> clean single-shot fallback for this provider
+                                val single = executeSingleProviderNonStream(
+                                    providerKey = providerKey,
+                                    resolvedModel = resolvedModel,
+                                    settings = settings,
+                                    customEntity = customEntity,
+                                    buildConfigGeminiKey = buildConfigGeminiKey,
+                                    systemPrompt = activeSystemPrompt,
+                                    messages = messages,
+                                    tools = if (!isPureOocTurn) tools else emptyList()
+                                )
+                                handleRawToken(single.text)
+                                single
+                            } else {
+                                val (httpRequest, sseFormat) = reqPair
+                                SseStreamParser.stream(streamClient, httpRequest, sseFormat).collect { chunk ->
+                                    if (chunk.promptTokens > 0L) totalPromptTokens = chunk.promptTokens
+                                    if (chunk.candidateTokens > 0L) totalCandidateTokens = chunk.candidateTokens
+                                    if (chunk.reasoningToken.isNotEmpty()) {
+                                        handleReasoningToken(chunk.reasoningToken)
+                                    }
+                                    if (chunk.token.isNotEmpty()) {
+                                        handleRawToken(chunk.token)
+                                    }
+                                }
+                                ModelResponseResult(
+                                    text = sanitizer.rawFullText,
+                                    toolCalls = emptyList(),
+                                    promptTokens = totalPromptTokens,
+                                    candidateTokens = totalCandidateTokens,
+                                    usedProvider = providerKey
+                                )
+                            }
+                        }
+
+                        // Finalize sanitizer lookahead buffer
+                        val finishDelta = sanitizer.finish()
+                        if (finishDelta.visibleDelta.isNotEmpty() || lastThinkingReported) {
+                            if (finishDelta.visibleDelta.isNotEmpty() && !firstTokenFired) {
+                                firstTokenFired = true
+                                onFirstToken()
+                            }
+                            lastThinkingReported = false
+                            onVisibleDelta(sanitizer.visibleText, false)
+                        }
+
+                        val visibleClean = EmochiRepository.cleanEmotionTags(sanitizer.visibleText)
+                            .ifBlank { EmochiRepository.cleanEmotionTags(streamResponse.text) }
+                            .trim()
+
+                        if (visibleClean.isBlank()) {
+                            // Empty/think-only stream -> try one non-stream safe retry on same provider
+                            val safePrompt = com.example.data.repository.SystemPromptBuilder.sanitizeForSafeRetry(
+                                systemPrompt = activeSystemPrompt,
+                                isPureOoc = isPureOocTurn
+                            )
+                            activeSystemPrompt = safePrompt
+                            val retryRes = try {
+                                executeSingleProviderNonStream(
+                                    providerKey = providerKey,
+                                    resolvedModel = resolvedModel,
+                                    settings = settings,
+                                    customEntity = customEntity,
+                                    buildConfigGeminiKey = buildConfigGeminiKey,
+                                    systemPrompt = safePrompt,
+                                    messages = messages,
+                                    tools = emptyList()
+                                )
+                            } catch (ce: CancellationException) {
+                                throw ce
+                            } catch (_: Exception) {
+                                null
+                            }
+                            val retryClean = retryRes?.let { EmochiRepository.cleanEmotionTags(it.text).trim() }.orEmpty()
+                            if (retryRes != null && retryClean.isNotBlank()) {
+                                val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                                if (!firstTokenFired) {
+                                    firstTokenFired = true
+                                    onFirstToken()
+                                }
+                                onVisibleDelta(retryClean, false)
+                                ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
+                                return@withContext StreamResult(
+                                    response = retryRes,
+                                    visibleText = retryClean,
+                                    usedStreaming = false
+                                )
+                            }
+                            ProviderHealthTracker.recordFailure(
+                                providerKey = providerKey,
+                                failureType = ProviderFailureType.EMPTY_RESPONSE,
+                                errorMessage = "SSE akışı boş yanıt döndürdü"
+                            )
+                            throw IllegalStateException("SSE sağlayıcısı ($providerKey) boş yanıt döndürdü.")
+                        }
+
+                        // End-of-stream refusal_auto_fallback check
+                        if (refusalGuardEnabled) {
+                            val refusalCheck = RefusalDetector.detectOocRefusal(visibleClean)
+                            if (refusalCheck.isRefusal) {
+                                ProviderHealthTracker.recordFailure(
+                                    providerKey = providerKey,
+                                    failureType = ProviderFailureType.CONTENT_REFUSAL,
+                                    errorMessage = refusalCheck.matchedReason
+                                )
+                                val refusedResult = StreamResult(
+                                    response = streamResponse,
+                                    visibleText = visibleClean,
+                                    usedStreaming = true
+                                )
+                                lastRefusalResult = refusedResult
+                                onLogFallback(
+                                    ProviderFallbackLogEntry(
+                                        providerName = "$providerKey ($resolvedModel) [SSE]",
+                                        status = "OOC_REFUSAL_FALLBACK",
+                                        errorMessage = refusalCheck.matchedReason,
+                                        layer = layer
+                                    )
+                                )
+                                if (idx < candidates.lastIndex) {
+                                    onResetVisibleStream()
+                                    continue
+                                } else {
+                                    return@withContext refusedResult
+                                }
+                            }
+                        }
+
+                        val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                        ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
+                        onLogFallback(
+                            ProviderFallbackLogEntry(
+                                providerName = streamResponse.usedProvider.ifBlank { providerKey },
+                                status = "SUCCESS",
+                                layer = layer
+                            )
+                        )
+                        return@withContext StreamResult(
+                            response = streamResponse.copy(
+                                usedProvider = streamResponse.usedProvider.ifBlank { providerKey }
+                            ),
+                            visibleText = visibleClean,
+                            usedStreaming = true
+                        )
+                    } catch (ce: CancellationException) {
+                        // CRITICAL: User stop / coroutine cancel MUST NEVER penalize provider health!
+                        throw ce
+                    } catch (refusalAbort: StreamRefusalAbortException) {
+                        ProviderHealthTracker.recordFailure(
+                            providerKey = providerKey,
+                            failureType = ProviderFailureType.CONTENT_REFUSAL,
+                            errorMessage = refusalAbort.reason
+                        )
+                        onLogFallback(
+                            ProviderFallbackLogEntry(
+                                providerName = "$providerKey ($resolvedModel) [SSE]",
+                                status = "OOC_REFUSAL_FALLBACK",
+                                errorMessage = refusalAbort.reason,
+                                layer = layer
+                            )
+                        )
+                        onResetVisibleStream()
+                        lastError = refusalAbort
+                        continue
+                    } catch (e: Exception) {
+                        // HTTP 400 before first token: model may reject `stream: true` -> retry same provider non-stream once
+                        if (!firstTokenFired && e is SseStreamParser.SseHttpException && e.httpCode == 400) {
+                            val nonStreamFallback = try {
+                                executeSingleProviderNonStream(
+                                    providerKey = providerKey,
+                                    resolvedModel = resolvedModel,
+                                    settings = settings,
+                                    customEntity = customEntity,
+                                    buildConfigGeminiKey = buildConfigGeminiKey,
+                                    systemPrompt = activeSystemPrompt,
+                                    messages = messages,
+                                    tools = if (!isPureOocTurn) tools else emptyList()
+                                )
+                            } catch (ce: CancellationException) {
+                                throw ce
+                            } catch (_: Exception) {
+                                null
+                            }
+                            val fallbackClean = nonStreamFallback?.let {
+                                EmochiRepository.cleanEmotionTags(it.text).trim()
+                            }.orEmpty()
+                            if (nonStreamFallback != null && fallbackClean.isNotBlank()) {
+                                val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
+                                onFirstToken()
+                                onVisibleDelta(fallbackClean, false)
+                                ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
+                                return@withContext StreamResult(
+                                    response = nonStreamFallback,
+                                    visibleText = fallbackClean,
+                                    usedStreaming = false
+                                )
+                            }
+                        }
+
+                        // Post-first-token disconnect: preserve clean streamed text if substantial (>= 25 chars)
+                        if (firstTokenFired) {
+                            sanitizer.finish()
+                            val partialClean = EmochiRepository.cleanEmotionTags(sanitizer.visibleText).trim()
+                            if (partialClean.length >= 25) {
+                                onVisibleDelta(partialClean, false)
+                                return@withContext StreamResult(
+                                    response = ModelResponseResult(
+                                        text = sanitizer.rawFullText.ifBlank { partialClean },
+                                        promptTokens = totalPromptTokens,
+                                        candidateTokens = totalCandidateTokens,
+                                        usedProvider = providerKey
+                                    ),
+                                    visibleText = partialClean,
+                                    usedStreaming = true
+                                )
+                            } else {
+                                onResetVisibleStream()
+                            }
+                        }
+
+                        lastError = e
+                        val httpCode = (e as? SseStreamParser.SseHttpException)?.httpCode
+                        val retryAfter = (e as? SseStreamParser.SseHttpException)?.retryAfterSeconds
+                        val failureType = ProviderHealthTracker.classifyFailure(
+                            httpCode = httpCode,
+                            errorMessage = e.message
+                        )
+                        if (failureType != ProviderFailureType.EMPTY_RESPONSE) {
+                            ProviderHealthTracker.recordFailure(
+                                providerKey = providerKey,
+                                failureType = failureType,
+                                errorMessage = e.message ?: "SSE hatası",
+                                retryAfterSeconds = retryAfter
+                            )
+                        }
+                        onLogFallback(
+                            ProviderFallbackLogEntry(
+                                providerName = "$providerKey [SSE]",
+                                status = "FAILED",
+                                errorMessage = e.message ?: "SSE hatası",
+                                layer = layer
+                            )
+                        )
+                    }
+                }
+
+                lastRefusalResult?.let { return@withContext it }
+                throw lastError ?: IllegalStateException("Tüm AI sağlayıcıları akış başlatmakta başarısız oldu.")
+            }
+        }
+    }
+
+    private class StreamRefusalAbortException(val reason: String) : IllegalStateException(reason)
+
+    private suspend fun executeSingleProviderNonStream(
+        providerKey: String,
+        resolvedModel: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?,
+        buildConfigGeminiKey: String,
+        systemPrompt: String,
+        messages: List<MessageEntity>,
+        tools: List<MemoryToolDefinition>
+    ): ModelResponseResult {
+        if (customExecutor != null) {
+            return customExecutor.invoke(providerKey, resolvedModel, systemPrompt, messages, tools)
+        }
+        val adapter = LLMAdapterFactory.createAdapter(
+            providerKey,
+            resolvedModel,
+            settings,
+            customEntity,
+            buildConfigGeminiKey
+        )
+        val effectiveTools = if (adapter.supportsFunctionCalling()) tools else emptyList()
+        val llmResp = adapter.sendMessage(systemPrompt, messages, effectiveTools)
+        return ModelResponseResult(
+            text = llmResp.text,
+            toolCalls = llmResp.toolCalls ?: emptyList(),
+            promptTokens = llmResp.usage?.promptTokens ?: 0L,
+            candidateTokens = llmResp.usage?.candidateTokens ?: 0L,
+            usedProvider = llmResp.usedProvider.ifBlank { providerKey }
+        )
+    }
+
+    private fun buildNarrativeStreamHttpRequest(
+        providerKey: String,
+        model: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?,
+        buildConfigGeminiKey: String,
+        systemPrompt: String,
+        messages: List<MessageEntity>
+    ): Pair<Request, SseStreamParser.SseFormat>? {
+        val jsonMedia = "application/json; charset=utf-8".toMediaType()
+        val format: SseStreamParser.SseFormat
+        val url: String
+        val apiKey: String
+
+        when {
+            providerKey == "gemini" -> {
+                apiKey = settings.customApiKey.ifBlank { buildConfigGeminiKey }.trim()
+                if (apiKey.isBlank() || apiKey == "MY_GEMINI_API_KEY") return null
+                format = SseStreamParser.SseFormat.GEMINI
+                url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse"
+            }
+            providerKey == "claude" -> return null // Anthropic handled via single-shot adapter
+            providerKey == "groq" -> {
+                apiKey = settings.groqApiKey.trim()
+                if (apiKey.isBlank()) return null
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://api.groq.com/openai/v1/chat/completions"
+            }
+            providerKey == "openai" -> {
+                apiKey = settings.openaiApiKey.trim()
+                if (apiKey.isBlank()) return null
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://api.openai.com/v1/chat/completions"
+            }
+            providerKey == "openrouter" -> {
+                apiKey = settings.openRouterApiKey.trim()
+                if (apiKey.isBlank()) return null
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://openrouter.ai/api/v1/chat/completions"
+            }
+            providerKey == "nvidia" -> {
+                apiKey = settings.nvidiaApiKey.trim()
+                if (apiKey.isBlank()) return null
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://integrate.api.nvidia.com/v1/chat/completions"
+            }
+            providerKey == "mistral" -> {
+                apiKey = settings.mistralApiKey.trim()
+                if (apiKey.isBlank()) return null
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://api.mistral.ai/v1/chat/completions"
+            }
+            providerKey == "llm7" -> {
+                apiKey = ""
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://api.llm7.io/v1/chat/completions"
+            }
+            providerKey == "pollinations" -> {
+                apiKey = ""
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://text.pollinations.ai/openai/chat/completions"
+            }
+            providerKey == "ovh" -> {
+                apiKey = ""
+                format = SseStreamParser.SseFormat.OPENAI
+                url = "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/chat/completions"
+            }
+            customEntity != null -> {
+                val cleanBase = customEntity.baseUrl.trim().trimEnd('/')
+                apiKey = try {
+                    com.example.util.KeystoreEncryptionManager.decrypt(customEntity.apiKeyEncrypted).trim()
+                } catch (_: Exception) {
+                    ""
+                }
+                val fmt = customEntity.apiFormat.lowercase().trim()
+                when {
+                    fmt == "anthropic" || cleanBase.contains("anthropic.com") -> return null
+                    fmt == "gemini" || cleanBase.contains("generativelanguage.googleapis.com") -> {
+                        format = SseStreamParser.SseFormat.GEMINI
+                        url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse"
+                    }
+                    else -> {
+                        format = SseStreamParser.SseFormat.OPENAI
+                        url = when {
+                            cleanBase.endsWith("/chat/completions") -> cleanBase
+                            cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") -> "$cleanBase/chat/completions"
+                            else -> "$cleanBase/v1/chat/completions"
+                        }
+                    }
+                }
+            }
+            else -> return null
+        }
+
+        val reqBuilder = Request.Builder()
+            .url(url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .header(
+                com.example.EmochiApplication.HEADER_CALL_TYPE,
+                com.example.EmochiApplication.CALL_TYPE_NARRATIVE
+            )
+
+        if (url.contains("openrouter.ai", ignoreCase = true)) {
+            reqBuilder.header("HTTP-Referer", com.example.EmochiApplication.OPENROUTER_REFERER)
+            reqBuilder.header("X-Title", com.example.EmochiApplication.OPENROUTER_TITLE)
+        }
+
+        val payload = when (format) {
+            SseStreamParser.SseFormat.GEMINI -> {
+                if (apiKey.isNotBlank()) reqBuilder.header("x-goog-api-key", apiKey)
+                val contents = JSONArray()
+                var lastRole: String? = null
+                var lastParts: JSONArray? = null
+                for (msg in messages) {
+                    if (msg.text.isBlank()) continue
+                    val role = if (msg.role == "user") "user" else "model"
+                    if (role == lastRole && lastParts != null) {
+                        lastParts.put(JSONObject().put("text", msg.text))
+                    } else {
+                        val parts = JSONArray().put(JSONObject().put("text", msg.text))
+                        contents.put(JSONObject().put("role", role).put("parts", parts))
+                        lastRole = role
+                        lastParts = parts
+                    }
+                }
+                if (contents.length() == 0) {
+                    contents.put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("parts", JSONArray().put(JSONObject().put("text", "...")))
+                    )
+                }
+                JSONObject().apply {
+                    if (systemPrompt.isNotBlank()) {
+                        put(
+                            "system_instruction",
+                            JSONObject().put(
+                                "parts",
+                                JSONArray().put(JSONObject().put("text", systemPrompt))
+                            )
+                        )
+                    }
+                    put("contents", contents)
+                    put(
+                        "generationConfig",
+                        JSONObject()
+                            .put("temperature", 0.90)
+                            .put("topP", 0.95)
+                    )
+                    put(
+                        "safetySettings",
+                        JSONArray().apply {
+                            listOf(
+                                "HARM_CATEGORY_HARASSMENT",
+                                "HARM_CATEGORY_HATE_SPEECH",
+                                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                                "HARM_CATEGORY_DANGEROUS_CONTENT",
+                                "HARM_CATEGORY_CIVIC_INTEGRITY"
+                            ).forEach { cat ->
+                                put(JSONObject().put("category", cat).put("threshold", "BLOCK_NONE"))
+                            }
+                        }
+                    )
+                }
+            }
+            else -> {
+                if (apiKey.isNotBlank()) reqBuilder.header("Authorization", "Bearer $apiKey")
+                val msgsArr = JSONArray()
+                if (systemPrompt.isNotBlank()) {
+                    msgsArr.put(JSONObject().put("role", "system").put("content", systemPrompt))
+                }
+                for (msg in messages) {
+                    if (msg.text.isBlank()) continue
+                    val role = if (msg.role == "user") "user" else "assistant"
+                    msgsArr.put(JSONObject().put("role", role).put("content", msg.text))
+                }
+                JSONObject().apply {
+                    put("model", model)
+                    put("messages", msgsArr)
+                    put("temperature", 0.90)
+                    put("top_p", 0.95)
+                    put("stream", true)
+                }
+            }
+        }
+
+        return Pair(reqBuilder.post(payload.toString().toRequestBody(jsonMedia)).build(), format)
     }
 
     /**

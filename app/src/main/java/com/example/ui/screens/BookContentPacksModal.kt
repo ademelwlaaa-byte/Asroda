@@ -5,14 +5,23 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -102,29 +111,42 @@ fun StoryLaunchDownloadDialog(
         },
         properties = DialogProperties(
             usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
             dismissOnBackPress = !isDownloading,
             dismissOnClickOutside = !isDownloading
         )
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 22.dp)
-                .morCamCosmicGlow(cornerRadius = 26.dp, glowColor = accent, alpha = 0.45f, blurDp = 18.dp)
-                .clip(RoundedCornerShape(26.dp))
-                .background(
-                    Brush.verticalGradient(
-                        listOf(MorCamTokens.GlassSurfaceTop, MorCamTokens.GlassSurfaceMid, MorCamTokens.GlassSurfaceBottom)
-                    )
-                )
-                .border(1.3.dp, MorCamTokens.RimGradient, RoundedCornerShape(26.dp))
-                .padding(horizontal = 20.dp, vertical = 22.dp)
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 520.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = (maxHeight * 0.92f).coerceAtLeast(240.dp))
+                    .morCamCosmicGlow(cornerRadius = 26.dp, glowColor = accent, alpha = 0.45f, blurDp = 18.dp)
+                    .clip(RoundedCornerShape(26.dp))
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(MorCamTokens.GlassSurfaceTop, MorCamTokens.GlassSurfaceMid, MorCamTokens.GlassSurfaceBottom)
+                        )
+                    )
+                    .border(1.3.dp, MorCamTokens.RimGradient, RoundedCornerShape(26.dp))
+                    .padding(horizontal = 20.dp, vertical = 20.dp)
             ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                 Box(
                     modifier = Modifier
                         .size(54.dp)
@@ -300,4 +322,5 @@ fun StoryLaunchDownloadDialog(
             }
         }
     }
+}
 }

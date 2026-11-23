@@ -87,11 +87,14 @@ fun NeuralVaultModal(
 
     val archivedMemories by (viewModel?.archivedMemories ?: kotlinx.coroutines.flow.flowOf(emptyList()))
         .collectAsStateWithLifecycle(initialValue = emptyList())
+    val entityRelations by (viewModel?.entityRelations ?: kotlinx.coroutines.flow.flowOf(emptyList()))
+        .collectAsStateWithLifecycle(initialValue = emptyList())
     val lastRagRouteMode by (viewModel?.lastRagRouteMode ?: kotlinx.coroutines.flow.flowOf(com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST))
         .collectAsStateWithLifecycle(initialValue = com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST)
 
     LaunchedEffect(bot.id, activeFacts.size, activeEvents.size) {
         viewModel?.loadArchivedMemories(bot.id)
+        viewModel?.loadEntityRelations(bot.id)
     }
 
     var editingFact by remember { mutableStateOf<com.example.data.local.MemoryFactEntity?>(null) }
@@ -175,12 +178,21 @@ fun NeuralVaultModal(
             )
     }
 
-    val totalSaved = memoriesList.size + activeFacts.size + activeEvents.size
+    val filteredRelations = entityRelations.filter { rel ->
+        val matchesCategory = categoryFilter == "İlişki Ağı" || categoryFilter == "Tümü"
+        val matchesSearch = searchQuery.isBlank() ||
+            rel.sourceEntityName.contains(searchQuery, ignoreCase = true) ||
+            rel.relationType.contains(searchQuery, ignoreCase = true) ||
+            rel.targetEntityName.contains(searchQuery, ignoreCase = true)
+        matchesCategory && matchesSearch
+    }
+
+    val totalSaved = memoriesList.size + activeFacts.size + activeEvents.size + entityRelations.size
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Neural Vault • Bellek Mahzeni",
-        subtitle = "$totalSaved aktif • ${archivedMemories.size} arşiv • Ortak Hibrit + AI RAG",
+        subtitle = "$totalSaved aktif • ${entityRelations.size} ilişki ağı • ${archivedMemories.size} arşiv",
         icon = Icons.Default.Memory,
         maxWidthFraction = 0.94f
     ) {
@@ -206,6 +218,14 @@ fun NeuralVaultModal(
                     onClick = {},
                     modifier = Modifier.testTag("rag_mode_badge")
                 )
+                if (entityRelations.isNotEmpty()) {
+                    MorCamChipPill(
+                        label = "${entityRelations.size} İlişki Ağı",
+                        selected = categoryFilter == "İlişki Ağı",
+                        onClick = { categoryFilter = "İlişki Ağı" },
+                        modifier = Modifier.testTag("graph_relations_count_badge")
+                    )
+                }
                 if (archivedMemories.isNotEmpty()) {
                     MorCamChipPill(
                         label = "${archivedMemories.size} Arşiv",
@@ -362,8 +382,8 @@ fun NeuralVaultModal(
                 )
             }
 
-            // Category Filter Chips (including Arşiv tab)
-            val presetCategories = listOf("Tümü", "Anılar", "Otomatik Bilgiler", "Arşiv", "Sabit", "İlişki", "Dünya/Mekan")
+            // Category Filter Chips (including İlişki Ağı & Arşiv tabs)
+            val presetCategories = listOf("Tümü", "İlişki Ağı", "Anılar", "Otomatik Bilgiler", "Arşiv", "Sabit", "İlişki", "Dünya/Mekan")
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -371,7 +391,11 @@ fun NeuralVaultModal(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 presetCategories.forEach { cat ->
-                    val chipLabel = if (cat == "Arşiv" && archivedMemories.isNotEmpty()) "Arşiv (${archivedMemories.size})" else cat
+                    val chipLabel = when {
+                        cat == "Arşiv" && archivedMemories.isNotEmpty() -> "Arşiv (${archivedMemories.size})"
+                        cat == "İlişki Ağı" && entityRelations.isNotEmpty() -> "İlişki Ağı (${entityRelations.size})"
+                        else -> cat
+                    }
                     MorCamChipPill(
                         label = chipLabel,
                         selected = categoryFilter == cat,
@@ -379,9 +403,15 @@ fun NeuralVaultModal(
                             categoryFilter = cat
                             if (cat == "Arşiv") {
                                 viewModel?.loadArchivedMemories(bot.id)
+                            } else if (cat == "İlişki Ağı") {
+                                viewModel?.loadEntityRelations(bot.id)
                             }
                         },
-                        modifier = if (cat == "Arşiv") Modifier.testTag("vault_tab_archive") else Modifier
+                        modifier = when (cat) {
+                            "Arşiv" -> Modifier.testTag("vault_tab_archive")
+                            "İlişki Ağı" -> Modifier.testTag("vault_tab_knowledge_graph")
+                            else -> Modifier
+                        }
                     )
                 }
             }
@@ -390,7 +420,11 @@ fun NeuralVaultModal(
             MorCamGlassTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = if (categoryFilter == "Arşiv") "Arşivde ara..." else "Hafızada ara...",
+                placeholder = when (categoryFilter) {
+                    "Arşiv" -> "Arşivde ara..."
+                    "İlişki Ağı" -> "İlişki ağında ara (ör. Aiden, kardeşi)..."
+                    else -> "Hafızada ara..."
+                },
                 leadingIcon = Icons.Default.Search,
                 trailingContent = if (searchQuery.isNotEmpty()) {
                     {
@@ -404,12 +438,13 @@ fun NeuralVaultModal(
                 } else null
             )
 
-            // Saved Memory List Cards (or Arşiv List when Arşiv tab active)
+            // Saved Memory List Cards (or Arşiv / İlişki Ağı List)
             val isArchiveTab = categoryFilter == "Arşiv"
-            val totalItemsCount = if (isArchiveTab) {
-                filteredArchives.size
-            } else {
-                filteredMemories.size + filteredFacts.size + filteredEvents.size
+            val isGraphTab = categoryFilter == "İlişki Ağı"
+            val totalItemsCount = when {
+                isArchiveTab -> filteredArchives.size
+                isGraphTab -> filteredRelations.size
+                else -> filteredMemories.size + filteredFacts.size + filteredEvents.size + filteredRelations.size
             }
             if (totalItemsCount == 0) {
                 MorCamGlassCard(
@@ -419,10 +454,10 @@ fun NeuralVaultModal(
                     modifier = Modifier.cosmicFloatingLevitation(amplitudeDp = 3.dp, durationMs = 2800)
                 ) {
                     Text(
-                        text = if (isArchiveTab) {
-                            "Arşivlenmiş eski bellek kaydı bulunmuyor."
-                        } else {
-                            "Henüz enjekte edilmiş veya öğrenilmiş bellek yok."
+                        text = when {
+                            isArchiveTab -> "Arşivlenmiş eski bellek kaydı bulunmuyor."
+                            isGraphTab -> "Henüz öğrenilmiş Bilgi Grafiği ilişkisi yok."
+                            else -> "Henüz enjekte edilmiş veya öğrenilmiş bellek yok."
                         },
                         fontFamily = InterFontFamily,
                         color = MorCamTokens.LavenderMuted,
@@ -430,6 +465,53 @@ fun NeuralVaultModal(
                         textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth()
                     )
+                }
+            } else if (isGraphTab) {
+                filteredRelations.forEachIndexed { idx, rel ->
+                    MorCamGlassCard(
+                        cornerRadius = 16.dp,
+                        modifier = Modifier.cosmicStaggeredEnter(index = idx, key = "rel_tab_${rel.id}")
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${rel.sourceEntityName}  ⟶  ${rel.targetEntityName}",
+                                    fontFamily = LiterarySerifFontFamily,
+                                    color = MorCamTokens.SilverLavenderBright,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(5.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(Color(0x458B5CF6))
+                                        .border(0.75.dp, MorCamTokens.RimGradient, RoundedCornerShape(50))
+                                        .padding(horizontal = 9.dp, vertical = 2.5.dp)
+                                ) {
+                                    Text(
+                                        text = rel.relationType,
+                                        fontFamily = InterFontFamily,
+                                        color = MorCamTokens.LavenderLight,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            MorCamCircleIconButton(
+                                icon = Icons.Default.Delete,
+                                contentDescription = "İlişkiyi Sil",
+                                onClick = { viewModel?.deleteEntityRelation(bot.id, rel.id) },
+                                size = 48.dp,
+                                isDestructive = true,
+                                modifier = Modifier.testTag("delete_relation_${rel.id}")
+                            )
+                        }
+                    }
                 }
             } else if (isArchiveTab) {
                 filteredArchives.forEachIndexed { idx, archive ->
@@ -798,6 +880,40 @@ fun NeuralVaultModal(
                                 size = 36.dp,
                                 isDestructive = true
                             )
+                        }
+                    }
+                }
+
+                // 4. Knowledge Graph Relations in "Tümü" overview
+                if (categoryFilter == "Tümü" && filteredRelations.isNotEmpty()) {
+                    filteredRelations.forEachIndexed { idx, rel ->
+                        MorCamGlassCard(
+                            cornerRadius = 16.dp,
+                            modifier = Modifier.cosmicStaggeredEnter(index = idx, key = "rel_all_${rel.id}")
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "🕸️ ${rel.sourceEntityName} • ${rel.relationType} → ${rel.targetEntityName}",
+                                        fontFamily = LiterarySerifFontFamily,
+                                        color = MorCamTokens.SilverLavenderBright,
+                                        fontSize = 12.8.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                                MorCamCircleIconButton(
+                                    icon = Icons.Default.Delete,
+                                    contentDescription = "İlişkiyi Sil",
+                                    onClick = { viewModel?.deleteEntityRelation(bot.id, rel.id) },
+                                    size = 48.dp,
+                                    isDestructive = true,
+                                    modifier = Modifier.testTag("delete_relation_all_${rel.id}")
+                                )
+                            }
                         }
                     }
                 }

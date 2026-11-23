@@ -1,95 +1,290 @@
 package com.example.util
 
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.suspendCancellableCoroutine
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.IOException
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
- * Server-Sent Events (SSE) akışını okuyup token token yayınlar.
- * OpenAI uyumlu `stream=true` endpoint'leri için çalışır.
- * Her `data: {...}` satırından `choices[0].delta.content` çekilerek emit edilir.
+ * Sistem #23: Çoklu Format Gerçek Zamanlı Server-Sent Events (SSE) Ayrıştırıcı.
+ *
+ * Desteklenen formatlar:
+ * - **OpenAI-Compatible SSE** (OpenAI, OpenRouter, Groq, DeepSeek, Nvidia, Mistral, Together, Ollama, Custom):
+ *   `data: {"choices":[{"delta":{"content":"..."}}]}` + `delta.reasoning_content` + `data: [DONE]`
+ * - **Google Gemini SSE** (`streamGenerateContent?alt=sse`):
+ *   `data: {"candidates":[{"content":{"parts":[{"text":"..."}]}}]}`
+ * - Yorum/heartbeat satırlarını (`: OPENROUTER PROCESSING`, `: keep-alive`) ve yarım/bozuk JSON'ları
+ *   çökmeden güvenle atlar; coroutine iptalinde OkHttp soketini anında kapatır.
  */
 object SseStreamParser {
 
+    enum class SseFormat {
+        AUTO,
+        OPENAI,
+        GEMINI
+    }
+
     data class StreamChunk(
         val token: String,
-        val isDone: Boolean = false
+        val isDone: Boolean = false,
+        val reasoningToken: String = "",
+        val promptTokens: Long = 0L,
+        val candidateTokens: Long = 0L
     )
 
+    class SseHttpException(
+        val httpCode: Int,
+        val errorBody: String,
+        val retryAfterSeconds: Long? = null
+    ) : IllegalStateException("SSE HTTP $httpCode: ${errorBody.take(240)}")
+
     /**
-     * Verilen [request]'i stream olarak çalıştırır.
-     * Her yeni token için [StreamChunk] emit eder, bitişte `isDone=true` bir son chunk yayınlar.
+     * Tek bir ham SSE satırını ayrıştırır. Yorum (`: ...`), boş satır veya bozuk JSON'da `null` döner.
      */
-    fun stream(client: OkHttpClient, request: Request): Flow<StreamChunk> = flow {
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                val err = response.body?.string() ?: "HTTP ${response.code}"
-                throw IllegalStateException("SSE bağlantı hatası: $err")
+    fun parseSseLine(
+        rawLine: String,
+        format: SseFormat = SseFormat.AUTO
+    ): StreamChunk? {
+        val trimmed = rawLine.trim()
+        if (trimmed.isEmpty() || trimmed.startsWith(":")) return null
+        if (!trimmed.startsWith("data:")) return null
+
+        val payload = trimmed.removePrefix("data:").trim()
+        if (payload.isEmpty()) return null
+        if (payload == "[DONE]") {
+            return StreamChunk(token = "", isDone = true)
+        }
+
+        val json = try {
+            JSONObject(payload)
+        } catch (_: Exception) {
+            return null
+        }
+
+        // OpenAI-compatible SSE chunk
+        if (format == SseFormat.OPENAI || (format == SseFormat.AUTO && json.has("choices"))) {
+            val usage = json.optJSONObject("usage")
+            val pTok = usage?.optLong("prompt_tokens", 0L) ?: 0L
+            val cTok = usage?.optLong("completion_tokens", 0L) ?: 0L
+
+            val choices = json.optJSONArray("choices")
+            if (choices == null || choices.length() == 0) {
+                return if (pTok > 0L || cTok > 0L) {
+                    StreamChunk(token = "", promptTokens = pTok, candidateTokens = cTok)
+                } else null
             }
 
-            val reader = BufferedReader(response.body!!.charStream())
-            var line: String?
-            while (reader.readLine().also { line = it } != null) {
-                val raw = line!!.trim()
-                if (raw.isEmpty()) continue
-                if (!raw.startsWith("data:")) continue
+            val firstChoice = choices.optJSONObject(0) ?: return null
+            val delta = firstChoice.optJSONObject("delta") ?: firstChoice.optJSONObject("message")
+            val content = extractSafeJsonString(delta, "content")
+            val reasoning = extractSafeJsonString(delta, "reasoning_content")
+                .ifEmpty { extractSafeJsonString(delta, "reasoning") }
 
-                val payload = raw.removePrefix("data:").trim()
-                if (payload == "[DONE]") {
-                    emit(StreamChunk("", isDone = true))
-                    break
-                }
+            if (content.isNotEmpty() || reasoning.isNotEmpty() || pTok > 0L || cTok > 0L) {
+                return StreamChunk(
+                    token = content,
+                    isDone = false,
+                    reasoningToken = reasoning,
+                    promptTokens = pTok,
+                    candidateTokens = cTok
+                )
+            }
+            return null
+        }
 
-                try {
-                    val json = JSONObject(payload)
-                    val choices = json.optJSONArray("choices") ?: continue
-                    if (choices.length() == 0) continue
-                    val delta = choices.getJSONObject(0).optJSONObject("delta") ?: continue
-                    val content = delta.optString("content", "")
-                    if (content.isNotEmpty()) {
-                        emit(StreamChunk(content))
+        // Google Gemini SSE chunk
+        if (format == SseFormat.GEMINI || (format == SseFormat.AUTO && json.has("candidates"))) {
+            val usage = json.optJSONObject("usageMetadata")
+            val pTok = usage?.optLong("promptTokenCount", 0L) ?: 0L
+            val cTok = usage?.optLong("candidatesTokenCount", 0L) ?: 0L
+
+            val candidates = json.optJSONArray("candidates") ?: return null
+            if (candidates.length() == 0) return null
+            val firstCandidate = candidates.optJSONObject(0) ?: return null
+            val parts = firstCandidate.optJSONObject("content")?.optJSONArray("parts")
+            val tokenBuilder = StringBuilder()
+            val reasoningBuilder = StringBuilder()
+
+            if (parts != null) {
+                for (i in 0 until parts.length()) {
+                    val part = parts.optJSONObject(i) ?: continue
+                    val text = extractSafeJsonString(part, "text")
+                    if (text.isEmpty()) continue
+                    if (part.optBoolean("thought", false)) {
+                        reasoningBuilder.append(text)
+                    } else {
+                        tokenBuilder.append(text)
                     }
-                } catch (_: Exception) {
-                    // Kötü format — atla
+                }
+            }
+
+            if (tokenBuilder.isNotEmpty() || reasoningBuilder.isNotEmpty() || pTok > 0L || cTok > 0L) {
+                return StreamChunk(
+                    token = tokenBuilder.toString(),
+                    isDone = false,
+                    reasoningToken = reasoningBuilder.toString(),
+                    promptTokens = pTok,
+                    candidateTokens = cTok
+                )
+            }
+            return null
+        }
+
+        return null
+    }
+
+    /**
+     * Bir [BufferedReader] akışından tüm SSE satırlarını sıfır bellek şişirmesiyle satır satır okur.
+     */
+    suspend fun parseSseReader(
+        reader: BufferedReader,
+        format: SseFormat = SseFormat.AUTO,
+        onChunk: suspend (StreamChunk) -> Unit
+    ) {
+        var line: String?
+        while (reader.readLine().also { line = it } != null) {
+            currentCoroutineContext().ensureActive()
+            val chunk = parseSseLine(line!!, format) ?: continue
+            onChunk(chunk)
+            if (chunk.isDone) break
+        }
+    }
+
+    /**
+     * Birim testleri ve çevrimdışı ayrıştırma için saf satır listesi ayrıştırıcısı.
+     */
+    fun parseSseLines(
+        lines: Iterable<String>,
+        format: SseFormat = SseFormat.AUTO
+    ): List<StreamChunk> {
+        val result = mutableListOf<StreamChunk>()
+        for (line in lines) {
+            val chunk = parseSseLine(line, format) ?: continue
+            result.add(chunk)
+            if (chunk.isDone) break
+        }
+        return result
+    }
+
+    /**
+     * Coroutine iptal edildiğinde OkHttp çağrısını anında kapatan canlı SSE akışı.
+     */
+    fun stream(
+        client: OkHttpClient,
+        request: Request,
+        format: SseFormat = SseFormat.AUTO
+    ): Flow<StreamChunk> = flow {
+        val call = client.newCall(request)
+        val response = call.awaitResponseCancellable()
+        response.use { resp ->
+            if (!resp.isSuccessful) {
+                val errBody = try { resp.body?.string().orEmpty() } catch (_: Exception) { "" }
+                val retryAfter = resp.header("Retry-After")?.trim()?.toLongOrNull()
+                throw SseHttpException(resp.code, errBody.ifBlank { "HTTP ${resp.code}" }, retryAfter)
+            }
+
+            val body = resp.body ?: throw IllegalStateException("SSE yanıt gövdesi boş.")
+            BufferedReader(body.charStream()).use { reader ->
+                var sawDone = false
+                try {
+                    parseSseReader(reader, format) { chunk ->
+                        if (chunk.isDone) sawDone = true
+                        emit(chunk)
+                    }
+                    if (!sawDone) {
+                        emit(StreamChunk(token = "", isDone = true))
+                    }
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    try { call.cancel() } catch (_: Throwable) {}
+                    throw ce
                 }
             }
         }
     }
 
+    private suspend fun Call.awaitResponseCancellable(): Response = suspendCancellableCoroutine { cont ->
+        cont.invokeOnCancellation {
+            try { cancel() } catch (_: Throwable) {}
+        }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                if (cont.isActive) cont.resumeWithException(e)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                if (cont.isActive) {
+                    cont.resume(response)
+                } else {
+                    response.close()
+                }
+            }
+        })
+    }
+
+    private fun extractSafeJsonString(obj: JSONObject?, key: String): String {
+        if (obj == null || !obj.has(key) || obj.isNull(key)) return ""
+        val value = obj.opt(key) ?: return ""
+        if (value === JSONObject.NULL) return ""
+        return value.toString()
+    }
+
     /**
-     * OpenAI uyumlu bir istek body'si oluşturur (stream=true eklenmiş).
+     * OpenAI uyumlu bir istek oluşturur (`stream = true`, `Accept: text/event-stream`, `Cache-Control: no-cache`).
      */
     fun buildStreamRequestBody(
         endpointUrl: String,
         apiKey: String,
         model: String,
         systemPrompt: String,
-        messagesJson: org.json.JSONArray
+        messagesJson: JSONArray
     ): Request {
+        val effectiveMessages = JSONArray()
+        var hasSystem = false
+        for (i in 0 until messagesJson.length()) {
+            val item = messagesJson.optJSONObject(i)
+            if (item?.optString("role") == "system") hasSystem = true
+        }
+        if (!hasSystem && systemPrompt.isNotBlank()) {
+            effectiveMessages.put(JSONObject().put("role", "system").put("content", systemPrompt))
+        }
+        for (i in 0 until messagesJson.length()) {
+            effectiveMessages.put(messagesJson.get(i))
+        }
+
         val body = JSONObject().apply {
             put("model", model)
-            put("messages", messagesJson)
+            put("messages", effectiveMessages)
             put("temperature", 0.90)
             put("top_p", 0.95)
             put("stream", true)
         }
 
-        val reqBody = body.toString()
-            .toByteArray()
-            .let { okhttp3.RequestBody.create("application/json; charset=utf-8".toMediaTypeOrNull(), it) }
+        val reqBody = body.toString().toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
-        return Request.Builder()
+        val builder = Request.Builder()
             .url(endpointUrl)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .addHeader("Accept", "text/event-stream")
+            .header("Content-Type", "application/json")
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache")
             .post(reqBody)
-            .build()
-    }
 
-    private fun String.toMediaTypeOrNull() =
-        with(okhttp3.MediaType) { this@toMediaTypeOrNull.toMediaTypeOrNull() }
+        if (apiKey.isNotBlank()) {
+            builder.header("Authorization", "Bearer $apiKey")
+        }
+        return builder.build()
+    }
 }

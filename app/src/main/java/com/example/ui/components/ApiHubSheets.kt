@@ -16,6 +16,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -33,6 +34,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -1125,65 +1127,101 @@ internal fun ApiProviderConfigureDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .padding(vertical = 18.dp)
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center
         ) {
-            GlobalGlassCard(
-                rootSize = rootSize,
-                blurredBg = blurredBg,
-                cornerRadius = 24.dp,
-                highlighted = true,
-                contentPadding = PaddingValues(18.dp),
-                modifier = Modifier.fillMaxWidth()
+            val maxDialogHeight = (maxHeight * 0.94f).coerceAtLeast(240.dp)
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 560.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = maxDialogHeight)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                GlobalGlassCard(
+                    rootSize = rootSize,
+                    blurredBg = blurredBg,
+                    cornerRadius = 24.dp,
+                    highlighted = true,
+                    contentPadding = PaddingValues(16.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Header
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = spec.name,
-                                color = GlobalMorCamColors.PearlText,
-                                fontSize = 19.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = DisplaySerifFontFamily
-                            )
-                            Text(
-                                text = spec.shortDesc,
-                                color = GlobalMorCamColors.LavenderSubtext,
-                                fontSize = 11.5.sp,
-                                lineHeight = 15.sp,
-                                fontFamily = InterFontFamily
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x55180B30))
-                                .clickable(onClick = onDismiss),
-                            contentAlignment = Alignment.Center
+                        // Sticky Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Kapat",
-                                tint = GlobalMorCamColors.PearlText,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = spec.name,
+                                    color = GlobalMorCamColors.PearlText,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = DisplaySerifFontFamily,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = spec.shortDesc,
+                                    color = GlobalMorCamColors.LavenderSubtext,
+                                    fontSize = 11.5.sp,
+                                    lineHeight = 15.sp,
+                                    fontFamily = InterFontFamily,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x55180B30))
+                                    .clickable(onClick = onDismiss),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Kapat",
+                                    tint = GlobalMorCamColors.PearlText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                    }
+
+                        // Scrollable Form Body (stays cleanly above keyboard)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
 
                     // Key input
                     GlobalGlassInputField(
@@ -1329,45 +1367,47 @@ internal fun ApiProviderConfigureDialog(
                         }
                     }
 
-                    // Test Result banner
-                    testResult?.let { res ->
-                        TestResultGlassBanner(res)
-                    }
+                        // Test Result banner
+                        testResult?.let { res ->
+                            TestResultGlassBanner(res)
+                        }
+                        }
 
-                    // Action Buttons
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        GlobalGlassSecondaryButton(
-                            text = "Test Et",
-                            loading = isTesting,
-                            enabled = modelName.isNotBlank() && (!spec.requiresApiKey || apiKey.isNotBlank()),
-                            onClick = {
-                                scope.launch {
-                                    isTesting = true
-                                    testResult = onTestConnection(spec.baseUrl, apiKey, modelName.trim(), spec.apiFormat)
-                                    isTesting = false
-                                }
-                            },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("provider_test_button")
-                        )
-                        GlobalGlassPrimaryButton(
-                            text = if (isEditingExisting) "Güncelle" else "Ekle & Sıraya Al",
-                            enabled = canSave,
-                            onClick = {
-                                onConfirm(
-                                    apiKey.trim(),
-                                    modelName.trim(),
-                                    testResult?.supportsFunctionCalling ?: true
-                                )
-                            },
-                            modifier = Modifier
-                                .weight(1.45f)
-                                .testTag("provider_confirm_button")
-                        )
+                        // Sticky Bottom Action Bar (always reachable with keyboard open)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            GlobalGlassSecondaryButton(
+                                text = "Test Et",
+                                loading = isTesting,
+                                enabled = modelName.isNotBlank() && (!spec.requiresApiKey || apiKey.isNotBlank()),
+                                onClick = {
+                                    scope.launch {
+                                        isTesting = true
+                                        testResult = onTestConnection(spec.baseUrl, apiKey, modelName.trim(), spec.apiFormat)
+                                        isTesting = false
+                                    }
+                                },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("provider_test_button")
+                            )
+                            GlobalGlassPrimaryButton(
+                                text = if (isEditingExisting) "Güncelle" else "Ekle & Sıraya Al",
+                                enabled = canSave,
+                                onClick = {
+                                    onConfirm(
+                                        apiKey.trim(),
+                                        modelName.trim(),
+                                        testResult?.supportsFunctionCalling ?: true
+                                    )
+                                },
+                                modifier = Modifier
+                                    .weight(1.45f)
+                                    .testTag("provider_confirm_button")
+                            )
+                        }
                     }
                 }
             }
@@ -1422,63 +1462,100 @@ internal fun CustomApiEditorDialog(
 
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
-                .fillMaxWidth(0.94f)
-                .padding(vertical = 18.dp)
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismiss
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center
         ) {
-            GlobalGlassCard(
-                rootSize = rootSize,
-                blurredBg = blurredBg,
-                cornerRadius = 24.dp,
-                highlighted = true,
-                contentPadding = PaddingValues(18.dp),
-                modifier = Modifier.fillMaxWidth()
+            val maxDialogHeight = (maxHeight * 0.94f).coerceAtLeast(240.dp)
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 560.dp)
+                    .fillMaxWidth()
+                    .heightIn(max = maxDialogHeight)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
+                    )
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                GlobalGlassCard(
+                    rootSize = rootSize,
+                    blurredBg = blurredBg,
+                    cornerRadius = 24.dp,
+                    highlighted = true,
+                    contentPadding = PaddingValues(16.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = if (isEditing) "Özel API'yi Düzenle" else "Özel (Custom) API Ekle",
-                                color = GlobalMorCamColors.PearlText,
-                                fontSize = 19.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = DisplaySerifFontFamily
-                            )
-                            Text(
-                                text = "Herhangi bir OpenAI veya Anthropic uyumlu sunucuya bağlan.",
-                                color = GlobalMorCamColors.LavenderSubtext,
-                                fontSize = 11.5.sp,
-                                fontFamily = InterFontFamily
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x55180B30))
-                                .clickable(onClick = onDismiss),
-                            contentAlignment = Alignment.Center
+                        // Sticky Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Kapat",
-                                tint = GlobalMorCamColors.PearlText,
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = if (isEditing) "Özel API'yi Düzenle" else "Özel (Custom) API Ekle",
+                                    color = GlobalMorCamColors.PearlText,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = DisplaySerifFontFamily,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = "Herhangi bir OpenAI veya Anthropic uyumlu sunucuya bağlan.",
+                                    color = GlobalMorCamColors.LavenderSubtext,
+                                    fontSize = 11.5.sp,
+                                    fontFamily = InterFontFamily,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0x55180B30))
+                                    .clickable(onClick = onDismiss),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Kapat",
+                                    tint = GlobalMorCamColors.PearlText,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
-                    }
+
+                        // Scrollable Form Body (never clipped by soft keyboard)
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f, fill = false)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
 
                     GlobalGlassInputField(
                         value = label,
@@ -1696,45 +1773,48 @@ internal fun CustomApiEditorDialog(
                         )
                     }
 
-                    testResult?.let { TestResultGlassBanner(it) }
+                        testResult?.let { TestResultGlassBanner(it) }
+                        }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        GlobalGlassSecondaryButton(
-                            text = "Test Et",
-                            loading = isTesting,
-                            enabled = canSave,
-                            onClick = {
-                                scope.launch {
-                                    isTesting = true
-                                    testResult = onTestConnection(baseUrl.trim(), apiKey.trim(), modelName.trim(), apiFormat)
-                                    isTesting = false
-                                }
-                            },
-                            modifier = Modifier.weight(1f)
-                        )
-                        GlobalGlassPrimaryButton(
-                            text = if (isEditing) "Güncelle" else "Kaydet & Ekle",
-                            enabled = canSave,
-                            onClick = {
-                                val detectedJson = org.json.JSONArray(detectedSmallModels).toString()
-                                onSave(
-                                    label.trim().ifBlank { modelName.trim() },
-                                    baseUrl.trim(),
-                                    apiKey.trim(),
-                                    modelName.trim(),
-                                    apiFormat,
-                                    testResult?.supportsFunctionCalling ?: true,
-                                    utilityModel.trim(),
-                                    detectedJson
-                                )
-                            },
-                            modifier = Modifier
-                                .weight(1.45f)
-                                .testTag("custom_api_save_button")
-                        )
+                        // Sticky Bottom Action Bar
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            GlobalGlassSecondaryButton(
+                                text = "Test Et",
+                                loading = isTesting,
+                                enabled = canSave,
+                                onClick = {
+                                    scope.launch {
+                                        isTesting = true
+                                        testResult = onTestConnection(baseUrl.trim(), apiKey.trim(), modelName.trim(), apiFormat)
+                                        isTesting = false
+                                    }
+                                },
+                                modifier = Modifier.weight(1f)
+                            )
+                            GlobalGlassPrimaryButton(
+                                text = if (isEditing) "Güncelle" else "Kaydet & Ekle",
+                                enabled = canSave,
+                                onClick = {
+                                    val detectedJson = org.json.JSONArray(detectedSmallModels).toString()
+                                    onSave(
+                                        label.trim().ifBlank { modelName.trim() },
+                                        baseUrl.trim(),
+                                        apiKey.trim(),
+                                        modelName.trim(),
+                                        apiFormat,
+                                        testResult?.supportsFunctionCalling ?: true,
+                                        utilityModel.trim(),
+                                        detectedJson
+                                    )
+                                },
+                                modifier = Modifier
+                                    .weight(1.45f)
+                                    .testTag("custom_api_save_button")
+                            )
+                        }
                     }
                 }
             }

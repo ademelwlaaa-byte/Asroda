@@ -185,6 +185,11 @@ fun BotSettingsModal(
     val clipboardManager = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
     val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+    val sensitiveTriggers by viewModel.sensitiveTriggers.collectAsStateWithLifecycle()
+    val pendingReappraisals by viewModel.pendingReappraisals.collectAsStateWithLifecycle()
+    LaunchedEffect(bot.id) {
+        viewModel.loadEmotionalDefenseState(bot.id)
+    }
 
     // ── Shared Wisteria Frosted Glass Backdrop & Reference Glass Plates ──
     val rootSize = LocalAetheriaRootSize.current.value
@@ -1293,6 +1298,16 @@ fun BotSettingsModal(
                                     }
                                 }
                             }
+
+                            MorCamHairlineDivider()
+
+                            // Sistem #22: Active Sensitive Triggers & Open Emotional Reappraisals
+                            SensitiveTriggersAndReappraisalsCardContent(
+                                sensitiveTriggers = sensitiveTriggers,
+                                openReappraisals = pendingReappraisals.filter { !it.resolved && !it.expired },
+                                onAddTrigger = { kw -> viewModel.addSensitiveTrigger(bot.id, kw) },
+                                onDeleteTrigger = { id -> viewModel.deleteSensitiveTrigger(bot.id, id) }
+                            )
 
                             MorCamHairlineDivider()
 

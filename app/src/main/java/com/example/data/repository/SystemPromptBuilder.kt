@@ -67,7 +67,8 @@ object SystemPromptBuilder {
         val explicitInSceneCastNames: Set<String> = emptySet(),
         val userSubtextHint: String = "",
         val latestUserMessage: String = "",
-        val isPureOocTurn: Boolean = false
+        val isPureOocTurn: Boolean = false,
+        val sensitiveTriggerDirective: String = ""
     )
 
     private val TR_LOCALE = java.util.Locale("tr", "TR")
@@ -246,16 +247,33 @@ object SystemPromptBuilder {
             sb.appendLine("\n[İLİŞKİ DÖNÜM NOKTALARI]: $formattedMilestones.")
         }
 
-        // System #8: Conditional Pending Reappraisals (earliest 1-2 active only, flexible AI decision — zero tokens when empty)
+        // System #22: Live Sensitive Trigger Directive (when user touches a core wound)
+        if (input.sensitiveTriggerDirective.isNotBlank()) {
+            sb.appendLine("\n${input.sensitiveTriggerDirective.trim()}")
+        }
+
+        // System #8 & #22: Flexible Story-Aware Pending Reappraisals (zero rigid +15/+3d lock; max 2 active)
         val activePendingReappraisals = input.pendingReappraisals
             .filter { !it.resolved && !it.expired }
             .sortedBy { it.triggeredAtTimestamp }
             .take(2)
         if (activePendingReappraisals.isNotEmpty()) {
-            val summary = activePendingReappraisals.joinToString(" | ") { pr ->
-                "#${pr.id}: ${pr.originalEventDescription.trim().take(90)}"
+            sb.appendLine("\n[BEKLEYEN DUYGUSAL OLGUNLAŞMA]")
+            activePendingReappraisals.forEach { pr ->
+                val triggeredStoryDay = try {
+                    org.json.JSONObject(pr.originalEmotionState).optLong("storyDay", bot.storyDayCounter)
+                } catch (_: Exception) {
+                    bot.storyDayCounter
+                }
+                val deltaStoryDays = (bot.storyDayCounter - triggeredStoryDay).coerceAtLeast(0L)
+                val deltaMessages = (input.totalMessageCount - pr.triggeredAtMessageIndex).coerceAtLeast(0)
+                sb.appendLine(
+                    "[İÇSEL HESAPLAŞMA (AÇIK YARA #${pr.id})]: \"${pr.originalEventDescription.trim().take(110)}\" " +
+                        "(hikâye günü farkı: $deltaStoryDays gün, $deltaMessages mesaj önce). " +
+                        "Kullanıcı samimi telafi/empati gösterdiyse veya karakter kendi içinde olgunlaştıysa yumuşat (\"softened\") ya da çöz (\"resolved\"); " +
+                        "yara yeniden deşildiyse sertleştir (\"hardened\"); henüz zamanı değilse dokunma."
+                )
             }
-            sb.appendLine("\n[BEKLEYEN DUYGUSAL OLGUNLAŞMA]: $summary (Esnek AI kararı: sahnede kırgınlık/öfke gerçekten yumuşadı, çözüldü veya sertleştiyse JSON'da \"reapp\" kullan; zorunlu değil.)")
         }
 
         try {
@@ -309,6 +327,7 @@ object SystemPromptBuilder {
         val p4TokenCeiling = (maxPromptTokens - 680).coerceAtLeast(1200)
         fun hasBudgetFor(line: String): Boolean = estimateTokens(sb.toString()) + estimateTokens(line) <= p4TokenCeiling
 
+        val cleanGraphLower = input.graphResolutionNote?.trim()?.lowercase(TR_LOCALE).orEmpty()
         if (!input.graphResolutionNote.isNullOrBlank()) {
             val cleanGraph = input.graphResolutionNote.trim()
             val graphBlock = "\n[İLİŞKİ AĞI GERÇEĞİ]\n$cleanGraph"
@@ -316,11 +335,23 @@ object SystemPromptBuilder {
         }
 
         if (input.relevantFacts.isNotEmpty()) {
-            sb.appendLine("\n[NEURAL VAULT — KESİN HAFIZA (Değişirse #ID ile güncelle/sil; ★ kullanıcı kilididir)]")
-            input.relevantFacts.take(factLimit).forEach { f ->
-                val line = MemoryEngine.formatFactForPrompt(f, bot.storyDayCounter)
-                val isProtected = f.userCorrected || MemoryLifecycleCodec.parse(f.confidence).tier == MemoryTier.CORE
-                if (isProtected || hasBudgetFor(line)) sb.appendLine(line)
+            val dedupedFacts = if (cleanGraphLower.isBlank()) {
+                input.relevantFacts
+            } else {
+                input.relevantFacts.filterNot { f ->
+                    val subj = f.subject.trim().lowercase(TR_LOCALE)
+                    val value = f.value.trim().lowercase(TR_LOCALE)
+                    subj.length >= 2 && value.length >= 2 &&
+                        cleanGraphLower.contains(subj) && cleanGraphLower.contains(value)
+                }
+            }
+            if (dedupedFacts.isNotEmpty()) {
+                sb.appendLine("\n[NEURAL VAULT — KESİN HAFIZA (Değişirse #ID ile güncelle/sil; ★ kullanıcı kilididir)]")
+                dedupedFacts.take(factLimit).forEach { f ->
+                    val line = MemoryEngine.formatFactForPrompt(f, bot.storyDayCounter)
+                    val isProtected = f.userCorrected || MemoryLifecycleCodec.parse(f.confidence).tier == MemoryTier.CORE
+                    if (isProtected || hasBudgetFor(line)) sb.appendLine(line)
+                }
             }
             val pureOocForToolHint = input.isPureOocTurn ||
                 com.example.util.UserSentimentAnalyzer.isPureOocMessage(input.latestUserMessage)

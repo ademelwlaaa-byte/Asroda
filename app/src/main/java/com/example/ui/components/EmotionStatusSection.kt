@@ -30,7 +30,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.ui.platform.testTag
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -66,6 +69,8 @@ import com.example.data.local.BotEntity
 import com.example.data.local.CharacterEmotionEntity
 import com.example.data.local.EmotionState
 import com.example.data.local.WorldState
+import com.example.data.local.PendingReappraisalEntity
+import com.example.data.local.SensitiveTriggerEntity
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
@@ -78,6 +83,10 @@ fun EmotionStatusSection(
     filterCount: Int = 0,
     onUpdateCharacterEmotion: ((characterName: String, mood: String, affection: Int, trust: Int, tension: Int) -> Unit)? = null,
     onDeleteCharacter: ((characterName: String) -> Unit)? = null,
+    sensitiveTriggers: List<SensitiveTriggerEntity> = emptyList(),
+    pendingReappraisals: List<PendingReappraisalEntity> = emptyList(),
+    onAddTrigger: ((String) -> Unit)? = null,
+    onDeleteTrigger: ((Long) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val emotion = remember(bot.emotionState) { EmotionState.fromJson(bot.emotionState) }
@@ -623,6 +632,22 @@ fun EmotionStatusSection(
             }
         }
 
+        // System #22: Active Sensitive Triggers & Open Emotional Reappraisals
+        val openReappraisals = remember(pendingReappraisals) {
+            pendingReappraisals.filter { !it.resolved && !it.expired }
+        }
+        if (sensitiveTriggers.isNotEmpty() || openReappraisals.isNotEmpty() || onAddTrigger != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            MorCamDivider()
+            Spacer(modifier = Modifier.height(10.dp))
+            SensitiveTriggersAndReappraisalsCardContent(
+                sensitiveTriggers = sensitiveTriggers,
+                openReappraisals = openReappraisals,
+                onAddTrigger = onAddTrigger,
+                onDeleteTrigger = onDeleteTrigger
+            )
+        }
+
         // Relationship History Timeline Section
         Spacer(modifier = Modifier.height(12.dp))
         MorCamDivider()
@@ -773,6 +798,161 @@ fun EmotionStatusSection(
                     }
                 }
             }
+            }
+        }
+    }
+}
+
+/**
+ * Sistem #22: Hassas Tetikleyiciler & Açık Duygusal Olgunlaşma rozet/yönetim bloğu.
+ * Hem [EmotionStatusSection] hem [BotSettingsModal] tarafından ortak kullanılır.
+ */
+@Composable
+fun SensitiveTriggersAndReappraisalsCardContent(
+    sensitiveTriggers: List<SensitiveTriggerEntity>,
+    openReappraisals: List<PendingReappraisalEntity>,
+    onAddTrigger: ((String) -> Unit)? = null,
+    onDeleteTrigger: ((Long) -> Unit)? = null
+) {
+    var newTriggerText by remember { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = "💔 Hassas Tetikleyiciler & İçsel Olgunlaşma",
+            fontFamily = DisplaySerifFontFamily,
+            color = MorCamTokens.SilverLavenderBright,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+
+        if (sensitiveTriggers.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                sensitiveTriggers.forEach { trig ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Brush.horizontalGradient(listOf(Color(0x664C1D95), Color(0x771E0B38))))
+                            .border(0.85.dp, MorCamTokens.DestructiveRimGradient, RoundedCornerShape(12.dp))
+                            .padding(horizontal = 10.dp, vertical = 7.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "⚡ ${trig.triggerTopic}",
+                                fontFamily = LiterarySerifFontFamily,
+                                color = MorCamTokens.SilverLavenderBright,
+                                fontSize = 12.2.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (trig.sourceDescription.isNotBlank()) {
+                                Text(
+                                    text = trig.sourceDescription,
+                                    fontFamily = InterFontFamily,
+                                    color = MorCamTokens.LavenderMuted,
+                                    fontSize = 10.5.sp
+                                )
+                            }
+                        }
+                        if (onDeleteTrigger != null) {
+                            MorCamCircleIconButton(
+                                icon = Icons.Default.Close,
+                                contentDescription = "Tetikleyiciyi Sil",
+                                onClick = { onDeleteTrigger(trig.id) },
+                                size = 36.dp,
+                                isDestructive = true,
+                                modifier = Modifier.testTag("delete_trigger_${trig.id}")
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Text(
+                text = "Tanımlı hassas tetikleyici yok.",
+                fontFamily = InterFontFamily,
+                color = MorCamTokens.LavenderMuted,
+                fontSize = 11.sp
+            )
+        }
+
+        if (onAddTrigger != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                MorCamGlassTextField(
+                    value = newTriggerText,
+                    onValueChange = { newTriggerText = it },
+                    placeholder = "Yeni tetikleyici ekle (ör. ihanet, terk edilme)",
+                    singleLine = true,
+                    minHeight = 46.dp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("add_trigger_input")
+                )
+                MorCamCircleIconButton(
+                    icon = Icons.Default.Add,
+                    contentDescription = "Tetikleyici Ekle",
+                    onClick = {
+                        val trimmed = newTriggerText.trim()
+                        if (trimmed.isNotBlank()) {
+                            onAddTrigger(trimmed)
+                            newTriggerText = ""
+                        }
+                    },
+                    size = 48.dp,
+                    isActive = newTriggerText.isNotBlank(),
+                    modifier = Modifier.testTag("add_trigger_button")
+                )
+            }
+        }
+
+        if (openReappraisals.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Açık İçsel Hesaplaşmalar (${openReappraisals.size})",
+                fontFamily = LiterarySerifFontFamily,
+                color = MorCamTokens.LavenderSoft,
+                fontSize = 11.8.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            openReappraisals.take(3).forEach { reapp ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Brush.horizontalGradient(listOf(Color(0x557C3AED), Color(0x6616072C))))
+                        .border(0.85.dp, MorCamTokens.RimGradient, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "💠",
+                        fontSize = 12.sp
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = reapp.originalEventDescription,
+                            fontFamily = InterFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 11.5.sp,
+                            lineHeight = 15.5.sp
+                        )
+                        Text(
+                            text = "Açık yara #${reapp.id} • Doğal olgunlaşma bekleniyor",
+                            fontFamily = InterFontFamily,
+                            color = MorCamTokens.LavenderMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+                }
             }
         }
     }

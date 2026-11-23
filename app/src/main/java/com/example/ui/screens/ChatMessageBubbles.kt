@@ -168,6 +168,7 @@ internal fun IsolatedStreamingBotBubbleText(
     persistedText: String,
     streamingMsgIdFlow: StateFlow<String?>,
     streamingTextFlow: StateFlow<String?>,
+    isStreamingThinkingFlow: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false),
     isCollapsed: Boolean,
     highlightQuery: String
 ) {
@@ -179,28 +180,65 @@ internal fun IsolatedStreamingBotBubbleText(
     } else {
         persistedText
     }
+    val isThinking = if (isThisStreaming) {
+        val thinking by isStreamingThinkingFlow.collectAsStateWithLifecycle()
+        thinking
+    } else {
+        false
+    }
     val effectiveCollapsed = isCollapsed && !isThisStreaming
+
+    if (isThisStreaming && isThinking && displayText.isBlank()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(vertical = 4.dp)
+        ) {
+            CosmicStreamingCaret(color = Color(0xFFD8B4FE), size = 14.dp)
+            Text(
+                text = "✦ Düşünüyor...",
+                color = Color(0xFFE9D5FF).copy(alpha = 0.88f),
+                fontSize = 14.sp,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                fontFamily = LiterarySerifFontFamily
+            )
+        }
+        return
+    }
+
     val annotated = remember(displayText, highlightQuery) {
         formatNarrativeTextWithHighlight(displayText, highlightQuery)
     }
 
-    Text(
-        text = annotated,
-        color = Color.White.copy(alpha = 0.97f),
-        fontSize = 15.sp,
-        lineHeight = 22.5.sp,
-        letterSpacing = 0.1.sp,
-        fontFamily = LiterarySerifFontFamily,
-        maxLines = if (effectiveCollapsed) 4 else Int.MAX_VALUE,
-        overflow = if (effectiveCollapsed) TextOverflow.Ellipsis else TextOverflow.Clip,
-        style = TextStyle(
-            shadow = Shadow(
-                color = Color(0x88120524),
-                offset = Offset(0f, 1f),
-                blurRadius = 3.5f
+    Column {
+        Text(
+            text = annotated,
+            color = Color.White.copy(alpha = 0.97f),
+            fontSize = 15.sp,
+            lineHeight = 22.5.sp,
+            letterSpacing = 0.1.sp,
+            fontFamily = LiterarySerifFontFamily,
+            maxLines = if (effectiveCollapsed) 4 else Int.MAX_VALUE,
+            overflow = if (effectiveCollapsed) TextOverflow.Ellipsis else TextOverflow.Clip,
+            style = TextStyle(
+                shadow = Shadow(
+                    color = Color(0x88120524),
+                    offset = Offset(0f, 1f),
+                    blurRadius = 3.5f
+                )
             )
         )
-    )
+        if (isThisStreaming && isThinking) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "✦ Düşünüyor...",
+                color = Color(0xFFD8B4FE).copy(alpha = 0.78f),
+                fontSize = 12.sp,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                fontFamily = LiterarySerifFontFamily
+            )
+        }
+    }
 }
 
 /**
@@ -1080,6 +1118,7 @@ internal fun ChatBotMessageItem(
     refGlassBitmaps: AetheriaRefGlassBitmaps,
     streamingMsgIdFlow: StateFlow<String?>,
     streamingTextFlow: StateFlow<String?>,
+    isStreamingThinkingFlow: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false),
     speakingMessageIdFlow: StateFlow<String?>,
     onToggleMenu: () -> Unit,
     onCloseMenu: () -> Unit,
@@ -1263,6 +1302,7 @@ internal fun ChatBotMessageItem(
                     persistedText = msg.text,
                     streamingMsgIdFlow = streamingMsgIdFlow,
                     streamingTextFlow = streamingTextFlow,
+                    isStreamingThinkingFlow = isStreamingThinkingFlow,
                     isCollapsed = isBotMsgCollapsed,
                     highlightQuery = activeHighlightQuery
                 )
@@ -1621,6 +1661,7 @@ internal fun ChatMessageTimelineList(
     refGlassBitmaps: AetheriaRefGlassBitmaps,
     streamingMsgIdFlow: StateFlow<String?>,
     streamingTextFlow: StateFlow<String?>,
+    isStreamingThinkingFlow: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false),
     speakingMessageIdFlow: StateFlow<String?>,
     onLoadOlder: (nextBatchCount: Int) -> Unit,
     onEditingTextChange: (String) -> Unit,
@@ -1771,6 +1812,7 @@ internal fun ChatMessageTimelineList(
                     refGlassBitmaps = refGlassBitmaps,
                     streamingMsgIdFlow = streamingMsgIdFlow,
                     streamingTextFlow = streamingTextFlow,
+                    isStreamingThinkingFlow = isStreamingThinkingFlow,
                     speakingMessageIdFlow = speakingMessageIdFlow,
                     onToggleMenu = { onToggleBotMenu(msg.id) },
                     onCloseMenu = onCloseBotMenu,

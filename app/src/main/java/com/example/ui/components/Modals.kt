@@ -675,10 +675,21 @@ fun BotQuickProfileSheet(
                 }
             }
 
+            val quickVm: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
+            val quickTriggers by quickVm.sensitiveTriggers.collectAsStateWithLifecycle()
+            val quickReappraisals by quickVm.pendingReappraisals.collectAsStateWithLifecycle()
+            LaunchedEffect(bot.id) {
+                quickVm.loadEmotionalDefenseState(bot.id)
+            }
+
             EmotionStatusSection(
                 bot = bot,
                 characterEmotions = characterEmotions,
-                affectionEvents = affectionEvents
+                affectionEvents = affectionEvents,
+                sensitiveTriggers = quickTriggers,
+                pendingReappraisals = quickReappraisals,
+                onAddTrigger = { kw -> quickVm.addSensitiveTrigger(bot.id, kw) },
+                onDeleteTrigger = { id -> quickVm.deleteSensitiveTrigger(bot.id, id) }
             )
 
             com.example.ui.screens.StoryMilestoneTimelineCard(

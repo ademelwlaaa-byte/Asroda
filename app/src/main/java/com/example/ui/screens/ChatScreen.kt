@@ -81,7 +81,9 @@ fun ChatScreen(
     onRewindToMessage: ((String) -> Unit)? = null,
     onCloneBot: (() -> Unit)? = null,
     streamingMsgIdFlow: StateFlow<String?> = MutableStateFlow(null),
-    streamingTextFlow: StateFlow<String?> = MutableStateFlow(null)
+    streamingTextFlow: StateFlow<String?> = MutableStateFlow(null),
+    isStreamingThinkingFlow: StateFlow<Boolean> = MutableStateFlow(false),
+    onStopGeneration: (() -> Unit)? = null
 ) {
     var inputText by remember { mutableStateOf("") }
     var showBotSettings by remember { mutableStateOf(false) }
@@ -266,11 +268,11 @@ fun ChatScreen(
         }
     }
 
-    // Throttled coroutine-only auto-scroll during streaming (zero ChatScreen recompositions)
+    // Throttled coroutine-only auto-scroll during streaming (strictly respects upward user scrolling)
     LaunchedEffect(streamingTextFlow) {
         var lastScrollMs = 0L
         streamingTextFlow.collect { chunk ->
-            if (!chunk.isNullOrEmpty() && isChatAtBottom) {
+            if (!chunk.isNullOrEmpty() && isChatAtBottom && !listState.isScrollInProgress) {
                 val nowMs = System.currentTimeMillis()
                 if (nowMs - lastScrollMs >= 180L) {
                     lastScrollMs = nowMs
@@ -475,7 +477,10 @@ fun ChatScreen(
                             }
                         },
                         onOpenBackgroundPicker = { showBackgroundPicker = true },
-                        onTriggerSendBurst = { sendBurstTrigger += 1 }
+                        onTriggerSendBurst = { sendBurstTrigger += 1 },
+                        onStopGeneration = {
+                            if (onStopGeneration != null) onStopGeneration() else viewModel.stopGeneration()
+                        }
                     )
                 }
             ) { innerPadding ->
@@ -522,6 +527,7 @@ fun ChatScreen(
                             refGlassBitmaps = refGlassBitmaps,
                             streamingMsgIdFlow = streamingMsgIdFlow,
                             streamingTextFlow = streamingTextFlow,
+                            isStreamingThinkingFlow = isStreamingThinkingFlow,
                             speakingMessageIdFlow = speakingMessageIdFlow,
                             onLoadOlder = { nextBatchCount ->
                                 val willStillHaveHeader = (hiddenOlderCount - nextBatchCount) > 0

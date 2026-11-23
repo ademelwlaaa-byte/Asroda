@@ -369,59 +369,285 @@ class EmochiViewModel @JvmOverloads constructor(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // Typewriter streaming
+    // Sistem #23: Gerçek Zamanlı SSE Streaming durumu (33 ms ~30 Hz frame-safe coalescing, tek balon izolasyonu)
     private val _streamingMsgId = MutableStateFlow<String?>(null)
     val streamingMsgId: StateFlow<String?> = _streamingMsgId.asStateFlow()
 
     private val _streamingText = MutableStateFlow<String?>(null)
     val streamingText: StateFlow<String?> = _streamingText.asStateFlow()
 
-    private var streamingJob: kotlinx.coroutines.Job? = null
+    private val _isStreamingThinking = MutableStateFlow(false)
+    val isStreamingThinking: StateFlow<Boolean> = _isStreamingThinking.asStateFlow()
 
-    private fun startTypewriter(msgId: String, fullText: String) {
-        streamingJob?.cancel()
-        if (fullText.isEmpty()) {
-            _streamingMsgId.value = null
-            _streamingText.value = null
-            return
-        }
-        _streamingMsgId.value = msgId
-        _streamingText.value = ""
-        maybeAutoSpeakReply(msgId, fullText)
-        // Frame-paced 60fps chunked reveal (16ms ticks, adaptive 3-6 char step) — avoids O(n²) StringBuilder churn
-        val charsPerTick = when {
-            fullText.length > 1200 -> 6
-            fullText.length > 500 -> 4
-            else -> 3
-        }
-        streamingJob = viewModelScope.launch {
-            var pos = 0
-            while (pos < fullText.length) {
-                pos = (pos + charsPerTick).coerceAtMost(fullText.length)
-                _streamingText.value = fullText.substring(0, pos)
-                if (pos < fullText.length) {
-                    kotlinx.coroutines.delay(16L)
-                }
+    private var activeGenerationJob: kotlinx.coroutines.Job? = null
+
+    // Sistem #20 (Bilgi Grafiği) & Sistem #22 (Hassas Tetikleyiciler & Açık Olgunlaşmalar) UI StateFlows
+    private val _entityRelations = MutableStateFlow<List<com.example.data.local.EntityRelationEntity>>(emptyList())
+    val entityRelations: StateFlow<List<com.example.data.local.EntityRelationEntity>> = _entityRelations.asStateFlow()
+
+    private val _sensitiveTriggers = MutableStateFlow<List<com.example.data.local.SensitiveTriggerEntity>>(emptyList())
+    val sensitiveTriggers: StateFlow<List<com.example.data.local.SensitiveTriggerEntity>> = _sensitiveTriggers.asStateFlow()
+
+    private val _pendingReappraisals = MutableStateFlow<List<com.example.data.local.PendingReappraisalEntity>>(emptyList())
+    val pendingReappraisals: StateFlow<List<com.example.data.local.PendingReappraisalEntity>> = _pendingReappraisals.asStateFlow()
+
+    fun loadEntityRelations(botId: String) {
+        viewModelScope.launch {
+            _entityRelations.value = try {
+                repository.getEntityRelationsForBot(botId)
+            } catch (_: Exception) {
+                emptyList()
             }
-            // Streaming done — clear so DB text takes over
-            _streamingMsgId.value = null
-            _streamingText.value = null
         }
     }
 
-    fun skipTypewriter() {
-        streamingJob?.cancel()
-        streamingJob = null
+    fun deleteEntityRelation(botId: String, relationId: Long) {
+        viewModelScope.launch {
+            try {
+                repository.deleteEntityRelation(relationId)
+                _entityRelations.value = repository.getEntityRelationsForBot(botId)
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun loadEmotionalDefenseState(botId: String) {
+        viewModelScope.launch {
+            _sensitiveTriggers.value = try {
+                repository.getSensitiveTriggersForBot(botId)
+            } catch (_: Exception) {
+                emptyList()
+            }
+            _pendingReappraisals.value = try {
+                repository.getActivePendingReappraisalsForBot(botId)
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    fun addSensitiveTrigger(botId: String, keyword: String, response: String = "", intensityMultiplier: Double = 2.0) {
+        val trimmed = keyword.trim()
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            try {
+                repository.addSensitiveTrigger(botId, trimmed, response, intensityMultiplier)
+                _sensitiveTriggers.value = repository.getSensitiveTriggersForBot(botId)
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun deleteSensitiveTrigger(botId: String, triggerId: Long) {
+        viewModelScope.launch {
+            try {
+                repository.deleteSensitiveTrigger(botId, triggerId)
+                _sensitiveTriggers.value = repository.getSensitiveTriggersForBot(botId)
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun clearStreamingUiState() {
         _streamingMsgId.value = null
         _streamingText.value = null
+        _isStreamingThinking.value = false
+    }
+
+    /**
+     * Aktif SSE yanıt üretimini anında durdurur; OkHttp çağrısını iptal eder
+     * (CancellationException üzerinden ProviderHealthTracker'a 0 ceza yazar).
+     */
+    fun stopGeneration() {
+        activeGenerationJob?.cancel()
+        activeGenerationJob = null
+        clearStreamingUiState()
+    }
+
+    /**
+     * Sistem #23: Gerçek SSE Streaming orkestratörü.
+     * - Sunucudan gelen yüksek frekanslı mikro tokenları en fazla ~33 ms (30 Hz) aralıklarla
+     *   tek aktif balonun StateFlow'una yayınlar (recomposition fırtınası önlenir).
+     * - İlk görünür token veya `<think>` geldiğinde geçici balonu tek kez kaydeder; akış bitince
+     *   temiz metinle günceller ve otomatik TTS'i başlatır.
+     */
+    private suspend fun executeStreamingReplyAndPersist(
+        bot: BotEntity,
+        messagesForPrompt: List<MessageEntity>,
+        literaryFramingMode: Boolean = false,
+        timestampHint: Long = System.currentTimeMillis(),
+        beforeFinalPersist: (suspend () -> Unit)? = null
+    ): Pair<MessageEntity, com.example.data.repository.AiReplyResult> {
+        val liveMsgId = UUID.randomUUID().toString()
+        val msgTimestamp = timestampHint.coerceAtLeast(System.currentTimeMillis())
+        var placeholderInserted = false
+        var latestVisibleText = ""
+        var latestThinking = false
+        var lastPublishMs = 0L
+        var pendingFlushJob: kotlinx.coroutines.Job? = null
+        val coalesceLock = Any()
+
+        suspend fun ensurePlaceholderBubble() {
+            if (!placeholderInserted) {
+                placeholderInserted = true
+                _streamingMsgId.value = liveMsgId
+                _streamingText.value = ""
+                repository.saveMessage(
+                    MessageEntity(
+                        id = liveMsgId,
+                        botId = bot.id,
+                        role = "assistant",
+                        text = "",
+                        timestamp = msgTimestamp,
+                        status = "streaming"
+                    )
+                )
+            }
+        }
+
+        fun publishNow(text: String, thinking: Boolean) {
+            lastPublishMs = System.currentTimeMillis()
+            _streamingText.value = text
+            _isStreamingThinking.value = thinking
+        }
+
+        try {
+            val replyResult = repository.generateAiReplyStream(
+                bot = bot,
+                messages = messagesForPrompt,
+                literaryFramingMode = literaryFramingMode,
+                onFirstToken = {},
+                onResetVisibleStream = {
+                    synchronized(coalesceLock) {
+                        pendingFlushJob?.cancel()
+                        pendingFlushJob = null
+                        latestVisibleText = ""
+                        latestThinking = false
+                    }
+                    if (placeholderInserted) {
+                        publishNow("", false)
+                    }
+                },
+                onVisibleDelta = { visibleSnapshot, isThinking ->
+                    if (visibleSnapshot.isNotEmpty() || isThinking) {
+                        ensurePlaceholderBubble()
+                    }
+                    val shouldPublishImmediately: Boolean
+                    synchronized(coalesceLock) {
+                        latestVisibleText = visibleSnapshot
+                        latestThinking = isThinking
+                        val now = System.currentTimeMillis()
+                        shouldPublishImmediately = (now - lastPublishMs) >= 33L || lastPublishMs == 0L
+                        if (shouldPublishImmediately) {
+                            pendingFlushJob?.cancel()
+                            pendingFlushJob = null
+                        } else if (pendingFlushJob == null || pendingFlushJob?.isActive != true) {
+                            pendingFlushJob = viewModelScope.launch {
+                                kotlinx.coroutines.delay(33L)
+                                val (snapText, snapThink) = synchronized(coalesceLock) {
+                                    pendingFlushJob = null
+                                    Pair(latestVisibleText, latestThinking)
+                                }
+                                if (_streamingMsgId.value == liveMsgId) {
+                                    publishNow(snapText, snapThink)
+                                }
+                            }
+                        }
+                    }
+                    if (shouldPublishImmediately && _streamingMsgId.value == liveMsgId) {
+                        publishNow(visibleSnapshot, isThinking)
+                    }
+                }
+            )
+
+            synchronized(coalesceLock) {
+                pendingFlushJob?.cancel()
+                pendingFlushJob = null
+            }
+
+            val replyText = replyResult.replyText
+            if (replyText.isBlank()) {
+                if (placeholderInserted) {
+                    try { repository.deleteMessage(liveMsgId) } catch (_: Exception) {}
+                }
+                clearStreamingUiState()
+                throw IllegalStateException("Model boş yanıt döndürdü.")
+            }
+
+            if (replyResult.systemPromptSnapshot.isNotBlank()) {
+                _lastSystemPrompt.value = replyResult.systemPromptSnapshot
+            }
+
+            beforeFinalPersist?.invoke()
+
+            val finalAiMsg = MessageEntity(
+                id = liveMsgId,
+                botId = bot.id,
+                role = "assistant",
+                text = replyText,
+                timestamp = msgTimestamp.coerceAtLeast(System.currentTimeMillis()),
+                status = "success",
+                provider = replyResult.usedProvider
+            )
+            repository.saveMessage(finalAiMsg)
+            clearStreamingUiState()
+            maybeAutoSpeakReply(finalAiMsg.id, replyText)
+            loadEmotionalDefenseState(bot.id)
+            return Pair(finalAiMsg, replyResult)
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            synchronized(coalesceLock) {
+                pendingFlushJob?.cancel()
+                pendingFlushJob = null
+            }
+            val partial = latestVisibleText.trim()
+            if (placeholderInserted) {
+                if (partial.length >= 8) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        try {
+                            repository.saveMessage(
+                                MessageEntity(
+                                    id = liveMsgId,
+                                    botId = bot.id,
+                                    role = "assistant",
+                                    text = partial,
+                                    timestamp = msgTimestamp,
+                                    status = "success"
+                                )
+                            )
+                        } catch (_: Exception) {}
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        try { repository.deleteMessage(liveMsgId) } catch (_: Exception) {}
+                    }
+                }
+            }
+            clearStreamingUiState()
+            throw ce
+        } catch (e: Exception) {
+            synchronized(coalesceLock) {
+                pendingFlushJob?.cancel()
+                pendingFlushJob = null
+            }
+            if (placeholderInserted) {
+                try { repository.deleteMessage(liveMsgId) } catch (_: Exception) {}
+            }
+            clearStreamingUiState()
+            throw e
+        }
     }
 
     private fun setActiveBotId(botId: String?) {
         if (_activeBotId.value != botId) {
-            skipTypewriter()
+            stopGeneration()
         }
         _activeBotId.value = botId
         EmochiRepository.activeBotId = botId
+        if (botId != null) {
+            loadEntityRelations(botId)
+            loadEmotionalDefenseState(botId)
+        } else {
+            _entityRelations.value = emptyList()
+            _sensitiveTriggers.value = emptyList()
+            _pendingReappraisals.value = emptyList()
+        }
     }
 
     private val ttsManager = com.example.util.ChatTtsManager(application)
@@ -502,7 +728,7 @@ class EmochiViewModel @JvmOverloads constructor(
 
     override fun onCleared() {
         super.onCleared()
-        skipTypewriter()
+        stopGeneration()
         EmochiRepository.activeBotId = null
         ttsManager.shutdown()
     }
@@ -518,7 +744,7 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun startWizard() {
         stopSpeaking()
-        skipTypewriter()
+        stopGeneration()
         _errorMessage.value = null
         _uiState.value = UiState.SetupWizard
     }
@@ -855,7 +1081,7 @@ class EmochiViewModel @JvmOverloads constructor(
         if (sanitizedText.isBlank() || _isSending.value) return
         _isSending.value = true
 
-        viewModelScope.launch {
+        activeGenerationJob = viewModelScope.launch {
             withSendLock {
                 val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
@@ -874,25 +1100,12 @@ class EmochiViewModel @JvmOverloads constructor(
 
                     val currentMsgs = repository.getMessageListForBot(botId)
 
-                    val replyResult = repository.generateAiReply(currentBot, currentMsgs)
-                    val replyText = replyResult.replyText
-                    if (replyText.isBlank()) {
-                        throw IllegalStateException("Model boş yanıt döndürdü.")
-                    }
-                    if (replyResult.systemPromptSnapshot.isNotBlank()) {
-                        _lastSystemPrompt.value = replyResult.systemPromptSnapshot
-                    }
-
-                    val aiMsg = MessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        botId = botId,
-                        role = "assistant",
-                        text = replyText,
-                        timestamp = (now + 10L).coerceAtLeast(System.currentTimeMillis()),
-                        provider = replyResult.usedProvider
+                    val (aiMsg, replyResult) = executeStreamingReplyAndPersist(
+                        bot = currentBot,
+                        messagesForPrompt = currentMsgs,
+                        timestampHint = now + 10L
                     )
-                    repository.saveMessage(aiMsg)
-                    startTypewriter(aiMsg.id, replyText)
+                    val replyText = aiMsg.text
 
                     val freshBot = repository.getBot(botId) ?: currentBot
                     repository.saveBot(freshBot.copy(updatedAt = System.currentTimeMillis()))
@@ -925,6 +1138,8 @@ class EmochiViewModel @JvmOverloads constructor(
                             }
                         }
                     }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Kullanıcı akışı durdurdu — hata bannerı gösterme
                 } catch (e: Exception) {
                     val friendlyMsg = extractUserFriendlyErrorMessage(e)
                     _errorMessage.value = friendlyMsg
@@ -938,7 +1153,7 @@ class EmochiViewModel @JvmOverloads constructor(
         if (_isSending.value) return
         _isSending.value = true
 
-        viewModelScope.launch {
+        activeGenerationJob = viewModelScope.launch {
             withSendLock {
                 val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
@@ -946,26 +1161,16 @@ class EmochiViewModel @JvmOverloads constructor(
                     repository.deleteMessage(msgId)
 
                     val currentMsgs = repository.getMessageListForBot(botId)
-                    val replyResult = repository.generateAiReply(currentBot, currentMsgs)
-                    val replyText = replyResult.replyText
-                    if (replyText.isBlank()) {
-                        throw IllegalStateException("Model boş yanıt döndürdü.")
-                    }
-
                     val now = System.currentTimeMillis()
-                    val aiMsg = MessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        botId = botId,
-                        role = "assistant",
-                        text = replyText,
-                        timestamp = now,
-                        status = "success",
-                        provider = replyResult.usedProvider
+                    val (aiMsg, replyResult) = executeStreamingReplyAndPersist(
+                        bot = currentBot,
+                        messagesForPrompt = currentMsgs,
+                        timestampHint = now
                     )
-                    repository.saveMessage(aiMsg)
-                    startTypewriter(aiMsg.id, replyText)
+                    val replyText = aiMsg.text
+
                     val freshBot = repository.getBot(botId) ?: currentBot
-                    repository.saveBot(freshBot.copy(updatedAt = now))
+                    repository.saveBot(freshBot.copy(updatedAt = System.currentTimeMillis()))
                     replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
 
                     val finalMsgs = currentMsgs + aiMsg
@@ -981,6 +1186,8 @@ class EmochiViewModel @JvmOverloads constructor(
                         repository.updateMemorySummaries(currentBot, finalMsgs)
                         markSummarizationDone(botId, finalMsgs.size)
                     }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Kullanıcı durdurdu
                 } catch (e: Exception) {
                     val friendlyMsg = extractUserFriendlyErrorMessage(e)
                     _errorMessage.value = friendlyMsg
@@ -994,7 +1201,7 @@ class EmochiViewModel @JvmOverloads constructor(
         if (_isSending.value) return
         _isSending.value = true
 
-        viewModelScope.launch {
+        activeGenerationJob = viewModelScope.launch {
             withSendLock {
                 val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
@@ -1018,29 +1225,20 @@ class EmochiViewModel @JvmOverloads constructor(
                         reverted
                     } else currentBot
 
-                    // Generate first before deleting targetMsg to prevent wiping message on network error
                     repository.incrementRegenerateCount(botId)
-                    val replyResult = repository.generateAiReply(botToUse, remainingMsgs)
-                    val replyText = replyResult.replyText
-                    if (replyText.isBlank()) {
-                        throw IllegalStateException("Model boş yanıt döndürdü.")
-                    }
-
-                    if (targetMsg != null) {
-                        repository.deleteMessage(targetMsg.id)
-                    }
-
-                    val newAiMsg = MessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        botId = botId,
-                        role = "assistant",
-                        text = replyText,
-                        timestamp = System.currentTimeMillis(),
-                        provider = replyResult.usedProvider
+                    val (_, replyResult) = executeStreamingReplyAndPersist(
+                        bot = botToUse,
+                        messagesForPrompt = remainingMsgs,
+                        timestampHint = System.currentTimeMillis(),
+                        beforeFinalPersist = {
+                            if (targetMsg != null) {
+                                repository.deleteMessage(targetMsg.id)
+                            }
+                        }
                     )
-                    repository.saveMessage(newAiMsg)
-                    startTypewriter(newAiMsg.id, replyText)
                     replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Kullanıcı durdurdu
                 } catch (e: Exception) {
                     _errorMessage.value = e.message ?: "Yeniden oluşturulamadı."
                 }
@@ -1054,7 +1252,7 @@ class EmochiViewModel @JvmOverloads constructor(
         if (trimmedNewText.isBlank() || _isSending.value) return
         _isSending.value = true
 
-        viewModelScope.launch {
+        activeGenerationJob = viewModelScope.launch {
             withSendLock {
                 val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
@@ -1074,32 +1272,23 @@ class EmochiViewModel @JvmOverloads constructor(
                         } else currentBot
 
                         val truncatedList = msgs.subList(0, idx) + editedMsg
-                        val replyResult = repository.generateAiReply(botToUse, truncatedList)
-                        val replyText = replyResult.replyText
-                        if (replyText.isBlank()) {
-                            throw IllegalStateException("Model boş yanıt döndürdü.")
-                        }
-
-                        // Delete old trailing messages ONLY after generation succeeds
-                        for (i in (idx + 1) until msgs.size) {
-                            repository.deleteMessage(msgs[i].id)
-                        }
-                        repository.saveMessage(editedMsg)
-
-                        val newAiMsg = MessageEntity(
-                            id = UUID.randomUUID().toString(),
-                            botId = botId,
-                            role = "assistant",
-                            text = replyText,
-                            timestamp = (editedMsg.timestamp + 10L).coerceAtLeast(System.currentTimeMillis()),
-                            provider = replyResult.usedProvider
+                        val (_, replyResult) = executeStreamingReplyAndPersist(
+                            bot = botToUse,
+                            messagesForPrompt = truncatedList,
+                            timestampHint = editedMsg.timestamp + 10L,
+                            beforeFinalPersist = {
+                                for (i in (idx + 1) until msgs.size) {
+                                    repository.deleteMessage(msgs[i].id)
+                                }
+                                repository.saveMessage(editedMsg)
+                            }
                         )
-                        repository.saveMessage(newAiMsg)
-                        startTypewriter(newAiMsg.id, replyText)
                         replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
                     } else {
                         repository.saveMessage(editedMsg)
                     }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Kullanıcı durdurdu
                 } catch (e: Exception) {
                     _errorMessage.value = e.message ?: "Mesaj düzenlenemedi."
                 }
@@ -1262,7 +1451,7 @@ class EmochiViewModel @JvmOverloads constructor(
         if (_isSending.value) return
         _isSending.value = true
 
-        viewModelScope.launch {
+        activeGenerationJob = viewModelScope.launch {
             withSendLock {
                 val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
@@ -1277,30 +1466,18 @@ class EmochiViewModel @JvmOverloads constructor(
                     val currentMsgs = repository.getMessageListForBot(botId)
                     if (currentMsgs.isEmpty() || currentMsgs.last().role != "user") return@withSendLock
 
-                    val replyResult = repository.generateAiReply(
-                        bot = currentBot,
-                        messages = currentMsgs,
-                        literaryFramingMode = true
-                    )
-                    val replyText = replyResult.replyText
-                    if (replyText.isBlank()) {
-                        throw IllegalStateException("Model boş yanıt döndürdü.")
-                    }
-
                     val now = System.currentTimeMillis()
-                    val aiMsg = MessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        botId = botId,
-                        role = "assistant",
-                        text = replyText,
-                        timestamp = now,
-                        status = "success",
-                        provider = replyResult.usedProvider
+                    val (_, replyResult) = executeStreamingReplyAndPersist(
+                        bot = currentBot,
+                        messagesForPrompt = currentMsgs,
+                        literaryFramingMode = true,
+                        timestampHint = now
                     )
-                    repository.saveMessage(aiMsg)
                     val freshBot = repository.getBot(botId) ?: currentBot
-                    repository.saveBot(freshBot.copy(updatedAt = now))
+                    repository.saveBot(freshBot.copy(updatedAt = System.currentTimeMillis()))
                     replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Kullanıcı durdurdu
                 } catch (e: Exception) {
                     val friendlyMsg = extractUserFriendlyErrorMessage(e)
                     _errorMessage.value = friendlyMsg
@@ -1314,7 +1491,7 @@ class EmochiViewModel @JvmOverloads constructor(
         if (_isSending.value) return
         _isSending.value = true
 
-        viewModelScope.launch {
+        activeGenerationJob = viewModelScope.launch {
             withSendLock {
                 val currentBot = activeBot.value ?: _immediateBotCache.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
@@ -1327,29 +1504,17 @@ class EmochiViewModel @JvmOverloads constructor(
                         text = "[SAHNEYİ DEVAM ETTİR]: Kullanıcının yeni bir mesaj yazmasına gerek kalmadan, mevcut roman sahnesini karakterin yeni bir eylemi, iç sesi (*...*) ve diyaloğuyla (\"...\") 2 ila 4 paragraf halinde doğrudan devam ettir.",
                         timestamp = System.currentTimeMillis()
                     )
-                    val replyResult = repository.generateAiReply(currentBot, currentMsgs + continuationPromptMsg)
-                    val replyText = replyResult.replyText
-                    if (replyText.isBlank()) {
-                        throw IllegalStateException("Model boş yanıt döndürdü.")
-                    }
-                    if (replyResult.systemPromptSnapshot.isNotBlank()) {
-                        _lastSystemPrompt.value = replyResult.systemPromptSnapshot
-                    }
-
                     val now = System.currentTimeMillis()
-                    val aiMsg = MessageEntity(
-                        id = UUID.randomUUID().toString(),
-                        botId = botId,
-                        role = "assistant",
-                        text = replyText,
-                        timestamp = now,
-                        provider = replyResult.usedProvider
+                    val (_, replyResult) = executeStreamingReplyAndPersist(
+                        bot = currentBot,
+                        messagesForPrompt = currentMsgs + continuationPromptMsg,
+                        timestampHint = now
                     )
-                    repository.saveMessage(aiMsg)
-                    startTypewriter(aiMsg.id, replyText)
                     val freshBot = repository.getBot(botId) ?: currentBot
-                    repository.saveBot(freshBot.copy(updatedAt = now))
+                    repository.saveBot(freshBot.copy(updatedAt = System.currentTimeMillis()))
                     replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
+                } catch (_: kotlinx.coroutines.CancellationException) {
+                    // Kullanıcı durdurdu
                 } catch (e: Exception) {
                     val friendlyMsg = extractUserFriendlyErrorMessage(e)
                     _errorMessage.value = friendlyMsg

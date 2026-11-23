@@ -1,6 +1,7 @@
 package com.example.data.managers
 
 import com.example.data.local.BotDao
+import com.example.data.local.CastMemberEntity
 import com.example.data.local.EntityRegistryDao
 import com.example.data.local.EntityRelationDao
 import com.example.data.local.EntityRelationEntity
@@ -224,10 +225,33 @@ class WorldStateManager(
         else -> 1
     }
 
+    companion object {
+        const val MAX_GRAPH_DEPTH = 4
+    }
+
+    /**
+     * Normalizes a Turkish entity surface form (e.g. "Elif'in", "Aiden'la", "Vaelor'un")
+     * to a clean lowercase canonical key for graph lookup & cycle detection.
+     */
+    fun normalizeGraphEntity(raw: String): String {
+        var s = raw.trim()
+            .replace("’", "'")
+            .replace("`", "'")
+            .replace(Regex("""[?.!,;:"'()]+$"""), "")
+            .trim()
+        if (s.isBlank()) return ""
+        val apostropheIdx = s.indexOf('\'')
+        if (apostropheIdx >= 2) {
+            s = s.substring(0, apostropheIdx).trim()
+        }
+        return s.lowercase(turkishLocale).replace(Regex("""\s+"""), " ").trim()
+    }
+
     private fun normalizeRelationStep(raw: String): String {
         var s = raw.trim().lowercase(turkishLocale)
             .replace("’", "'")
             .replace(Regex("""[?.!,;:]+$"""), "")
+            .replace(Regex("""\s+"""), " ")
             .trim()
         // Strip Turkish genitive/possessive chain suffixes: "kardeşinin" -> "kardeşi", "ortağının" -> "ortağı"
         s = when {
@@ -247,7 +271,155 @@ class WorldStateManager(
             s.endsWith("nün") && s.length > 4 -> s.removeSuffix("nün")
             else -> s
         }
-        return s.trim()
+        return when (s.trim()) {
+            "eski sevgili", "ex sevgilisi", "eski kız arkadaşı", "eski erkek arkadaşı" -> "eski sevgilisi"
+            "sevgili", "kız arkadaşı", "erkek arkadaşı" -> "sevgilisi"
+            "eski patron" -> "eski patronu"
+            "patron" -> "patronu"
+            "düşman" -> "düşmanı"
+            "müttefik" -> "müttefiki"
+            "dost" -> "dostu"
+            "arkadaş" -> "arkadaşı"
+            "kardeş" -> "kardeşi"
+            "abla" -> "ablası"
+            "abi", "ağabey", "ağabeyi" -> "abisi"
+            "baba" -> "babası"
+            "anne" -> "annesi"
+            "eş", "karısı", "kocası" -> "eşi"
+            "eski eş", "eski karısı", "eski kocası" -> "eski eşi"
+            "yaşadığı yer", "oturduğu yer", "ikametgahı", "memleketi", "evi" -> "yaşadığı yer"
+            "sahip olduğu", "sahibi", "eşyası", "silahı", "kılıcı" -> if (s.trim() == "kılıcı") "kılıcı" else "sahip olduğu"
+            else -> s.trim()
+        }
+    }
+
+    private fun contradictoryRelationsFor(rel: String): Set<String> = when (normalizeRelationStep(rel)) {
+        "sevgilisi" -> setOf("eski sevgilisi", "düşmanı")
+        "eski sevgilisi" -> setOf("sevgilisi")
+        "eşi" -> setOf("eski eşi", "düşmanı")
+        "eski eşi" -> setOf("eşi")
+        "müttefiki", "dostu", "arkadaşı", "en yakın arkadaşı" -> setOf("düşmanı", "rakibi")
+        "düşmanı" -> setOf("müttefiki", "dostu", "arkadaşı", "en yakın arkadaşı", "sevgilisi", "eşi")
+        "patronu" -> setOf("eski patronu")
+        "eski patronu" -> setOf("patronu")
+        else -> emptySet()
+    }
+
+    private fun isExclusiveRelation(rel: String): Boolean = normalizeRelationStep(rel) in setOf(
+        "sevgilisi",
+        "eşi",
+        "patronu",
+        "yaşadığı yer",
+        "annesi",
+        "babası"
+    )
+
+    suspend fun getEntityRelationsForBot(botId: String): List<EntityRelationEntity> = withContext(Dispatchers.IO) {
+        entityRelationDao.getRelationsForBot(botId)
+    }
+
+    suspend fun deleteEntityRelation(relationId: Long) = withContext(Dispatchers.IO) {
+        entityRelationDao.deleteRelation(relationId)
+    }
+
+    /**
+     * System #20: Upserts a directed (source, relationType, target) edge into the Knowledge Graph.
+     * - Deduplicates normalized (source, rel, target)
+     * - Resolves contradictory edges between the same pair (e.g. sevgilisi -> eski sevgilisi, müttefiki -> düşmanı)
+     * - Updates exclusive single-target edges (e.g. yaşadığı yer, patronu) when newer or higher confidence
+     */
+    suspend fun upsertEntityRelation(
+        botId: String,
+        sourceName: String,
+        relationType: String,
+        targetName: String,
+        currentMessageIndex: Int = 0,
+        confidence: String = "certain"
+    ): EntityRelationEntity? = withContext(Dispatchers.IO) {
+        val cleanSource = sourceName.trim().replace("’", "'").substringBefore("'").trim()
+        val cleanTarget = targetName.trim().replace("’", "'").substringBefore("'").trim()
+        val cleanRel = normalizeRelationStep(relationType)
+        if (cleanSource.length < 2 || cleanTarget.length < 2 || cleanRel.isBlank()) return@withContext null
+        val normSource = normalizeGraphEntity(cleanSource)
+        val normTarget = normalizeGraphEntity(cleanTarget)
+        if (normSource.isBlank() || normTarget.isBlank() || normSource == normTarget) return@withContext null
+
+        val existingRelations = entityRelationDao.getRelationsForBot(botId).toMutableList()
+
+        // 1. Exact duplicate check (normalized)
+        val exact = existingRelations.firstOrNull {
+            normalizeGraphEntity(it.sourceEntityName) == normSource &&
+                normalizeGraphEntity(it.targetEntityName) == normTarget &&
+                normalizeRelationStep(it.relationType) == cleanRel
+        }
+        if (exact != null) {
+            val upgraded = exact.copy(
+                confidence = if (confidenceRank(confidence) >= confidenceRank(exact.confidence)) confidence else exact.confidence,
+                createdAtMessageIndex = maxOf(exact.createdAtMessageIndex, currentMessageIndex)
+            )
+            if (upgraded != exact) {
+                entityRelationDao.updateRelation(upgraded)
+            }
+            return@withContext upgraded
+        }
+
+        // 2. Contradictory edge between SAME (source, target) pair (e.g., sevgilisi -> eski sevgilisi / düşmanı)
+        val contradictions = contradictoryRelationsFor(cleanRel)
+        if (contradictions.isNotEmpty()) {
+            val opposing = existingRelations.filter {
+                normalizeGraphEntity(it.sourceEntityName) == normSource &&
+                    normalizeGraphEntity(it.targetEntityName) == normTarget &&
+                    normalizeRelationStep(it.relationType) in contradictions
+            }
+            if (opposing.isNotEmpty()) {
+                val primary = opposing.first()
+                val updated = primary.copy(
+                    relationType = cleanRel,
+                    confidence = confidence,
+                    createdAtMessageIndex = maxOf(primary.createdAtMessageIndex, currentMessageIndex)
+                )
+                entityRelationDao.updateRelation(updated)
+                opposing.drop(1).forEach { entityRelationDao.deleteRelation(it.id) }
+                return@withContext updated
+            }
+        }
+
+        // 3. Same source + same relationType conflict check (update target when newer/higher confidence)
+        val conflicting = existingRelations.firstOrNull {
+            normalizeGraphEntity(it.sourceEntityName) == normSource &&
+                normalizeRelationStep(it.relationType) == cleanRel
+        }
+        if (conflicting != null &&
+            (confidenceRank(confidence) > confidenceRank(conflicting.confidence) ||
+                (confidenceRank(confidence) == confidenceRank(conflicting.confidence) &&
+                    currentMessageIndex >= conflicting.createdAtMessageIndex)) &&
+            (isExclusiveRelation(cleanRel) || conflicting.createdAtMessageIndex <= currentMessageIndex)
+        ) {
+            val targetEntity = entityRegistryDao.findByName(botId, cleanTarget)
+            val updated = conflicting.copy(
+                targetEntityId = targetEntity?.id ?: conflicting.targetEntityId,
+                targetEntityName = cleanTarget,
+                confidence = confidence,
+                createdAtMessageIndex = currentMessageIndex
+            )
+            entityRelationDao.updateRelation(updated)
+            return@withContext updated
+        }
+
+        val sourceEntity = entityRegistryDao.findByName(botId, cleanSource)
+        val targetEntity = entityRegistryDao.findByName(botId, cleanTarget)
+        val entity = EntityRelationEntity(
+            botId = botId,
+            sourceEntityId = sourceEntity?.id ?: 0L,
+            sourceEntityName = cleanSource,
+            relationType = cleanRel,
+            targetEntityId = targetEntity?.id ?: 0L,
+            targetEntityName = cleanTarget,
+            confidence = confidence,
+            createdAtMessageIndex = currentMessageIndex
+        )
+        val id = entityRelationDao.insertRelation(entity)
+        entity.copy(id = id)
     }
 
     suspend fun extractAndSaveEntityRelations(
@@ -259,76 +431,27 @@ class WorldStateManager(
         if (text.isBlank()) return@withContext emptyList()
 
         val saved = mutableListOf<EntityRelationEntity>()
-        val existingRelations = entityRelationDao.getRelationsForBot(botId).toMutableList()
 
-        suspend fun upsertRelation(sourceName: String, relType: String, targetName: String, conf: String) {
-            val cleanSource = sourceName.trim()
-            val cleanTarget = targetName.trim()
-            val cleanRel = normalizeRelationStep(relType)
-            if (cleanSource.length < 2 || cleanTarget.length < 2 || cleanRel.isBlank()) return
-            if (cleanSource.equals(cleanTarget, ignoreCase = true)) return
-
-            val exact = existingRelations.firstOrNull {
-                it.sourceEntityName.equals(cleanSource, ignoreCase = true) &&
-                    it.targetEntityName.equals(cleanTarget, ignoreCase = true) &&
-                    normalizeRelationStep(it.relationType) == cleanRel
-            }
-            if (exact != null) {
-                saved.add(exact)
-                return
-            }
-
-            // Conflict check: same source + same relationType -> update if incoming has >= confidence and newer/equal index
-            val conflicting = existingRelations.firstOrNull {
-                it.sourceEntityName.equals(cleanSource, ignoreCase = true) &&
-                    normalizeRelationStep(it.relationType) == cleanRel
-            }
-            if (conflicting != null &&
-                (confidenceRank(conf) > confidenceRank(conflicting.confidence) ||
-                    (confidenceRank(conf) == confidenceRank(conflicting.confidence) &&
-                        currentMessageIndex >= conflicting.createdAtMessageIndex))
-            ) {
-                val targetEntity = entityRegistryDao.findByName(botId, cleanTarget)
-                val updated = conflicting.copy(
-                    targetEntityId = targetEntity?.id ?: conflicting.targetEntityId,
-                    targetEntityName = cleanTarget,
-                    confidence = conf,
-                    createdAtMessageIndex = currentMessageIndex
-                )
-                entityRelationDao.updateRelation(updated)
-                existingRelations.remove(conflicting)
-                existingRelations.add(updated)
-                saved.add(updated)
-                return
-            }
-
-            val sourceEntity = entityRegistryDao.findByName(botId, cleanSource)
-            val targetEntity = entityRegistryDao.findByName(botId, cleanTarget)
-            val entity = EntityRelationEntity(
+        suspend fun saveEdge(sourceName: String, relType: String, targetName: String, conf: String) {
+            upsertEntityRelation(
                 botId = botId,
-                sourceEntityId = sourceEntity?.id ?: 0L,
-                sourceEntityName = cleanSource,
-                relationType = cleanRel,
-                targetEntityId = targetEntity?.id ?: 0L,
-                targetEntityName = cleanTarget,
-                confidence = conf,
-                createdAtMessageIndex = currentMessageIndex
-            )
-            val id = entityRelationDao.insertRelation(entity)
-            val created = entity.copy(id = id)
-            existingRelations.add(created)
-            saved.add(created)
+                sourceName = sourceName,
+                relationType = relType,
+                targetName = targetName,
+                currentMessageIndex = currentMessageIndex,
+                confidence = conf
+            )?.let { saved.add(it) }
         }
 
         // Supports single names ("Ahmet"), multi-word names ("Kerem Aydın"), and titled names ("Dr. Kerem")
         val nameExpr = """(?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})?"""
 
-        // Pattern 1: "Ahmet'in kardeşi Mehmet'tir." / "Dr. Kerem'in patronu Leyla Aydın'dır."
+        // Pattern 1: "Ahmet'in kardeşi Mehmet'tir." / "Dr. Kerem'in eski patronu Leyla Aydın'dır."
         val possessivePattern = Regex(
-            """(?<![\p{L}\p{N}])($nameExpr)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+((?:en\s+yakın\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|arkadaşı|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|hocası|eşi))\s+($nameExpr)(?:['’][a-zçğıöşü]+)?"""
+            """(?<![\p{L}\p{N}])($nameExpr)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+((?:en\s+yakın\s+|eski\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|arkadaşı|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|hocası|eşi|müttefiki|kılıcı))\s+($nameExpr)(?:['’][a-zçğıöşü]+)?"""
         )
         for (match in possessivePattern.findAll(text)) {
-            upsertRelation(
+            saveEdge(
                 sourceName = match.groupValues[1],
                 relType = match.groupValues[2],
                 targetName = match.groupValues[3],
@@ -338,10 +461,10 @@ class WorldStateManager(
 
         // Pattern 2: "Ahmet'in Mehmet adlı kardeşi"
         val appositivePattern = Regex(
-            """(?<![\p{L}\p{N}])($nameExpr)(?:['’][a-zçğıöşü]+)?\s+($nameExpr)\s+(?:adlı\s+)?(kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı)(?![\p{L}\p{N}])"""
+            """(?<![\p{L}\p{N}])($nameExpr)(?:['’][a-zçğıöşü]+)?\s+($nameExpr)\s+(?:adlı\s+)?((?:eski\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|müttefiki))(?![\p{L}\p{N}])"""
         )
         for (match in appositivePattern.findAll(text)) {
-            upsertRelation(
+            saveEdge(
                 sourceName = match.groupValues[1],
                 relType = match.groupValues[3],
                 targetName = match.groupValues[2],
@@ -354,20 +477,22 @@ class WorldStateManager(
             "kardeş" to "kardeşi",
             "ortak" to "ortağı",
             "dost" to "dostu",
+            "arkadaş" to "arkadaşı",
+            "müttefik" to "müttefiki",
             "evli" to "eşi",
             "sevgili" to "sevgilisi",
             "düşman" to "düşmanı",
             "rakip" to "rakibi"
         )
         val mutualPattern = Regex(
-            """(?<![\p{L}\p{N}])($nameExpr)\s+ile\s+($nameExpr)\s+(kardeş|ortak|dost|evli|sevgili|düşman|rakip)(?![\p{L}\p{N}])"""
+            """(?<![\p{L}\p{N}])($nameExpr)\s+ile\s+($nameExpr)\s+(kardeş|ortak|dost|arkadaş|müttefik|evli|sevgili|düşman|rakip)(?![\p{L}\p{N}])"""
         )
         for (match in mutualPattern.findAll(text)) {
             val left = match.groupValues[1]
             val right = match.groupValues[2]
             val canonicalRel = mutualCanonical[match.groupValues[3].lowercase(turkishLocale)] ?: match.groupValues[3]
-            upsertRelation(sourceName = left, relType = canonicalRel, targetName = right, conf = defaultConfidence)
-            upsertRelation(sourceName = right, relType = canonicalRel, targetName = left, conf = defaultConfidence)
+            saveEdge(sourceName = left, relType = canonicalRel, targetName = right, conf = defaultConfidence)
+            saveEdge(sourceName = right, relType = canonicalRel, targetName = left, conf = defaultConfidence)
         }
 
         saved
@@ -376,23 +501,33 @@ class WorldStateManager(
     suspend fun traverseRelationGraph(
         botId: String,
         startEntity: String,
-        relationSteps: List<String>
+        relationSteps: List<String>,
+        maxDepth: Int = MAX_GRAPH_DEPTH
     ): GraphTraversalResult? = withContext(Dispatchers.IO) {
-        if (startEntity.isBlank() || relationSteps.isEmpty()) return@withContext null
+        val boundedSteps = relationSteps.take(maxDepth.coerceIn(1, MAX_GRAPH_DEPTH))
+        if (startEntity.isBlank() || boundedSteps.isEmpty()) return@withContext null
         val allRelations = entityRelationDao.getRelationsForBot(botId)
         if (allRelations.isEmpty()) return@withContext null
 
-        var current = startEntity.trim()
+        val normStart = normalizeGraphEntity(startEntity)
+        if (normStart.isBlank()) return@withContext null
+
+        // Resolve canonical casing from stored relations if available
+        var current = allRelations.firstOrNull {
+            normalizeGraphEntity(it.sourceEntityName) == normStart
+        }?.sourceEntityName ?: startEntity.trim()
+
         val visited = mutableListOf(current)
-        val visitedLower = mutableSetOf(current.lowercase(turkishLocale))
+        val visitedLower = mutableSetOf(normalizeGraphEntity(current))
         val pathDescriptions = mutableListOf<String>()
 
-        for (rawStep in relationSteps) {
+        for (rawStep in boundedSteps) {
             val step = normalizeRelationStep(rawStep)
+            val currentNorm = normalizeGraphEntity(current)
             val candidates = allRelations.filter { rel ->
-                rel.sourceEntityName.equals(current, ignoreCase = true) &&
+                normalizeGraphEntity(rel.sourceEntityName) == currentNorm &&
                     normalizeRelationStep(rel.relationType) == step &&
-                    !visitedLower.contains(rel.targetEntityName.trim().lowercase(turkishLocale))
+                    !visitedLower.contains(normalizeGraphEntity(rel.targetEntityName))
             }
             val best = candidates.maxWithOrNull(
                 compareBy<EntityRelationEntity>({ confidenceRank(it.confidence) }, { it.createdAtMessageIndex }, { it.id })
@@ -410,10 +545,10 @@ class WorldStateManager(
                     promptExplanation = explanation
                 )
             }
-            pathDescriptions.add("$current -> [${best.relationType}] -> ${best.targetEntityName}")
+            pathDescriptions.add("$current --[${best.relationType}]--> ${best.targetEntityName}")
             current = best.targetEntityName
             visited.add(current)
-            visitedLower.add(current.trim().lowercase(turkishLocale))
+            visitedLower.add(normalizeGraphEntity(current))
         }
 
         GraphTraversalResult(
@@ -426,33 +561,146 @@ class WorldStateManager(
         )
     }
 
+    /**
+     * Cycle-safe BFS shortest path finder between two entities (depth <= MAX_GRAPH_DEPTH).
+     * Used when user asks "Aiden ile Vaelor'un ne ilişkisi var?".
+     */
+    suspend fun findShortestRelationPath(
+        botId: String,
+        startEntity: String,
+        targetEntity: String,
+        maxDepth: Int = MAX_GRAPH_DEPTH
+    ): GraphTraversalResult? = withContext(Dispatchers.IO) {
+        val normStart = normalizeGraphEntity(startEntity)
+        val normTarget = normalizeGraphEntity(targetEntity)
+        if (normStart.isBlank() || normTarget.isBlank() || normStart == normTarget) return@withContext null
+        val allRelations = entityRelationDao.getRelationsForBot(botId)
+        if (allRelations.isEmpty()) return@withContext null
+
+        val canonicalStart = allRelations.firstOrNull {
+            normalizeGraphEntity(it.sourceEntityName) == normStart
+        }?.sourceEntityName ?: startEntity.trim()
+
+        data class BfsNode(
+            val entityName: String,
+            val visitedNodes: List<String>,
+            val pathDescriptions: List<String>
+        )
+
+        val queue = ArrayDeque<BfsNode>()
+        val visitedGlobal = mutableSetOf(normStart)
+        queue.add(BfsNode(canonicalStart, listOf(canonicalStart), emptyList()))
+        val depthLimit = maxDepth.coerceIn(1, MAX_GRAPH_DEPTH)
+
+        while (queue.isNotEmpty()) {
+            val node = queue.removeFirst()
+            if (node.pathDescriptions.size >= depthLimit) continue
+            val currentNorm = normalizeGraphEntity(node.entityName)
+            val outgoing = allRelations
+                .filter { normalizeGraphEntity(it.sourceEntityName) == currentNorm }
+                .sortedWith(compareByDescending<EntityRelationEntity> { confidenceRank(it.confidence) }.thenByDescending { it.createdAtMessageIndex })
+
+            for (edge in outgoing) {
+                val nextNorm = normalizeGraphEntity(edge.targetEntityName)
+                val nextPaths = node.pathDescriptions + "${edge.sourceEntityName} --[${edge.relationType}]--> ${edge.targetEntityName}"
+                val nextVisited = node.visitedNodes + edge.targetEntityName
+                if (nextNorm == normTarget) {
+                    return@withContext GraphTraversalResult(
+                        finalTargetName = edge.targetEntityName,
+                        isComplete = true,
+                        pathDescriptions = nextPaths,
+                        visitedNodes = nextVisited,
+                        missingRelationStep = null,
+                        promptExplanation = "İlişki zinciri çözüldü: ${nextPaths.joinToString(" -> ")}."
+                    )
+                }
+                if (visitedGlobal.add(nextNorm)) {
+                    queue.add(BfsNode(edge.targetEntityName, nextVisited, nextPaths))
+                }
+            }
+        }
+        null
+    }
+
+    private fun resolveAliasToCanonicalEntity(
+        rawStart: String,
+        castMembers: List<CastMemberEntity>
+    ): String {
+        val norm = normalizeGraphEntity(rawStart)
+        if (norm.isBlank() || castMembers.isEmpty()) return rawStart.trim()
+        for (member in castMembers) {
+            val memberNorm = normalizeGraphEntity(member.name)
+            if (memberNorm == norm) return member.name
+            val firstWord = memberNorm.substringBefore(" ")
+            if (firstWord.length >= 3 && firstWord == norm) return member.name
+            // Also check parenthesized/quoted nicknames inside member.description
+            val nickRegex = Regex("""[("«]([\p{L}\s]{2,24})[)"»]""")
+            val descAliasMatch = nickRegex.findAll(member.description)
+                .any { normalizeGraphEntity(it.groupValues[1]) == norm }
+            if (descAliasMatch) return member.name
+        }
+        return rawStart.trim()
+    }
+
     suspend fun detectAndResolveGraphQuery(
         botId: String,
-        query: String
+        query: String,
+        castMembers: List<CastMemberEntity> = emptyList()
     ): GraphTraversalResult? = withContext(Dispatchers.IO) {
         val trimmed = query.trim()
         if (trimmed.isBlank()) return@withContext null
 
-        val nameExpr = """(?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})?"""
-        val startMatch = Regex("""(?<![\p{L}\p{N}])($nameExpr)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+(.+)""").find(trimmed)
-            ?: return@withContext null
-        val startEntity = startMatch.groupValues[1].trim()
-        var remainder = startMatch.groupValues[2]
-            .replace(Regex("""(?i)\b(kimdir|kim|nedir|ne|nerede|hangisi|var mı)\b.*$"""), "")
-            .replace(Regex("""[?.!,;:]+$"""), "")
-            .trim()
-        if (remainder.isBlank()) return@withContext null
+        val allRelations = entityRelationDao.getRelationsForBot(botId)
+        if (allRelations.isEmpty()) return@withContext null
 
-        // Tokenize chain while keeping multi-word relation "en yakın arkadaşı/arkadaşının" intact
-        val steps = mutableListOf<String>()
-        val stepRegex = Regex("""(?i)(en\s+yakın\s+arkadaş[a-zçğıöşü]+|[a-zçğıöşü]{3,})""")
-        for (m in stepRegex.findAll(remainder)) {
-            val token = normalizeRelationStep(m.value)
-            if (token.isNotBlank() && token !in setOf("ve", "ile", "bir", "bu", "şu", "o", "mi", "mı", "mu", "mü")) {
-                steps.add(token)
+        // 1. Possessive chain query: "Aiden'ın kardeşinin eski patronu kimdi?" / "elif'in ablası kim?"
+        val possessiveStartRegex = Regex(
+            """(?<![\p{L}\p{N}])((?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[\p{L}]{2,24}(?:\s+[\p{L}]{2,24})?)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+(.+)""",
+            RegexOption.IGNORE_CASE
+        )
+        val startMatch = possessiveStartRegex.find(trimmed)
+        if (startMatch != null) {
+            val rawStart = startMatch.groupValues[1].trim()
+            val startEntity = resolveAliasToCanonicalEntity(rawStart, castMembers)
+            val remainder = startMatch.groupValues[2]
+                .replace(Regex("""(?i)\b(kimdir|kimdi|kim|nedir|neydi|ne|nerede|neredeydi|hangisi|var mı|ilişkisi var)\b.*$"""), "")
+                .replace(Regex("""[?.!,;:]+$"""), "")
+                .trim()
+            if (remainder.isNotBlank()) {
+                val steps = mutableListOf<String>()
+                val stepRegex = Regex(
+                    """(?i)(en\s+yakın\s+arkadaş[\p{L}]+|eski\s+(?:patron|sevgili|eş)[\p{L}]*|yaşadığı\s+yer[\p{L}]*|sahip\s+olduğu[\p{L}]*|[\p{L}]{3,})"""
+                )
+                for (m in stepRegex.findAll(remainder)) {
+                    val token = normalizeRelationStep(m.value)
+                    if (token.isNotBlank() && token !in setOf("ve", "ile", "bir", "bu", "şu", "o", "mi", "mı", "mu", "mü", "hakkında", "acaba", "peki")) {
+                        steps.add(token)
+                    }
+                }
+                if (steps.isNotEmpty()) {
+                    val direct = traverseRelationGraph(botId, startEntity, steps.take(MAX_GRAPH_DEPTH))
+                    if (direct != null) return@withContext direct
+                }
             }
         }
-        if (steps.isEmpty()) return@withContext null
-        traverseRelationGraph(botId, startEntity, steps)
+
+        // 2. General two-entity relation query: "Aiden ile Vaelor'un ne ilişkisi var?"
+        val queryNorm = trimmed.lowercase(turkishLocale)
+        val knownNodes = (allRelations.map { it.sourceEntityName } + allRelations.map { it.targetEntityName })
+            .distinctBy { normalizeGraphEntity(it) }
+        val mentionedNodes = knownNodes.filter { node ->
+            val norm = normalizeGraphEntity(node)
+            norm.length >= 2 && queryNorm.contains(norm)
+        }
+        if (mentionedNodes.size >= 2 &&
+            (queryNorm.contains("ilişki") || queryNorm.contains("kim") || queryNorm.contains("bağ") || queryNorm.contains("ne"))
+        ) {
+            val pathForward = findShortestRelationPath(botId, mentionedNodes[0], mentionedNodes[1])
+            if (pathForward != null) return@withContext pathForward
+            val pathReverse = findShortestRelationPath(botId, mentionedNodes[1], mentionedNodes[0])
+            if (pathReverse != null) return@withContext pathReverse
+        }
+
+        null
     }
 }

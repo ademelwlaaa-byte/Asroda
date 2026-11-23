@@ -29,6 +29,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -38,10 +39,12 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
@@ -300,53 +303,77 @@ fun MorCamDialogShell(
 ) {
     Dialog(
         onDismissRequest = onDismissRequest,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
-                .fillMaxWidth(maxWidthFraction)
-                .padding(vertical = 14.dp)
-                .cosmicDialogEnter(key = title),
-            contentAlignment = Alignment.TopCenter
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding()
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onDismissRequest
+                )
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            contentAlignment = Alignment.Center
         ) {
+            val maxDialogHeight = (maxHeight * 0.94f).coerceAtLeast(220.dp)
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = if (showTopStarCrest) 8.dp else 0.dp)
-                    .morCamCosmicGlow(cornerRadius = 26.dp, alpha = 0.38f, blurDp = 14.dp)
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(
-                                MorCamTokens.GlassSurfaceTop,
-                                MorCamTokens.GlassSurfaceMid,
-                                MorCamTokens.GlassSurfaceBottom
-                            )
-                        )
+                    .widthIn(max = 560.dp)
+                    .fillMaxWidth(maxWidthFraction)
+                    .heightIn(max = maxDialogHeight)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {}
                     )
-                    .cosmicGlassSheen(cornerRadius = 26.dp, periodMs = 6600, maxAlpha = 0.11f)
-                    .border(BorderStroke(1.2.dp, MorCamTokens.RimGradient), RoundedCornerShape(26.dp))
+                    .cosmicDialogEnter(key = title),
+                contentAlignment = Alignment.TopCenter
             ) {
-                // Subtle internal silver-lavender top light refraction
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                Color(0x2EE9D5FF),
-                                Color(0x109333EA),
-                                Color.Transparent
-                            ),
-                            center = Offset(size.width * 0.5f, 0f),
-                            radius = size.width * 0.85f
-                        )
-                    )
-                }
-
-                Column(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 20.dp)
+                        .padding(top = if (showTopStarCrest) 8.dp else 0.dp)
+                        .morCamCosmicGlow(cornerRadius = 26.dp, alpha = 0.38f, blurDp = 14.dp)
+                        .clip(RoundedCornerShape(26.dp))
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    MorCamTokens.GlassSurfaceTop,
+                                    MorCamTokens.GlassSurfaceMid,
+                                    MorCamTokens.GlassSurfaceBottom
+                                )
+                            )
+                        )
+                        .cosmicGlassSheen(cornerRadius = 26.dp, periodMs = 6600, maxAlpha = 0.11f)
+                        .border(BorderStroke(1.2.dp, MorCamTokens.RimGradient), RoundedCornerShape(26.dp))
                 ) {
+                    // Subtle internal silver-lavender top light refraction
+                    Canvas(modifier = Modifier.matchParentSize()) {
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0x2EE9D5FF),
+                                    Color(0x109333EA),
+                                    Color.Transparent
+                                ),
+                                center = Offset(size.width * 0.5f, 0f),
+                                radius = size.width * 0.85f
+                            )
+                        )
+                    }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 18.dp)
+                    ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -415,11 +442,12 @@ fun MorCamDialogShell(
                 }
             }
 
-            if (showTopStarCrest) {
-                MorCamAnimatedStarCrest(
-                    size = 22.dp,
-                    modifier = Modifier.align(Alignment.TopCenter)
-                )
+                if (showTopStarCrest) {
+                    MorCamAnimatedStarCrest(
+                        size = 22.dp,
+                        modifier = Modifier.align(Alignment.TopCenter)
+                    )
+                }
             }
         }
     }
@@ -513,7 +541,9 @@ fun MorCamBottomSheetShell(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .statusBarsPadding()
                 .navigationBarsPadding()
+                .imePadding()
                 .padding(horizontal = 18.dp, vertical = 6.dp)
         ) {
             Row(

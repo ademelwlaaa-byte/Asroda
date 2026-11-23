@@ -94,7 +94,7 @@ jobs:
         id: version
         run: |
           VER_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n 1)
-          VER_CODE=$(grep -oP 'versionCode\s*=\s*\K[0-9]+' app/build.gradle.kts | head -n 1)
+          VER_CODE=$(grep -oP '(?:baseVersionCode|versionCode)\s*=\s*\K[0-9]+' app/build.gradle.kts | head -n 1)
           VER_NAME="${VER_NAME:-1.0}"
           VER_CODE="${VER_CODE:-1}"
           echo "version_name=$VER_NAME" >> "$GITHUB_OUTPUT"
@@ -167,7 +167,7 @@ jobs:
           APKSIGNER="$ANDROID_HOME/build-tools/36.0.0/apksigner"
           AAPT2="$ANDROID_HOME/build-tools/36.0.0/aapt2"
 
-          VERIFY_OUT=$("$APKSIGNER" verify --verbose --print-certs "$OUT_DIR/$OUT_NAME")
+          VERIFY_OUT=$("$APKSIGNER" verify --min-sdk-version 21 --verbose --print-certs "$OUT_DIR/$OUT_NAME")
           echo "$VERIFY_OUT"
 
           echo "$VERIFY_OUT" | grep -q "Verified using v1 scheme (JAR signing): true" || { echo "::error::V1 signature missing!"; exit 1; }

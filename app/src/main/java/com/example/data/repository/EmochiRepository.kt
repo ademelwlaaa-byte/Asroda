@@ -1320,6 +1320,14 @@ class EmochiRepository(
     private val lastUnlockedMilestoneMap = java.util.concurrent.ConcurrentHashMap<String, com.example.data.local.MilestoneEntity>()
     private val activeInSceneCastMap = java.util.concurrent.ConcurrentHashMap<String, Set<String>>()
     private val lastDetectedUserToneMap = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val lastTriggerMessageIndexMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    data class SensitiveTriggerEvaluation(
+        val multiplier: Double = 1.0,
+        val matchedTriggers: List<SensitiveTriggerEntity> = emptyList(),
+        val promptDirective: String = "",
+        val createdReappraisal: Boolean = false
+    )
 
     fun getMilestonesFlow(botId: String): kotlinx.coroutines.flow.Flow<List<com.example.data.local.MilestoneEntity>> =
         db.milestoneDao().getMilestonesFlow(botId)
@@ -1482,6 +1490,7 @@ class EmochiRepository(
                     entityRelationDao.deleteRelation(rel.id)
                 }
             }
+            lastTriggerMessageIndexMap.keys.removeAll { it.startsWith("$botId:") }
             try {
                 db.openHelper.writableDatabase.execSQL(
                     "DELETE FROM archived_memories WHERE botId = ? AND timestamp > ?",
@@ -3013,13 +3022,15 @@ Yalnızca GEÇERLİ JSON üret; markdown veya ek açıklama YAZMA.
    - "pov_character": Bu sahnede duygusal olarak EN ÇOK sarsılan karakter ($userChar, $aiChar veya yan karakter).
    - "narrative": 2-4 edebi cümle, 1. tekil şahıs ("Ben...") ağzıyla yaşanmış anı.
    - "inner_thought": Sohbette ASLA dile getirilmemiş gizli duygu/şüphe (1-2 cümle).
+3) "relations" (Bilgi Grafiği İlişkileri — Opsiyonel, yalnız kesin yeni/değişen ilişkiler):
+   - Sahnede iki kişi/yer/nesne arasında kesin bir ilişki açıklandıysa veya değiştiyse (ör. sevgilisi -> eski sevgilisi, müttefiki -> düşmanı, kardeşi, patronu, yaşadığı yer) {"s":"Özne","p":"ilişki","o":"Nesne"} ekle; yoksa [] bırak.
 ${if (shouldExtractCast) """
-3) "cast" & "rejected" (Birleşik Yan Karakter Çıkarımı — Ekstra API Çağrısı Yok):
+4) "cast" & "rejected" (Birleşik Yan Karakter Çıkarımı — Ekstra API Çağrısı Yok):
    - Sahnede yeni geçen veya dolaylı tanıtılan gerçek İNSAN/VARLIK yan karakterlerini "cast" dizisine al (ana bot $aiChar ve kullanıcı $userChar HARİÇ).
    - Yer/mekân/kavram yanlış pozitiflerini "rejected" dizisine koy.
 """ else ""}
 JSON ŞEMASI:
-${if (shouldExtractCast) """{"vault_ops":[],"living_memory":null,"cast":[{"name":"Kadir","is_person":true,"aliases":["yaşlı saatçi"],"role":"saat ustası","relation":"tanıdık","age":62,"in_scene":true}],"rejected":[]}""" else """{"vault_ops":[],"living_memory":null}"""}
+${if (shouldExtractCast) """{"vault_ops":[],"living_memory":null,"relations":[{"s":"Aiden","p":"kardeşi","o":"Mira"}],"cast":[{"name":"Kadir","is_person":true,"aliases":["yaşlı saatçi"],"role":"saat ustası","relation":"tanıdık","age":62,"in_scene":true}],"rejected":[]}""" else """{"vault_ops":[],"living_memory":null,"relations":[]}"""}
         """.trimIndent()
 
         val userPrompt = """
@@ -3203,6 +3214,30 @@ $aiChar: ${latestAiReply.take(850)}
                 if (committed) {
                     savedMemoryPov = pov
                     savedMemoryTitle = title
+                }
+            }
+        }
+
+        // 3b) System #20: Knowledge Graph "relations" extraction (zero extra API cost, contradiction-aware upsert)
+        val relationsArr = jsonObj.optJSONArray("relations")
+        if (relationsArr != null) {
+            val relLimit = minOf(relationsArr.length(), 6)
+            for (i in 0 until relLimit) {
+                val rObj = relationsArr.optJSONObject(i) ?: continue
+                val subj = rObj.optString("s", "").ifBlank { rObj.optString("source", "") }.trim()
+                val pred = rObj.optString("p", "").ifBlank { rObj.optString("relation", "") }.trim()
+                val obj = rObj.optString("o", "").ifBlank { rObj.optString("target", "") }.trim()
+                if (subj.length >= 2 && pred.length >= 2 && obj.length >= 2) {
+                    try {
+                        managers.worldStateManager.upsertEntityRelation(
+                            botId = bot.id,
+                            sourceName = subj,
+                            relationType = pred,
+                            targetName = obj,
+                            currentMessageIndex = totalMsgCount,
+                            confidence = "certain"
+                        )
+                    } catch (_: Exception) {}
                 }
             }
         }
@@ -3971,19 +4006,14 @@ $aiChar: ${latestAiReply.take(850)}
                 val msgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { 0 }
                 reapExpiredMemories(bot.id, newDayCounter, msgCount)
             } catch (_: Exception) {}
-            // Step 5b: Expire unresolved pending_reappraisals older than 14 story days
+            // Step 5b: System #22 — Expire unresolved pending_reappraisals older than 14 story days
             try {
-                val activeReapps = pendingReappraisalDao.getActivePendingReappraisals(bot.id)
-                for (pr in activeReapps) {
-                    val estimatedAgeInDays = if (safeDeltaDays >= 14) {
-                        safeDeltaDays.toLong()
-                    } else {
-                        (newDayCounter - 1L).coerceAtLeast(0L)
-                    }
-                    if (safeDeltaDays >= 14 || (newDayCounter >= 15L && estimatedAgeInDays >= 14L && pr.triggeredAtMessageIndex <= 2)) {
-                        pendingReappraisalDao.update(pr.copy(expired = true, resolved = false))
-                    }
-                }
+                expireStaleReappraisals(
+                    botId = bot.id,
+                    currentStoryDay = newDayCounter,
+                    regulationCapacity = bot.emotionalRegulationCapacity,
+                    elapsedJumpDays = safeDeltaDays
+                )
             } catch (_: Exception) {}
         }
 
@@ -4377,53 +4407,24 @@ $aiChar: ${latestAiReply.take(850)}
             (parsedDelta * 0.5).toInt().coerceAtLeast(1)
         } else parsedDelta
 
-        // V3.1: "trig" — anlamsal tetik konuları → mevcut sensitiveTrigger mekanizmasıyla entegre
-        // Model kendi cevabında "trig": ["konu1", "konu2"] döndürür (anlamsal karar LLM'de).
-        // Kod yalnızca bilinen triggerTopic'leri kabul eder; bilinmeyenler göz ardı edilir.
-        // Anahtar kelime tespiti yedek olarak mevcut evaluateSensitiveTriggers içinde çalışmaya devam eder.
-        if (parsedTrigIds.isNotEmpty()) {
-            try {
-                val knownTriggers = sensitiveTriggerDao.getTriggersForBot(botId)
-                val knownTopics = knownTriggers.associateBy { it.triggerTopic.lowercase() }
-                for (trigTopic in parsedTrigIds) {
-                    val trigger = knownTopics[trigTopic.lowercase()]
-                    if (trigger != null) {
-                        android.util.Log.d("EmotionEngine", "[trig] Semantic trigger activated: ${trigger.triggerTopic} (mult=${trigger.intensityMultiplier})")
-                        // Tetik sayacını güncelle
-                        sensitiveTriggerDao.insertOrUpdate(
-                            trigger.copy(recentTriggerCount = trigger.recentTriggerCount + 1)
-                        )
-                        // Tetik efekti: intensityMultiplier > 1 ise delta zaten model tarafından uygulandı.
-                        // Burada yalnızca kayıt tutulur; kod delta'ya dokunmaz (LLM kararı).
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-
-        // System #8: Flexible AI reappraisal resolution via {"id":12,"out":"softened|resolved|hardened"}
-        if (parsedCompactReappObj != null) {
-            runCatching {
-                val targetId = parsedCompactReappObj!!.optLong("id", -1L)
-                val outcome = parsedCompactReappObj!!.optString("out", "").lowercase(java.util.Locale.ROOT).trim()
-                if (targetId > 0L && outcome in setOf("softened", "resolved", "hardened")) {
-                    val existing = pendingReappraisalDao.getAllForBot(botId).firstOrNull { it.id == targetId }
-                    if (existing != null && !existing.resolved) {
-                        val markExpired = outcome == "hardened"
-                        pendingReappraisalDao.update(existing.copy(resolved = true, expired = markExpired))
-                    }
-                }
-            }
-        } else if (parsedReapp && effectiveParsedDelta <= -10) {
-            try {
-                recordPendingReappraisalIfEligible(
-                    botId = botId,
-                    eventDescription = parsedWhy.ifBlank { parsedReason }.ifBlank { "reappraisal" },
-                    emotionStateJson = current.toJson(),
-                    currentMessageIndex = totalMsgCount,
-                    rawDelta = effectiveParsedDelta
-                )
-            } catch (_: Exception) {}
-        }
+        // System #22: "trig" + "reapp" extracted into helper to keep suspend bytecode compact
+        val reappDeltas = applySemanticTriggersAndReappraisal(
+            botId = botId,
+            bot = bot,
+            current = current,
+            rawResponse = rawResponse,
+            totalMsgCount = totalMsgCount,
+            effectiveParsedDelta = effectiveParsedDelta,
+            parsedWhy = parsedWhy,
+            parsedReason = parsedReason,
+            parsedTrigIds = parsedTrigIds,
+            parsedCompactReappObj = parsedCompactReappObj,
+            parsedReapp = parsedReapp
+        )
+        val reappAngerDelta = reappDeltas.angerDelta
+        val reappResentmentDelta = reappDeltas.resentmentDelta
+        val reappTrustDelta = reappDeltas.trustDelta
+        val reappAffectionDelta = reappDeltas.affectionDelta
 
         val clampedDelta = calculateClampedDelta(
             prevAffection = prevAffection,
@@ -4439,10 +4440,11 @@ $aiChar: ${latestAiReply.take(850)}
             isEstablishedRomantic = isEstablishedRomantic
         )
 
-        var nextAffection = (prevAffection + clampedDelta).coerceIn(0, 100)
+        var nextAffection = (prevAffection + clampedDelta + reappAffectionDelta).coerceIn(0, 100)
 
         // Resentment >= 70 caps affectionScore at 50 max
-        if (rawRelationshipAxes.resentmentScore >= 70) {
+        val adjustedResentment = ((rawRelationshipAxes.resentmentScore * pResentmentMult).roundToInt() + reappResentmentDelta).coerceIn(0, 100)
+        if (adjustedResentment >= 70) {
             nextAffection = minOf(nextAffection, 50)
         }
 
@@ -4453,9 +4455,9 @@ $aiChar: ${latestAiReply.take(850)}
         }
 
         val joyVal = rawPrimaryEmotions.joy
-        val trustVal = (rawPrimaryEmotions.trust * pTrustMult).roundToInt().coerceIn(0, 100)
+        val trustVal = ((rawPrimaryEmotions.trust * pTrustMult).roundToInt() + reappTrustDelta).coerceIn(0, 100)
         val fearVal = (rawPrimaryEmotions.fear * pFearMult).roundToInt().coerceIn(0, 100)
-        val angerVal = (rawPrimaryEmotions.anger * pResentmentMult).roundToInt().coerceIn(0, 100)
+        val angerVal = ((rawPrimaryEmotions.anger * pResentmentMult).roundToInt() + reappAngerDelta).coerceIn(0, 100)
         val sadnessVal = rawPrimaryEmotions.sadness
         val antVal = rawPrimaryEmotions.anticipation
         val surVal = rawPrimaryEmotions.surprise
@@ -4491,7 +4493,7 @@ $aiChar: ${latestAiReply.take(850)}
 
         val finalRelationshipAxes = rawRelationshipAxes.copy(
             affectionScore = nextAffection,
-            resentmentScore = (rawRelationshipAxes.resentmentScore * pResentmentMult).roundToInt().coerceIn(0, 100)
+            resentmentScore = adjustedResentment
         )
 
         val newConsecutiveCount = if (clampedDelta > 0) current.consecutivePositiveCount + 1 else 0
@@ -4560,141 +4562,18 @@ $aiChar: ${latestAiReply.take(850)}
                 )
             )
 
-            // [6b] Compact "cast_emo" ([{"n":"İsim","d":"duygu","v":-8..+8}]) + legacy "side_character_updates" JSON parse
-            val MAX_SIDE_CHAR_UPDATES = 8
+            // [6b] Compact "cast_emo" + legacy "side_character_updates" JSON parse
             if (jsonObj != null) {
-                val sideArr = jsonObj.optJSONArray("cast_emo") ?: jsonObj.optJSONArray("side_character_updates")
-                if (sideArr != null) {
-                    runCatching {
-                        val recentText = try {
-                            messageDao.getMessagesForBotList(botId).takeLast(4).joinToString(" ") { it.text }
-                        } catch (_: Exception) { "" }
-                        val confirmedCast = try {
-                            castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation && !it.isBlacklisted }
-                        } catch (_: Exception) { emptyList() }
-
-                        val seenNames = mutableSetOf<String>()
-                        val trLocale = java.util.Locale("tr", "TR")
-                        val limit = minOf(sideArr.length(), MAX_SIDE_CHAR_UPDATES)
-                        for (i in 0 until limit) {
-                            val entry = sideArr.optJSONObject(i) ?: continue
-                            val rawName = entry.optString("n", "").ifBlank {
-                                entry.optString("name", "").ifBlank { entry.optString("character", "") }
-                            }.trim()
-                            val normalizedTurkish = CastDetectorEngine.normalizeTurkishEntityName(rawName)
-                            val cleanCandidate = normalizedTurkish.ifBlank { cleanCharacterNameCandidate(rawName) }
-                            if (cleanCandidate.isBlank()) continue
-                            if (isMainOrUserCharacter(rawName, bot) || isMainOrUserCharacter(cleanCandidate, bot)) continue
-
-                            // Match canonical CastMember via Turkish suffix normalization + alias matching
-                            val castMem = confirmedCast.firstOrNull { member ->
-                                member.name.equals(cleanCandidate, ignoreCase = true) ||
-                                    CastDetectorEngine.matchesMemberOrAlias(cleanCandidate, listOf(rawName), member)
-                            }
-                            val isCompactCastEmo = entry.has("n")
-                            val isInScene = castMem != null && (
-                                isCompactCastEmo ||
-                                    recentText.contains(castMem.name, ignoreCase = true) ||
-                                    rawResponse.contains(castMem.name, ignoreCase = true)
-                                )
-                            if (!isInScene || castMem == null) continue
-
-                            val canonicalName = castMem.name.trim()
-                            val nameLower = canonicalName.lowercase(trLocale)
-                            if (!seenNames.add(nameLower)) continue
-
-                            val existingCharEntity = emotionDao.getEmotionForCharacter(botId, canonicalName)
-                            val existingState = existingCharEntity
-                                ?.let { EmotionState.fromJson(it.emotionState) }
-                                ?: EmotionState.calculateBaselineEmotionState(bot.aiName, canonicalName, "").let { base ->
-                                    base.copy(
-                                        relationshipAxes = base.relationshipAxes.copy(
-                                            affectionScore = castMem.affectionScore.coerceIn(0, 100)
-                                        )
-                                    )
-                                }
-                            val sideRoleMult = if (castMem.baseAffectionDifficultyMultiplier > 0.0) {
-                                determineEffectiveRoleMultiplier(castMem, rawResponse.take(200))
-                            } else {
-                                calculateCastMemberDifficultyMultiplier("Yan Karakter", canonicalName, rawResponse.take(200))
-                            }
-
-                            // Safe per-turn delta clamp [-8..+8] and final values strictly [0..100]
-                            val rawAffDelta = if (entry.has("v")) {
-                                entry.optInt("v", 0).coerceIn(-8, 8)
-                            } else {
-                                entry.optInt("affection_delta", 0).coerceIn(-8, 8)
-                            }
-                            val rawTrustDelta = entry.optInt("trust_delta", if (entry.has("v")) (rawAffDelta / 2) else 0)
-                                .coerceIn(-8, 8)
-                            val moodStr = entry.optString("d", "").ifBlank {
-                                entry.optString("mood", existingState.dominantEmotion)
-                            }.trim().ifBlank { existingState.dominantEmotion }
-
-                            val sidePrevAff = existingState.affection.coerceIn(0, 100)
-                            val sidePrevDailyGain = if (castMem.lastGainResetDate == todayStr) castMem.dailyAffectionGain else 0
-                            val sideConsecutiveCount = castMem.consecutivePositiveCount
-                            val sideRecoveryLock = castMem.recoveryLockUntilMessageCount
-
-                            val clampedSideAff = calculateClampedDelta(
-                                prevAffection = sidePrevAff,
-                                rawDelta = rawAffDelta,
-                                totalMsgCount = totalMsgCount,
-                                baseMultiplier = sideRoleMult,
-                                combinedContextMult = combinedContextMult,
-                                personalityAffectionMult = 1.0,
-                                recoveryLockUntilMessageCount = sideRecoveryLock,
-                                dailyAffectionGain = sidePrevDailyGain,
-                                consecutivePositiveCount = sideConsecutiveCount,
-                                regCount = regCount,
-                                isEstablishedRomantic = sidePrevAff >= 70
-                            ).coerceIn(-8, 8)
-                            val clampedSideTrust = (rawTrustDelta * sideRoleMult).toInt().coerceIn(-8, 8)
-                            val newSideAff = (sidePrevAff + clampedSideAff).coerceIn(0, 100)
-                            val newSideTrust = (existingState.trust + clampedSideTrust).coerceIn(0, 100)
-
-                            val updatedCharState = existingState.copy(
-                                dominantEmotion = moodStr,
-                                primaryEmotions = existingState.primaryEmotions.copy(trust = newSideTrust),
-                                relationshipAxes = existingState.relationshipAxes.copy(affectionScore = newSideAff)
-                            )
-                            val charEntityToSave = existingCharEntity
-                                ?.copy(characterName = canonicalName, emotionState = updatedCharState.toJson())
-                                ?: CharacterEmotionEntity(botId = botId, characterName = canonicalName, emotionState = updatedCharState.toJson())
-                            emotionDao.insertOrUpdate(charEntityToSave)
-
-                            val sideNewConsec = if (clampedSideAff > 0) sideConsecutiveCount + 1 else 0
-                            val sideNewDaily = if (clampedSideAff > 0) sidePrevDailyGain + clampedSideAff else sidePrevDailyGain
-                            castMemberDao.updateCastMember(
-                                castMem.copy(
-                                    affectionScore = newSideAff,
-                                    consecutivePositiveCount = sideNewConsec,
-                                    dailyAffectionGain = sideNewDaily,
-                                    lastGainResetDate = todayStr,
-                                    peakAffectionScore = maxOf(castMem.peakAffectionScore, newSideAff),
-                                    recoveryLockUntilMessageCount = sideRecoveryLock
-                                )
-                            )
-                            emotionHistoryDao.insertHistory(
-                                EmotionHistoryEntity(
-                                    botId = botId,
-                                    characterName = canonicalName,
-                                    timestamp = System.currentTimeMillis(),
-                                    messageIndex = totalMsgCount,
-                                    affectionScore = newSideAff,
-                                    respectScore = updatedCharState.relationshipAxes.respectScore,
-                                    comfortScore = updatedCharState.relationshipAxes.comfortScore,
-                                    resentmentScore = updatedCharState.relationshipAxes.resentmentScore,
-                                    trustScore = newSideTrust,
-                                    physicalComfortScore = updatedCharState.physicalComfortScore,
-                                    obsessionScore = updatedCharState.obsessionScore,
-                                    dominantEmotion = moodStr,
-                                    fullVectorJson = updatedCharState.toJson()
-                                )
-                            )
-                        }
-                    }
-                }
+                applySideCharacterJsonUpdates(
+                    botId = botId,
+                    bot = bot,
+                    jsonObj = jsonObj,
+                    rawResponse = rawResponse,
+                    totalMsgCount = totalMsgCount,
+                    combinedContextMult = combinedContextMult,
+                    regCount = regCount,
+                    todayStr = todayStr
+                )
             }
 
             // [6c] System #18 Hybrid Milestone Engine: Channel 2 AI Narrative ("mile") + Channel 1 Numeric
@@ -5021,6 +4900,292 @@ $aiChar: ${latestAiReply.take(850)}
         }
 
         return cleanedText
+    }
+
+    private data class ReappraisalEmotionDelta(
+        val angerDelta: Int = 0,
+        val resentmentDelta: Int = 0,
+        val trustDelta: Int = 0,
+        val affectionDelta: Int = 0
+    )
+
+    private suspend fun applySemanticTriggersAndReappraisal(
+        botId: String,
+        bot: BotEntity,
+        current: EmotionState,
+        rawResponse: String,
+        totalMsgCount: Int,
+        effectiveParsedDelta: Int,
+        parsedWhy: String,
+        parsedReason: String,
+        parsedTrigIds: List<String>,
+        parsedCompactReappObj: org.json.JSONObject?,
+        parsedReapp: Boolean
+    ): ReappraisalEmotionDelta {
+        if (parsedTrigIds.isNotEmpty()) {
+            try {
+                val knownTriggers = sensitiveTriggerDao.getTriggersForBot(botId)
+                val knownTopics = knownTriggers.associateBy { it.triggerTopic.lowercase(java.util.Locale("tr", "TR")) }
+                for (trigTopic in parsedTrigIds) {
+                    val trigger = knownTopics[trigTopic.lowercase(java.util.Locale("tr", "TR"))]
+                    if (trigger != null) {
+                        android.util.Log.d("EmotionEngine", "[trig] Semantic trigger activated: ${trigger.triggerTopic} (mult=${trigger.intensityMultiplier})")
+                        sensitiveTriggerDao.insertOrUpdate(
+                            trigger.copy(recentTriggerCount = trigger.recentTriggerCount + 1)
+                        )
+                        val activeExisting = pendingReappraisalDao.getActivePendingReappraisals(botId)
+                        val alreadyTracked = activeExisting.any {
+                            it.originalEventDescription.contains(trigger.triggerTopic, ignoreCase = true)
+                        }
+                        if (!alreadyTracked) {
+                            recordPendingReappraisalIfEligible(
+                                botId = botId,
+                                eventDescription = "Hassas yara tetiklendi: ${trigger.triggerTopic}" +
+                                    if (parsedWhy.isNotBlank()) " ($parsedWhy)" else "",
+                                emotionStateJson = current.toJson(),
+                                currentMessageIndex = totalMsgCount,
+                                rawDelta = -20,
+                                storyDayCounter = bot.storyDayCounter,
+                                forceFromTrigger = true
+                            )
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+
+        var reappAngerDelta = 0
+        var reappResentmentDelta = 0
+        var reappTrustDelta = 0
+        var reappAffectionDelta = 0
+        if (parsedCompactReappObj != null) {
+            runCatching {
+                val targetId = parsedCompactReappObj.optLong("id", -1L)
+                val outcome = parsedCompactReappObj.optString("out", "").lowercase(java.util.Locale.ROOT).trim()
+                if (targetId > 0L && outcome in setOf("softened", "resolved", "hardened")) {
+                    val existing = pendingReappraisalDao.getAllForBot(botId).firstOrNull { it.id == targetId }
+                    if (existing != null && !existing.resolved) {
+                        when (outcome) {
+                            "softened" -> {
+                                reappAngerDelta -= 14
+                                reappResentmentDelta -= 14
+                                val updatedDesc = if (existing.originalEventDescription.contains("[Yumuşadı]")) {
+                                    existing.originalEventDescription
+                                } else {
+                                    "${existing.originalEventDescription} [Yumuşadı]"
+                                }
+                                pendingReappraisalDao.update(
+                                    existing.copy(
+                                        originalEventDescription = updatedDesc,
+                                        resolved = false,
+                                        expired = false
+                                    )
+                                )
+                            }
+                            "resolved" -> {
+                                reappAngerDelta -= 12
+                                reappResentmentDelta -= 16
+                                reappTrustDelta += 4
+                                reappAffectionDelta += 4
+                                pendingReappraisalDao.update(existing.copy(resolved = true, expired = false))
+                                val aiTitle = if (bot.mode == "universe") bot.universeName.ifBlank { bot.aiName } else bot.aiName.ifBlank { bot.universeName }
+                                commitLivingMemory(
+                                    botId = botId,
+                                    povCharacter = aiTitle.ifBlank { "Karakter" },
+                                    title = "Duygusal Olgunlaşma: ${existing.originalEventDescription.take(48)}",
+                                    emotionTag = "Huzur & Kabulleniş",
+                                    salience = 7,
+                                    narrative = "İçimde taşıdığım \"${existing.originalEventDescription.take(120)}\" kırgınlığını bugün geride bırakıp olgunlukla kapattım.",
+                                    innerThought = "Bu yara eskisi kadar canımı yakmıyor; aramızdaki bağ yeniden nefes almaya başladı.",
+                                    rawChatTexts = listOf(rawResponse),
+                                    storyDayIndex = bot.storyDayCounter,
+                                    storyCalendarDateStr = bot.storyCalendarDate,
+                                    isBotSaved = true
+                                )
+                            }
+                            "hardened" -> {
+                                reappAngerDelta += 6
+                                reappResentmentDelta += 8
+                                reappTrustDelta -= 4
+                                val updatedDesc = if (existing.originalEventDescription.contains("[Sertleşti]")) {
+                                    existing.originalEventDescription
+                                } else {
+                                    "${existing.originalEventDescription} [Sertleşti]"
+                                }
+                                pendingReappraisalDao.update(
+                                    existing.copy(
+                                        originalEventDescription = updatedDesc,
+                                        resolved = true,
+                                        expired = true
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (parsedReapp && effectiveParsedDelta <= -10) {
+            try {
+                recordPendingReappraisalIfEligible(
+                    botId = botId,
+                    eventDescription = parsedWhy.ifBlank { parsedReason }.ifBlank { "reappraisal" },
+                    emotionStateJson = current.toJson(),
+                    currentMessageIndex = totalMsgCount,
+                    rawDelta = effectiveParsedDelta,
+                    storyDayCounter = bot.storyDayCounter
+                )
+            } catch (_: Exception) {}
+        }
+
+        return ReappraisalEmotionDelta(
+            angerDelta = reappAngerDelta,
+            resentmentDelta = reappResentmentDelta,
+            trustDelta = reappTrustDelta,
+            affectionDelta = reappAffectionDelta
+        )
+    }
+
+    private suspend fun applySideCharacterJsonUpdates(
+        botId: String,
+        bot: BotEntity,
+        jsonObj: org.json.JSONObject,
+        rawResponse: String,
+        totalMsgCount: Int,
+        combinedContextMult: Double,
+        regCount: Int,
+        todayStr: String
+    ) {
+        val MAX_SIDE_CHAR_UPDATES = 8
+        val sideArr = jsonObj.optJSONArray("cast_emo") ?: jsonObj.optJSONArray("side_character_updates")
+        if (sideArr != null) {
+            runCatching {
+                val recentText = try {
+                    messageDao.getMessagesForBotList(botId).takeLast(4).joinToString(" ") { it.text }
+                } catch (_: Exception) { "" }
+                val confirmedCast = try {
+                    castMemberDao.getCastMembersForBot(botId).filter { !it.pendingUserConfirmation && !it.isBlacklisted }
+                } catch (_: Exception) { emptyList() }
+
+                val seenNames = mutableSetOf<String>()
+                val trLocale = java.util.Locale("tr", "TR")
+                val limit = minOf(sideArr.length(), MAX_SIDE_CHAR_UPDATES)
+                for (i in 0 until limit) {
+                    val entry = sideArr.optJSONObject(i) ?: continue
+                    val rawName = entry.optString("n", "").ifBlank {
+                        entry.optString("name", "").ifBlank { entry.optString("character", "") }
+                    }.trim()
+                    val normalizedTurkish = CastDetectorEngine.normalizeTurkishEntityName(rawName)
+                    val cleanCandidate = normalizedTurkish.ifBlank { cleanCharacterNameCandidate(rawName) }
+                    if (cleanCandidate.isBlank()) continue
+                    if (isMainOrUserCharacter(rawName, bot) || isMainOrUserCharacter(cleanCandidate, bot)) continue
+
+                    val castMem = confirmedCast.firstOrNull { member ->
+                        member.name.equals(cleanCandidate, ignoreCase = true) ||
+                            CastDetectorEngine.matchesMemberOrAlias(cleanCandidate, listOf(rawName), member)
+                    }
+                    val isCompactCastEmo = entry.has("n")
+                    val isInScene = castMem != null && (
+                        isCompactCastEmo ||
+                            recentText.contains(castMem.name, ignoreCase = true) ||
+                            rawResponse.contains(castMem.name, ignoreCase = true)
+                        )
+                    if (!isInScene || castMem == null) continue
+
+                    val canonicalName = castMem.name.trim()
+                    val nameLower = canonicalName.lowercase(trLocale)
+                    if (!seenNames.add(nameLower)) continue
+
+                    val existingCharEntity = emotionDao.getEmotionForCharacter(botId, canonicalName)
+                    val existingState = existingCharEntity
+                        ?.let { EmotionState.fromJson(it.emotionState) }
+                        ?: EmotionState.calculateBaselineEmotionState(bot.aiName, canonicalName, "").let { base ->
+                            base.copy(
+                                relationshipAxes = base.relationshipAxes.copy(
+                                    affectionScore = castMem.affectionScore.coerceIn(0, 100)
+                                )
+                            )
+                        }
+                    val sideRoleMult = if (castMem.baseAffectionDifficultyMultiplier > 0.0) {
+                        determineEffectiveRoleMultiplier(castMem, rawResponse.take(200))
+                    } else {
+                        calculateCastMemberDifficultyMultiplier("Yan Karakter", canonicalName, rawResponse.take(200))
+                    }
+
+                    val rawAffDelta = if (entry.has("v")) {
+                        entry.optInt("v", 0).coerceIn(-8, 8)
+                    } else {
+                        entry.optInt("affection_delta", 0).coerceIn(-8, 8)
+                    }
+                    val rawTrustDelta = entry.optInt("trust_delta", if (entry.has("v")) (rawAffDelta / 2) else 0)
+                        .coerceIn(-8, 8)
+                    val moodStr = entry.optString("d", "").ifBlank {
+                        entry.optString("mood", existingState.dominantEmotion)
+                    }.trim().ifBlank { existingState.dominantEmotion }
+
+                    val sidePrevAff = existingState.affection.coerceIn(0, 100)
+                    val sidePrevDailyGain = if (castMem.lastGainResetDate == todayStr) castMem.dailyAffectionGain else 0
+                    val sideConsecutiveCount = castMem.consecutivePositiveCount
+                    val sideRecoveryLock = castMem.recoveryLockUntilMessageCount
+
+                    val clampedSideAff = calculateClampedDelta(
+                        prevAffection = sidePrevAff,
+                        rawDelta = rawAffDelta,
+                        totalMsgCount = totalMsgCount,
+                        baseMultiplier = sideRoleMult,
+                        combinedContextMult = combinedContextMult,
+                        personalityAffectionMult = 1.0,
+                        recoveryLockUntilMessageCount = sideRecoveryLock,
+                        dailyAffectionGain = sidePrevDailyGain,
+                        consecutivePositiveCount = sideConsecutiveCount,
+                        regCount = regCount,
+                        isEstablishedRomantic = sidePrevAff >= 70
+                    ).coerceIn(-8, 8)
+                    val clampedSideTrust = (rawTrustDelta * sideRoleMult).toInt().coerceIn(-8, 8)
+                    val newSideAff = (sidePrevAff + clampedSideAff).coerceIn(0, 100)
+                    val newSideTrust = (existingState.trust + clampedSideTrust).coerceIn(0, 100)
+
+                    val updatedCharState = existingState.copy(
+                        dominantEmotion = moodStr,
+                        primaryEmotions = existingState.primaryEmotions.copy(trust = newSideTrust),
+                        relationshipAxes = existingState.relationshipAxes.copy(affectionScore = newSideAff)
+                    )
+                    val charEntityToSave = existingCharEntity
+                        ?.copy(characterName = canonicalName, emotionState = updatedCharState.toJson())
+                        ?: CharacterEmotionEntity(botId = botId, characterName = canonicalName, emotionState = updatedCharState.toJson())
+                    emotionDao.insertOrUpdate(charEntityToSave)
+
+                    val sideNewConsec = if (clampedSideAff > 0) sideConsecutiveCount + 1 else 0
+                    val sideNewDaily = if (clampedSideAff > 0) sidePrevDailyGain + clampedSideAff else sidePrevDailyGain
+                    castMemberDao.updateCastMember(
+                        castMem.copy(
+                            affectionScore = newSideAff,
+                            consecutivePositiveCount = sideNewConsec,
+                            dailyAffectionGain = sideNewDaily,
+                            lastGainResetDate = todayStr,
+                            peakAffectionScore = maxOf(castMem.peakAffectionScore, newSideAff),
+                            recoveryLockUntilMessageCount = sideRecoveryLock
+                        )
+                    )
+                    emotionHistoryDao.insertHistory(
+                        EmotionHistoryEntity(
+                            botId = botId,
+                            characterName = canonicalName,
+                            timestamp = System.currentTimeMillis(),
+                            messageIndex = totalMsgCount,
+                            affectionScore = newSideAff,
+                            respectScore = updatedCharState.relationshipAxes.respectScore,
+                            comfortScore = updatedCharState.relationshipAxes.comfortScore,
+                            resentmentScore = updatedCharState.relationshipAxes.resentmentScore,
+                            trustScore = newSideTrust,
+                            physicalComfortScore = updatedCharState.physicalComfortScore,
+                            obsessionScore = updatedCharState.obsessionScore,
+                            dominantEmotion = moodStr,
+                            fullVectorJson = updatedCharState.toJson()
+                        )
+                    )
+                }
+            }
+        }
     }
 
     // =====================================================
@@ -5375,77 +5540,363 @@ $aiChar: ${latestAiReply.take(850)}
     }
 
     // =====================================================
-    // BÖLÜM G — DUYGUSAL HASSAS NOKTA (SensitiveTrigger) SİSTEMİ
+    // BÖLÜM G — DUYGUSAL HASSAS NOKTA (SensitiveTrigger) SİSTEMİ (SİSTEM #22)
     // =====================================================
+    private fun isMetaOrDictionaryQuestion(text: String): Boolean {
+        val lower = text.lowercase(java.util.Locale("tr", "TR"))
+        return lower.contains("kelimesinin anlamı") ||
+            lower.contains("kelimesi ne demek") ||
+            lower.contains("sözcüğünün anlamı") ||
+            lower.contains("ne demektir") ||
+            Regex("""(?i)\b(anlamı nedir|tanımı nedir|kökeni nedir|ne demek\?)\b""").containsMatchIn(lower)
+    }
+
+    private fun extractTurkishTriggerStems(topic: String): List<String> {
+        val trLocale = java.util.Locale("tr", "TR")
+        val normalized = topic.trim().lowercase(trLocale)
+        if (normalized.isBlank()) return emptyList()
+        val stems = mutableSetOf(normalized)
+        val suffixes = listOf(
+            "ilmesi", "ılması", "ulması", "ülmesi", "mek", "mak", "mesi", "ması",
+            "liği", "lığı", "luğu", "lüğü", "lik", "lık", "luk", "lük",
+            "leri", "ları", "ler", "lar", "nin", "nın", "nun", "nün",
+            "den", "dan", "ten", "tan", "de", "da", "te", "ta",
+            "in", "ın", "un", "ün", "i", "ı", "u", "ü", "e", "a"
+        )
+        val tokens = normalized.split(Regex("""[\s,;/]+""")).filter { it.length >= 3 }
+        for (tok in tokens) {
+            stems.add(tok)
+            for (suf in suffixes) {
+                if (tok.endsWith(suf) && tok.length - suf.length >= 4) {
+                    stems.add(tok.removeSuffix(suf))
+                    break
+                }
+            }
+        }
+        // Implicit phrase synonyms for classic core wounds
+        when {
+            normalized.contains("terk") || normalized.contains("bırak") -> {
+                stems.addAll(listOf("çekip gideceksin", "beni bırakacaksın", "herkes gibi gideceksin", "yalnız bırak", "terk ed", "bırakıp git"))
+            }
+            normalized.contains("ihanet") || normalized.contains("aldat") -> {
+                stems.addAll(listOf("arkamdan iş", "sırtımdan vur", "ihanet", "aldat", "güvenimi yık"))
+            }
+            normalized.contains("yalan") || normalized.contains("sakla") -> {
+                stems.addAll(listOf("yalan söyl", "benden sakla", "gizledin", "kandırdın"))
+            }
+        }
+        return stems.filter { it.length >= 3 }.toList()
+    }
+
+    private fun matchesSensitiveTrigger(trigger: SensitiveTriggerEntity, cleanInSceneText: String): Boolean {
+        val trLocale = java.util.Locale("tr", "TR")
+        val lowerText = cleanInSceneText.lowercase(trLocale)
+        if (lowerText.isBlank()) return false
+        val topicLower = trigger.triggerTopic.trim().lowercase(trLocale)
+        if (topicLower.length >= 3 && lowerText.contains(topicLower)) return true
+        val stems = extractTurkishTriggerStems(trigger.triggerTopic)
+        return stems.any { stem ->
+            if (stem.contains(' ')) {
+                lowerText.contains(stem)
+            } else {
+                Regex("""(?<![\p{L}\p{N}])${Regex.escape(stem)}""").containsMatchIn(lowerText)
+            }
+        }
+    }
+
     suspend fun evaluateSensitiveTriggers(
         botId: String,
         userMessageText: String
     ): Double {
-        val triggers = sensitiveTriggerDao.getTriggersForBot(botId)
-        if (triggers.isEmpty()) return 1.0
+        val bot = botDao.getBotById(botId)
+        val msgCount = try { messageDao.getMessageCountForBot(botId) } catch (_: Exception) { 0 }
+        return if (bot != null) {
+            evaluateSensitiveTriggersLive(
+                bot = bot,
+                userMessageText = userMessageText,
+                currentMessageIndex = msgCount,
+                createReappraisal = false
+            ).multiplier
+        } else {
+            val triggers = sensitiveTriggerDao.getTriggersForBot(botId)
+            if (triggers.isEmpty()) return 1.0
+            val stripped = userMessageText.replace(Regex("""\(\(.*?\)\)""", RegexOption.DOT_MATCHES_ALL), "").trim()
+            if (stripped.isBlank() || isMetaOrDictionaryQuestion(stripped)) return 1.0
+            var mult = 1.0
+            for (trigger in triggers) {
+                if (matchesSensitiveTrigger(trigger, stripped)) {
+                    val newCount = trigger.recentTriggerCount + 1
+                    val effective = if (newCount >= 4) 1.0 else trigger.intensityMultiplier
+                    sensitiveTriggerDao.insertOrUpdate(trigger.copy(recentTriggerCount = newCount))
+                    mult = maxOf(mult, effective)
+                }
+            }
+            mult
+        }
+    }
 
-        val lowerText = userMessageText.lowercase()
-        var matchedAny = false
+    /**
+     * System #22: Live hybrid sensitive trigger evaluator called on every user turn in generateAiReply / generateAiReplyStream.
+     * - Ignores OOC `((...))` notes and meta/dictionary questions ("ihanet kelimesinin anlamı nedir?")
+     * - Applies Turkish stem + implicit wound matching
+     * - Enforces 2-message spam cooldown per trigger so consecutive turns don't explode emotions
+     * - Creates a flexible PendingReappraisalEntity (without rigid +15/+3d lock) and emits a P2 scene directive
+     */
+    suspend fun evaluateSensitiveTriggersLive(
+        bot: BotEntity,
+        userMessageText: String,
+        currentMessageIndex: Int,
+        isOocMeta: Boolean = false,
+        createReappraisal: Boolean = true
+    ): SensitiveTriggerEvaluation = withContext(Dispatchers.IO) {
+        if (isOocMeta || com.example.util.UserSentimentAnalyzer.isPureOocMessage(userMessageText)) {
+            return@withContext SensitiveTriggerEvaluation()
+        }
+        val strippedOoc = userMessageText
+            .replace(Regex("""\(\(.*?\)\)""", RegexOption.DOT_MATCHES_ALL), " ")
+            .replace(Regex("""(?i)\[ooc[^\]]*]"""), " ")
+            .trim()
+        if (strippedOoc.isBlank() || isMetaOrDictionaryQuestion(strippedOoc)) {
+            return@withContext SensitiveTriggerEvaluation()
+        }
+
+        val triggers = sensitiveTriggerDao.getTriggersForBot(bot.id)
+        if (triggers.isEmpty()) return@withContext SensitiveTriggerEvaluation()
+
+        val matched = mutableListOf<SensitiveTriggerEntity>()
         var effectiveMultiplier = 1.0
 
         for (trigger in triggers) {
-            if (lowerText.contains(trigger.triggerTopic.lowercase())) {
-                matchedAny = true
-                val newCount = trigger.recentTriggerCount + 1
-                // ÖNEMLİ DENGELEME: Art arda 4. tetiklenmeden itibaren multiplier otomatik normale (1.0) düşer!
-                val multiplier = if (newCount >= 4) 1.0 else trigger.intensityMultiplier
-                sensitiveTriggerDao.insertOrUpdate(trigger.copy(recentTriggerCount = newCount))
-                effectiveMultiplier = maxOf(effectiveMultiplier, multiplier)
+            if (!matchesSensitiveTrigger(trigger, strippedOoc)) continue
+
+            val cooldownKey = "${bot.id}:${trigger.id}"
+            val lastFiredIdx = lastTriggerMessageIndexMap[cooldownKey]
+            val withinCooldown = lastFiredIdx != null && (currentMessageIndex - lastFiredIdx) in 0..2
+            if (withinCooldown) {
+                continue
             }
+
+            val newCount = trigger.recentTriggerCount + 1
+            val mult = if (newCount >= 4) 1.0 else trigger.intensityMultiplier.coerceIn(1.2, 2.5)
+            val updatedTrigger = trigger.copy(recentTriggerCount = newCount)
+            sensitiveTriggerDao.insertOrUpdate(updatedTrigger)
+            lastTriggerMessageIndexMap[cooldownKey] = currentMessageIndex
+            matched.add(updatedTrigger)
+            effectiveMultiplier = maxOf(effectiveMultiplier, mult)
         }
 
-        if (!matchedAny) {
-            // Sıfırla: Her tetiklenme ayrı bir olaydır, art arda gelmediyse sayacı sıfırla
-            for (trigger in triggers) {
-                if (trigger.recentTriggerCount > 0) {
-                    sensitiveTriggerDao.insertOrUpdate(trigger.copy(recentTriggerCount = 0))
+        if (matched.isEmpty()) {
+            // Reset consecutive streak counters only when user message didn't touch any trigger
+            val touchedAnyIgnoringCooldown = triggers.any { matchesSensitiveTrigger(it, strippedOoc) }
+            if (!touchedAnyIgnoringCooldown) {
+                for (trigger in triggers) {
+                    if (trigger.recentTriggerCount > 0) {
+                        sensitiveTriggerDao.insertOrUpdate(trigger.copy(recentTriggerCount = 0))
+                    }
                 }
             }
+            return@withContext SensitiveTriggerEvaluation()
         }
 
-        return effectiveMultiplier
+        val primary = matched.maxByOrNull { it.intensityMultiplier } ?: matched.first()
+        var createdReappraisal = false
+        if (createReappraisal) {
+            try {
+                val activeExisting = pendingReappraisalDao.getActivePendingReappraisals(bot.id)
+                val alreadyTracked = activeExisting.any {
+                    it.originalEventDescription.contains(primary.triggerTopic, ignoreCase = true)
+                }
+                if (!alreadyTracked) {
+                    recordPendingReappraisalIfEligible(
+                        botId = bot.id,
+                        eventDescription = "\"${primary.triggerTopic}\" hassas yarası tetiklendi: ${strippedOoc.take(90)}",
+                        emotionStateJson = bot.emotionState,
+                        currentMessageIndex = currentMessageIndex,
+                        rawDelta = -22,
+                        storyDayCounter = bot.storyDayCounter,
+                        forceFromTrigger = true
+                    )
+                    createdReappraisal = true
+                }
+            } catch (_: Exception) {}
+        }
+
+        val personality = try {
+            com.example.data.local.PersonalityProfile.deriveFromPersonality(bot.aiName, bot.aiPersonality, bot.scenario)
+        } catch (_: Exception) {
+            null
+        }
+        val attachmentLabel = when (personality?.attachmentStyle) {
+            "anxious" -> "kaygılı (anxious)"
+            "avoidant" -> "kaçıngan (avoidant)"
+            "fearful_avoidant" -> "korkulu-kaçıngan (fearful-avoidant)"
+            else -> "güvenli/dengeli"
+        }
+        val severityLabel = when {
+            effectiveMultiplier >= 2.1 -> "yüksek"
+            effectiveMultiplier >= 1.5 -> "orta-yüksek"
+            else -> "orta"
+        }
+        val directive = "[HASSAS YARA TETİKLENDİ]: \"${primary.triggerTopic}\" yarasına dokunuldu (şiddet: $severityLabel). " +
+            "Karakterin bağlanma stiline ($attachmentLabel) uygun gerçekçi tepki ver — abartılı tiyatro değil, içten savunma/kırılma."
+
+        SensitiveTriggerEvaluation(
+            multiplier = effectiveMultiplier,
+            matchedTriggers = matched,
+            promptDirective = directive,
+            createdReappraisal = createdReappraisal
+        )
     }
 
     // =====================================================
-    // BÖLÜM H — DUYGUNUN ZAMANLA "OLGUNLAŞMASI" (EmotionalReappraisal)
+    // BÖLÜM H — DUYGUNUN ZAMANLA "OLGUNLAŞMASI" (EmotionalReappraisal — SİSTEM #22)
     // =====================================================
+    private fun embedStoryDayInEmotionJson(emotionStateJson: String, storyDayCounter: Long): String {
+        return try {
+            val obj = if (emotionStateJson.trim().startsWith("{")) {
+                org.json.JSONObject(emotionStateJson)
+            } else {
+                org.json.JSONObject()
+            }
+            obj.put("storyDay", storyDayCounter.coerceAtLeast(1L))
+            obj.toString()
+        } catch (_: Exception) {
+            """{"storyDay":${storyDayCounter.coerceAtLeast(1L)}}"""
+        }
+    }
+
+    /**
+     * System #22: Flexible story-aware reappraisal recording — ZERO rigid +15 message / +3 day lock!
+     * Records are immediately eligible so the AI can soften/resolve/harden organically whenever the story earns it.
+     */
     suspend fun recordPendingReappraisalIfEligible(
         botId: String,
         eventDescription: String,
         emotionStateJson: String,
         currentMessageIndex: Int,
-        rawDelta: Int
+        rawDelta: Int,
+        storyDayCounter: Long? = null,
+        forceFromTrigger: Boolean = false
     ) {
-        // SADECE büyük negatif olaylar (ham delta <= -20) için çalışır
-        if (rawDelta > -20) return
+        if (!forceFromTrigger && rawDelta > -10) return
 
         val activeList = pendingReappraisalDao.getActivePendingReappraisals(botId)
-
-        // ÖNEMLİ DENGELEME: Bir botta aynı anda en fazla 2-3 bekleyen reappraisal olabilir.
-        // 3 veya daha fazla ise, en eskisi (ilk kaydedileni) otomatik expired=true olarak kapatılır.
         if (activeList.size >= 3) {
             val oldest = activeList.first()
             pendingReappraisalDao.update(oldest.copy(expired = true, resolved = false))
         }
 
+        val resolvedStoryDay = storyDayCounter ?: try {
+            botDao.getBotById(botId)?.storyDayCounter ?: 1L
+        } catch (_: Exception) { 1L }
+
         val now = System.currentTimeMillis()
         val newReappraisal = PendingReappraisalEntity(
             botId = botId,
-            originalEventDescription = eventDescription,
-            originalEmotionState = emotionStateJson,
+            originalEventDescription = eventDescription.trim().take(220),
+            originalEmotionState = embedStoryDayInEmotionJson(emotionStateJson, resolvedStoryDay),
             triggeredAtMessageIndex = currentMessageIndex,
             triggeredAtTimestamp = now,
-            reappraisalEligibleAtMessageIndex = currentMessageIndex + 15,
-            reappraisalEligibleAtTimestamp = now + (3 * 24 * 3600 * 1000L), // +3 gün
+            reappraisalEligibleAtMessageIndex = currentMessageIndex,
+            reappraisalEligibleAtTimestamp = now,
             resolved = false,
             expired = false
         )
         pendingReappraisalDao.insert(newReappraisal)
+    }
+
+    /**
+     * System #22: Natural story-time expiration (14+ story days unresolved, or 10+ days for high regulationCapacity >= 80).
+     */
+    suspend fun expireStaleReappraisals(
+        botId: String,
+        currentStoryDay: Long,
+        regulationCapacity: Int = 50,
+        elapsedJumpDays: Int = 0
+    ): Int = withContext(Dispatchers.IO) {
+        val activeReapps = pendingReappraisalDao.getActivePendingReappraisals(botId)
+        if (activeReapps.isEmpty()) return@withContext 0
+        val maxAgeDays = if (regulationCapacity >= 80) 10L else 14L
+        var expiredCount = 0
+        for (pr in activeReapps) {
+            val triggeredStoryDay = try {
+                val obj = org.json.JSONObject(pr.originalEmotionState)
+                if (obj.has("storyDay")) obj.optLong("storyDay", 1L) else 1L
+            } catch (_: Exception) {
+                1L
+            }
+            val storyDayDelta = (currentStoryDay - triggeredStoryDay).coerceAtLeast(0L)
+            if (storyDayDelta >= maxAgeDays || elapsedJumpDays.toLong() >= maxAgeDays) {
+                pendingReappraisalDao.update(pr.copy(expired = true, resolved = false))
+                expiredCount++
+            }
+        }
+        expiredCount
+    }
+
+    // --- Systems #20 & #22 UI CRUD Helpers ---
+
+    suspend fun getEntityRelationsForBot(botId: String): List<EntityRelationEntity> =
+        managers.worldStateManager.getEntityRelationsForBot(botId)
+
+    suspend fun upsertEntityRelation(
+        botId: String,
+        sourceName: String,
+        relationType: String,
+        targetName: String,
+        currentMessageIndex: Int = 0,
+        confidence: String = "certain"
+    ): EntityRelationEntity? = managers.worldStateManager.upsertEntityRelation(
+        botId = botId,
+        sourceName = sourceName,
+        relationType = relationType,
+        targetName = targetName,
+        currentMessageIndex = currentMessageIndex,
+        confidence = confidence
+    )
+
+    suspend fun deleteEntityRelation(relationId: Long) =
+        managers.worldStateManager.deleteEntityRelation(relationId)
+
+    suspend fun getSensitiveTriggersForBot(botId: String): List<SensitiveTriggerEntity> = withContext(Dispatchers.IO) {
+        sensitiveTriggerDao.getTriggersForBot(botId)
+    }
+
+    suspend fun addSensitiveTrigger(
+        botId: String,
+        topic: String,
+        sourceDescription: String = "",
+        intensityMultiplier: Double = 2.0
+    ): SensitiveTriggerEntity? = withContext(Dispatchers.IO) {
+        val cleanTopic = topic.trim()
+        if (cleanTopic.length < 2) return@withContext null
+        val existing = sensitiveTriggerDao.getTriggersForBot(botId)
+            .firstOrNull { it.triggerTopic.equals(cleanTopic, ignoreCase = true) }
+        if (existing != null) return@withContext existing
+        val entity = SensitiveTriggerEntity(
+            botId = botId,
+            triggerTopic = cleanTopic,
+            sourceDescription = sourceDescription.trim().ifBlank { "Kullanıcı tarafından eklendi" },
+            intensityMultiplier = intensityMultiplier.coerceIn(1.2, 2.5),
+            recentTriggerCount = 0
+        )
+        sensitiveTriggerDao.insertOrUpdate(entity)
+        sensitiveTriggerDao.getTriggersForBot(botId)
+            .firstOrNull { it.triggerTopic.equals(cleanTopic, ignoreCase = true) } ?: entity
+    }
+
+    suspend fun deleteSensitiveTrigger(botId: String, triggerId: Long) = withContext(Dispatchers.IO) {
+        try {
+            db.openHelper.writableDatabase.execSQL(
+                "DELETE FROM sensitive_triggers WHERE botId = ? AND id = ?",
+                arrayOf<Any>(botId, triggerId)
+            )
+            lastTriggerMessageIndexMap.remove("$botId:$triggerId")
+        } catch (_: Exception) {}
+    }
+
+    suspend fun getActivePendingReappraisalsForBot(botId: String): List<PendingReappraisalEntity> = withContext(Dispatchers.IO) {
+        pendingReappraisalDao.getActivePendingReappraisals(botId)
     }
 
     // =====================================================
@@ -8054,9 +8505,10 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
 
     suspend fun detectAndResolveGraphQuery(
         botId: String,
-        query: String
+        query: String,
+        castMembers: List<CastMemberEntity> = emptyList()
     ): com.example.data.managers.GraphTraversalResult? =
-        managers.worldStateManager.detectAndResolveGraphQuery(botId, query)
+        managers.worldStateManager.detectAndResolveGraphQuery(botId, query, castMembers)
 
     // --- MemoryRetrievalManager Delegations ---
 
@@ -8173,7 +8625,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         explicitInSceneCastNames: Set<String> = emptySet(),
         userSubtextHint: String = "",
         latestUserMessage: String = "",
-        isPureOocTurn: Boolean = false
+        isPureOocTurn: Boolean = false,
+        sensitiveTriggerDirective: String = ""
     ): String {
         val consistencyNote = pendingConsistencyNoteMap.remove(bot.id)
         val decayNote = pendingDecayNoteMap.remove(bot.id)
@@ -8206,7 +8659,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 explicitInSceneCastNames = explicitInSceneCastNames,
                 userSubtextHint = userSubtextHint,
                 latestUserMessage = latestUserMessage,
-                isPureOocTurn = isPureOocTurn
+                isPureOocTurn = isPureOocTurn,
+                sensitiveTriggerDirective = sensitiveTriggerDirective
             )
         )
     }
@@ -8229,20 +8683,22 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         )
     }
 
-    suspend fun generateAiReply(
+    private data class PreparedNarrativeTurn(
+        val settings: UserSettingsEntity,
+        val effectiveModel: String,
+        val updatedBot: BotEntity,
+        val contextMessages: List<MessageEntity>,
+        val sysPrompt: String,
+        val ragRouteMode: MemoryEngine.RagRouteMode,
+        val activeRoutine: com.example.data.local.RoutineEntity?,
+        val currentStoryDayKey: String
+    )
+
+    private suspend fun prepareNarrativeTurnContext(
         bot: BotEntity,
         messages: List<MessageEntity>,
-        literaryFramingMode: Boolean = false
-    ): AiReplyResult = withContext(Dispatchers.IO) {
-        if (bot.id.startsWith("book_") || bot.mode == "book") {
-            val bookReply = generateDeterministicBookReply(bot, messages)
-            return@withContext AiReplyResult(
-                replyText = bookReply,
-                usedProvider = "Interaktif Kitap Motoru",
-                systemPromptSnapshot = "Book Mode (${bot.aiName.ifBlank { bot.universeName }})"
-            )
-        }
-
+        literaryFramingMode: Boolean
+    ): PreparedNarrativeTurn {
         val settings = getOrCreateSettings()
         val effectiveModel = getEffectiveModelForProvider(settings)
         val (updatedBot, contextMessages) = prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
@@ -8252,16 +8708,12 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             castMembers.map { it.name }).filter { it.isNotBlank() }.distinct()
         val modelContextWindow = getModelContextLimit(effectiveModel)
 
-        // Natural Forgetting Reaper (Section 3.1): lightweight local (<2 ms, 0 AI tokens) check every 5 messages
         if (messages.size % 5 == 0 || updatedBot.storyDayCounter > 1L) {
             try {
                 reapExpiredMemories(updatedBot.id, updatedBot.storyDayCounter, messages.size)
             } catch (_: Exception) {}
         }
 
-        // 10/10 Co-Piloted (Hybrid + AI) RAG Retrieval:
-        // - Simplest trivial/exact-fact turns stay in 0-token Hybrid Fast (<10 ms)
-        // - Real story/emotion/subtext/relative-time turns run Hybrid 15-item micro-index -> 1 unified Utility call -> optional miss_queries pass
         val ragBundle = managers.memoryRetrievalManager.retrieveCoPilotedContext(
             bot = updatedBot,
             recentMessages = contextMessages,
@@ -8279,13 +8731,12 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 )
             },
             graphResolver = { userQuery ->
-                detectAndResolveGraphQuery(updatedBot.id, userQuery)
+                detectAndResolveGraphQuery(updatedBot.id, userQuery, castMembers)
                     ?.promptExplanation
                     ?.takeIf { it.isNotBlank() }
             }
         )
 
-        // Habit / Repetition Reinforcement (Section 3.2): promote frequently recalled EPHEMERAL memories to CORE
         if (ragBundle.facts.isNotEmpty()) {
             try {
                 reinforceRecalledFacts(updatedBot.id, ragBundle.facts, updatedBot.storyDayCounter)
@@ -8319,18 +8770,12 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             emptyList()
         }
 
-        val activePendingReappraisals = try {
-            pendingReappraisalDao.getActivePendingReappraisals(updatedBot.id)
-        } catch (_: Exception) {
-            emptyList()
-        }
         val recentMilestones = try {
             db.milestoneDao().getRecentMilestonesForBot(updatedBot.id, limit = 3)
         } catch (_: Exception) {
             emptyList()
         }
 
-        // Sistem #17: Hybrid Layer 1 + Layer 2 Micro-AI User Sentiment & Subtext Sensor (2.5s race timeout)
         val latestUserMessageText = contextMessages.lastOrNull { it.role == "user" }?.text.orEmpty()
         val lastBotSummaryText = contextMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty().take(220)
         val previousStateJsonTone = lastDetectedUserToneMap.remove(updatedBot.id)
@@ -8370,6 +8815,31 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             }
         }
 
+        // System #22: Live Sensitive Trigger evaluation & Story-Day Reappraisal expiration
+        try {
+            expireStaleReappraisals(
+                botId = effectiveBot.id,
+                currentStoryDay = effectiveBot.storyDayCounter,
+                regulationCapacity = effectiveBot.emotionalRegulationCapacity
+            )
+        } catch (_: Exception) {}
+        val triggerEval = try {
+            evaluateSensitiveTriggersLive(
+                bot = effectiveBot,
+                userMessageText = latestUserMessageText,
+                currentMessageIndex = messages.size,
+                isOocMeta = sentimentResult.isOocMeta,
+                createReappraisal = true
+            )
+        } catch (_: Exception) {
+            SensitiveTriggerEvaluation()
+        }
+        val activePendingReappraisals = try {
+            pendingReappraisalDao.getActivePendingReappraisals(effectiveBot.id)
+        } catch (_: Exception) {
+            emptyList()
+        }
+
         val userSubtextHint = UserSentimentAnalyzer.buildSubtextPromptHint(sentimentResult)
         val baseSysPrompt = buildSystemPrompt(
             bot = effectiveBot,
@@ -8395,10 +8865,10 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             explicitInSceneCastNames = activeInSceneCastMap[effectiveBot.id].orEmpty(),
             userSubtextHint = userSubtextHint,
             latestUserMessage = latestUserMessageText,
-            isPureOocTurn = sentimentResult.isOocMeta
+            isPureOocTurn = sentimentResult.isOocMeta,
+            sensitiveTriggerDirective = triggerEval.promptDirective
         )
 
-        // Wire UserSentimentAnalyzer into live replies (chat mode always; personal non-intense on NEGATIVE/WITHDRAWN)
         val detectedMood = if (sentimentResult.usedMicroAi) sentimentResult.mood else UserSentimentAnalyzer.analyze(contextMessages)
         val moodHint = when {
             sentimentResult.isOocMeta -> ""
@@ -8411,19 +8881,30 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         }
         val sysPrompt = if (moodHint.isNotBlank()) baseSysPrompt + moodHint else baseSysPrompt
 
-        val response = executeModelRequestWithFallback(
-            model = effectiveModel,
+        return PreparedNarrativeTurn(
             settings = settings,
-            systemPrompt = sysPrompt,
-            messages = contextMessages,
-            botId = updatedBot.id
+            effectiveModel = effectiveModel,
+            updatedBot = effectiveBot,
+            contextMessages = contextMessages,
+            sysPrompt = sysPrompt,
+            ragRouteMode = ragBundle.routeMode,
+            activeRoutine = activeRoutine,
+            currentStoryDayKey = currentStoryDayKey
         )
-        recordTokenUsage(updatedBot.id, response.promptTokens, response.candidateTokens)
+    }
 
-        val latestUserText = contextMessages.lastOrNull { it.role == "user" }?.text.orEmpty()
+    private suspend fun finalizeNarrativeTurnResponse(
+        prepared: PreparedNarrativeTurn,
+        totalMessageCount: Int,
+        response: com.example.data.api.ModelResponseResult
+    ): AiReplyResult {
+        val botId = prepared.updatedBot.id
+        recordTokenUsage(botId, response.promptTokens, response.candidateTokens)
+
+        val latestUserText = prepared.contextMessages.lastOrNull { it.role == "user" }?.text.orEmpty()
         val channelASummary = try {
             executeActiveMemoryToolCalls(
-                botId = updatedBot.id,
+                botId = botId,
                 responseText = response.text,
                 toolCalls = response.toolCalls,
                 explicitUserOverride = MemoryEngine.hasExplicitUserOverrideIntent(latestUserText)
@@ -8432,42 +8913,105 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             MemoryCommitSummary()
         }
 
-        lastUnlockedMilestoneMap.remove(updatedBot.id)
+        lastUnlockedMilestoneMap.remove(botId)
         try {
             parseAndApplyEmotionUpdates(
-                botId = updatedBot.id,
+                botId = botId,
                 rawResponse = response.text
             )
         } catch (_: Exception) {}
-        val unlockedMilestone = lastUnlockedMilestoneMap.remove(updatedBot.id)
+        val unlockedMilestone = lastUnlockedMilestoneMap.remove(botId)
 
-        // System #21: Mark injected routine as mentioned for the current story-day key so it never repeats same day
-        if (activeRoutine != null) {
+        if (prepared.activeRoutine != null) {
             try {
                 markRoutineMentioned(
-                    routineId = activeRoutine.id,
-                    storyDate = currentStoryDayKey,
-                    botId = updatedBot.id
+                    routineId = prepared.activeRoutine.id,
+                    storyDate = prepared.currentStoryDayKey,
+                    botId = botId
                 )
             } catch (_: Exception) {}
         }
 
-        // 50-Message Checkpoint Pyramid trigger (non-blocking fail-safe)
         try {
-            if (messages.size > 0 && messages.size % 50 == 0) {
-                checkAndGenerateCheckpoint(updatedBot.id, messages.size)
+            if (totalMessageCount > 0 && totalMessageCount % 50 == 0) {
+                checkAndGenerateCheckpoint(botId, totalMessageCount)
             }
         } catch (_: Exception) {}
 
         val cleanedText = cleanEmotionTags(response.text).ifBlank { response.text.trim() }
-        AiReplyResult(
+        return AiReplyResult(
             replyText = cleanedText,
             usedProvider = response.usedProvider,
-            systemPromptSnapshot = sysPrompt,
+            systemPromptSnapshot = prepared.sysPrompt,
             memoryCommitSummary = channelASummary,
-            ragRouteMode = ragBundle.routeMode,
+            ragRouteMode = prepared.ragRouteMode,
             unlockedMilestone = unlockedMilestone
         )
+    }
+
+    suspend fun generateAiReply(
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        literaryFramingMode: Boolean = false
+    ): AiReplyResult = withContext(Dispatchers.IO) {
+        if (bot.id.startsWith("book_") || bot.mode == "book") {
+            val bookReply = generateDeterministicBookReply(bot, messages)
+            return@withContext AiReplyResult(
+                replyText = bookReply,
+                usedProvider = "Interaktif Kitap Motoru",
+                systemPromptSnapshot = "Book Mode (${bot.aiName.ifBlank { bot.universeName }})"
+            )
+        }
+
+        val prepared = prepareNarrativeTurnContext(bot, messages, literaryFramingMode)
+        val response = executeModelRequestWithFallback(
+            model = prepared.effectiveModel,
+            settings = prepared.settings,
+            systemPrompt = prepared.sysPrompt,
+            messages = prepared.contextMessages,
+            botId = prepared.updatedBot.id
+        )
+        finalizeNarrativeTurnResponse(prepared, messages.size, response)
+    }
+
+    /**
+     * Sistem #23: Gerçek Zamanlı SSE Streaming ile yanıt üretir.
+     * `StreamingTextSanitizer` üzerinden 0-sızıntı temiz metni canlı olarak [onVisibleDelta] ile yayınlar;
+     * akış tamamlandığında `[[STATE_JSON]]`, duygu, hafıza araçları, rutin ve kilometre taşlarını
+     * tam olarak [generateAiReply] ile aynı biçimde işler.
+     */
+    suspend fun generateAiReplyStream(
+        bot: BotEntity,
+        messages: List<MessageEntity>,
+        literaryFramingMode: Boolean = false,
+        onVisibleDelta: suspend (visibleSnapshot: String, isThinking: Boolean) -> Unit,
+        onFirstToken: () -> Unit = {},
+        onResetVisibleStream: suspend () -> Unit = {}
+    ): AiReplyResult = withContext(Dispatchers.IO) {
+        if (bot.id.startsWith("book_") || bot.mode == "book") {
+            val bookReply = generateDeterministicBookReply(bot, messages)
+            onFirstToken()
+            onVisibleDelta(bookReply, false)
+            return@withContext AiReplyResult(
+                replyText = bookReply,
+                usedProvider = "Interaktif Kitap Motoru",
+                systemPromptSnapshot = "Book Mode (${bot.aiName.ifBlank { bot.universeName }})"
+            )
+        }
+
+        val prepared = prepareNarrativeTurnContext(bot, messages, literaryFramingMode)
+        val streamResult = managers.providerFallbackManager.executeChatStream(
+            model = prepared.effectiveModel,
+            settings = prepared.settings,
+            systemPrompt = prepared.sysPrompt,
+            messages = prepared.contextMessages,
+            buildConfigGeminiKey = getBuildConfigKey(),
+            tools = com.example.data.api.MemoryToolRegistry.CENTRAL_TOOLS,
+            onVisibleDelta = onVisibleDelta,
+            onFirstToken = onFirstToken,
+            onResetVisibleStream = onResetVisibleStream
+        )
+        finalizeNarrativeTurnResponse(prepared, messages.size, streamResult.response)
     }
 
     suspend fun generateOpeningMessage(

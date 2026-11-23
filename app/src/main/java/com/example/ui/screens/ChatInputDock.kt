@@ -88,7 +88,8 @@ internal fun ChatBottomInputDock(
     onSendMessage: (String) -> Unit,
     onEditLastMessage: () -> Unit,
     onOpenBackgroundPicker: () -> Unit,
-    onTriggerSendBurst: () -> Unit
+    onTriggerSendBurst: () -> Unit,
+    onStopGeneration: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -245,6 +246,7 @@ internal fun ChatBottomInputDock(
                 )
 
                 val canSendNow = !isSending && inputText.trim().isNotEmpty()
+                val canStopNow = isSending && onStopGeneration != null
                 val sendInteraction = remember { MutableInteractionSource() }
                 Box(
                     modifier = Modifier
@@ -252,35 +254,56 @@ internal fun ChatBottomInputDock(
                         .size(width = barW * (130f / 841f), height = barH * (114f / 138f))
                         .cosmicTapSpring(
                             interactionSource = sendInteraction,
-                            enabled = canSendNow,
+                            enabled = canSendNow || canStopNow,
                             pressedScale = 0.88f,
                             cornerRadius = 40.dp
                         )
                         .cosmicPopOnTrigger(triggerKey = sendBurstTrigger, peakScale = 1.15f)
                         .clip(CircleShape)
                         .clickable(
-                            enabled = canSendNow,
+                            enabled = canSendNow || canStopNow,
                             interactionSource = sendInteraction,
                             indication = null
                         ) {
-                            val text = inputText.trim()
-                            if (text.isNotBlank() && !isSending) {
-                                onTriggerSendBurst()
-                                onInputTextChange("")
-                                onSendMessage(text)
+                            if (canStopNow) {
+                                onStopGeneration?.invoke()
+                            } else {
+                                val text = inputText.trim()
+                                if (text.isNotBlank() && !isSending) {
+                                    onTriggerSendBurst()
+                                    onInputTextChange("")
+                                    onSendMessage(text)
+                                }
                             }
                         }
-                        .testTag("send_message_button"),
+                        .testTag(if (canStopNow) "stop_generation_button" else "send_message_button"),
                     contentAlignment = Alignment.Center
                 ) {
-                    CosmicSparkleBurst(
-                        triggerKey = sendBurstTrigger,
-                        accentColor = Color(0xFFE9D5FF),
-                        secondaryColor = Color(0xFFA855F7),
-                        particleCount = 10,
-                        maxRadius = 30.dp,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    if (canStopNow) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .border(1.1.dp, Color(0xFFE9D5FF), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(11.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .border(1.2.dp, Color.White, RoundedCornerShape(3.dp))
+                            )
+                        }
+                    } else {
+                        CosmicSparkleBurst(
+                            triggerKey = sendBurstTrigger,
+                            accentColor = Color(0xFFE9D5FF),
+                            secondaryColor = Color(0xFFA855F7),
+                            particleCount = 10,
+                            maxRadius = 30.dp,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
                 }
             }
         }

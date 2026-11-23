@@ -173,7 +173,7 @@ class Systems2_7_8_TenOutOfTenTest {
         assertEquals("bot_test_sync", EmochiRepository.activeBotId)
         assertEquals(UiState.Chat("bot_test_sync"), vm.uiState.value)
 
-        vm.skipTypewriter()
+        vm.stopGeneration()
         assertNull(vm.streamingMsgId.value)
         assertNull(vm.streamingText.value)
 
