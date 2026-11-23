@@ -1,0 +1,23 @@
+﻿2026-11-23T19:53:47.8141976Z ##[group]Run VER_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n 1)
+2026-11-23T19:53:47.8142874Z [36;1mVER_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts | head -n 1)[0m
+2026-11-23T19:53:47.8143465Z [36;1mVER_CODE=$(grep -oP '(?:baseVersionCode|versionCode)\s*=\s*\K[0-9]+' app/build.gradle.kts | head -n 1)[0m
+2026-11-23T19:53:47.8143926Z [36;1mVER_NAME="${VER_NAME:-1.0}"[0m
+2026-11-23T19:53:47.8144220Z [36;1mVER_CODE="${VER_CODE:-1}"[0m
+2026-11-23T19:53:47.8144549Z [36;1mecho "version_name=$VER_NAME" >> "$GITHUB_OUTPUT"[0m
+2026-11-23T19:53:47.8144926Z [36;1mecho "version_code=$VER_CODE" >> "$GITHUB_OUTPUT"[0m
+2026-11-23T19:53:47.8145328Z [36;1mecho "Detected Asroda v${VER_NAME} (versionCode=${VER_CODE})"[0m
+2026-11-23T19:53:47.8172672Z shell: /usr/bin/bash -e {0}
+2026-11-23T19:53:47.8172940Z env:
+2026-11-23T19:53:47.8173255Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-23T19:53:47.8173713Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-23T19:53:47.8174120Z   MAVEN_ARGS: -ntp
+2026-11-23T19:53:47.8174389Z   GRADLE_ACTION_ID: gradle/actions/setup-gradle
+2026-11-23T19:53:47.8174694Z   GRADLE_USER_HOME: /home/runner/.gradle
+2026-11-23T19:53:47.8174988Z   GRADLE_BUILD_ACTION_SETUP_COMPLETED: true
+2026-11-23T19:53:47.8175379Z   GRADLE_BUILD_ACTION_CACHE_RESTORED: true
+2026-11-23T19:53:47.8175827Z   DEVELOCITY_INJECTION_INIT_SCRIPT_NAME: gradle-actions.inject-develocity.init.gradle
+2026-11-23T19:53:47.8176269Z   DEVELOCITY_INJECTION_CUSTOM_VALUE: gradle-actions
+2026-11-23T19:53:47.8176600Z   GITHUB_DEPENDENCY_GRAPH_ENABLED: false
+2026-11-23T19:53:47.8176948Z   KEYSTORE_PATH: /home/runner/work/_temp/asroda-release.keystore
+2026-11-23T19:53:47.8177430Z ##[endgroup]
+2026-11-23T19:53:47.8313831Z Detected Asroda v3.1 (versionCode=16)

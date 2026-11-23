@@ -1,0 +1,25 @@
+﻿2026-11-23T19:54:07.3403088Z ##[group]Run actions/upload-artifact@v4
+2026-11-23T19:54:07.3403393Z with:
+2026-11-23T19:54:07.3403612Z   name: junit-test-results
+2026-11-23T19:54:07.3403937Z   path: app/build/test-results/testDebugUnitTest/*.xml
+2026-11-23T19:54:07.3404265Z   retention-days: 14
+2026-11-23T19:54:07.3404513Z   if-no-files-found: ignore
+2026-11-23T19:54:07.3404768Z   compression-level: 6
+2026-11-23T19:54:07.3405004Z   overwrite: false
+2026-11-23T19:54:07.3405405Z   include-hidden-files: false
+2026-11-23T19:54:07.3405657Z env:
+2026-11-23T19:54:07.3405963Z   JAVA_HOME: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-23T19:54:07.3406409Z   JAVA_HOME_21_X64: /opt/hostedtoolcache/Java_Temurin-Hotspot_jdk/21.0.13-9/x64
+2026-11-23T19:54:07.3406774Z   MAVEN_ARGS: -ntp
+2026-11-23T19:54:07.3407223Z   GRADLE_ACTION_ID: gradle/actions/setup-gradle
+2026-11-23T19:54:07.3407535Z   GRADLE_USER_HOME: /home/runner/.gradle
+2026-11-23T19:54:07.3407825Z   GRADLE_BUILD_ACTION_SETUP_COMPLETED: true
+2026-11-23T19:54:07.3408121Z   GRADLE_BUILD_ACTION_CACHE_RESTORED: true
+2026-11-23T19:54:07.3408575Z   DEVELOCITY_INJECTION_INIT_SCRIPT_NAME: gradle-actions.inject-develocity.init.gradle
+2026-11-23T19:54:07.3409006Z   DEVELOCITY_INJECTION_CUSTOM_VALUE: gradle-actions
+2026-11-23T19:54:07.3409315Z   GITHUB_DEPENDENCY_GRAPH_ENABLED: false
+2026-11-23T19:54:07.3409655Z   KEYSTORE_PATH: /home/runner/work/_temp/asroda-release.keystore
+2026-11-23T19:54:07.3409992Z ##[endgroup]
+2026-11-23T19:54:07.4885640Z (node:2673) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+2026-11-23T19:54:07.4886706Z (Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-23T19:54:07.4899817Z No files were found with the provided path: app/build/test-results/testDebugUnitTest/*.xml. No artifacts will be uploaded.
