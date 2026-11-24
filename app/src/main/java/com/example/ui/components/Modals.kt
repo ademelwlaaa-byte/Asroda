@@ -394,9 +394,11 @@ fun FallbackLogModal(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        val healthBannerText = remember(liveHealth) {
+        val healthBannerText = remember(liveHealth, logs) {
             val summary = com.example.util.ProviderHealthSummaryFormatter.summarize(liveHealth)
-            com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)
+            val base = com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)
+            val rateLine = com.example.util.ProviderFallbackSuccessRateHelper.formatCompact(logs)
+            if (rateLine.isNotBlank()) "$base\n$rateLine" else base
         }
         Box(
             modifier = Modifier
