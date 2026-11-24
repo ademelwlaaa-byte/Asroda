@@ -187,6 +187,18 @@ internal fun ChatStoryStatsDialog(
                     modifier = Modifier.weight(1f)
                 )
             }
+            MorCamCapsuleButton(
+                text = "📦 Tam Hikaye Arşivini Kopyala",
+                variant = MorCamButtonVariant.Secondary,
+                onClick = {
+                    val bms = StoryBookmarkStore.loadBookmarks(context, bot.id)
+                    val archive = com.example.util.StoryArchiveBundler.buildCompleteArchive(bot, validMessages, bms)
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, archive))
+                    Toast.makeText(context, "Tam hikaye arşivi panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
