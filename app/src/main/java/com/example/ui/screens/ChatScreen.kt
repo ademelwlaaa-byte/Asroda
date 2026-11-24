@@ -860,10 +860,12 @@ fun ChatScreen(
     }
 
     if (showDirectorDialog) {
+        val lastAiReply = validMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
         com.example.ui.components.ChatStoryDirectorDialog(
             context = context,
             botId = bot.id,
             displayName = displayName,
+            lastAssistantText = lastAiReply,
             currentResponseLength = userSettings?.responseLength ?: "standard",
             currentTtsSpeed = userSettings?.ttsSpeed ?: 1.0f,
             currentFontScale = chatFontScale,

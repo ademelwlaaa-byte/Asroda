@@ -218,6 +218,7 @@ internal fun ChatStoryDirectorDialog(
     context: Context,
     botId: String,
     displayName: String,
+    lastAssistantText: String = "",
     currentResponseLength: String,
     currentTtsSpeed: Float,
     currentFontScale: Float,
@@ -394,6 +395,39 @@ internal fun ChatStoryDirectorDialog(
                 },
                 modifier = Modifier.fillMaxWidth()
             )
+
+            val smartStarters = remember(lastAssistantText) {
+                com.example.util.QuickReplyChipsHelper.suggestStarters(lastAssistantText)
+            }
+            Text(
+                text = "Sahneye Göre Hızlı Başlangıçlar (Dokun & Ekle)",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                smartStarters.forEach { starter ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x44211044))
+                            .border(0.8.dp, Color(0x55A78BFA), RoundedCornerShape(10.dp))
+                            .clickable {
+                                onInsertMacro(starter)
+                                onDismiss()
+                            }
+                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                    ) {
+                        Text(
+                            text = "✦ $starter",
+                            color = Color.White,
+                            fontSize = 11.5.sp,
+                            maxLines = 2
+                        )
+                    }
+                }
+            }
 
             Text(
                 text = "Hızlı Rol Yapma Makroları (Dokun & Ekle)",

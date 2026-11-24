@@ -1875,10 +1875,8 @@ class ProviderFallbackManager(
         apiKey: String
     ): List<String> = withContext(Dispatchers.IO) {
         try {
-            val cleanBase = baseUrl.trim().trimEnd('/')
-                .removeSuffix("/chat/completions")
-                .removeSuffix("/completions")
-                .trimEnd('/')
+            val cleanBase = com.example.util.CustomApiUrlNormalizer.normalizeBaseUrl(baseUrl)
+            if (cleanBase.isBlank()) return@withContext emptyList<String>()
             val modelsUrl = when {
                 cleanBase.endsWith("/models") -> cleanBase
                 cleanBase.endsWith("/v1") || cleanBase.endsWith("/v4") || cleanBase.endsWith("/openai") || cleanBase.endsWith("/v1beta") -> "$cleanBase/models"
