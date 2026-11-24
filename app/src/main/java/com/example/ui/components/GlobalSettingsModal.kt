@@ -2669,10 +2669,15 @@ fun GlobalSettingsModal(
 
         // ── Mor Cam Backup Restore Mode Confirmation (Merge vs Overwrite) ──
         pendingImportJson?.let { jsonToImport ->
+            val preview = remember(jsonToImport) { com.example.util.BackupHealthChecker.inspectJson(jsonToImport) }
             MorCamDialogShell(
                 onDismissRequest = { if (!isBusy) pendingImportJson = null },
                 title = "Geri Yükleme Modunu Seç",
-                subtitle = "Mevcut API anahtarların korunur; verilerin nasıl yükleneceğini seç.",
+                subtitle = if (preview.isValidJson) {
+                    "Önizleme: ${preview.botCount} karakter • ${preview.messageCount} mesaj • ${preview.customProviderCount} özel API"
+                } else {
+                    "Mevcut API anahtarların korunur; verilerin nasıl yükleneceğini seç."
+                },
                 icon = Icons.Default.FileDownload
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

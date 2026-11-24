@@ -1347,6 +1347,7 @@ class EmochiViewModel @JvmOverloads constructor(
             com.example.util.ChatDraftStore.clearDraft(getApplication(), botId)
             com.example.util.StoryBookmarkStore.clearAllForBot(getApplication(), botId)
             com.example.util.BotScratchpadStore.clearNote(getApplication(), botId)
+            com.example.util.BotDirectorNoteStore.clearRule(getApplication(), botId)
             repository.deleteBot(botId)
             if (_activeBotId.value == botId) {
                 openMenu()
