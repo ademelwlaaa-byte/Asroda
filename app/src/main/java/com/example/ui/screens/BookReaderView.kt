@@ -1345,7 +1345,7 @@ fun BookReaderView(
                                                 context = context,
                                                 rawResId = R.raw.kozmiksuruklenismuzik,
                                                 loop = true,
-                                                volume = 1.0f,
+                                                volume = com.example.book.BookAudioPreferences.loadMusicVolume(context),
                                                 fadeInMs = 1500L,
                                                 autoUnmute = true
                                             )

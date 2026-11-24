@@ -856,6 +856,7 @@ fun ChatScreen(
     if (showDirectorDialog) {
         com.example.ui.components.ChatStoryDirectorDialog(
             context = context,
+            botId = bot.id,
             displayName = displayName,
             currentResponseLength = userSettings?.responseLength ?: "standard",
             currentTtsSpeed = userSettings?.ttsSpeed ?: 1.0f,

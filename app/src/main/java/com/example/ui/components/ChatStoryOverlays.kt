@@ -216,6 +216,7 @@ internal fun ChatStoryBookmarksDialog(
 @Composable
 internal fun ChatStoryDirectorDialog(
     context: Context,
+    botId: String,
     displayName: String,
     currentResponseLength: String,
     currentTtsSpeed: Float,
@@ -227,6 +228,9 @@ internal fun ChatStoryDirectorDialog(
     onDismiss: () -> Unit
 ) {
     var macros by remember { mutableStateOf(com.example.util.RoleplayMacroStore.loadMacros(context)) }
+    var directorRule by remember(botId) {
+        mutableStateOf(com.example.util.BotDirectorNoteStore.loadRule(context, botId))
+    }
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Hikaye Yönetmeni",
@@ -357,6 +361,39 @@ internal fun ChatStoryDirectorDialog(
                     }
                 }
             }
+
+            Text(
+                text = "Özel Yönetmen Kuralı (Her Yanıtta AI'ya İletilir)",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            OutlinedTextField(
+                value = directorRule,
+                onValueChange = { directorRule = it },
+                minLines = 2,
+                maxLines = 4,
+                placeholder = {
+                    Text(
+                        text = "Ör. Asla benim yerime konuşma, 3. şahıs edebi anlatım kullan...",
+                        color = Color(0x99C4B5FD),
+                        fontSize = 11.5.sp
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            MorCamCapsuleButton(
+                text = "Yönetmen Kuralını Kaydet",
+                onClick = {
+                    com.example.util.BotDirectorNoteStore.saveRule(context, botId, directorRule)
+                    Toast.makeText(
+                        context,
+                        if (directorRule.isBlank()) "Yönetmen kuralı temizlendi" else "Yönetmen kuralı kaydedildi",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
 
             Text(
                 text = "Hızlı Rol Yapma Makroları (Dokun & Ekle)",

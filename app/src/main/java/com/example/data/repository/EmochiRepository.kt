@@ -8900,7 +8900,21 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 UserSentimentAnalyzer.buildMoodHint(detectedMood)
             else -> ""
         }
-        val sysPrompt = if (moodHint.isNotBlank()) baseSysPrompt + moodHint else baseSysPrompt
+        val directorRule = context?.let { com.example.util.BotDirectorNoteStore.loadRule(it, effectiveBot.id) }.orEmpty().trim()
+        val recentAssistantTexts = contextMessages.filter { it.role == "assistant" }.takeLast(5).map { it.text }
+        val repeatingPhrases = com.example.util.RepetitionDetector.detectLoopingPhrases(recentAssistantTexts)
+        val extraDirectives = buildString {
+            if (moodHint.isNotBlank()) append(moodHint)
+            if (directorRule.isNotBlank()) {
+                append("\n\n[ÖZEL YÖNETMEN KURALI — KESİNLİKLE UY]: ")
+                append(directorRule)
+            }
+            if (repeatingPhrases.isNotEmpty()) {
+                append("\n\n[TEKRAR ÖNLEME]: Son yanıtlarda tekrarlanan şu kalıpları bir daha kullanma, taze ve özgün ifadeler seç: ")
+                append(repeatingPhrases.joinToString(", ") { "\"$it\"" })
+            }
+        }
+        val sysPrompt = if (extraDirectives.isNotBlank()) baseSysPrompt + extraDirectives else baseSysPrompt
 
         return PreparedNarrativeTurn(
             settings = settings,
