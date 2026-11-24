@@ -1885,6 +1885,30 @@ internal fun CustomApiEditorDialog(
                     modifier = Modifier.testTag("custom_api_utility_model_input")
                 )
 
+                val recommendedUtil = remember(fetchedModels, modelName) {
+                    com.example.util.CustomApiModelRecommendationHelper.pickFastestUtilityModel(
+                        models = fetchedModels,
+                        excludePrimary = modelName
+                    )
+                }
+                if (utilityModel.isBlank() && !recommendedUtil.isNullOrBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x55059669))
+                            .border(0.8.dp, Color(0x886EE7B7), RoundedCornerShape(10.dp))
+                            .clickable { utilityModel = recommendedUtil }
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = "⚡ Hızlı Öneri (Dokun & Seç): $recommendedUtil",
+                            color = Color(0xFFD1FAE5),
+                            fontSize = 10.5.sp,
+                            fontFamily = InterFontFamily
+                        )
+                    }
+                }
+
                 if (detectedSmallModels.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text(
