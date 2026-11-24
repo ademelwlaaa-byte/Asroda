@@ -238,7 +238,9 @@ class EmochiViewModel @JvmOverloads constructor(
         modelName: String,
         apiFormat: String
     ): EmochiRepository.ProviderTestResult {
-        return repository.testCustomProviderConnection(baseUrl, apiKey, modelName, apiFormat)
+        val cleanKey = com.example.util.ApiKeyFormatValidator.sanitizeKey(apiKey)
+        val cleanUrl = com.example.util.CustomApiUrlNormalizer.normalizeBaseUrl(baseUrl).ifBlank { baseUrl.trim() }
+        return repository.testCustomProviderConnection(cleanUrl, cleanKey, modelName, apiFormat)
     }
 
     suspend fun testOvhConnection(modelName: String = "Meta-Llama-3_3-70B-Instruct"): EmochiRepository.ProviderTestResult {
@@ -268,7 +270,8 @@ class EmochiViewModel @JvmOverloads constructor(
         onSaved: (Long) -> Unit = {}
     ) {
         viewModelScope.launch {
-            val encryptedKey = com.example.util.KeystoreEncryptionManager.encrypt(apiKey.trim())
+            val cleanKey = com.example.util.ApiKeyFormatValidator.sanitizeKey(apiKey)
+            val encryptedKey = com.example.util.KeystoreEncryptionManager.encrypt(cleanKey)
             val cleanUtil = utilityModel.trim()
             val utilSource = when {
                 cleanUtil.isNotBlank() -> "manual"
@@ -326,7 +329,8 @@ class EmochiViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             val existing = repository.getCustomProviderById(id) ?: return@launch
             val finalEncryptedKey = if (!apiKey.isNullOrBlank()) {
-                com.example.util.KeystoreEncryptionManager.encrypt(apiKey.trim())
+                val cleanKey = com.example.util.ApiKeyFormatValidator.sanitizeKey(apiKey)
+                com.example.util.KeystoreEncryptionManager.encrypt(cleanKey)
             } else {
                 existing.apiKeyEncrypted
             }
@@ -1403,7 +1407,21 @@ class EmochiViewModel @JvmOverloads constructor(
         }
         val botId = _activeBotId.value ?: return
         viewModelScope.launch {
-            _searchResults.value = repository.searchMessages(botId, query.trim())
+            val trimmed = query.trim()
+            val dbMatches = repository.searchMessages(botId, trimmed)
+            val liveMsgs = activeMessages.value
+            val foldedMatchIds = com.example.util.ChatSearchHelper
+                .findMatches(liveMsgs, trimmed)
+                .map { it.messageId }
+                .toHashSet()
+            val merged = LinkedHashMap<String, com.example.data.local.MessageEntity>()
+            dbMatches.forEach { merged[it.id] = it }
+            liveMsgs.forEach { msg ->
+                if (msg.id in foldedMatchIds && !merged.containsKey(msg.id)) {
+                    merged[msg.id] = msg
+                }
+            }
+            _searchResults.value = merged.values.sortedBy { it.timestamp }
         }
     }
 

@@ -45,6 +45,7 @@ internal fun ChatStoryStatsDialog(
 ) {
     val stats = remember(validMessages) { ChatStoryStats.compute(validMessages) }
     val atmosphere = remember(validMessages) { com.example.util.StoryMoodAnalytics.detectDominantAtmosphere(validMessages) }
+    val pacing = remember(validMessages) { com.example.util.StoryPacingAnalyzer.analyze(validMessages) }
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.forLanguageTag("tr-TR")) }
     MorCamDialogShell(
         onDismissRequest = onDismiss,
@@ -59,6 +60,7 @@ internal fun ChatStoryStatsDialog(
             val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
             listOf(
                 "Baskın Atmosfer" to atmosphere,
+                "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
