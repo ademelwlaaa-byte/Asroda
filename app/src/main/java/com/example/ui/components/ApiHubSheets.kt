@@ -1132,8 +1132,7 @@ internal fun ApiProviderConfigureDialog(
         (fetchedModels + spec.popularModels).distinct()
     }
     val filteredModels = remember(combinedModels, modelSearchQuery) {
-        val q = modelSearchQuery.trim().lowercase()
-        if (q.isBlank()) combinedModels else combinedModels.filter { it.lowercase().contains(q) }
+        com.example.util.ProviderModelFilterHelper.filterModels(combinedModels, modelSearchQuery)
     }
 
     FullScreenMorCamSheetContainer(onDismiss = onDismiss) {
@@ -1473,8 +1472,7 @@ internal fun CustomApiEditorDialog(
     val canSave = baseUrl.trim().length > 8 && modelName.isNotBlank()
 
     val filteredFetchedModels = remember(fetchedModels, modelSearchQuery) {
-        val q = modelSearchQuery.trim().lowercase()
-        if (q.isBlank()) fetchedModels else fetchedModels.filter { it.lowercase().contains(q) }
+        com.example.util.ProviderModelFilterHelper.filterModels(fetchedModels, modelSearchQuery)
     }
 
     FullScreenMorCamSheetContainer(onDismiss = onDismiss) {

@@ -219,6 +219,10 @@ internal fun ChatStoryBookmarksDialog(
     onDismiss: () -> Unit
 ) {
     var bookmarkTitle by remember { mutableStateOf("") }
+    var bookmarkSearch by remember { mutableStateOf("") }
+    val filteredBookmarks = remember(storyBookmarks, bookmarkSearch) {
+        com.example.util.StoryBookmarkSearchHelper.filter(storyBookmarks, bookmarkSearch)
+    }
     val latestMsg = validMessages.lastOrNull()
     MorCamDialogShell(
         onDismissRequest = onDismiss,
@@ -282,6 +286,21 @@ internal fun ChatStoryBookmarksDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 )
+                if (storyBookmarks.size >= 4) {
+                    OutlinedTextField(
+                        value = bookmarkSearch,
+                        onValueChange = { bookmarkSearch = it },
+                        singleLine = true,
+                        placeholder = {
+                            Text(
+                                text = "Yer imlerinde ara...",
+                                color = Color(0x99C4B5FD),
+                                fontSize = 11.5.sp
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -289,7 +308,7 @@ internal fun ChatStoryBookmarksDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    storyBookmarks.forEach { bm ->
+                    filteredBookmarks.forEach { bm ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
