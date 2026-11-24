@@ -28,6 +28,7 @@ object BookBondSummaryHelper {
     fun formatCompact(highlight: BondHighlight): String {
         val ally = highlight.strongestAlly ?: return "Henüz karakter bağı oluşmadı"
         val sign = if (highlight.strongestScore > 0) "+${highlight.strongestScore}" else "${highlight.strongestScore}"
-        return "En Güçlü Bağ: ${ally.displayName} ($sign) • ${highlight.unlockedCount} karakter açık"
+        val tier = BookBondTierClassifier.classify(highlight.strongestScore)
+        return "En Güçlü Bağ: ${ally.displayName} ($sign • $tier) • ${highlight.unlockedCount} karakter açık"
     }
 }
