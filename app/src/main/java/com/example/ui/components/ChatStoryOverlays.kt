@@ -250,7 +250,9 @@ internal fun ChatStoryBookmarksDialog(
                 MorCamCapsuleButton(
                     text = "Son Sahneyi Yer İmi Olarak Kaydet",
                     onClick = {
-                        val label = bookmarkTitle.trim().ifBlank { "Sahne #${validMessages.size}" }
+                        val label = bookmarkTitle.trim().ifBlank {
+                            com.example.util.StorySceneTitleGenerator.suggestTitle(latestMsg.text, validMessages.size)
+                        }
                         val updated = StoryBookmarkStore.addBookmark(
                             context = context,
                             botId = botId,
