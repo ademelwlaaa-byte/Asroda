@@ -1341,7 +1341,8 @@ fun ProviderReliabilityDashboardUI() {
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Ort. Yanıt • Hata • Devir:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
-                    Text("${stat.averageResponseTimeMs} ms • ${stat.malformedCount} hata • ${stat.fallbackCount} devir", color = MorCamTokens.SilverLavenderBright, fontSize = 10.sp)
+                    val speedBadge = com.example.util.ProviderLatencyBadgeFormatter.formatBadge(stat.averageResponseTimeMs)
+                    Text("$speedBadge • ${stat.malformedCount} hata • ${stat.fallbackCount} devir", color = MorCamTokens.SilverLavenderBright, fontSize = 10.sp)
                 }
             }
         }
