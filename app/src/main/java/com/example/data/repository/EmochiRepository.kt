@@ -5089,14 +5089,12 @@ $aiChar: ${latestAiReply.take(850)}
                     val castMem = confirmedCast.firstOrNull { member ->
                         member.name.equals(cleanCandidate, ignoreCase = true) ||
                             CastDetectorEngine.matchesMemberOrAlias(cleanCandidate, listOf(rawName), member)
-                    }
+                    } ?: continue
                     val isCompactCastEmo = entry.has("n")
-                    val isInScene = castMem != null && (
-                        isCompactCastEmo ||
-                            recentText.contains(castMem.name, ignoreCase = true) ||
-                            rawResponse.contains(castMem.name, ignoreCase = true)
-                        )
-                    if (!isInScene || castMem == null) continue
+                    val isInScene = isCompactCastEmo ||
+                        recentText.contains(castMem.name, ignoreCase = true) ||
+                        rawResponse.contains(castMem.name, ignoreCase = true)
+                    if (!isInScene) continue
 
                     val canonicalName = castMem.name.trim()
                     val nameLower = canonicalName.lowercase(trLocale)

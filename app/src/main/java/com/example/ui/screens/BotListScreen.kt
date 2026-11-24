@@ -78,7 +78,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -308,7 +308,7 @@ fun BotListScreen(
                 NavTab("discover",  Icons.Default.Public,   "Keşfet"),
                 NavTab("chats",     Icons.Default.Forum,    "Sohbet"),
                 NavTab("templates", Icons.Default.Star,     "Şablon"),
-                NavTab("books",     Icons.Default.MenuBook, "Kitap")
+                NavTab("books",     Icons.AutoMirrored.Filled.MenuBook, "Kitap")
             )
             val listStates = mapOf(
                 "discover"  to discoverListState,
@@ -1232,7 +1232,7 @@ fun TopHeader(
                     // Soft curved light arc peaking gently in the center
                     val arcPath = Path().apply {
                         moveTo(0f, cy + 2.5.dp.toPx())
-                        quadraticBezierTo(w * 0.50f, cy - 3.dp.toPx(), w, cy + 2.5.dp.toPx())
+                        quadraticTo(w * 0.50f, cy - 3.dp.toPx(), w, cy + 2.5.dp.toPx())
                     }
                     drawPath(
                         path = arcPath,
@@ -2181,10 +2181,10 @@ fun ChatsTabContent(
                                 )
                                 val star = Path().apply {
                                     moveTo(cx, cy - rOut)
-                                    quadraticBezierTo(cx, cy - rIn, cx + rOut, cy)
-                                    quadraticBezierTo(cx, cy + rIn, cx, cy + rOut)
-                                    quadraticBezierTo(cx, cy + rIn, cx - rOut, cy)
-                                    quadraticBezierTo(cx, cy - rIn, cx, cy - rOut)
+                                    quadraticTo(cx, cy - rIn, cx + rOut, cy)
+                                    quadraticTo(cx, cy + rIn, cx, cy + rOut)
+                                    quadraticTo(cx, cy + rIn, cx - rOut, cy)
+                                    quadraticTo(cx, cy - rIn, cx, cy - rOut)
                                     close()
                                 }
                                 drawPath(
@@ -2526,7 +2526,7 @@ private fun CalligraphicTurkishTitle(
                                 val topY = box.top + if (ch == 'Ğ') 1.dp.toPx() else 10.dp.toPx()
                                 val brevePath = Path().apply {
                                     moveTo(cx - 4.2.dp.toPx(), topY)
-                                    quadraticBezierTo(cx, topY + 3.4.dp.toPx(), cx + 4.4.dp.toPx(), topY - 0.5.dp.toPx())
+                                    quadraticTo(cx, topY + 3.4.dp.toPx(), cx + 4.4.dp.toPx(), topY - 0.5.dp.toPx())
                                 }
                                 drawPath(
                                     path = brevePath,

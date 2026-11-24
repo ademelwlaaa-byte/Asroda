@@ -73,8 +73,8 @@ import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.TrackChanges
@@ -358,7 +358,7 @@ fun FallbackLogModal(
         onDismissRequest = onDismiss,
         title = "Sağlayıcı Deneme & Güvenilirlik",
         subtitle = "API geçiş geçmişi, devre kesici ve canlı metrikler",
-        icon = Icons.Default.List
+        icon = Icons.AutoMirrored.Filled.List
     ) {
         // 2-tab Mor Cam switcher
         Row(
@@ -787,7 +787,7 @@ fun BotQuickProfileSheet(
                     MorCamOptionRow(
                         title = "Sadece Mesajları Sil",
                         subtitle = "Hafıza ve ilişki bağları korunur",
-                        icon = Icons.Default.Chat,
+                        icon = Icons.AutoMirrored.Filled.Chat,
                         selected = true,
                         onClick = {
                             showResetOptions = false

@@ -46,9 +46,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
@@ -940,7 +940,7 @@ fun BookReaderView(
 
                         if (useDeterministicEngine) {
                             ReaderMorCamIconOrb(
-                                icon = Icons.Default.MenuBook,
+                                icon = Icons.AutoMirrored.Filled.MenuBook,
                                 contentDescription = "Aiden'ın Dosyası & Evren",
                                 testTag = "book_chronicle_button",
                                 isActive = engineState.discoveredSecrets.isNotEmpty(),
@@ -1768,7 +1768,7 @@ private fun CustomAiBookCanvas(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Send,
+                        imageVector = Icons.AutoMirrored.Filled.Send,
                         contentDescription = "Gönder",
                         tint = Color.White,
                         modifier = Modifier.size(18.dp)
