@@ -126,6 +126,8 @@ internal fun ChatStoryStatsDialog(
                 "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
                 "Tahmini Okuma Süresi" to com.example.util.StoryReadingEstimateRangeHelper.formatRange(stats.totalWordCount),
                 "Tahmini Sesli Dinleme" to estAudioText,
+                "Önerilen Ses Tonu" to com.example.util.TtsProsodyStyleRecommender.recommendForAtmosphere(atmosphere).label,
+                "Son Aktivite" to com.example.util.StorySessionFreshnessHelper.formatFreshness(stats.lastTimestampMs),
                 "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
                     "${dateFmt.format(Date(stats.firstTimestampMs))} — ${dateFmt.format(Date(stats.lastTimestampMs))}"
                 } else "Henüz başlamadı"
