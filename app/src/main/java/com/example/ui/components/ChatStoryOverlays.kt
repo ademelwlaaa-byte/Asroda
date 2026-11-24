@@ -105,6 +105,7 @@ internal fun ChatStoryStatsDialog(
             val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
             listOf(
                 "Hikaye Seviyesi" to com.example.util.StoryDepthTierClassifier.formatLabel(stats.totalWordCount),
+                "Açılış Tarzı" to com.example.util.StoryOpeningHookAnalyzer.classifyOpening(validMessages),
                 "Türler" to genreTags.joinToString(" • "),
                 "Baskın Atmosfer" to atmosphere,
                 "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
