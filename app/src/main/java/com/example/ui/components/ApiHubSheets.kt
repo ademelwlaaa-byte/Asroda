@@ -1711,7 +1711,9 @@ internal fun CustomApiEditorDialog(
                 )
 
                 val modelTags = remember(modelName) {
-                    com.example.util.ProviderModelTagClassifier.formatCompact(modelName)
+                    val base = com.example.util.ProviderModelTagClassifier.formatCompact(modelName)
+                    val ctx = com.example.util.CustomApiModelContextEstimator.estimateContextLabel(modelName)
+                    listOfNotNull(base.takeIf { it.isNotBlank() }, ctx).joinToString(" • ")
                 }
                 if (modelTags.isNotBlank()) {
                     Text(

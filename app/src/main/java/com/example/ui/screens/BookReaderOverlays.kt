@@ -538,7 +538,8 @@ fun BookChronicleModal(
                     val readPart = if (transcriptStats.totalWords > 0) {
                         " • Okunan: ${com.example.book.BookTranscriptStatsHelper.formatCompact(transcriptStats)}"
                     } else ""
-                    "$badge • ${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}$readPart"
+                    val statusLine = com.example.book.BookFatigueAlertHelper.formatStatusRibbon(state)
+                    "$badge • ${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}$readPart\n$statusLine"
                 }
                 Box(
                     modifier = Modifier
