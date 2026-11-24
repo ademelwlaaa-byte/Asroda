@@ -117,9 +117,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         super.onStop()
-        // Sistem #11: Stop active TTS & background book music cleanly when app enters background
+        // Sistem #11: Stop active TTS & smoothly pause background book music when app enters background
+        // (idempotent with BookReaderView's ON_STOP observer so smooth 250ms fade & ON_START resume stay intact)
         viewModel.stopSpeaking()
-        com.example.util.BookAudioController.pauseIfPlaying()
+        com.example.util.BookAudioController.pauseForBackground(fadeOutMs = 250L)
     }
 }
 

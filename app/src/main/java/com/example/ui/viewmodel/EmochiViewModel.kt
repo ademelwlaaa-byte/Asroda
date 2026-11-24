@@ -1898,20 +1898,6 @@ class EmochiViewModel @JvmOverloads constructor(
         repository.getRecentCharacterEmotionHistory(botId, characterName, limit)
 
     private fun extractUserFriendlyErrorMessage(e: Exception): String {
-        val rawMsg = e.message ?: ""
-        return when {
-            rawMsg.contains("içerik kısıtlaması", ignoreCase = true) ||
-            rawMsg.contains("içerik filtresi", ignoreCase = true) ||
-            rawMsg.contains("güvenlik filtresine", ignoreCase = true) ||
-            rawMsg.contains("politikası", ignoreCase = true) ||
-            rawMsg.contains("refusal", ignoreCase = true) ||
-            rawMsg.contains("content_filter", ignoreCase = true) -> {
-                rawMsg.ifBlank { "Seçili AI sağlayıcısı içerik kısıtlaması politikası gereği bu yanıtı süzdü. Lütfen Ayarlar -> AI Model Ayarları menüsünden farklı bir model (ör. Groq veya Gemini) seçin." }
-            }
-            rawMsg.contains("429", ignoreCase = true) || rawMsg.contains("kotası", ignoreCase = true) || rawMsg.contains("rate limit", ignoreCase = true) -> {
-                "API kullanım kotası doldu (429 Rate Limit). Lütfen Ayarlar -> AI Model Ayarları menüsünden API Key'inizi ekleyin veya modelinizi değiştirin."
-            }
-            else -> if (rawMsg.isNotBlank()) rawMsg else "Yanıt alınamadı. Lütfen ağ bağlantınızı veya API ayarlarınızı kontrol edin."
-        }
+        return com.example.util.ApiErrorFormatter.formatException(e)
     }
 }

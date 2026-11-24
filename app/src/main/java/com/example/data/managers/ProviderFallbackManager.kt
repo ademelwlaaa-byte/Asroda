@@ -1675,7 +1675,7 @@ class ProviderFallbackManager(
                         EmochiRepository.ProviderTestResult(
                             isSuccess = false,
                             supportsFunctionCalling = false,
-                            errorMessage = "HTTP ${resp.code}: ${bodyStr.take(180)}",
+                            errorMessage = com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr),
                             rawResponse = bodyStr,
                             latencyMs = latency
                         )
@@ -1725,7 +1725,7 @@ class ProviderFallbackManager(
                         EmochiRepository.ProviderTestResult(
                             isSuccess = false,
                             supportsFunctionCalling = false,
-                            errorMessage = "HTTP ${resp.code}: ${bodyStr.take(180)}",
+                            errorMessage = com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr),
                             rawResponse = bodyStr,
                             latencyMs = latency
                         )
@@ -1784,7 +1784,7 @@ class ProviderFallbackManager(
                     return@withContext EmochiRepository.ProviderTestResult(
                         isSuccess = false,
                         supportsFunctionCalling = false,
-                        errorMessage = "HTTP ${resp.code}: ${bodyStr.take(180)}",
+                        errorMessage = com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr),
                         rawResponse = bodyStr,
                         latencyMs = latency
                     )
@@ -1804,7 +1804,7 @@ class ProviderFallbackManager(
             EmochiRepository.ProviderTestResult(
                 isSuccess = false,
                 supportsFunctionCalling = false,
-                errorMessage = e.message ?: "Bağlantı kurulamadı",
+                errorMessage = com.example.util.ApiErrorFormatter.formatException(e),
                 latencyMs = System.currentTimeMillis() - startMs
             )
         }

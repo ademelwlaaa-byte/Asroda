@@ -38,12 +38,13 @@ object EdgeNeuralTtsClient {
 
     private const val TAG = "EdgeNeuralTtsClient"
     private const val TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
-    private const val CHROMIUM_FULL_VERSION = "130.0.2849.68"
-    private const val SEC_MS_GEC_VERSION = "1-$CHROMIUM_FULL_VERSION"
+    private const val PRIMARY_CHROMIUM_VERSION = "131.0.2903.86"
+    private const val FALLBACK_CHROMIUM_VERSION = "130.0.2849.68"
     private const val WIN_EPOCH_OFFSET_SECONDS = 11644473600L
     private const val CACHE_DIR_NAME = "tts_audio_cache"
     private const val MAX_CACHE_BYTES = 15L * 1024L * 1024L // 15 MB LRU cap
-    private const val SYNTHESIS_TIMEOUT_MS = 4_500L
+    private const val FIRST_AUDIO_READ_TIMEOUT_MS = 3_500L
+    private const val TOTAL_STREAM_TIMEOUT_MS = 12_000L
 
     data class NeuralVoiceSpec(
         val id: String,
@@ -101,6 +102,8 @@ object EdgeNeuralTtsClient {
     @Volatile
     private var clockSkewSeconds: Long = 0L
 
+    private val cacheWriteLock = Any()
+
     /** Optional test hook for deterministic offline/error/fallback verification in Robolectric tests. */
     @Volatile
     internal var synthesizerOverride: (suspend (voiceId: String, ssml: String) -> ByteArray?)? = null
@@ -114,7 +117,7 @@ object EdgeNeuralTtsClient {
         context: Context,
         voiceId: String,
         ssml: String,
-        timeoutMs: Long = SYNTHESIS_TIMEOUT_MS
+        timeoutMs: Long = TOTAL_STREAM_TIMEOUT_MS
     ): File? = withContext(Dispatchers.IO) {
         val cacheDir = File(context.cacheDir, CACHE_DIR_NAME).apply {
             if (!exists()) mkdirs()
@@ -144,11 +147,15 @@ object EdgeNeuralTtsClient {
         try {
             val tmp = File(cacheDir, "$cacheKey.${UUID.randomUUID()}.tmp")
             tmp.writeBytes(audioBytes)
-            if (!tmp.renameTo(cachedFile)) {
-                tmp.copyTo(cachedFile, overwrite = true)
-                tmp.delete()
+            synchronized(cacheWriteLock) {
+                if (cachedFile.exists() && cachedFile.length() == audioBytes.size.toLong()) {
+                    tmp.delete()
+                } else if (!tmp.renameTo(cachedFile)) {
+                    tmp.copyTo(cachedFile, overwrite = true)
+                    tmp.delete()
+                }
+                enforceCacheLruLimit(cacheDir)
             }
-            enforceCacheLruLimit(cacheDir)
             cachedFile
         } catch (e: Exception) {
             Log.w(TAG, "Failed to persist TTS cache file: ${e.message}")
@@ -163,29 +170,36 @@ object EdgeNeuralTtsClient {
     }
 
     private suspend fun fetchWithClockSkewRetry(ssml: String, timeoutMs: Long): ByteArray? {
-        val first = runSingleWebSocketFetch(ssml, timeoutMs)
+        val first = runSingleWebSocketFetch(ssml, timeoutMs, PRIMARY_CHROMIUM_VERSION)
         return when (first) {
             is WsFetchOutcome.Success -> first.mp3Bytes
             is WsFetchOutcome.ClockSkew403 -> {
                 adjustClockSkewFromHeader(first.serverDateHeader)
-                val second = runSingleWebSocketFetch(ssml, timeoutMs)
+                val second = runSingleWebSocketFetch(ssml, timeoutMs, FALLBACK_CHROMIUM_VERSION)
                 (second as? WsFetchOutcome.Success)?.mp3Bytes
             }
             is WsFetchOutcome.Failed -> null
         }
     }
 
-    private suspend fun runSingleWebSocketFetch(ssml: String, timeoutMs: Long): WsFetchOutcome {
-        return withTimeoutOrNull(timeoutMs) {
+    private suspend fun runSingleWebSocketFetch(
+        ssml: String,
+        timeoutMs: Long,
+        chromiumVersion: String = PRIMARY_CHROMIUM_VERSION
+    ): WsFetchOutcome {
+        val totalTimeoutMs = timeoutMs.coerceAtLeast(FIRST_AUDIO_READ_TIMEOUT_MS)
+        val perFrameReadTimeoutMs = FIRST_AUDIO_READ_TIMEOUT_MS.coerceAtMost(totalTimeoutMs)
+        return withTimeoutOrNull(totalTimeoutMs) {
             suspendCancellableCoroutine { cont ->
                 val connectionId = UUID.randomUUID().toString().replace("-", "")
                 val muid = UUID.randomUUID().toString().replace("-", "").uppercase(Locale.ROOT)
                 val secMsGec = generateSecMsGec()
+                val secMsGecVersion = "1-$chromiumVersion"
                 val wsUrl =
                     "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1" +
                         "?TrustedClientToken=$TRUSTED_CLIENT_TOKEN" +
                         "&Sec-MS-GEC=$secMsGec" +
-                        "&Sec-MS-GEC-Version=$SEC_MS_GEC_VERSION" +
+                        "&Sec-MS-GEC-Version=$secMsGecVersion" +
                         "&ConnectionId=$connectionId"
 
                 val request = Request.Builder()
@@ -196,14 +210,14 @@ object EdgeNeuralTtsClient {
                     .header(
                         "User-Agent",
                         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                            "(KHTML, like Gecko) Chrome/$CHROMIUM_FULL_VERSION Safari/537.36 Edg/$CHROMIUM_FULL_VERSION"
+                            "(KHTML, like Gecko) Chrome/$chromiumVersion Safari/537.36 Edg/$chromiumVersion"
                     )
                     .header("Cookie", "muid=$muid;")
                     .build()
 
                 val wsClient = RetrofitClient.okHttpClient.newBuilder()
                     .connectTimeout(3_500L, TimeUnit.MILLISECONDS)
-                    .readTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+                    .readTimeout(perFrameReadTimeoutMs, TimeUnit.MILLISECONDS)
                     .writeTimeout(3_500L, TimeUnit.MILLISECONDS)
                     .build()
 
@@ -326,7 +340,11 @@ object EdgeNeuralTtsClient {
 
     internal fun enforceCacheLruLimit(cacheDir: File, maxBytes: Long = MAX_CACHE_BYTES) {
         try {
-            val files = cacheDir.listFiles()?.filter { it.isFile } ?: return
+            val allFiles = cacheDir.listFiles()?.filter { it.isFile } ?: return
+            val staleTmpCutoff = System.currentTimeMillis() - 60_000L
+            allFiles.filter { it.name.endsWith(".tmp") && it.lastModified() < staleTmpCutoff }
+                .forEach { it.delete() }
+            val files = allFiles.filter { it.exists() && !it.name.endsWith(".tmp") }
             var totalBytes = files.sumOf { it.length() }
             if (totalBytes <= maxBytes) return
             val sortedOldestFirst = files.sortedBy { it.lastModified() }

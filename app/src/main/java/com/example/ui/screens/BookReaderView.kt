@@ -233,20 +233,26 @@ fun BookReaderView(
             readerVoiceEngine.stopAndRelease()
         }
     }
-    LaunchedEffect(engineState.activeChapter) {
-        readerVoiceEngine.stopCurrentLine()
-        activeVoiceCardKey = null
-    }
-    var isFullscreenMode by remember { mutableStateOf(false) }
-    BackHandler(enabled = isFullscreenMode) {
-        isFullscreenMode = false
-    }
     var showChapterSummaryModal by remember { mutableStateOf(false) }
     var showTwinAidenPostCredits by remember { mutableStateOf(false) }
     var showSeason2PostCredits by remember { mutableStateOf(false) }
     var showChronicleModal by remember { mutableStateOf(false) }
     var showChapterSwitcher by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
+    var showQuickMandatoryDuel by remember { mutableStateOf(false) }
+
+    // Stop any playing scene voice card cleanly on chapter/scene transitions or modal switches
+    LaunchedEffect(
+        engineState.activeChapter,
+        engineState.currentNodeId,
+        showChapterSummaryModal,
+        showTwinAidenPostCredits,
+        showSeason2PostCredits,
+        showQuickMandatoryDuel
+    ) {
+        readerVoiceEngine.stopCurrentLine()
+        activeVoiceCardKey = null
+    }
 
     // Instant consequence banner + newly unlocked character toast + sparkle/confetti + cosmic screen edge pulse triggers
     var lastDecisionBanner by remember { mutableStateOf<RecordedDecision?>(null) }
@@ -271,7 +277,10 @@ fun BookReaderView(
             miniGamePrefs.getStringSet("completed_nodes", emptySet())?.toSet().orEmpty()
         )
     }
-    var showQuickMandatoryDuel by remember { mutableStateOf(false) }
+    var isFullscreenMode by remember { mutableStateOf(false) }
+    BackHandler(enabled = isFullscreenMode) {
+        isFullscreenMode = false
+    }
 
     fun markMiniGameCompleted(nodeId: String) {
         if (nodeId !in completedMiniGameNodes) {
@@ -678,6 +687,7 @@ fun BookReaderView(
             onDismiss = { showChapterSwitcher = false },
             onSelectChapter = { targetChapter ->
                 showChapterSwitcher = false
+                ambientMusicEnabled = false
                 BookAudioController.stop(fadeOutMs = 2000L)
                 val switching = targetChapter != engineState.activeChapter
                 BookStateRepository.jumpToChapter(
@@ -698,6 +708,7 @@ fun BookReaderView(
             onDismiss = { showResetDialog = false },
             onRestartChapter = {
                 showResetDialog = false
+                ambientMusicEnabled = false
                 BookAudioController.stop(fadeOutMs = 2000L)
                 if (useDeterministicEngine) {
                     clearMiniGameForChapter(engineState.activeChapter)
@@ -709,6 +720,7 @@ fun BookReaderView(
             },
             onResetEntireBook = {
                 showResetDialog = false
+                ambientMusicEnabled = false
                 BookAudioController.stop(fadeOutMs = 2000L)
                 if (useDeterministicEngine) {
                     completedMiniGameNodes = emptySet()
@@ -1301,6 +1313,7 @@ fun BookReaderView(
                                         },
                                         onOpenChronicle = { showChronicleModal = true },
                                         onNextChapter = {
+                                            ambientMusicEnabled = false
                                             BookAudioController.stop(fadeOutMs = 2000L)
                                             val nextCh = (engineState.activeChapter + 1)
                                                 .coerceAtMost(CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS)
@@ -1308,6 +1321,7 @@ fun BookReaderView(
                                             chapterResetNonce += 1
                                         },
                                         onRestartChapter = {
+                                            ambientMusicEnabled = false
                                             BookAudioController.stop(fadeOutMs = 2000L)
                                             clearMiniGameForChapter(engineState.activeChapter)
                                             BookStateRepository.restartCurrentChapter(context, CosmicDriftBookRegistry.BOOK_ID)

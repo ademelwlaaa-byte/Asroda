@@ -255,4 +255,48 @@ class V32SystemsAuditFixesTest {
             db.close()
         }
     }
+
+    @Test
+    fun edgeNeuralTtsClient_cleansStaleTmpFilesAndEnforcesLruLimit() {
+        val dir = java.io.File(context.cacheDir, "tts_lru_test_${System.nanoTime()}").apply { mkdirs() }
+        try {
+            val staleTmp = java.io.File(dir, "orphan.123.tmp").apply {
+                writeBytes(ByteArray(256))
+                setLastModified(System.currentTimeMillis() - 120_000L)
+            }
+            val oldestMp3 = java.io.File(dir, "oldest.mp3").apply {
+                writeBytes(ByteArray(1000))
+                setLastModified(System.currentTimeMillis() - 50_000L)
+            }
+            val newestMp3 = java.io.File(dir, "newest.mp3").apply {
+                writeBytes(ByteArray(1000))
+                setLastModified(System.currentTimeMillis())
+            }
+
+            EdgeNeuralTtsClient.enforceCacheLruLimit(dir, maxBytes = 1200L)
+
+            assertFalse("Stale orphan .tmp file should be deleted", staleTmp.exists())
+            assertFalse("Oldest MP3 should be evicted to respect LRU cap", oldestMp3.exists())
+            assertTrue("Newest MP3 should be kept", newestMp3.exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun chatTtsManager_shutdownDoesNotClearNewerInstanceBookAudioListener() {
+        val first = ChatTtsManager(context)
+        val second = ChatTtsManager(context)
+        try {
+            val secondListener = com.example.util.BookAudioController.onPlaybackStarted
+            assertNotNull("Second instance should register BookAudioController listener", secondListener)
+            first.shutdown()
+            assertTrue(
+                "Shutting down an older ChatTtsManager must NOT wipe a newer instance's listener",
+                com.example.util.BookAudioController.onPlaybackStarted === secondListener
+            )
+        } finally {
+            second.shutdown()
+        }
+    }
 }

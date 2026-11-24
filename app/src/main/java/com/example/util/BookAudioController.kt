@@ -73,14 +73,22 @@ object BookAudioController {
             _isMutedFlow.value = false
         }
 
+        val target = volume.coerceIn(0f, 1f)
         val existing = player
         if (!forceRestart && existing != null && !isFadingOut && activeResId == rawResId) {
             if (isActivelyStarting || existing.isPlaying) {
                 if (autoUnmute && !_isPlayingFlow.value) {
                     _isPlayingFlow.value = true
                 }
+                if (kotlin.math.abs(resumeTargetVolume - target) > 0.02f || kotlin.math.abs(currentVolume - target) > 0.02f) {
+                    transitionVolume(targetVolume = target, durationMs = fadeInMs)
+                }
                 return
             }
+        }
+        if (!forceRestart && simulatedActiveForTest && !isFadingOut && activeResId == rawResId && _isPlayingFlow.value) {
+            transitionVolume(targetVolume = target, durationMs = fadeInMs)
+            return
         }
 
         fadeJob?.cancel()
@@ -119,7 +127,6 @@ object BookAudioController {
             activeResId = rawResId
             isActivelyStarting = false
 
-            val target = volume.coerceIn(0f, 1f)
             resumeTargetVolume = target
             if (_isMutedFlow.value) {
                 _isPlayingFlow.value = false
@@ -398,10 +405,55 @@ object BookAudioController {
     private var simulatedActiveForTest: Boolean = false
 
     /**
+     * Smoothly ramps the active track's volume to [targetVolume] over [durationMs] without
+     * restarting playback (e.g. ambient reading volume 0.28f -> Chapter End Screen 1.0f).
+     */
+    fun transitionVolume(targetVolume: Float, durationMs: Long = 1200L) {
+        val target = targetVolume.coerceIn(0f, 1f)
+        resumeTargetVolume = target
+        if (simulatedActiveForTest) {
+            currentVolume = target
+            return
+        }
+        val p = player ?: return
+        if (isFadingOut || _isMutedFlow.value) return
+        fadeJob?.cancel()
+        val startVol = currentVolume.coerceIn(0f, 1f)
+        if (durationMs <= 0L || kotlin.math.abs(target - startVol) <= 0.01f) {
+            currentVolume = target
+            try {
+                p.setVolume(target, target)
+            } catch (_: Exception) {}
+            return
+        }
+        fadeJob = scope.launch {
+            val steps = 24
+            val stepDelay = (durationMs / steps).coerceAtLeast(16L)
+            for (i in 1..steps) {
+                val t = i.toFloat() / steps
+                val v = startVol + (target - startVol) * t
+                currentVolume = v
+                try {
+                    p.setVolume(v, v)
+                } catch (_: Exception) {
+                    break
+                }
+                delay(stepDelay)
+            }
+            currentVolume = target
+            try {
+                p.setVolume(target, target)
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
      * Smoothly fades out over [fadeOutMs] (default 250ms) and pauses active chapter-end soundtrack
-     * when the host Activity moves to background (`Lifecycle.Event.ON_PAUSE`), without changing manual mute state.
+     * when the host Activity moves to background (`Lifecycle.Event.ON_STOP`), without changing manual mute state.
+     * Idempotent: repeated calls while already background-paused preserve the active fade-out.
      */
     fun pauseForBackground(fadeOutMs: Long = 250L) {
+        if (pausedByBackground) return
         if (simulatedActiveForTest) {
             if (!isFadingOut && _isPlayingFlow.value) {
                 pausedByBackground = true
@@ -514,10 +566,23 @@ object BookAudioController {
         } catch (_: Exception) {}
     }
 
+    /** Test-only helper to inspect active target/current volume cleanly under Robolectric. */
+    internal val currentTargetVolumeForTest: Float get() = resumeTargetVolume
+    internal val currentVolumeForTest: Float get() = currentVolume
+
     /** Test-only helper to exercise lifecycle & TTS mutual-exclusion paths cleanly under Robolectric. */
-    internal fun simulatePlaybackStateForTest(playing: Boolean, muted: Boolean = false) {
+    internal fun simulatePlaybackStateForTest(
+        playing: Boolean,
+        muted: Boolean = false,
+        rawResId: Int = 1,
+        volume: Float = 1.0f
+    ) {
         fadeJob?.cancel()
         simulatedActiveForTest = true
+        activeResId = rawResId
+        val clamped = volume.coerceIn(0f, 1f)
+        resumeTargetVolume = clamped
+        currentVolume = if (playing && !muted) clamped else 0f
         isFadingOut = false
         pausedByBackground = false
         _isMutedFlow.value = muted

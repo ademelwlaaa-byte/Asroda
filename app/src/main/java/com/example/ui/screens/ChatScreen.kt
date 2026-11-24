@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -228,18 +229,64 @@ fun ChatScreen(
     val isChatAtBottom by remember {
         derivedStateOf {
             val layoutInfo = listState.layoutInfo
-            val totalItems = layoutInfo.totalItemsCount
-            if (totalItems == 0 || !listState.canScrollForward) true
-            else {
-                val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
-                val itemsFromEnd = totalItems - 1 - lastVisible.index
-                if (itemsFromEnd > 0) false
-                else {
-                    val contentEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
-                    ((lastVisible.offset + lastVisible.size) - contentEnd) <= 80
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+            val contentEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
+            com.example.util.ChatScrollPolicy.isAtBottom(
+                totalItems = layoutInfo.totalItemsCount,
+                canScrollForward = listState.canScrollForward,
+                lastVisibleIndex = lastVisible?.index,
+                lastVisibleEndPx = lastVisible?.let { it.offset + it.size },
+                viewportEndPx = contentEnd
+            )
+        }
+    }
+
+    var isStickyToBottom by remember(bot.id) { mutableStateOf(true) }
+    LaunchedEffect(isChatAtBottom, listState.isScrollInProgress) {
+        isStickyToBottom = com.example.util.ChatScrollPolicy.nextStickyState(
+            currentSticky = isStickyToBottom,
+            isUserScrollInProgress = listState.isScrollInProgress,
+            isAtBottom = isChatAtBottom
+        )
+    }
+
+    suspend fun scrollToTrueBottom(animate: Boolean) {
+        val layoutInfo = listState.layoutInfo
+        val total = layoutInfo.totalItemsCount
+        if (total <= 0) return
+        val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()
+        val contentEnd = layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding
+        val overflowPx = com.example.util.ChatScrollPolicy.computeBottomOverflowPx(
+            totalItems = total,
+            lastVisibleIndex = lastVisible?.index,
+            lastVisibleEndPx = lastVisible?.let { it.offset + it.size },
+            viewportEndPx = contentEnd
+        )
+        try {
+            if (overflowPx != null) {
+                if (overflowPx > 0f) {
+                    listState.scrollBy(overflowPx)
+                }
+            } else {
+                if (animate) {
+                    listState.animateScrollToItem(total - 1)
+                } else {
+                    listState.scrollToItem(total - 1)
+                }
+                val updatedInfo = listState.layoutInfo
+                val updatedLast = updatedInfo.visibleItemsInfo.lastOrNull()
+                val updatedEnd = updatedInfo.viewportEndOffset - updatedInfo.afterContentPadding
+                val extraOverflow = com.example.util.ChatScrollPolicy.computeBottomOverflowPx(
+                    totalItems = updatedInfo.totalItemsCount,
+                    lastVisibleIndex = updatedLast?.index,
+                    lastVisibleEndPx = updatedLast?.let { it.offset + it.size },
+                    viewportEndPx = updatedEnd
+                )
+                if (extraOverflow != null && extraOverflow > 0f) {
+                    listState.scrollBy(extraOverflow)
                 }
             }
-        }
+        } catch (_: Exception) {}
     }
 
     LaunchedEffect(isChatAtBottom, listState.isScrollInProgress, visibleMessageLimit, expandedOldMessageIds.size, pendingJumpMessageId, highlightedMessageId) {
@@ -262,25 +309,27 @@ fun ChatScreen(
     }
 
     LaunchedEffect(rawValidMessages.size, isSending) {
-        val totalItems = (if (hasLoadOlderHeader) 1 else 0) + paginatedValidMessages.size + if (isSending) 1 else 0
-        if (totalItems > 0) {
-            try { listState.animateScrollToItem(totalItems - 1) } catch (_: Exception) {}
+        if (isStickyToBottom && !listState.isScrollInProgress) {
+            scrollToTrueBottom(animate = true)
         }
     }
 
-    // Throttled coroutine-only auto-scroll during streaming (strictly respects upward user scrolling)
+    // Throttled coroutine-only auto-scroll during streaming:
+    // follows tall multi-paragraph bubbles line-by-line at the bottom while strictly respecting upward user scrolling.
     LaunchedEffect(streamingTextFlow) {
         var lastScrollMs = 0L
         streamingTextFlow.collect { chunk ->
-            if (!chunk.isNullOrEmpty() && isChatAtBottom && !listState.isScrollInProgress) {
-                val nowMs = System.currentTimeMillis()
-                if (nowMs - lastScrollMs >= 180L) {
-                    lastScrollMs = nowMs
-                    val total = listState.layoutInfo.totalItemsCount
-                    if (total > 0) {
-                        try { listState.scrollToItem(total - 1) } catch (_: Exception) {}
-                    }
-                }
+            val nowMs = System.currentTimeMillis()
+            if (com.example.util.ChatScrollPolicy.shouldAutoScrollOnStreamChunk(
+                    chunk = chunk,
+                    isStickyToBottom = isStickyToBottom,
+                    isUserScrollInProgress = listState.isScrollInProgress,
+                    nowMs = nowMs,
+                    lastScrollMs = lastScrollMs
+                )
+            ) {
+                lastScrollMs = nowMs
+                scrollToTrueBottom(animate = false)
             }
         }
     }
@@ -358,7 +407,7 @@ fun ChatScreen(
         outputRgb565 = true
     )
     val blurredBgBitmap = blurredBgState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
-    val refGlassBitmaps = remember(context) { loadAetheriaRefGlassBitmaps(context) }
+    val refGlassBitmaps = rememberAetheriaRefGlassBitmaps()
     val validMessages = paginatedValidMessages
 
     CompositionLocalProvider(
@@ -469,7 +518,10 @@ fun ChatScreen(
                         onContinueScene = {
                             if (onContinueScene != null) onContinueScene() else viewModel.continueStoryScene()
                         },
-                        onSendMessage = onSendMessage,
+                        onSendMessage = { text ->
+                            isStickyToBottom = true
+                            onSendMessage(text)
+                        },
                         onEditLastMessage = {
                             validMessages.lastOrNull()?.let { target ->
                                 editingMessageId = target.id
@@ -609,6 +661,7 @@ fun ChatScreen(
                         rootSize = rootSize,
                         blurredBgBitmap = blurredBgBitmap,
                         onClick = {
+                            isStickyToBottom = true
                             val totalCount = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (isSending) 1 else 0
                             coroutineScope.launch {
                                 expandedOldMessageIds = emptySet()
@@ -616,7 +669,7 @@ fun ChatScreen(
                                     visibleMessageLimit = chatPageSize
                                     pendingSnapToBottomAfterCollapse = true
                                 } else if (totalCount > 0) {
-                                    listState.animateScrollToItem(totalCount - 1)
+                                    scrollToTrueBottom(animate = true)
                                 }
                             }
                         },

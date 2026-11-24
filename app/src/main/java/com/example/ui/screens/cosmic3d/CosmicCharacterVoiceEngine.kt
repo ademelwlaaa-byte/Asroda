@@ -320,26 +320,60 @@ class CosmicCharacterVoiceEngine(
     }
 
     /**
-     * Background pre-warms studio-mastered WAV clips for upcoming combat/cutscene lines
+     * Background pre-warms Tier 2 (100% Free Neural MP3) clips for upcoming combat/cutscene lines
      * so playback triggers instantaneously with zero synthesis delay during action.
+     * Falls back to Tier 3 offline DSP WAV only when completely offline.
      */
     fun prewarmLines(lines: List<Triple<String, String, String?>>) {
         if (released || lines.isEmpty()) return
         synthExecutor.execute {
             if (released) return@execute
-            readyLatch.await(3, TimeUnit.SECONDS)
-            if (!ready || released) return@execute
             for ((speaker, text, lineId) in lines) {
-                if (released) break
+                if (released || text.isBlank()) break
+                // Skip if Tier 0 DLC voice pack or Tier 1 bundled res/raw exists
                 if (!lineId.isNullOrBlank()) {
+                    if (com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId) != null) continue
                     val resId = appContext.resources.getIdentifier(lineId, "raw", appContext.packageName)
                     if (resId != 0) continue
                 }
+                val freeNeuralCacheMp3 = neuralCacheFileFor(speaker, text, "mp3")
+                if (freeNeuralCacheMp3.exists() && freeNeuralCacheMp3.length() > 1024L) continue
+
+                val neuralFile = trySynthesizeFreeNeuralVoice(speaker, text, freeNeuralCacheMp3)
+                if (neuralFile != null && neuralFile.exists() && neuralFile.length() > 1024L) {
+                    pruneBookVoiceCacheIfNeeded()
+                    continue
+                }
+
+                // Offline fallback: pre-warm Tier 3 studio-mastered WAV
+                if (!ready) readyLatch.await(2500, TimeUnit.MILLISECONDS)
+                if (!ready || released) continue
                 val cacheFile = cacheFileFor(speaker, text)
                 if (!cacheFile.exists() || cacheFile.length() < 1024L) {
                     synthesizeAndMasterToWav(speaker, text, cacheFile)
+                    pruneBookVoiceCacheIfNeeded()
                 }
             }
+        }
+    }
+
+    /** Convenience single-line lookahead prewarm for instant next-line voice playback. */
+    fun prewarmLine(speakerKey: String, text: String, lineId: String? = null) {
+        if (released || text.isBlank()) return
+        prewarmLines(listOf(Triple(speakerKey, text, lineId)))
+    }
+
+    private fun pruneBookVoiceCacheIfNeeded(maxBytes: Long = 40L * 1024L * 1024L) {
+        try {
+            val files = cacheDir.listFiles()?.filter { it.isFile } ?: return
+            var total = files.sumOf { it.length() }
+            if (total <= maxBytes) return
+            files.sortedBy { it.lastModified() }.forEach { f ->
+                if (total <= maxBytes) return@forEach
+                val len = f.length()
+                if (f.delete()) total -= len
+            }
+        } catch (_: Throwable) {
         }
     }
 

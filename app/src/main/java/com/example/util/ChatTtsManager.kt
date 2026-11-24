@@ -123,12 +123,14 @@ class ChatTtsManager(context: Context) {
         }
     }
 
-    init {
-        BookAudioController.onPlaybackStarted = {
-            if (_isSpeaking.value) {
-                stop()
-            }
+    private val bookPlaybackListener: () -> Unit = {
+        if (_isSpeaking.value) {
+            stop()
         }
+    }
+
+    init {
+        BookAudioController.onPlaybackStarted = bookPlaybackListener
         try {
             tts = TextToSpeech(appContext) { status ->
                 if (status == TextToSpeech.SUCCESS) {
@@ -653,7 +655,9 @@ class ChatTtsManager(context: Context) {
 
     fun shutdown() {
         stop()
-        BookAudioController.onPlaybackStarted = null
+        if (BookAudioController.onPlaybackStarted === bookPlaybackListener) {
+            BookAudioController.onPlaybackStarted = null
+        }
         try {
             tts?.shutdown()
         } catch (_: Exception) {

@@ -212,6 +212,7 @@ class EmochiApplication : Application(), ImageLoaderFactory {
             level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN
         ) {
             FrostedBackdropCache.evictAll()
+            com.example.ui.screens.AetheriaRefGlassCache.evictAll()
             try {
                 Coil.imageLoader(this).memoryCache?.clear()
             } catch (_: Exception) {}

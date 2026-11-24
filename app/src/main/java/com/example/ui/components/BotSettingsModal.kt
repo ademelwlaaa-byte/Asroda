@@ -194,7 +194,7 @@ fun BotSettingsModal(
     // ── Shared Wisteria Frosted Glass Backdrop & Reference Glass Plates ──
     val rootSize = LocalAetheriaRootSize.current.value
     val blurredBgBitmap = remember(context) { createSettingsDeepFrostedWisteriaBitmap(context) }
-    val refGlassBitmaps = remember(context) { loadAetheriaRefGlassBitmaps(context) }
+    val refGlassBitmaps = com.example.ui.screens.rememberAetheriaRefGlassBitmaps()
 
     // ── 1. Core Identity & Story State (100% Preserved) ──
     var aiName by remember(bot.id) { mutableStateOf(bot.aiName) }

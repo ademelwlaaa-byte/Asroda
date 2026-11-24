@@ -460,7 +460,76 @@ private fun processPlateWithTranslucentInterior(
     }
 }
 
-fun loadAetheriaRefGlassBitmaps(context: android.content.Context): AetheriaRefGlassBitmaps {
+/**
+ * Process-scoped cache for the 14 processed ARGB_8888 Aetheria glass reference plates.
+ *
+ * Eliminates repeated synchronous main-thread PNG decoding + pixel loops whenever ChatScreen
+ * or BotSettingsModal opens, prevents duplicate 14-bitmap allocations in RAM, and evicts
+ * cleanly from [com.example.EmochiApplication.onTrimMemory].
+ */
+object AetheriaRefGlassCache {
+    private val lock = Any()
+
+    @Volatile
+    private var cached: AetheriaRefGlassBitmaps? = null
+
+    val placeholder: AetheriaRefGlassBitmaps by lazy {
+        val px = android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888).asImageBitmap()
+        AetheriaRefGlassBitmaps(
+            headerNoLetter = px,
+            sigilNoLetter = px,
+            userTop = px,
+            userMid = px,
+            userBottom = px,
+            botTop = px,
+            botMid = px,
+            botBottom = px,
+            bot3Top = px,
+            bot3Mid = px,
+            bot3Bottom = px,
+            pillsRowAligned = px,
+            quickCards = px,
+            inputBarNoText = px
+        )
+    }
+
+    fun get(): AetheriaRefGlassBitmaps? = cached
+
+    fun isCached(): Boolean = cached != null
+
+    fun put(bitmaps: AetheriaRefGlassBitmaps) {
+        synchronized(lock) {
+            cached = bitmaps
+        }
+    }
+
+    fun evictAll() {
+        synchronized(lock) {
+            cached = null
+        }
+    }
+
+    fun getOrLoadSync(context: android.content.Context): AetheriaRefGlassBitmaps {
+        cached?.let { return it }
+        val appContext = context.applicationContext ?: context
+        synchronized(lock) {
+            cached?.let { return it }
+            val loaded = loadAetheriaRefGlassBitmapsInternal(appContext)
+            cached = loaded
+            return loaded
+        }
+    }
+
+    suspend fun getOrLoadAsync(context: android.content.Context): AetheriaRefGlassBitmaps {
+        cached?.let { return it }
+        val appContext = context.applicationContext ?: context
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            getOrLoadSync(appContext)
+        }
+    }
+}
+
+private fun loadAetheriaRefGlassBitmapsInternal(context: android.content.Context): AetheriaRefGlassBitmaps {
     val rawSigil = decodeRawRefBitmap(context, com.example.R.drawable.img_chat_ref_sigil_noletter)
     val sigilBitmap = rawSigil?.asImageBitmap() ?: ImageBitmap(1, 1)
     return AetheriaRefGlassBitmaps(
@@ -479,6 +548,24 @@ fun loadAetheriaRefGlassBitmaps(context: android.content.Context): AetheriaRefGl
         quickCards = processPlateWithTranslucentInterior(context, com.example.R.drawable.img_chat_ref_quick_cards, interiorAlpha = 0.60f),
         inputBarNoText = processPlateWithTranslucentInterior(context, com.example.R.drawable.img_chat_ref_input_bar_notext, interiorAlpha = 0.58f)
     )
+}
+
+fun loadAetheriaRefGlassBitmaps(context: android.content.Context): AetheriaRefGlassBitmaps {
+    return AetheriaRefGlassCache.getOrLoadSync(context)
+}
+
+@Composable
+fun rememberAetheriaRefGlassBitmaps(): AetheriaRefGlassBitmaps {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val state = androidx.compose.runtime.produceState(
+        initialValue = AetheriaRefGlassCache.get() ?: AetheriaRefGlassCache.placeholder,
+        key1 = Unit
+    ) {
+        if (!AetheriaRefGlassCache.isCached()) {
+            value = AetheriaRefGlassCache.getOrLoadAsync(context)
+        }
+    }
+    return state.value
 }
 
 @Composable
