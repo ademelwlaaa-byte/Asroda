@@ -52,6 +52,30 @@ object BookAudioController {
     @Volatile
     var onPlaybackStarted: (() -> Unit)? = null
 
+    @Volatile
+    private var isVoiceDucked: Boolean = false
+
+    /**
+     * Smoothly lowers ambient chapter music volume while a Book Mode character voice card speaks,
+     * then restores it cleanly once the character finishes. Safe to call from any thread.
+     */
+    fun setVoiceDucking(ducked: Boolean) {
+        scope.launch {
+            if (isFadingOut || _isMutedFlow.value || !_isPlayingFlow.value) {
+                isVoiceDucked = false
+                return@launch
+            }
+            if (ducked == isVoiceDucked) return@launch
+            isVoiceDucked = ducked
+            val target = if (ducked) {
+                (resumeTargetVolume * 0.26f).coerceIn(0.08f, 0.30f)
+            } else {
+                resumeTargetVolume.coerceIn(0.15f, 1.0f)
+            }
+            transitionVolume(targetVolume = target, durationMs = if (ducked) 240L else 420L)
+        }
+    }
+
     /**
      * Starts playback automatically ON from silence (0f) and smoothly ramps to full volume (1.0f)
      * over [fadeInMs] (default 1500ms).

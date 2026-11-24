@@ -1,0 +1,211 @@
+package com.example.ui.components
+
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.local.MessageEntity
+import com.example.util.ChatStoryStats
+import com.example.util.StoryBookmarkStore
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+@Composable
+internal fun ChatStoryStatsDialog(
+    displayName: String,
+    validMessages: List<MessageEntity>,
+    onDismiss: () -> Unit
+) {
+    val stats = remember(validMessages) { ChatStoryStats.compute(validMessages) }
+    val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.forLanguageTag("tr-TR")) }
+    MorCamDialogShell(
+        onDismissRequest = onDismiss,
+        title = "Hikaye İstatistikleri",
+        subtitle = "$displayName • Roman Özeti"
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            listOf(
+                "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
+                "Toplam Kelime" to "${stats.totalWordCount} kelime",
+                "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
+                "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
+                "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
+                "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
+                    "${dateFmt.format(Date(stats.firstTimestampMs))} — ${dateFmt.format(Date(stats.lastTimestampMs))}"
+                } else "Henüz başlamadı"
+            ).forEach { (label, value) ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = label,
+                        color = Color(0xFFC4B5FD),
+                        fontSize = 12.5.sp
+                    )
+                    Text(
+                        text = value,
+                        color = Color.White,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ChatStoryBookmarksDialog(
+    context: Context,
+    botId: String,
+    displayName: String,
+    validMessages: List<MessageEntity>,
+    storyBookmarks: List<StoryBookmarkStore.Bookmark>,
+    onBookmarksChanged: (List<StoryBookmarkStore.Bookmark>) -> Unit,
+    onJumpToMessage: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var bookmarkTitle by remember { mutableStateOf("") }
+    val latestMsg = validMessages.lastOrNull()
+    MorCamDialogShell(
+        onDismissRequest = onDismiss,
+        title = "Hikaye Yer İmleri",
+        subtitle = "$displayName • Önemli sahnelere anında dön"
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (latestMsg != null) {
+                OutlinedTextField(
+                    value = bookmarkTitle,
+                    onValueChange = { bookmarkTitle = it },
+                    singleLine = true,
+                    placeholder = {
+                        Text(
+                            text = "Yer imi adı (örn. Kulede ihanet)",
+                            color = Color(0x99C4B5FD),
+                            fontSize = 12.sp
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                MorCamCapsuleButton(
+                    text = "Son Sahneyi Yer İmi Olarak Kaydet",
+                    onClick = {
+                        val label = bookmarkTitle.trim().ifBlank { "Sahne #${validMessages.size}" }
+                        val updated = StoryBookmarkStore.addBookmark(
+                            context = context,
+                            botId = botId,
+                            messageId = latestMsg.id,
+                            title = label,
+                            snippet = latestMsg.text
+                        )
+                        onBookmarksChanged(updated)
+                        bookmarkTitle = ""
+                        Toast.makeText(context, "Yer imi kaydedildi: $label", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            if (storyBookmarks.isEmpty()) {
+                Text(
+                    text = "Henüz kayıtlı yer imi yok. Önemli sahneleri işaretleyip tek dokunuşla geri dönebilirsin.",
+                    color = Color(0xFFC4B5FD),
+                    fontSize = 12.sp
+                )
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 260.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    storyBookmarks.forEach { bm ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0x441B0D36))
+                                .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(12.dp))
+                                .clickable {
+                                    onDismiss()
+                                    onJumpToMessage(bm.messageId)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "🔖 ${bm.title}",
+                                    color = Color.White,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1
+                                )
+                                if (bm.snippet.isNotBlank()) {
+                                    Text(
+                                        text = bm.snippet,
+                                        color = Color(0xFFC4B5FD),
+                                        fontSize = 11.sp,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Sil",
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clickable {
+                                        onBookmarksChanged(
+                                            StoryBookmarkStore.removeBookmark(
+                                                context = context,
+                                                botId = botId,
+                                                bookmarkId = bm.id
+                                            )
+                                        )
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

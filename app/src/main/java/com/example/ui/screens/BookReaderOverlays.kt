@@ -469,6 +469,33 @@ fun BookChronicleModal(
                             fontSize = 11.2.sp
                         )
                     }
+                    val chronicleCtx = androidx.compose.ui.platform.LocalContext.current
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0x552A1452))
+                            .border(0.8.dp, Color(0x88C4B5FD), RoundedCornerShape(50))
+                            .clickable {
+                                val md = com.example.book.BookChronicleExporter.formatDossierMarkdown(state)
+                                val cm = chronicleCtx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                cm?.setPrimaryClip(android.content.ClipData.newPlainText("Aiden Kronik", md))
+                                android.widget.Toast.makeText(
+                                    chronicleCtx,
+                                    "Kronik dosyası panoya kopyalandı",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "📋 Kopyala",
+                            fontFamily = InterFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                     MorCamCloseOrb(onClick = onDismiss, tag = "book_chronicle_close")
                 }
 

@@ -223,6 +223,7 @@ fun BookReaderView(
     var activeVoiceCardKey by remember { mutableStateOf<String?>(null) }
     val readerVoiceEngine = remember(context) {
         com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine(context) { speaking ->
+            com.example.util.BookAudioController.setVoiceDucking(speaking)
             if (!speaking) {
                 activeVoiceCardKey = null
             }
@@ -230,6 +231,7 @@ fun BookReaderView(
     }
     DisposableEffect(readerVoiceEngine) {
         onDispose {
+            com.example.util.BookAudioController.setVoiceDucking(false)
             readerVoiceEngine.stopAndRelease()
         }
     }

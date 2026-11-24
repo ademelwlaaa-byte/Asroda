@@ -92,7 +92,10 @@ internal fun ChatBottomInputDock(
     onStopGeneration: (() -> Unit)? = null,
     onCopyTranscript: (() -> Unit)? = null,
     onShareTranscript: (() -> Unit)? = null,
-    onOpenStoryStats: (() -> Unit)? = null
+    onOpenStoryStats: (() -> Unit)? = null,
+    onOpenBookmarks: (() -> Unit)? = null,
+    autoTtsEnabled: Boolean = false,
+    onToggleAutoTts: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -114,7 +117,10 @@ internal fun ChatBottomInputDock(
                 onUpdateInputText = onInputTextChange,
                 onCopyTranscript = onCopyTranscript,
                 onShareTranscript = onShareTranscript,
-                onOpenStoryStats = onOpenStoryStats
+                onOpenStoryStats = onOpenStoryStats,
+                onOpenBookmarks = onOpenBookmarks,
+                autoTtsEnabled = autoTtsEnabled,
+                onToggleAutoTts = onToggleAutoTts
             )
 
             Box(
@@ -334,7 +340,10 @@ internal fun ChatPlusToolkitDrawer(
     onUpdateInputText: (String) -> Unit,
     onCopyTranscript: (() -> Unit)? = null,
     onShareTranscript: (() -> Unit)? = null,
-    onOpenStoryStats: (() -> Unit)? = null
+    onOpenStoryStats: (() -> Unit)? = null,
+    onOpenBookmarks: (() -> Unit)? = null,
+    autoTtsEnabled: Boolean = false,
+    onToggleAutoTts: (() -> Unit)? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -403,6 +412,14 @@ internal fun ChatPlusToolkitDrawer(
                 Triple("📊 Hikaye İstatistikleri", "plus_toolkit_story_stats") {
                     onDismiss()
                     onOpenStoryStats?.invoke()
+                },
+                Triple("🔖 Yer İmleri", "plus_toolkit_bookmarks") {
+                    onDismiss()
+                    onOpenBookmarks?.invoke()
+                },
+                Triple(if (autoTtsEnabled) "🔊 Oto-Ses: Açık" else "🔇 Oto-Ses: Kapalı", "plus_toolkit_auto_tts") {
+                    onDismiss()
+                    onToggleAutoTts?.invoke()
                 }
             )
             tools.forEach { (label, tag, action) ->

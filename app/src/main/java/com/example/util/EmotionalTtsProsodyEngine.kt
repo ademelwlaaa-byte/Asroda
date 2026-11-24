@@ -196,13 +196,19 @@ object EmotionalTtsProsodyEngine {
                     pauseMs = maxOf(pauseMs, 300L)
                 }
 
-                // Literary punctuation cues
+                // Literary punctuation & Turkish vocal-cue prosody modulation
                 if (emotionalProsodyEnabled) {
+                    val lower = cleanSentence.lowercase(Locale.forLanguageTag("tr-TR"))
                     when {
                         cleanSentence.endsWith("...") || cleanSentence.endsWith("…") || cleanSentence.contains("—") -> {
                             pauseMs = maxOf(pauseMs, 380L).coerceAtMost(480L)
                             ratePct -= 4
                             pitchHz -= 2
+                        }
+                        cleanSentence.endsWith("?!") || cleanSentence.endsWith("!?") -> {
+                            ratePct += 6
+                            pitchHz += 5
+                            pauseMs = minOf(pauseMs, 180L)
                         }
                         cleanSentence.endsWith("!") -> {
                             ratePct += 4
@@ -212,6 +218,27 @@ object EmotionalTtsProsodyEngine {
                         cleanSentence.endsWith("?") -> {
                             pitchHz += 3
                             pauseMs = maxOf(pauseMs, 220L)
+                        }
+                    }
+                    when {
+                        lower.contains("fısılda") || lower.contains("fısıltı") || lower.contains("whisper") -> {
+                            ratePct -= 8
+                            pitchHz -= 4
+                            pauseMs = maxOf(pauseMs, 340L)
+                        }
+                        lower.contains("bağır") || lower.contains("haykır") || lower.contains("kükre") || lower.contains("shout") -> {
+                            ratePct += 6
+                            pitchHz += 4
+                            pauseMs = minOf(pauseMs, 180L)
+                        }
+                        lower.contains("hıçkır") || lower.contains("ağla") || lower.contains("titreyerek") -> {
+                            ratePct -= 7
+                            pitchHz -= 3
+                            pauseMs = maxOf(pauseMs, 360L)
+                        }
+                        lower.contains("kahkaha") || lower.contains("gülümse") || lower.contains("kıkırda") -> {
+                            ratePct += 4
+                            pitchHz += 4
                         }
                     }
                 }
@@ -293,12 +320,14 @@ object EmotionalTtsProsodyEngine {
     }
 
     /**
-     * Groups prosody segments into bounded SSML request batches (<= ~900 chars each) so long
-     * literary chapters start playing quickly while keeping expressive prosody intact.
+     * Groups prosody segments into bounded SSML request batches.
+     * Batch #0 uses a tighter [firstBatchMaxChars] cap (~220 chars) so the very first spoken
+     * sentence starts in <0.6s while batches 1..N prefetch seamlessly in the background.
      */
     fun batchSegmentsForNeural(
         segments: List<ProsodySegment>,
-        maxCharsPerBatch: Int = 650
+        maxCharsPerBatch: Int = 650,
+        firstBatchMaxChars: Int = 220
     ): List<List<ProsodySegment>> {
         if (segments.isEmpty()) return emptyList()
         val batches = mutableListOf<List<ProsodySegment>>()
@@ -306,7 +335,12 @@ object EmotionalTtsProsodyEngine {
         var currentChars = 0
 
         for (seg in segments) {
-            if (current.isNotEmpty() && currentChars + seg.text.length > maxCharsPerBatch) {
+            val activeLimit = if (batches.isEmpty()) {
+                firstBatchMaxChars.coerceAtMost(maxCharsPerBatch).coerceAtLeast(80)
+            } else {
+                maxCharsPerBatch
+            }
+            if (current.isNotEmpty() && currentChars + seg.text.length > activeLimit) {
                 batches.add(current)
                 current = mutableListOf()
                 currentChars = 0
