@@ -2471,6 +2471,29 @@ fun GlobalSettingsModal(
                                     }
                                 )
                             }
+                            val backupStatus = remember { com.example.util.BackupRetentionAdvisor.getStatus(context) }
+                            GlobalGlassCard(
+                                rootSize = rootSize,
+                                blurredBg = blurredBg,
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                ApiHubEntryRow(
+                                    refPlates = refPlates,
+                                    icon = Icons.Default.AutoAwesome,
+                                    iconAccent = if (backupStatus.isReminderDue) Color(0xFFFDE047) else Color(0xFF86EFAC),
+                                    title = "Yedekleme Durumu",
+                                    subtitle = backupStatus.label,
+                                    badgeText = if (backupStatus.isReminderDue) "Önerilir" else "Güncel",
+                                    onClick = {
+                                        Toast.makeText(
+                                            context,
+                                            "Verilerini korumak için üstteki Yedekle butonunu kullanabilirsin.",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,

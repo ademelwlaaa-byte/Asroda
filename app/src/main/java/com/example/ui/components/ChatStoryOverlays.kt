@@ -47,6 +47,7 @@ internal fun ChatStoryStatsDialog(
     val atmosphere = remember(validMessages) { com.example.util.StoryMoodAnalytics.detectDominantAtmosphere(validMessages) }
     val pacing = remember(validMessages) { com.example.util.StoryPacingAnalyzer.analyze(validMessages) }
     val cadence = remember(validMessages) { com.example.util.StoryTurnCadenceAnalyzer.analyze(validMessages) }
+    val exprCounts = remember(validMessages) { com.example.util.StoryDialogueQuoteCounter.count(validMessages) }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -77,6 +78,7 @@ internal fun ChatStoryStatsDialog(
                 "Hikaye Seviyesi" to com.example.util.StoryDepthTierClassifier.formatLabel(stats.totalWordCount),
                 "Baskın Atmosfer" to atmosphere,
                 "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
+                "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
                 "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
