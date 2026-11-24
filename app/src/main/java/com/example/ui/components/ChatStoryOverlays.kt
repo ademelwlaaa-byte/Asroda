@@ -73,6 +73,7 @@ internal fun ChatStoryStatsDialog(
             val estTokens = com.example.util.TokenBudgetEstimator.estimateTokens(stats.totalWordCount)
             val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
             listOf(
+                "Hikaye Seviyesi" to com.example.util.StoryDepthTierClassifier.formatLabel(stats.totalWordCount),
                 "Baskın Atmosfer" to atmosphere,
                 "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",

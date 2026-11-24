@@ -1630,6 +1630,23 @@ internal fun CustomApiEditorDialog(
                     modifier = Modifier.testTag("custom_api_url_input")
                 )
 
+                val endpointInfo = remember(baseUrl) {
+                    com.example.util.CustomApiEndpointInfoHelper.inspect(baseUrl)
+                }
+                if (baseUrl.isNotBlank()) {
+                    Text(
+                        text = endpointInfo.badgeText,
+                        color = when {
+                            endpointInfo.isLocalServer -> Color(0xFF93C5FD)
+                            endpointInfo.isSecureHttps -> Color(0xFF86EFAC)
+                            else -> Color(0xFFFDE047)
+                        },
+                        fontSize = 11.sp,
+                        fontFamily = InterFontFamily,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+
                 GlobalGlassInputField(
                     value = apiKey,
                     onValueChange = { apiKey = it; testResult = null },
