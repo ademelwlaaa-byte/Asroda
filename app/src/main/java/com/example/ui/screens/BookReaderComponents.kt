@@ -706,7 +706,27 @@ fun ManuscriptParagraphBlock(
  * Breaks up long reading stretches with tappable S.H.I.E.L.D. dossiers, audio recordings,
  * red-alert system banners, comms transmissions, and psychic whispers.
  */
-private fun resolveVoiceSpeakerKey(rawTitle: String): String {
+internal fun extractBookVoiceCardEntries(
+    paragraphs: List<String>
+): List<Triple<String, String, String?>> {
+    val result = mutableListOf<Triple<String, String, String?>>()
+    for (raw in paragraphs) {
+        val trimmed = raw.trim()
+        if (!trimmed.startsWith("[[") || !trimmed.endsWith("]]")) continue
+        val inner = trimmed.removePrefix("[[").removeSuffix("]]")
+        val parts = inner.split("|")
+        if (parts.size < 3) continue
+        val tag = parts[0].trim().uppercase(java.util.Locale.ROOT)
+        if (tag != "COMMS" && tag != "AUDIO" && tag != "MIND") continue
+        val cardTitle = parts[1].trim()
+        val body = parts.drop(2).joinToString("|").trim()
+        if (body.isBlank()) continue
+        result.add(Triple(resolveVoiceSpeakerKey(cardTitle), body, null))
+    }
+    return result
+}
+
+internal fun resolveVoiceSpeakerKey(rawTitle: String): String {
     val u = rawTitle.uppercase(java.util.Locale.ROOT)
     return when {
         "MİMAR" in u || "ARCHITECT" in u -> "ARCHITECT"

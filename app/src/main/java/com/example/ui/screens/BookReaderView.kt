@@ -254,6 +254,19 @@ fun BookReaderView(
         activeVoiceCardKey = null
     }
 
+    // Background-prewarm upcoming voice cards (COMMS/AUDIO/MIND) in 100% free Edge Neural voices
+    // so tapping any dialogue card plays instantaneously with 0ms synthesis delay.
+    LaunchedEffect(engineState.activeChapter, engineState.currentNodeId, engineState.transcript.size) {
+        val recentParagraphs = engineState.transcript
+            .takeLast(2)
+            .filterIsInstance<BookTranscriptItem.SceneBlock>()
+            .flatMap { it.paragraphs }
+        val voiceEntries = extractBookVoiceCardEntries(recentParagraphs).takeLast(4)
+        if (voiceEntries.isNotEmpty()) {
+            readerVoiceEngine.prewarmLines(voiceEntries)
+        }
+    }
+
     // Instant consequence banner + newly unlocked character toast + sparkle/confetti + cosmic screen edge pulse triggers
     var lastDecisionBanner by remember { mutableStateOf<RecordedDecision?>(null) }
     var showDecisionBanner by remember { mutableStateOf(false) }

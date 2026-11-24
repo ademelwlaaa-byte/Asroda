@@ -299,4 +299,25 @@ class V32SystemsAuditFixesTest {
             second.shutdown()
         }
     }
+
+    @Test
+    fun extractBookVoiceCardEntries_extractsOnlyVoiceCardsWithResolvedSpeakers() {
+        val paragraphs = listOf(
+            "Normal anlatı paragrafı.",
+            "[[DOSSIER|SHIELD Raporu|Gizli dosya içeriği]]",
+            "[[COMMS|Natasha Romanoff|Aiden, kuleye çıkma!]]",
+            "[[MIND|Wanda Maximoff|Zaman dokusu parçalanıyor...]]",
+            "[[AUDIO|Elias Voss (6-B)|Sistem çökmek üzere.|Ek satır]]",
+            "[[ALARM|Kırmızı Alarm|Tahliye]]",
+            "[[COMMS|Tony Stark|   ]]"
+        )
+        val extracted = com.example.ui.screens.extractBookVoiceCardEntries(paragraphs)
+        assertEquals(3, extracted.size)
+        assertEquals("NATASHA", extracted[0].first)
+        assertEquals("Aiden, kuleye çıkma!", extracted[0].second)
+        assertEquals("WANDA", extracted[1].first)
+        assertEquals("Zaman dokusu parçalanıyor...", extracted[1].second)
+        assertEquals("VOSS", extracted[2].first)
+        assertEquals("Sistem çökmek üzere.|Ek satır", extracted[2].second)
+    }
 }

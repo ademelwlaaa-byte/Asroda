@@ -1298,7 +1298,7 @@ class ProviderFallbackManager(
             .callTimeout(timeoutCfg.callTimeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)
 
         val tempInterceptor = com.example.EmochiApplication.installedTemperatureInterceptor
-        if (tempInterceptor == null || clientBuilder.interceptors().none { it === tempInterceptor }) {
+        if (clientBuilder.interceptors().none { it === tempInterceptor }) {
             clientBuilder.interceptors().add(0, com.example.EmochiApplication.createTemperatureInterceptor())
         }
         val externalInterceptor = RetrofitClient.customInterceptor
