@@ -17,6 +17,12 @@ object ApiDiagnosticsFormatter {
     ): String {
         return buildString {
             append("=== Asroda v").append(appVersion).append(" API Tanılama Raporu ===\n")
+            val healthSummary = ProviderHealthSummaryFormatter.summarize(healthMap, nowMs)
+            append("Özet: ").append(ProviderHealthSummaryFormatter.formatBanner(healthSummary)).append("\n")
+            val rateLine = ProviderFallbackSuccessRateHelper.formatCompact(logs)
+            if (rateLine.isNotBlank()) {
+                append("Başarı: ").append(rateLine).append("\n")
+            }
             if (healthMap.isNotEmpty()) {
                 append("\n[Sağlayıcı Sağlığı]\n")
                 healthMap.values.sortedBy { it.providerKey }.forEach { st ->

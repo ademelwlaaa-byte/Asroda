@@ -1320,6 +1320,20 @@ fun CreateBotWizardScreen(
                                 }
                             }
 
+                            if (openingMessage.isNotBlank()) {
+                                val openingQuality = remember(openingMessage, scenario) {
+                                    com.example.util.StoryOpeningQualityChecker.evaluate(openingMessage, scenario)
+                                }
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "${openingQuality.badge} (%${openingQuality.scorePercent}) • ${openingQuality.tip}",
+                                    fontFamily = InterFontFamily,
+                                    color = if (openingQuality.scorePercent >= 85) Color(0xFF86EFAC) else Color(0xFFD8B4FE),
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                            }
+
                             Spacer(modifier = Modifier.height(16.dp))
 
                             Text(
