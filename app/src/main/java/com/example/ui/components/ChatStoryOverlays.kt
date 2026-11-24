@@ -116,6 +116,7 @@ internal fun ChatStoryStatsDialog(
                 "Yazım Tarzın" to com.example.util.StoryUserParticipationHelper.formatCompact(userParticipation),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
+                "Kelime Hedefi" to com.example.util.StoryWordMilestoneHelper.formatNextMilestone(stats.totalWordCount),
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
                 "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
                 "Karakter Kartı Yükü" to com.example.util.BotPromptBudgetEstimator.formatCompact(promptBudget),

@@ -30,6 +30,10 @@ object ChapterSummaryExporter {
             if (themes.isNotEmpty()) {
                 append("- **Temalar:** ").append(themes.joinToString(" ")).append("\n")
             }
+            val arc = StoryEmotionalArcHelper.formatThreeActArc(storyMsgs)
+            if (arc.isNotBlank()) {
+                append("- **Duygu Akışı:** ").append(arc).append("\n")
+            }
             append("- **Hacim:** ").append(stats.totalMessages).append(" mesaj • ")
                 .append(stats.totalWordCount).append(" kelime (~")
                 .append(stats.estimatedNovelPages).append(" sayfa)\n")
