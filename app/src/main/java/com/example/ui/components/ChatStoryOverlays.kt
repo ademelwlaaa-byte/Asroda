@@ -48,6 +48,7 @@ internal fun ChatStoryStatsDialog(
     val pacing = remember(validMessages) { com.example.util.StoryPacingAnalyzer.analyze(validMessages) }
     val cadence = remember(validMessages) { com.example.util.StoryTurnCadenceAnalyzer.analyze(validMessages) }
     val exprCounts = remember(validMessages) { com.example.util.StoryDialogueQuoteCounter.count(validMessages) }
+    val dialogueRatio = remember(validMessages) { com.example.util.StoryDialogueToNarrationRatioHelper.analyze(validMessages) }
     val lastAiTone = remember(validMessages) {
         val lastAi = validMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
         com.example.util.CharacterDialogueToneDetector.detectTone(lastAi)
@@ -108,6 +109,7 @@ internal fun ChatStoryStatsDialog(
                 "Baskın Atmosfer" to atmosphere,
                 "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
                 "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
+                "Diyalog / Betimleme" to com.example.util.StoryDialogueToNarrationRatioHelper.formatCompact(dialogueRatio),
                 "Son Sahne Tonu" to lastAiTone,
                 "Edebi Üslup" to com.example.util.StoryReadingLevelEstimator.formatCompact(proseMetrics),
                 "Okuma Akıcılığı" to readability.label,

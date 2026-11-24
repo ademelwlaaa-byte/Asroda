@@ -399,11 +399,12 @@ fun FallbackLogModal(
             val fleetScore = com.example.util.ProviderHealthScoreCalculator.compute(liveHealth)
             val base = "Filo Puanı: ${fleetScore.score}/100 (${fleetScore.grade}) • ${com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)}"
             val rateLine = com.example.util.ProviderFallbackSuccessRateHelper.formatCompact(logs)
+            val dominantErrorLine = com.example.util.ProviderErrorCategoryClassifier.summarizeDominantCategory(logs)
             val latestFailure = logs.firstOrNull { it.status == "FAILED" }
             val tipLine = if (latestFailure != null) {
                 "💡 ${com.example.util.ProviderErrorRecoveryAdvisor.adviseForStatusCode(latestFailure.statusCode)}"
             } else ""
-            listOf(base, rateLine, tipLine).filter { it.isNotBlank() }.joinToString("\n")
+            listOf(base, rateLine, dominantErrorLine, tipLine).filter { it.isNotBlank() }.joinToString("\n")
         }
         Box(
             modifier = Modifier
