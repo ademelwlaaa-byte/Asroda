@@ -985,6 +985,35 @@ fun BookReaderView(
                             )
                         }
 
+                        if (useDeterministicEngine) {
+                            val remainingMin = remember(
+                                currentSceneOrder,
+                                activeChapterMeta.sceneCount,
+                                engineState.isChapterCompleted,
+                                engineState.transcript.size
+                            ) {
+                                val scenes = engineState.transcript.filterIsInstance<BookTranscriptItem.SceneBlock>()
+                                val wordCount = scenes.sumOf { block ->
+                                    block.paragraphs.sumOf { com.example.util.ChatStoryStats.countWords(it) }
+                                }
+                                com.example.book.BookReadingEstimator.estimateRemainingMinutes(
+                                    currentSceneOrder = currentSceneOrder,
+                                    totalScenes = activeChapterMeta.sceneCount,
+                                    isChapterCompleted = engineState.isChapterCompleted,
+                                    observedTranscriptWordCount = wordCount,
+                                    observedSceneCount = scenes.size
+                                )
+                            }
+                            Text(
+                                text = com.example.book.BookReadingEstimator.formatBadgeText(remainingMin),
+                                fontFamily = InterFontFamily,
+                                color = MorCamTokens.LavenderLight.copy(alpha = 0.88f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
+
                         // Compact Typography Capsule [A− | A+]
                         Row(
                             modifier = Modifier
