@@ -1338,7 +1338,8 @@ fun ProviderReliabilityDashboardUI() {
                     val tokenLabel = if (stat.quotaType == com.example.util.QuotaType.EXHAUSTIBLE) {
                         "Kalan Kredi: ${stat.creditsRemaining}"
                     } else {
-                        "${stat.tokensUsed24h} / ${stat.tokenLimit24h} token"
+                        val headroom = com.example.util.ProviderRateLimitBudgetHelper.evaluate(stat.tokensUsed24h, stat.tokenLimit24h)
+                        "${stat.tokensUsed24h} / ${stat.tokenLimit24h} (${headroom.statusLabel} %${headroom.remainingPercent})"
                     }
                     Text(tokenLabel, color = MorCamTokens.LavenderSoft, fontSize = 10.sp, fontWeight = FontWeight.Medium)
                 }
