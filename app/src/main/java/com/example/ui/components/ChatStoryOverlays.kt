@@ -671,6 +671,12 @@ internal fun ChatScratchpadDialog(
                 },
                 modifier = Modifier.fillMaxWidth()
             )
+            Text(
+                text = com.example.util.TextWordCounter.formatCompact(noteText),
+                color = Color(0xFFC4B5FD),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
