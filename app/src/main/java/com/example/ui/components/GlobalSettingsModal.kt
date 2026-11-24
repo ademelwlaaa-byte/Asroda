@@ -2385,7 +2385,34 @@ fun GlobalSettingsModal(
                                 }
                             }
 
-                            // Separate Floating Neon Cards for Updates & Feature Flags
+                            // Separate Floating Neon Cards for Cache Cleaner, Updates & Feature Flags
+                            var cacheReport by remember {
+                                mutableStateOf(com.example.util.AppCacheCleaner.inspectCache(context))
+                            }
+                            GlobalGlassCard(
+                                rootSize = rootSize,
+                                blurredBg = blurredBg,
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                ApiHubEntryRow(
+                                    refPlates = refPlates,
+                                    icon = Icons.Default.DeleteOutline,
+                                    iconAccent = Color(0xFFFDE68A),
+                                    title = "Önbelleği Temizle",
+                                    subtitle = "Ses: ${com.example.util.AppCacheCleaner.formatBytes(cacheReport.ttsBytes)} • Görsel: ${com.example.util.AppCacheCleaner.formatBytes(cacheReport.imageBytes)} (Sohbetler korunur)",
+                                    badgeText = com.example.util.AppCacheCleaner.formatBytes(cacheReport.totalBytes),
+                                    onClick = {
+                                        val freed = com.example.util.AppCacheCleaner.clearDisposableCaches(context)
+                                        cacheReport = com.example.util.AppCacheCleaner.inspectCache(context)
+                                        Toast.makeText(
+                                            context,
+                                            "Önbellek temizlendi (${com.example.util.AppCacheCleaner.formatBytes(freed)} açıldı)",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
@@ -2398,7 +2425,7 @@ fun GlobalSettingsModal(
                                     iconAccent = Color(0xFFF3E8FF),
                                     title = "Sürüm & Güncellemeler",
                                     subtitle = "Mevcut sürümü ve APK güncellemelerini denetle",
-                                    badgeText = "v1.5",
+                                    badgeText = "v${com.example.BuildConfig.VERSION_NAME}",
                                     onClick = { showUpdateModal = true }
                                 )
                             }
