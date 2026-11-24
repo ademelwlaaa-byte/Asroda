@@ -611,7 +611,7 @@ fun EmotionStatusSection(
 
         val formattedDate = remember(bot.updatedAt) {
             try {
-                val sdf = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale("tr"))
+                val sdf = java.text.SimpleDateFormat("dd MMM yyyy, HH:mm", java.util.Locale.forLanguageTag("tr-TR"))
                 sdf.format(java.util.Date(if (bot.updatedAt > 0) bot.updatedAt else System.currentTimeMillis()))
             } catch (e: Exception) {
                 ""
@@ -739,7 +739,7 @@ fun EmotionStatusSection(
                         val isPos = ev.scoreDelta > 0
                         val badgeText = if (isPos) "+${ev.scoreDelta}" else "${ev.scoreDelta}"
                         val dateStr = try {
-                            val sdf = java.text.SimpleDateFormat("dd MMM, HH:mm", java.util.Locale("tr"))
+                            val sdf = java.text.SimpleDateFormat("dd MMM, HH:mm", java.util.Locale.forLanguageTag("tr-TR"))
                             sdf.format(java.util.Date(ev.timestamp))
                         } catch (e: Exception) { "" }
 

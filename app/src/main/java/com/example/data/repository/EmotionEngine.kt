@@ -362,7 +362,7 @@ object EmotionEngine {
         enforcePsychologicalConsistencyWithNote(state).state
 
     fun enforcePsychologicalConsistencyWithNote(state: EmotionState): ConsistencyResult {
-        var dom = state.dominantEmotion.lowercase(Locale("tr", "TR")).trim()
+        var dom = state.dominantEmotion.lowercase(Locale.forLanguageTag("tr-TR")).trim()
         val anger = state.primaryEmotions.anger
         val resentment = state.relationshipAxes.resentmentScore
         val joy = state.primaryEmotions.joy

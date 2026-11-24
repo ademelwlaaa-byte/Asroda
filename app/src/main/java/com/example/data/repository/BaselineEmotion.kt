@@ -38,7 +38,7 @@ object BaselineEmotionEngine {
     )
 
     fun normalizeRelType(raw: String): String {
-        val lower = raw.trim().lowercase(Locale("tr", "TR"))
+        val lower = raw.trim().lowercase(Locale.forLanguageTag("tr-TR"))
         if (lower in VALID_REL_TYPES) return lower
         return REL_TYPE_ALIASES[lower] ?: "other"
     }
@@ -131,7 +131,7 @@ object BaselineEmotionEngine {
     private val NEGATIVE_DOM = setOf("öfkeli", "sinirli", "kızgın", "hüzünlü", "korkmuş", "tiksinmiş")
 
     fun reconcileDominantEmotion(dominant: String, emotions: PrimaryEmotions): String {
-        val dom = dominant.lowercase(Locale("tr", "TR"))
+        val dom = dominant.lowercase(Locale.forLanguageTag("tr-TR"))
         if (dom in POSITIVE_DOM) {
             val negPeak = maxOf(emotions.anger, emotions.sadness, emotions.disgust, emotions.fear)
             val posPeak = maxOf(emotions.joy, emotions.trust, emotions.anticipation)
@@ -452,7 +452,7 @@ Kullanıcı tanımı: $safeUserDesc
         }
 
         // ── Relationship axes ─────────────────────────────────────────────────
-        val combinedText = "$aiName $personality $scenario $userCharName $userCharDesc".lowercase(Locale("tr", "TR"))
+        val combinedText = "$aiName $personality $scenario $userCharName $userCharDesc".lowercase(Locale.forLanguageTag("tr-TR"))
         val hasConflict = CONFLICT_KEYWORDS.containsMatchIn(combinedText)
 
         val rawAxes = try {
@@ -570,7 +570,7 @@ Kullanıcı tanımı: $safeUserDesc
         userCharDesc: String = ""
     ): BaselineAnalysisResult {
         val text = "$aiName $personality $scenario $userCharName $userCharDesc"
-            .lowercase(Locale("tr", "TR"))
+            .lowercase(Locale.forLanguageTag("tr-TR"))
             .replace(Regex("[.,!?;:]"), " ")
 
         // Word-boundary Turkish suffix-tolerant matching
@@ -759,7 +759,7 @@ Kullanıcı tanımı: $safeUserDesc
      */
     fun deriveCastMemberBaseline(name: String, desc: String): Triple<PersonalityProfile, Double, Int> {
         val profile = PersonalityProfile.deriveFromPersonality(name, desc, desc)
-        val lower = desc.lowercase(Locale("tr", "TR"))
+        val lower = desc.lowercase(Locale.forLanguageTag("tr-TR"))
         val (diffMult, initialAffection) = when {
             lower.contains("düşman") || lower.contains("hasım") || lower.contains("hain") -> 0.55 to 15
             lower.contains("rakip") || lower.contains("şüpheci") || lower.contains("soğuk") -> 0.70 to 28
@@ -786,7 +786,7 @@ Kullanıcı tanımı: $safeUserDesc
     fun sanitizeDominantEmotion(raw: String, emotions: PrimaryEmotions): String {
         val cleaned = raw.trim().replace(Regex("""[^\p{L}\s-]"""), "").trim().take(36)
         if (cleaned.isNotBlank()) {
-            val lower = cleaned.lowercase(Locale("tr", "TR"))
+            val lower = cleaned.lowercase(Locale.forLanguageTag("tr-TR"))
             val matchesWhitelist = ALLOWED_DOMINANT_EMOTION_TOKENS.any { token -> lower.contains(token) }
             if (matchesWhitelist) return cleaned
         }
@@ -829,7 +829,7 @@ Kullanıcı tanımı: $safeUserDesc
     }
 
     fun normalizeAttachment(raw: String): String {
-        val lower = raw.trim().lowercase(Locale("tr", "TR"))
+        val lower = raw.trim().lowercase(Locale.forLanguageTag("tr-TR"))
         return when {
             lower == "fearful_avoidant" || lower.contains("fearful") || lower.contains("disorganized") || lower.contains("korkulu") || lower.contains("düzensiz") -> "fearful_avoidant"
             lower == "anxious" || lower.contains("anxious") || lower.contains("kaygılı") -> "anxious"
@@ -861,11 +861,11 @@ Kullanıcı tanımı: $safeUserDesc
         relType: String,
         hasConflict: Boolean
     ): List<SensitiveTriggerEntity> {
-        val unique = existing.distinctBy { it.triggerTopic.lowercase(Locale("tr", "TR")) }.take(3).toMutableList()
+        val unique = existing.distinctBy { it.triggerTopic.lowercase(Locale.forLanguageTag("tr-TR")) }.take(3).toMutableList()
         val defaults = DEFAULT_TRIGGERS[relType] ?: DEFAULT_TRIGGERS["friend"]!!
         val extraDefault = if (hasConflict) "yalan ve kırık güven" else "dışlanma"
         val pool = (defaults + extraDefault).filter { d ->
-            unique.none { it.triggerTopic.lowercase(Locale("tr", "TR")) == d.lowercase(Locale("tr", "TR")) }
+            unique.none { it.triggerTopic.lowercase(Locale.forLanguageTag("tr-TR")) == d.lowercase(Locale.forLanguageTag("tr-TR")) }
         }
         var idx = 0
         while (unique.size < 3 && idx < pool.size) {

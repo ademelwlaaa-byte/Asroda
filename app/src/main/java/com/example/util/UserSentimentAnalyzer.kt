@@ -61,7 +61,7 @@ data class SentimentAnalysisResult(
  */
 object UserSentimentAnalyzer {
 
-    private val TR_LOCALE = Locale("tr", "TR")
+    private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
     private val positiveWords = setOf(
         "mutlu", "harika", "süper", "güzel", "seviyorum", "mükemmel", "iyi", "güldüm",

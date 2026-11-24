@@ -38,7 +38,7 @@ class RoutineNotificationWorker(
         const val WORK_TAG = "routine_notification_daily"
         private const val PREFS_NAME = "emochi_routine_notif_prefs"
         private const val NOTIF_ID_BASE = 9100
-        private val TR_LOCALE = Locale("tr", "TR")
+        private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
         fun isQuietHours(hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): Boolean {
             return hourOfDay >= 23 || hourOfDay < 8

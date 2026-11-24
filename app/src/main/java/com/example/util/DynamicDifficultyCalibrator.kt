@@ -27,7 +27,7 @@ object DynamicDifficultyCalibrator {
     private const val EMA_TURN_WEIGHT = 0.30f
     private const val FLOOR = 0.50f
     private const val CEILING = 2.50f
-    private val TR_LOCALE = Locale("tr", "TR")
+    private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
     private val POSITIVE_KW = listOf(
         "seviyorum", "teşekkür", "harika", "güzel", "süper",

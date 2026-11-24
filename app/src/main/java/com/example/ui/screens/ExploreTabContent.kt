@@ -500,7 +500,7 @@ fun ExploreTabContent(
     val scrollSync = lazyListState.firstVisibleItemIndex * 100000 + lazyListState.firstVisibleItemScrollOffset
 
     val presets = remember(isEnglish) { getAppPresets(isEnglish) }
-    val normalizedQuery = remember(searchQuery) { searchQuery.trim().lowercase(java.util.Locale("tr", "TR")) }
+    val normalizedQuery = remember(searchQuery) { searchQuery.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
 
     val showAidenHeroCard = remember(selectedCategory, normalizedQuery) {
         val catOk = selectedCategory == "all" || selectedCategory == "universe"
@@ -520,7 +520,7 @@ fun ExploreTabContent(
         if (normalizedQuery.isBlank()) {
             byCat
         } else {
-            val trLocale = java.util.Locale("tr", "TR")
+            val trLocale = java.util.Locale.forLanguageTag("tr-TR")
             byCat.filter { p ->
                 p.aiName.lowercase(trLocale).contains(normalizedQuery) ||
                     p.universeName.lowercase(trLocale).contains(normalizedQuery) ||

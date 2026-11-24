@@ -48,7 +48,7 @@ data class PersonalityProfile(
             }
         }
 
-        private val TR_LOCALE = Locale("tr", "TR")
+        private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
         private fun hasAnyWordPrefix(text: String, vararg terms: String): Boolean =
             terms.any { TurkishTextAnalyzer.containsWordPrefix(text, it) }

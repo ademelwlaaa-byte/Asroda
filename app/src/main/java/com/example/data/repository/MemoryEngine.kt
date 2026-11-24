@@ -15,7 +15,7 @@ import kotlin.math.sqrt
  * and common agglutinative inflectional suffixes so Turkish queries recall memories accurately.
  */
 object TurkishTextAnalyzer {
-    private val TR_LOCALE = Locale("tr", "TR")
+    private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
     val STOP_WORDS: Set<String> = setOf(
         "ve", "veya", "ya", "yahut", "bir", "bu", "şu", "o", "de", "da", "ki", "ile", "için",

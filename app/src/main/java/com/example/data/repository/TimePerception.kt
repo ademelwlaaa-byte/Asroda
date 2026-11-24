@@ -30,7 +30,7 @@ object TimePerceptionEngine {
 
     fun validateSceneTime(raw: String?): String? {
         if (raw.isNullOrBlank()) return null
-        val lower = raw.lowercase(Locale("tr", "TR")).trim()
+        val lower = raw.lowercase(Locale.forLanguageTag("tr-TR")).trim()
         return if (lower in VALID_SCENE_TIMES) lower else null
     }
 
@@ -48,7 +48,7 @@ object TimePerceptionEngine {
     )
 
     private fun parseTurkishNumber(text: String): NumberResult? {
-        val lower = text.lowercase(Locale("tr", "TR")).trim()
+        val lower = text.lowercase(Locale.forLanguageTag("tr-TR")).trim()
         if (lower.isBlank()) return null
 
         // Rakam ile başlıyorsa doğrudan al (örn. "1.5", "1,5", "12")
@@ -120,7 +120,7 @@ object TimePerceptionEngine {
             .replace(Regex("""«[^»]*»"""), " ")
             .replace(Regex("""\([^)]*\)"""), " ")
             .replace(Regex("""\[[^\]]*\]"""), " ")
-        val lower = stripped.lowercase(Locale("tr", "TR")).trim()
+        val lower = stripped.lowercase(Locale.forLanguageTag("tr-TR")).trim()
         if (lower.isBlank()) return StoryTimeJumpResult()
 
         // --- 1. Kesinlikle ATLAma olmayan söz/plan ifadeler ---

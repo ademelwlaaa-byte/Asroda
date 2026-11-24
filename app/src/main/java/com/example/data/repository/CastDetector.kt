@@ -51,7 +51,7 @@ data class CastExtractionResult(
  */
 object CastDetectorEngine {
 
-    private val TR_LOCALE = Locale("tr", "TR")
+    private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
     private const val ALIAS_PREFIX = "alias:"
 
     private val DEFAULT_FALLBACK_BLACKLIST = setOf(

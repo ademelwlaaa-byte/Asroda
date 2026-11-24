@@ -30,7 +30,7 @@ class WorldStateManager(
     private val entityRelationDao: EntityRelationDao,
     private val entityRegistryDao: EntityRegistryDao
 ) {
-    private val turkishLocale = Locale("tr", "TR")
+    private val turkishLocale = Locale.forLanguageTag("tr-TR")
 
     private val dayNameMap = linkedMapOf(
         "pazartesi" to "Pazartesi",

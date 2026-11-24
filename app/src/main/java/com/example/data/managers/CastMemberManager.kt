@@ -24,7 +24,7 @@ class CastMemberManager(
     private val emotionDao: CharacterEmotionDao,
     private val botDao: BotDao
 ) {
-    private val turkishLocale = Locale("tr", "TR")
+    private val turkishLocale = Locale.forLanguageTag("tr-TR")
 
     fun cleanCharacterNameCandidate(raw: String): String {
         val cleaned = raw

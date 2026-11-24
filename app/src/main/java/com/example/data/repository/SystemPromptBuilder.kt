@@ -71,7 +71,7 @@ object SystemPromptBuilder {
         val sensitiveTriggerDirective: String = ""
     )
 
-    private val TR_LOCALE = java.util.Locale("tr", "TR")
+    private val TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
     private val MINOR_AGE_REGEX = Regex("""(?i)\b(\d{1,2}(?:[.,]\d)?)\s*yaş(?:ında|ındaki|ındadır|larındaki|larında)?\b""")
     private val CHILD_FAMILY_TERMS = listOf(
         "bebek", "küçük kız", "küçük kızı", "küçük oğul", "küçük oğlu", "küçük çocuk",

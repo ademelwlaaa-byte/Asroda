@@ -265,7 +265,7 @@ class EmochiRepository(
             val cleanLines = result.lines().filterNot { line ->
                 val trimmed = line.trim().trimStart('-', '*', '•', '>', ' ', '"', '\'').trim()
                 val l = trimmed.lowercase(java.util.Locale.ROOT)
-                val lTr = trimmed.lowercase(java.util.Locale("tr"))
+                val lTr = trimmed.lowercase(java.util.Locale.forLanguageTag("tr-TR"))
 
                 fun checkPrefix(p: String): Boolean = l.startsWith(p) || lTr.startsWith(p)
 
@@ -386,7 +386,7 @@ class EmochiRepository(
         }
 
         fun calculateCastMemberDifficultyMultiplier(role: String, characterName: String, cueSentence: String = ""): Double {
-            val combined = "$role $characterName $cueSentence".lowercase(java.util.Locale("tr", "TR"))
+            val combined = "$role $characterName $cueSentence".lowercase(java.util.Locale.forLanguageTag("tr-TR"))
             return when {
                 combined.contains("düşman") || combined.contains("rakip") || combined.contains("hain") || combined.contains("hasım") -> 0.50
 
@@ -411,7 +411,7 @@ class EmochiRepository(
         }
 
         fun determineEffectiveRoleMultiplier(member: CastMemberEntity, sceneContext: String): Double {
-            val lowerContext = sceneContext.lowercase(java.util.Locale("tr", "TR"))
+            val lowerContext = sceneContext.lowercase(java.util.Locale.forLanguageTag("tr-TR"))
             val workWords = listOf("işyeri", "ofis", "rapor", "toplantı", "görev", "şirket", "proje", "patron", "çalış", "mesai", "bütçe", "sunum")
             val hasStandaloneIs = Regex("""\biş\b""").containsMatchIn(lowerContext)
             val isWorkContext = hasStandaloneIs || workWords.any { lowerContext.contains(it) }
@@ -728,7 +728,7 @@ class EmochiRepository(
     private val BACKUP_DEBOUNCE_MS = 10_000L
     private val MAX_FALLBACK_LOG_ENTRIES = 100
     private val MAX_CLASSIFICATION_LOG_ENTRIES = 100
-    private val trLocale = Locale("tr", "TR")
+    private val trLocale = Locale.forLanguageTag("tr-TR")
 
     /** Explicit lifecycle teardown for tests or process shutdown (prevents leaked repositoryScope). */
     fun close() {
@@ -4932,9 +4932,9 @@ $aiChar: ${latestAiReply.take(850)}
         if (parsedTrigIds.isNotEmpty()) {
             try {
                 val knownTriggers = sensitiveTriggerDao.getTriggersForBot(botId)
-                val knownTopics = knownTriggers.associateBy { it.triggerTopic.lowercase(java.util.Locale("tr", "TR")) }
+                val knownTopics = knownTriggers.associateBy { it.triggerTopic.lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
                 for (trigTopic in parsedTrigIds) {
-                    val trigger = knownTopics[trigTopic.lowercase(java.util.Locale("tr", "TR"))]
+                    val trigger = knownTopics[trigTopic.lowercase(java.util.Locale.forLanguageTag("tr-TR"))]
                     if (trigger != null) {
                         android.util.Log.d("EmotionEngine", "[trig] Semantic trigger activated: ${trigger.triggerTopic} (mult=${trigger.intensityMultiplier})")
                         sensitiveTriggerDao.insertOrUpdate(
@@ -5074,7 +5074,7 @@ $aiChar: ${latestAiReply.take(850)}
                 } catch (_: Exception) { emptyList() }
 
                 val seenNames = mutableSetOf<String>()
-                val trLocale = java.util.Locale("tr", "TR")
+                val trLocale = java.util.Locale.forLanguageTag("tr-TR")
                 val limit = minOf(sideArr.length(), MAX_SIDE_CHAR_UPDATES)
                 for (i in 0 until limit) {
                     val entry = sideArr.optJSONObject(i) ?: continue
@@ -5442,13 +5442,13 @@ $aiChar: ${latestAiReply.take(850)}
             it.sourceDescription.startsWith(USER_CUSTOM_TRIGGER_PREFIX)
         }
         val manualTopics = preservedManual
-            .map { it.triggerTopic.trim().lowercase(java.util.Locale("tr", "TR")) }
+            .map { it.triggerTopic.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
             .toSet()
 
         val dedupedAuto = triggers
             .filter { it.triggerTopic.isNotBlank() }
-            .distinctBy { it.triggerTopic.trim().lowercase(java.util.Locale("tr", "TR")) }
-            .filter { it.triggerTopic.trim().lowercase(java.util.Locale("tr", "TR")) !in manualTopics }
+            .distinctBy { it.triggerTopic.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
+            .filter { it.triggerTopic.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR")) !in manualTopics }
             .take(3)
 
         sensitiveTriggerDao.deleteTriggersForBot(botId)
@@ -5550,7 +5550,7 @@ $aiChar: ${latestAiReply.take(850)}
     // BÖLÜM G — DUYGUSAL HASSAS NOKTA (SensitiveTrigger) SİSTEMİ (SİSTEM #22)
     // =====================================================
     private fun isMetaOrDictionaryQuestion(text: String): Boolean {
-        val lower = text.lowercase(java.util.Locale("tr", "TR"))
+        val lower = text.lowercase(java.util.Locale.forLanguageTag("tr-TR"))
         return lower.contains("kelimesinin anlamı") ||
             lower.contains("kelimesi ne demek") ||
             lower.contains("sözcüğünün anlamı") ||
@@ -5559,7 +5559,7 @@ $aiChar: ${latestAiReply.take(850)}
     }
 
     private fun extractTurkishTriggerStems(topic: String): List<String> {
-        val trLocale = java.util.Locale("tr", "TR")
+        val trLocale = java.util.Locale.forLanguageTag("tr-TR")
         val normalized = topic.trim().lowercase(trLocale)
         if (normalized.isBlank()) return emptyList()
         val stems = mutableSetOf(normalized)
@@ -5596,7 +5596,7 @@ $aiChar: ${latestAiReply.take(850)}
     }
 
     private fun matchesSensitiveTrigger(trigger: SensitiveTriggerEntity, cleanInSceneText: String): Boolean {
-        val trLocale = java.util.Locale("tr", "TR")
+        val trLocale = java.util.Locale.forLanguageTag("tr-TR")
         val lowerText = cleanInSceneText.lowercase(trLocale)
         if (lowerText.isBlank()) return false
         val topicLower = trigger.triggerTopic.trim().lowercase(trLocale)

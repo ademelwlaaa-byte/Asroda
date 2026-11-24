@@ -308,7 +308,7 @@ object RefusalDetector {
         val trimmed = rawText.trim()
         if (trimmed.isEmpty()) return RefusalCheckResult(false)
 
-        val lower = trimmed.lowercase(Locale("tr"))
+        val lower = trimmed.lowercase(Locale.forLanguageTag("tr-TR"))
         val lowerRoot = trimmed.lowercase(Locale.ROOT)
 
         // 1. Check hard unambiguous AI refusal markers (unless clearly inside deep novel prose with action beats)
