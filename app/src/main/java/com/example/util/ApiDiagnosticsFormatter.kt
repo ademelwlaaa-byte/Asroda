@@ -30,7 +30,12 @@ object ApiDiagnosticsFormatter {
                         val remLabel = ProviderCooldownFormatter.formatRemaining(st.cooldownUntilMs - nowMs)
                         "COOLDOWN (${st.lastFailureType?.name ?: "ERR"}, $remLabel)"
                     } else {
-                        "HAZIR (${st.lastLatencyMs}ms)"
+                        val rolling = ProviderRollingLatencyTracker.getMetrics(st.providerKey)
+                        if (rolling != null && rolling.sampleCount >= 2) {
+                            "HAZIR (son ${st.lastLatencyMs}ms • medyan ${rolling.medianMs}ms)"
+                        } else {
+                            "HAZIR (${st.lastLatencyMs}ms)"
+                        }
                     }
                     append("- ").append(st.providerKey)
                         .append(": ").append(status)

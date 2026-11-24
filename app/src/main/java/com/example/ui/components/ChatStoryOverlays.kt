@@ -67,6 +67,9 @@ internal fun ChatStoryStatsDialog(
     val readability = remember(validMessages) {
         com.example.util.StoryParagraphReadabilityHelper.evaluate(validMessages)
     }
+    val cardCompleteness = remember(bot) {
+        com.example.util.BotCardCompletenessHelper.evaluate(bot)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -109,6 +112,7 @@ internal fun ChatStoryStatsDialog(
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
                 "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
                 "Karakter Kartı Yükü" to com.example.util.BotPromptBudgetEstimator.formatCompact(promptBudget),
+                "Kart Hazırlığı" to "${cardCompleteness.label} (%${cardCompleteness.percent})",
                 "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
                 "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
                 "Tahmini Sesli Dinleme" to estAudioText,
