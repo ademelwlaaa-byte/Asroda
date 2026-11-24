@@ -323,7 +323,12 @@ internal fun ChatStoryDirectorDialog(
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Hikaye Yönetmeni",
-        subtitle = "$displayName • Uzunluk, ses, yazı boyutu & makrolar"
+        subtitle = com.example.util.StoryDirectorSummaryHelper.formatActiveConfig(
+            responseLength = currentResponseLength,
+            ttsSpeed = currentTtsSpeed,
+            fontScale = currentFontScale,
+            hasDirectorRule = directorRule.isNotBlank()
+        )
     ) {
         Column(
             modifier = Modifier

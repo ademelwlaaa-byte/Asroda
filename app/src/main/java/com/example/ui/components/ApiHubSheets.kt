@@ -1679,6 +1679,19 @@ internal fun CustomApiEditorDialog(
                     modifier = Modifier.testTag("custom_api_model_input")
                 )
 
+                val modelTags = remember(modelName) {
+                    com.example.util.ProviderModelTagClassifier.formatCompact(modelName)
+                }
+                if (modelTags.isNotBlank()) {
+                    Text(
+                        text = modelTags,
+                        color = Color(0xFFC4B5FD),
+                        fontSize = 11.sp,
+                        fontFamily = InterFontFamily,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+
                 if (apiFormat == "openai") {
                     Row(
                         modifier = Modifier.fillMaxWidth(),

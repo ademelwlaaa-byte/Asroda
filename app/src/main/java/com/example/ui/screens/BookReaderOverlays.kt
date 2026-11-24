@@ -496,6 +496,35 @@ fun BookChronicleModal(
                         )
                     }
                     Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0x552A1452))
+                            .border(0.8.dp, accentColor.copy(alpha = 0.7f), RoundedCornerShape(50))
+                            .clickable {
+                                val cert = com.example.book.StoryCompletionCertificateHelper.buildCertificate(state)
+                                try {
+                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Kozmik Sürükleniş — Okur Kronik Belgesi")
+                                        putExtra(android.content.Intent.EXTRA_TEXT, cert)
+                                    }
+                                    chronicleCtx.startActivity(
+                                        android.content.Intent.createChooser(shareIntent, "Kronik Belgesini Paylaş")
+                                    )
+                                } catch (_: Exception) {}
+                            }
+                            .padding(horizontal = 9.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "✦ Paylaş",
+                            fontFamily = InterFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                     MorCamCloseOrb(onClick = onDismiss, tag = "book_chronicle_close")
                 }
 
