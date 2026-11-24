@@ -119,6 +119,8 @@ fun ChatScreen(
     var showStarredSheet by remember { mutableStateOf(false) }
     var showStoryStatsDialog by remember { mutableStateOf(false) }
     var showBookmarksDialog by remember { mutableStateOf(false) }
+    var showDirectorDialog by remember { mutableStateOf(false) }
+    var showScratchpadDialog by remember { mutableStateOf(false) }
     var storyBookmarks by remember(bot.id) {
         mutableStateOf(com.example.util.StoryBookmarkStore.loadBookmarks(context, bot.id))
     }
@@ -617,7 +619,9 @@ fun ChatScreen(
                                 if (next) "Otomatik sesli okuma açıldı" else "Otomatik sesli okuma kapatıldı",
                                 android.widget.Toast.LENGTH_SHORT
                             ).show()
-                        }
+                        },
+                        onOpenDirector = { showDirectorDialog = true },
+                        onOpenScratchpad = { showScratchpadDialog = true }
                     )
                 }
             ) { innerPadding ->
@@ -837,6 +841,32 @@ fun ChatScreen(
             onBookmarksChanged = { storyBookmarks = it },
             onJumpToMessage = jumpToMessageById,
             onDismiss = { showBookmarksDialog = false }
+        )
+    }
+
+    if (showDirectorDialog) {
+        com.example.ui.components.ChatStoryDirectorDialog(
+            displayName = displayName,
+            currentResponseLength = userSettings?.responseLength ?: "standard",
+            currentTtsSpeed = userSettings?.ttsSpeed ?: 1.0f,
+            onSelectResponseLength = { len ->
+                userSettings?.let { viewModel.updateSettings(it.copy(responseLength = len)) }
+                android.widget.Toast.makeText(context, "Yanıt uzunluğu güncellendi", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onSelectTtsSpeed = { spd ->
+                userSettings?.let { viewModel.updateSettings(it.copy(ttsSpeed = spd)) }
+                android.widget.Toast.makeText(context, "Ses hızı: ${spd}x", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showDirectorDialog = false }
+        )
+    }
+
+    if (showScratchpadDialog) {
+        com.example.ui.components.ChatScratchpadDialog(
+            context = context,
+            botId = bot.id,
+            displayName = displayName,
+            onDismiss = { showScratchpadDialog = false }
         )
     }
 }

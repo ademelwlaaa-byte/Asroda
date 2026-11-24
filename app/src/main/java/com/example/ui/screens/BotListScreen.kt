@@ -1374,13 +1374,19 @@ fun ChatsTabContent(
             val matchesFav = sortMode != "favorites_only" || favoriteBotIds.contains(bot.id)
             matchesFilter && matchesQuery && matchesFav
         }
-        when (sortMode) {
-            "favorites_first" -> base.sortedByDescending { if (favoriteBotIds.contains(it.id)) 1 else 0 }
-            "name_asc" -> base.sortedBy {
-                (if (it.mode == "universe") it.universeName.ifBlank { it.aiName } else it.aiName).lowercase()
-            }
-            else -> base
+        val draftIds = base.filter { com.example.util.ChatDraftStore.hasDraft(context, it.id) }.map { it.id }.toSet()
+        val sortOrder = when (sortMode) {
+            "favorites_first" -> com.example.util.BotListSortOrder.FAVORITES_FIRST
+            "name_asc" -> com.example.util.BotListSortOrder.NAME_AZ
+            "drafts_first" -> com.example.util.BotListSortOrder.DRAFTS_FIRST
+            else -> com.example.util.BotListSortOrder.RECENT
         }
+        com.example.util.BotListSorter.sortBots(
+            bots = base,
+            order = sortOrder,
+            favoriteIds = favoriteBotIds,
+            draftBotIds = draftIds
+        )
     }
 
     val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

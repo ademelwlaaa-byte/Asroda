@@ -95,7 +95,9 @@ internal fun ChatBottomInputDock(
     onOpenStoryStats: (() -> Unit)? = null,
     onOpenBookmarks: (() -> Unit)? = null,
     autoTtsEnabled: Boolean = false,
-    onToggleAutoTts: (() -> Unit)? = null
+    onToggleAutoTts: (() -> Unit)? = null,
+    onOpenDirector: (() -> Unit)? = null,
+    onOpenScratchpad: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -120,7 +122,9 @@ internal fun ChatBottomInputDock(
                 onOpenStoryStats = onOpenStoryStats,
                 onOpenBookmarks = onOpenBookmarks,
                 autoTtsEnabled = autoTtsEnabled,
-                onToggleAutoTts = onToggleAutoTts
+                onToggleAutoTts = onToggleAutoTts,
+                onOpenDirector = onOpenDirector,
+                onOpenScratchpad = onOpenScratchpad
             )
 
             Box(
@@ -343,7 +347,9 @@ internal fun ChatPlusToolkitDrawer(
     onOpenStoryStats: (() -> Unit)? = null,
     onOpenBookmarks: (() -> Unit)? = null,
     autoTtsEnabled: Boolean = false,
-    onToggleAutoTts: (() -> Unit)? = null
+    onToggleAutoTts: (() -> Unit)? = null,
+    onOpenDirector: (() -> Unit)? = null,
+    onOpenScratchpad: (() -> Unit)? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -420,6 +426,14 @@ internal fun ChatPlusToolkitDrawer(
                 Triple(if (autoTtsEnabled) "🔊 Oto-Ses: Açık" else "🔇 Oto-Ses: Kapalı", "plus_toolkit_auto_tts") {
                     onDismiss()
                     onToggleAutoTts?.invoke()
+                },
+                Triple("🎭 Yönetmen", "plus_toolkit_director") {
+                    onDismiss()
+                    onOpenDirector?.invoke()
+                },
+                Triple("📝 Not Defteri", "plus_toolkit_scratchpad") {
+                    onDismiss()
+                    onOpenScratchpad?.invoke()
                 }
             )
             tools.forEach { (label, tag, action) ->

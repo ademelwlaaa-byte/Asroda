@@ -209,3 +209,169 @@ internal fun ChatStoryBookmarksDialog(
         }
     }
 }
+
+@Composable
+internal fun ChatStoryDirectorDialog(
+    displayName: String,
+    currentResponseLength: String,
+    currentTtsSpeed: Float,
+    onSelectResponseLength: (String) -> Unit,
+    onSelectTtsSpeed: (Float) -> Unit,
+    onDismiss: () -> Unit
+) {
+    MorCamDialogShell(
+        onDismissRequest = onDismiss,
+        title = "Hikaye Yönetmeni",
+        subtitle = "$displayName • Anlatım uzunluğu & ses hızı"
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Yanıt Uzunluğu",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            val lengths = listOf(
+                "short" to "Kısa",
+                "standard" to "Dengeli",
+                "detailed" to "Detaylı",
+                "novel" to "Roman"
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                lengths.forEach { (key, label) ->
+                    val selected = currentResponseLength.equals(key, ignoreCase = true)
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) Color(0xCC7C3AED) else Color(0x551B0D36))
+                            .border(
+                                0.9.dp,
+                                if (selected) Color(0xFFE9D5FF) else Color(0x55B794F4),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSelectResponseLength(key) }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = label,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = "Sesli Okuma Hızı",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            val speeds = listOf(0.85f to "0.85x", 1.0f to "1.0x", 1.15f to "1.15x", 1.3f to "1.3x")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                speeds.forEach { (spd, label) ->
+                    val selected = kotlin.math.abs(currentTtsSpeed - spd) < 0.05f
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) Color(0xAA059669) else Color(0x551B0D36))
+                            .border(
+                                0.9.dp,
+                                if (selected) Color(0xFFA7F3D0) else Color(0x55B794F4),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSelectTtsSpeed(spd) }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = label,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ChatScratchpadDialog(
+    context: Context,
+    botId: String,
+    displayName: String,
+    onDismiss: () -> Unit
+) {
+    var noteText by remember(botId) {
+        mutableStateOf(com.example.util.BotScratchpadStore.loadNote(context, botId))
+    }
+    MorCamDialogShell(
+        onDismissRequest = {
+            com.example.util.BotScratchpadStore.saveNote(context, botId, noteText)
+            onDismiss()
+        },
+        title = "Hikaye Not Defteri",
+        subtitle = "$displayName • Sadece senin görebileceğin özel notlar"
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            OutlinedTextField(
+                value = noteText,
+                onValueChange = { noteText = it },
+                minLines = 5,
+                maxLines = 10,
+                placeholder = {
+                    Text(
+                        text = "İpuçları, yan karakter adları, envanter veya planlarını buraya yaz...",
+                        color = Color(0x99C4B5FD),
+                        fontSize = 12.sp
+                    )
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MorCamCapsuleButton(
+                    text = "Temizle",
+                    variant = MorCamButtonVariant.Secondary,
+                    onClick = {
+                        noteText = ""
+                        com.example.util.BotScratchpadStore.clearNote(context, botId)
+                        Toast.makeText(context, "Not defteri temizlendi", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                MorCamCapsuleButton(
+                    text = "Kaydet",
+                    onClick = {
+                        com.example.util.BotScratchpadStore.saveNote(context, botId, noteText)
+                        Toast.makeText(context, "Notlar kaydedildi", Toast.LENGTH_SHORT).show()
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1.4f)
+                )
+            }
+        }
+    }
+}

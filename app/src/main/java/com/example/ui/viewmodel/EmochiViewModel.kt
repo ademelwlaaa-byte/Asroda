@@ -586,18 +586,19 @@ class EmochiViewModel @JvmOverloads constructor(
 
             beforeFinalPersist?.invoke()
 
+            val sanitizedReply = com.example.util.ResponseSanitizer.sanitizeForDisplay(replyText).ifBlank { replyText }
             val finalAiMsg = MessageEntity(
                 id = liveMsgId,
                 botId = bot.id,
                 role = "assistant",
-                text = replyText,
+                text = sanitizedReply,
                 timestamp = msgTimestamp.coerceAtLeast(System.currentTimeMillis()),
                 status = "success",
                 provider = replyResult.usedProvider
             )
             repository.saveMessage(finalAiMsg)
             clearStreamingUiState()
-            maybeAutoSpeakReply(finalAiMsg.id, replyText)
+            maybeAutoSpeakReply(finalAiMsg.id, sanitizedReply)
             loadEmotionalDefenseState(bot.id)
             return Pair(finalAiMsg, replyResult)
         } catch (ce: kotlinx.coroutines.CancellationException) {
@@ -1345,6 +1346,7 @@ class EmochiViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             com.example.util.ChatDraftStore.clearDraft(getApplication(), botId)
             com.example.util.StoryBookmarkStore.clearAllForBot(getApplication(), botId)
+            com.example.util.BotScratchpadStore.clearNote(getApplication(), botId)
             repository.deleteBot(botId)
             if (_activeBotId.value == botId) {
                 openMenu()
