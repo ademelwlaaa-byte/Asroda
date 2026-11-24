@@ -2232,6 +2232,16 @@ fun ChapterSelectionModal(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            Text(
+                                text = com.example.book.BookChapterFilterHelper.formatCountsLine(
+                                    com.example.book.BookChapterFilterHelper.computeCounts(bookState, totalPlayable)
+                                ),
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFC4B5FD),
+                                fontSize = 10.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
 
