@@ -52,6 +52,10 @@ internal fun ChatStoryStatsDialog(
     val topThemes = remember(validMessages) {
         com.example.util.CharacterWordCloudHelper.extractTopThemes(validMessages, maxThemes = 5)
     }
+    val castMentions = remember(validMessages, bot.keyCharactersJson) {
+        val names = com.example.util.CharacterMentionTracker.extractCastNames(bot.keyCharactersJson)
+        com.example.util.CharacterMentionTracker.countMentions(validMessages, names, maxResults = 4)
+    }
     val estAudioText = remember(stats.totalWordCount) {
         val secs = com.example.util.TtsSpeechEstimator.estimateSeconds(stats.totalWordCount)
         com.example.util.TtsSpeechEstimator.formatDurationTurkish(secs)
@@ -99,6 +103,14 @@ internal fun ChatStoryStatsDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+            if (castMentions.isNotEmpty()) {
+                Text(
+                    text = "Sahnedeki Karakterler: ${castMentions.joinToString(" • ") { "${it.name} (${it.count})" }}",
+                    color = Color(0xFFD8B4FE),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
             if (topThemes.isNotEmpty()) {
                 Text(

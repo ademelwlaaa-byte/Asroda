@@ -2224,6 +2224,14 @@ fun ChapterSelectionModal(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                            Text(
+                                text = com.example.book.BookSessionResumeHelper.buildResumeSubtitle(bookState, totalPlayable),
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFE9D5FF),
+                                fontSize = 10.5.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
 
