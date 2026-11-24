@@ -130,6 +130,7 @@ class BackupSnapshotManager(
         val customProviderDao = db.customProviderDao()
         val pendingReappraisalDao = db.pendingReappraisalDao()
         val archivedMemoryDao = db.archivedMemoryDao()
+        val lorebookDao = db.lorebookDao()
 
         val bots = botDao.getAllBotsList()
         val allMessages = mutableListOf<MessageEntity>()
@@ -180,6 +181,10 @@ class BackupSnapshotManager(
             rawSettings.sanitizedForBackup()
         }
 
+        val allLorebooks = try { lorebookDao.getAllLorebooks() } catch (_: Exception) { emptyList() }
+        val allLorebookEntries = try { lorebookDao.getAllEntries() } catch (_: Exception) { emptyList() }
+        val allBotLorebookLinks = try { lorebookDao.getAllLinks() } catch (_: Exception) { emptyList() }
+
         return BackupSnapshot(
             version = CURRENT_BACKUP_VERSION,
             exportedAt = System.currentTimeMillis(),
@@ -197,7 +202,10 @@ class BackupSnapshotManager(
             milestones = allMilestones,
             customProviders = exportedCustomProviders,
             pendingReappraisals = allPendingReappraisals,
-            archivedMemories = allArchivedMemories
+            archivedMemories = allArchivedMemories,
+            lorebooks = allLorebooks,
+            lorebookEntries = allLorebookEntries,
+            botLorebookLinks = allBotLorebookLinks
         )
     }
 
@@ -282,6 +290,7 @@ class BackupSnapshotManager(
         val customProviderDao = db.customProviderDao()
         val pendingReappraisalDao = db.pendingReappraisalDao()
         val archivedMemoryDao = db.archivedMemoryDao()
+        val lorebookDao = db.lorebookDao()
 
         val existingSettings = try { settingsDao.getUserSettings() } catch (_: Exception) { null }
         val existingCustomProviders = try { customProviderDao.getAllProviders() } catch (_: Exception) { emptyList() }
@@ -308,6 +317,9 @@ class BackupSnapshotManager(
                     fragmentDao.deleteFragmentsForBot(bid)
                 }
                 botDao.deleteAllBots()
+                lorebookDao.deleteAllLinks()
+                lorebookDao.deleteAllEntries()
+                lorebookDao.deleteAllLorebooks()
             }
 
             for (b in snapshot.bots) botDao.insertOrUpdate(b)
@@ -416,6 +428,15 @@ class BackupSnapshotManager(
                         )
                     }
                 }
+            }
+            if (snapshot.lorebooks.isNotEmpty()) {
+                for (lb in snapshot.lorebooks) lorebookDao.upsertLorebook(lb)
+            }
+            if (snapshot.lorebookEntries.isNotEmpty()) {
+                lorebookDao.upsertEntries(snapshot.lorebookEntries)
+            }
+            if (snapshot.botLorebookLinks.isNotEmpty()) {
+                for (lnk in snapshot.botLorebookLinks) lorebookDao.linkBotToLorebook(lnk)
             }
         }
 

@@ -283,9 +283,12 @@ val MIGRATION_27_28 = object : Migration(27, 28) {
         ImplicitCorrectionLogEntity::class,
         ArchivedMemoryEntity::class,
         RoutineEntity::class,
-        MilestoneEntity::class
+        MilestoneEntity::class,
+        LorebookEntity::class,
+        LorebookEntryEntity::class,
+        BotLorebookLinkEntity::class
     ],
-    version = 48,
+    version = 49,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -317,6 +320,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun archivedMemoryDao(): ArchivedMemoryDao
     abstract fun routineDao(): RoutineDao
     abstract fun milestoneDao(): MilestoneDao
+    abstract fun lorebookDao(): LorebookDao
 
     companion object {
         val MIGRATION_28_29 = object : Migration(28, 29) {
@@ -762,6 +766,50 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_48_49 = object : Migration(48, 49) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `lorebooks` (" +
+                        "`id` TEXT NOT NULL, " +
+                        "`name` TEXT NOT NULL, " +
+                        "`description` TEXT NOT NULL, " +
+                        "`tokenBudget` INTEGER NOT NULL, " +
+                        "`isEnabled` INTEGER NOT NULL, " +
+                        "`createdAt` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`)" +
+                        ")"
+                )
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `lorebook_entries` (" +
+                        "`id` TEXT NOT NULL, " +
+                        "`lorebookId` TEXT NOT NULL, " +
+                        "`title` TEXT NOT NULL, " +
+                        "`keywords` TEXT NOT NULL, " +
+                        "`content` TEXT NOT NULL, " +
+                        "`category` TEXT NOT NULL, " +
+                        "`priority` INTEGER NOT NULL, " +
+                        "`isConstant` INTEGER NOT NULL, " +
+                        "`isEnabled` INTEGER NOT NULL, " +
+                        "`scanDepth` INTEGER NOT NULL, " +
+                        "`updatedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`id`)" +
+                        ")"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_lorebook_entries_lorebookId` ON `lorebook_entries` (`lorebookId`)")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `bot_lorebook_links` (" +
+                        "`botId` TEXT NOT NULL, " +
+                        "`lorebookId` TEXT NOT NULL, " +
+                        "`linkedAt` INTEGER NOT NULL, " +
+                        "PRIMARY KEY(`botId`, `lorebookId`)" +
+                        ")"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bot_lorebook_links_botId` ON `bot_lorebook_links` (`botId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bot_lorebook_links_lorebookId` ON `bot_lorebook_links` (`lorebookId`)")
+            }
+        }
+
         /** Bounded retention across all 7 diagnostic log tables so SQLite never grows unbounded. */
         val DIAGNOSTIC_LOG_TABLES = listOf(
             "prompt_violation_logs",
@@ -849,7 +897,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_44_45,
             MIGRATION_45_46,
             MIGRATION_46_47,
-            MIGRATION_47_48
+            MIGRATION_47_48,
+            MIGRATION_48_49
         )
 
         @Volatile

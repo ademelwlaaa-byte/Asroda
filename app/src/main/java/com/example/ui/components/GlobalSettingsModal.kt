@@ -31,6 +31,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.graphicsLayer
@@ -284,6 +285,8 @@ fun GlobalSettingsModal(
     // ── Tabs & Sub-Sheet Navigation ──
     // 0: API, 1: Sohbet, 2: Ses & Dil, 3: Sistem
     var activeTab by remember { mutableIntStateOf(0) }
+    var settingsSearchQuery by remember { mutableStateOf("") }
+    var showQuickSearchBar by remember { mutableStateOf(false) }
     LaunchedEffect(activeTab) {
         if (activeTab == 2) {
             viewModel.refreshTtsVoices()
@@ -782,6 +785,169 @@ fun GlobalSettingsModal(
                                     softWrap = false,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                            }
+                        }
+                    }
+                }
+
+                // ── 2b. COMPACT SYSTEM HEALTH SUMMARY + QUICK SETTINGS SEARCH ──
+                val primaryApiSummary = activeApiItems.firstOrNull()
+                val activeMainLabel = primaryApiSummary?.model?.ifBlank { primaryApiSummary.name }
+                    ?: if (enablePollinations) "Pollinations ($pollinationsModel)" else "Ücretsiz Yedek"
+                val activeUtilLabel = primaryApiSummary?.let { item ->
+                    item.customEntity?.utilityModel?.takeIf { it.isNotBlank() }
+                        ?: aiUtilityModelsMap[item.key]?.takeIf { it.isNotBlank() }
+                        ?: item.model
+                } ?: "Otomatik"
+                val nowMs = System.currentTimeMillis()
+                val cooledCount = providerHealthMap.values.count { it.cooldownUntilMs > nowMs }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(Color(0x6616092E))
+                            .border(0.85.dp, Color(0x55B794F4), RoundedCornerShape(14.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (cooledCount == 0) Color(0xFF34D399) else Color(0xFFFBBF24))
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Ana: $activeMainLabel",
+                                color = GlobalMorCamColors.PearlText,
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = InterFontFamily,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "Yardımcı: $activeUtilLabel • ${if (cooledCount == 0) "Sağlık Normal" else "$cooledCount beklemede"}",
+                                color = GlobalMorCamColors.LavenderSubtext,
+                                fontSize = 9.5.sp,
+                                fontFamily = InterFontFamily,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .heightIn(min = 34.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (showQuickSearchBar) Color(0xAA7C3AED) else Color(0x55221242))
+                                .border(0.85.dp, Color(0x88C084FC), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    showQuickSearchBar = !showQuickSearchBar
+                                    if (!showQuickSearchBar) settingsSearchQuery = ""
+                                }
+                                .padding(horizontal = 9.dp, vertical = 6.dp)
+                                .testTag("global_settings_quick_search_toggle"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Ayar Ara",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "Ara",
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = InterFontFamily
+                                )
+                            }
+                        }
+                    }
+
+                    if (showQuickSearchBar) {
+                        val quickEntries = remember {
+                            listOf(
+                                Triple("Özel API & Yardımcı Model Ekle", "api custom proxy url yardımcı model test", 0),
+                                Triple("API Katalog & Anahtar Yönetimi", "gemini openai claude groq openrouter nvidia mistral", 0),
+                                Triple("Ücretsiz API'siz Sağlayıcılar", "pollinations llm7 ovh ücretsiz free", 0),
+                                Triple("Yanıt Uzunluğu & Rol Yapma Tarzı", "sohbet nsfw flirty dark rp uzunluk yaratıcılık", 1),
+                                Triple("Sansür Koruması & Akıllı Timeout", "sansür vaaz timeout otomatik yedek fallback", 0),
+                                Triple("Sesli Okuma (TTS) & Nöral Sesler", "ses tts prosodi hız ton dil türkçe emel ahmet", 2),
+                                Triple("Yerel Yedekleme (JSON Dışa/İçe Aktar)", "yedek backup json dışa içe aktar geri yükle", 3),
+                                Triple("Hareketi Azalt & Deneysel Özellikler", "hareket pil performans animasyon bayrak flag sistem", 3)
+                            )
+                        }
+                        val q = settingsSearchQuery.trim().lowercase()
+                        val matches = remember(q) {
+                            if (q.isBlank()) quickEntries.take(4)
+                            else quickEntries.filter { (title, tags, _) ->
+                                title.lowercase().contains(q) || tags.contains(q)
+                            }
+                        }
+                        GlobalGlassInputField(
+                            value = settingsSearchQuery,
+                            onValueChange = { settingsSearchQuery = it },
+                            placeholder = "Ayar ara (örn. yardımcı model, tts, yedek, özel api, hareket)...",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("global_settings_quick_search_input"),
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = null,
+                                    tint = GlobalMorCamColors.BrightViolet,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            matches.forEach { (title, _, targetTab) ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(Color(0x883B1872))
+                                        .border(0.85.dp, Color(0xAAC084FC), RoundedCornerShape(10.dp))
+                                        .clickable {
+                                            activeTab = targetTab
+                                            if (title.startsWith("Özel API")) {
+                                                editingCustomProvider = null
+                                                showCustomApiDialog = true
+                                            } else if (title.startsWith("Hareketi Azalt")) {
+                                                showFeatureFlagsPanel = true
+                                            }
+                                            showQuickSearchBar = false
+                                            settingsSearchQuery = ""
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = title,
+                                        color = GlobalMorCamColors.PearlText,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        fontFamily = InterFontFamily,
+                                        maxLines = 1
+                                    )
+                                }
                             }
                         }
                     }

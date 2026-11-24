@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -102,6 +103,18 @@ enum class CosmicDuelBossId {
             else -> VAELOR_ROOFTOP
         }
     }
+}
+
+enum class CosmicDuelDifficulty(
+    val labelTr: String,
+    val enemyDamageScale: Float,
+    val absorbWindowSec: Float,
+    val perfectParrySec: Float,
+    val attackIntervalScale: Float
+) {
+    STORY("Hikâye Odaklı", 0.62f, 1.05f, 0.36f, 1.25f),
+    BALANCED("Dengeli", 1.0f, 0.78f, 0.28f, 1.0f),
+    COSMIC("Kozmik Meydan", 1.28f, 0.64f, 0.22f, 0.84f)
 }
 
 private data class BossDuelProfile(
@@ -364,6 +377,7 @@ fun CosmicRooftopBossDuelDialog(
     var hitStopTimer by remember { mutableFloatStateOf(0f) }
 
     // Core Duel State
+    var selectedDifficulty by remember { mutableStateOf(CosmicDuelDifficulty.BALANCED) }
     var duelPhase by remember { mutableStateOf(RooftopDuelPhase.READY) }
     var bossHp by remember { mutableIntStateOf(100) }
     var bossPosture by remember { mutableIntStateOf(0) } // 0..100 -> 100 triggers 3.8s CRITICAL STAGGER!
@@ -371,6 +385,13 @@ fun CosmicRooftopBossDuelDialog(
     var bossStunTimer by remember { mutableFloatStateOf(0f) }
     var bossHitFlash by remember { mutableFloatStateOf(0f) }
     var bossLane by remember { mutableIntStateOf(2) }
+
+    // Boss-Specific Signature States
+    var mirrorDecoyLane by remember { mutableStateOf<Int?>(null) }
+    var ultronArmorPlates by remember { mutableIntStateOf(if (bossId == CosmicDuelBossId.ULTRON_PRIME) 3 else 0) }
+    var beamClashActive by remember { mutableStateOf(false) }
+    var beamClashDone by remember { mutableStateOf(false) }
+    var beamClashProgress by remember { mutableFloatStateOf(0.45f) }
 
     var playerLane by remember { mutableIntStateOf(2) }
     var playerHp by remember { mutableIntStateOf(100) }
@@ -381,6 +402,7 @@ fun CosmicRooftopBossDuelDialog(
 
     // Canon Aiden Power States
     var absorbActiveTimer by remember { mutableFloatStateOf(0f) }
+    var perfectParryTimer by remember { mutableFloatStateOf(0f) }
     var absorbCooldown by remember { mutableFloatStateOf(0f) }
     var blinkCooldown by remember { mutableFloatStateOf(0f) }
     var reflexSlowTimer by remember { mutableFloatStateOf(0f) }
@@ -389,6 +411,7 @@ fun CosmicRooftopBossDuelDialog(
     var redEyeCharge by remember { mutableIntStateOf(30) }
     var redEyeChainTimer by remember { mutableFloatStateOf(0f) }
     var supportCharge by remember { mutableIntStateOf(60) }
+    var resonanceCharge by remember { mutableIntStateOf(0) } // 0..100 -> Cosmic Resonance Super Ultimate!
     var supportIndex by remember { mutableIntStateOf(0) }
     var supportFxTimer by remember { mutableFloatStateOf(0f) }
     var supportFxHero by remember { mutableStateOf("STEVE") }
@@ -396,6 +419,7 @@ fun CosmicRooftopBossDuelDialog(
     var score by remember { mutableIntStateOf(0) }
     var combo by remember { mutableIntStateOf(1) }
     var maxCombo by remember { mutableIntStateOf(1) }
+    var perfectParryCount by remember { mutableIntStateOf(0) }
     var cameraShake by remember { mutableFloatStateOf(0f) }
     var rainTime by remember { mutableFloatStateOf(0f) }
 
@@ -520,9 +544,49 @@ fun CosmicRooftopBossDuelDialog(
 
         if (postureAdd > 0) addBossPosture(postureAdd)
 
+        // Ultron Prime Breakable Vibranium Armor Plates
+        if (bossId == CosmicDuelBossId.ULTRON_PRIME && ultronArmorPlates > 0) {
+            val expectedPlates = when {
+                bossHp > 70 -> 3
+                bossHp > 42 -> 2
+                bossHp > 20 -> 1
+                else -> 0
+            }
+            if (expectedPlates < ultronArmorPlates || (bypassGuard && rawAmount >= 18)) {
+                ultronArmorPlates = minOf(ultronArmorPlates - 1, expectedPlates).coerceAtLeast(0)
+                hitStopTimer = 0.06f
+                cameraShake = 0.85f
+                shockRings.add(ShockRingFx(LANE_X_FRACS[bossLane], 0.24f, Color(0xFFFDE047), 0f, 0.54f))
+                spawnSparks(LANE_X_FRACS[bossLane], 0.24f, Color(0xFFBAE6FD), 18)
+                spawnFloatText(LANE_X_FRACS[bossLane], 0.14f, "✦ VİBRANYUM ZIRH PARÇALANDI!", Color(0xFFFDE047))
+                soundEngine.play(CosmicSfx.CRYSTAL_SHATTER, volume = 0.92f, affectedByTimeSlow = false)
+            }
+        }
+
+        // Ultron Prime Phase 3 Interactive FINAL BEAM CLASH at <= 18% HP!
+        if (bossId == CosmicDuelBossId.ULTRON_PRIME && !beamClashDone && !beamClashActive && bossHp in 1..18) {
+            beamClashActive = true
+            beamClashProgress = 0.44f
+            telegraphs.clear()
+            sweeps.clear()
+            projectiles.clear()
+            drones.clear()
+            cameraShake = 0.9f
+            speakComms(
+                "VISION",
+                "AVENGERS · FİNAL IŞIN ÇARPIŞMASI!",
+                "Hızlı dokun Aiden! Vision, Thor, Wanda ve Tony seninle birlikte Ultron'un çekirdeğini yarıyor!",
+                "voice_ultron_beam_clash"
+            )
+            return
+        }
+
         if (!phase2Announced && bossHp in 31..65) {
             phase2Announced = true
             bossGuardUp = true
+            if (bossId == CosmicDuelBossId.MIRROR_ZERO) {
+                mirrorDecoyLane = if (bossLane <= 2) 4 else 0
+            }
             spawnSparks(LANE_X_FRACS[bossLane], 0.24f, Color(0xFFF43F5E), 18)
             speakComms(
                 profile.p2Speaker,
@@ -534,6 +598,7 @@ fun CosmicRooftopBossDuelDialog(
             phase3Announced = true
             bossGuardUp = false
             supportCharge = 100
+            resonanceCharge = (resonanceCharge + 35).coerceAtMost(100)
             spawnSparks(LANE_X_FRACS[bossLane], 0.24f, Color(0xFFC084FC), 18)
             speakComms(
                 profile.p3Speaker,
@@ -546,6 +611,8 @@ fun CosmicRooftopBossDuelDialog(
             sweeps.clear()
             drones.clear()
             projectiles.clear()
+            beamClashActive = false
+            mirrorDecoyLane = null
             victoryDelayTimer = 1.45f
             hitStopTimer = 0.08f
             cameraShake = 1.0f
@@ -571,13 +638,14 @@ fun CosmicRooftopBossDuelDialog(
     }
 
     fun damagePlayer(amount: Int) {
-        if (playerInvulnTimer > 0f || victoryDelayTimer > 0f) return
-        playerHp = (playerHp - amount).coerceAtLeast(0)
+        if (playerInvulnTimer > 0f || victoryDelayTimer > 0f || beamClashActive) return
+        val scaledDmg = (amount * selectedDifficulty.enemyDamageScale).roundToInt().coerceAtLeast(4)
+        playerHp = (playerHp - scaledDmg).coerceAtLeast(0)
         playerHitFlash = 1f
         playerInvulnTimer = 1.15f
         cameraShake = 0.72f
         combo = 1
-        spawnFloatText(LANE_X_FRACS[playerLane], 0.68f, "-$amount CAN", Color(0xFFF87171))
+        spawnFloatText(LANE_X_FRACS[playerLane], 0.68f, "-$scaledDmg CAN", Color(0xFFF87171))
         soundEngine.play(CosmicSfx.PLAYER_SHIELD_HIT, volume = 0.90f, affectedByTimeSlow = false)
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         if (playerHp <= 0) {
@@ -602,7 +670,8 @@ fun CosmicRooftopBossDuelDialog(
         val escapingTelegraph = telegraphs.any { it.lane == playerLane && it.timer <= 0.44f }
         val escapingSweep = sweeps.any { abs(it.xFrac - playerXFrac) < 0.14f }
 
-        blinkGhosts.add(BlinkGhost(playerLane, 0f, Color(0xFF38BDF8)))
+        val departedLane = playerLane
+        blinkGhosts.add(BlinkGhost(departedLane, 0f, Color(0xFF38BDF8)))
         shockRings.add(ShockRingFx(playerXFrac, 0.78f, Color(0xFF38BDF8), 0f, 0.22f))
 
         playerLane = clamped
@@ -613,6 +682,13 @@ fun CosmicRooftopBossDuelDialog(
         soundEngine.play(CosmicSfx.DASH_BLINK, volume = 0.78f, pan = (LANE_X_FRACS[clamped] - 0.5f) * 1.4f, affectedByTimeSlow = false)
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
 
+        // Mirror Zero signature mechanic: Echo Shadow Strike locks onto your departed lane!
+        if (bossId == CosmicDuelBossId.MIRROR_ZERO && bossHp <= 70 && bossStunTimer <= 0f && telegraphs.size < 3 && Random.nextFloat() < 0.42f) {
+            nextId++
+            telegraphs.add(RooftopTelegraphZone(nextId, departedLane, 0.95f, 0.95f))
+            spawnFloatText(LANE_X_FRACS[departedLane], 0.62f, "⚡ ZAMAN YANKISI!", Color(0xFF38BDF8))
+        }
+
         if (escapingTelegraph || escapingSweep) {
             reflexSlowTimer = 1.55f
             soundEngine.setTimeSlowActive(true)
@@ -620,8 +696,9 @@ fun CosmicRooftopBossDuelDialog(
             whiteEyeCharge = (whiteEyeCharge + 18).coerceAtMost(100)
             redEyeCharge = (redEyeCharge + 18).coerceAtMost(100)
             supportCharge = (supportCharge + 14).coerceAtMost(100)
+            resonanceCharge = (resonanceCharge + 22).coerceAtMost(100)
             addBossPosture(22)
-            combo = (combo + 1).coerceAtMost(6)
+            combo = (combo + 1).coerceAtMost(8)
             if (combo > maxCombo) maxCombo = combo
             score += 200 * combo
             spawnFloatText(LANE_X_FRACS[clamped], 0.65f, "⚡ KUSURSUZ IŞINLANMA!", Color(0xFF7DD3FC))
@@ -661,14 +738,41 @@ fun CosmicRooftopBossDuelDialog(
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
     }
 
-    // Drift Form Cosmic Energy Absorption / Parry
+    // Drift Form Cosmic Energy Absorption / True Perfect Parry
     fun triggerAbsorbParry() {
-        if (duelPhase != RooftopDuelPhase.PLAYING || isPaused || absorbCooldown > 0f || victoryDelayTimer > 0f) return
-        absorbActiveTimer = 0.75f
-        absorbCooldown = 1.65f
-        shockRings.add(ShockRingFx(LANE_X_FRACS[playerLane], 0.78f, Color(0xFF38BDF8), 0f, 0.28f))
+        if (duelPhase != RooftopDuelPhase.PLAYING || isPaused || absorbCooldown > 0f || victoryDelayTimer > 0f || beamClashActive) return
+        absorbActiveTimer = selectedDifficulty.absorbWindowSec
+        perfectParryTimer = selectedDifficulty.perfectParrySec
+        absorbCooldown = 1.55f
+        shockRings.add(ShockRingFx(LANE_X_FRACS[playerLane], 0.78f, Color(0xFF38BDF8), 0f, 0.30f))
         soundEngine.play(CosmicSfx.COSMIC_BEAM, volume = 0.58f, affectedByTimeSlow = false)
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+    }
+
+    // Cosmic Resonance Ultimate Finisher (100% Resonance Bar!)
+    fun triggerCosmicResonanceUltimate() {
+        if (duelPhase != RooftopDuelPhase.PLAYING || isPaused || resonanceCharge < 100 || victoryDelayTimer > 0f || beamClashActive) return
+        resonanceCharge = 0
+        hitStopTimer = 0.095f
+        playerInvulnTimer = maxOf(playerInvulnTimer, 1.6f)
+        cameraShake = 1.0f
+        bossGuardUp = false
+        mirrorDecoyLane = null
+        telegraphs.clear()
+        sweeps.clear()
+        drones.clear()
+        listOf(0, 1, 2, 3, 4).forEachIndexed { idx, ln ->
+            blinkGhosts.add(BlinkGhost(ln, idx * 0.08f, Color(0xFFFDE047)))
+            shockRings.add(ShockRingFx(LANE_X_FRACS[ln], 0.50f, Color(0xFF38BDF8), idx * 0.06f, 0.55f))
+        }
+        shockRings.add(ShockRingFx(LANE_X_FRACS[bossLane], 0.24f, Color(0xFFFDE047), 0f, 0.95f))
+        spawnSparks(LANE_X_FRACS[bossLane], 0.24f, Color(0xFFFDE047), 28)
+        soundEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 1.0f, affectedByTimeSlow = false)
+        soundEngine.play(CosmicSfx.AVENGERS_SUPPORT, volume = 0.9f, affectedByTimeSlow = false)
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        spawnFloatText(LANE_X_FRACS[bossLane], 0.14f, "✦ KOZMİK REZONANS SÜPER BİTİRİCİ!", Color(0xFFFDE047))
+        speakComms("AIDEN", "AIDEN BLACKWOOD · KOZMİK REZONANS", "Mavi enerji, Beyaz Göz ve Kırmızı Göz — tek bir irade!", "voice_resonance_ultimate")
+        damageBoss(28, postureAdd = 65, bypassGuard = true)
     }
 
     // White Eye Psychic Stun (instant Posture Break + destroys drones!)
@@ -812,6 +916,11 @@ fun CosmicRooftopBossDuelDialog(
         bossStunTimer = 0f
         bossHitFlash = 0f
         bossLane = 2
+        mirrorDecoyLane = null
+        ultronArmorPlates = if (bossId == CosmicDuelBossId.ULTRON_PRIME) 3 else 0
+        beamClashActive = false
+        beamClashDone = false
+        beamClashProgress = 0.45f
 
         playerLane = 2
         playerHp = 100
@@ -821,6 +930,7 @@ fun CosmicRooftopBossDuelDialog(
         strikeComboStep = 0
 
         absorbActiveTimer = 0f
+        perfectParryTimer = 0f
         absorbCooldown = 0f
         blinkCooldown = 0f
         reflexSlowTimer = 0f
@@ -829,12 +939,14 @@ fun CosmicRooftopBossDuelDialog(
         redEyeCharge = 35
         redEyeChainTimer = 0f
         supportCharge = 65
+        resonanceCharge = 0
         supportIndex = 0
         supportFxTimer = 0f
 
         score = 0
         combo = 1
         maxCombo = 1
+        perfectParryCount = 0
         cameraShake = 0f
         phase2Announced = false
         phase3Announced = false
@@ -937,6 +1049,20 @@ fun CosmicRooftopBossDuelDialog(
                     return@withFrameNanos
                 }
 
+                // Ultron Prime Interactive Final Beam Clash Loop
+                if (beamClashActive) {
+                    val pushBackSpeed = 0.24f * selectedDifficulty.enemyDamageScale
+                    beamClashProgress = (beamClashProgress - rawDt * pushBackSpeed).coerceIn(0.08f, 1.0f)
+                    cameraShake = 0.35f
+                    if (beamClashProgress >= 1.0f) {
+                        beamClashActive = false
+                        beamClashDone = true
+                        score += 900
+                        damageBoss(bossHp + 20, postureAdd = 100, bypassGuard = true)
+                    }
+                    return@withFrameNanos
+                }
+
                 // Micro Hit-Stop crunch on heavy blows & parries (authentic AAA action feel!)
                 if (hitStopTimer > 0f) {
                     hitStopTimer = (hitStopTimer - rawDt).coerceAtLeast(0f)
@@ -945,6 +1071,7 @@ fun CosmicRooftopBossDuelDialog(
 
                 if (commsTimer > 0f) { commsTimer -= rawDt; if (commsTimer <= 0f) activeComms = null }
                 if (absorbActiveTimer > 0f) absorbActiveTimer = (absorbActiveTimer - rawDt).coerceAtLeast(0f)
+                if (perfectParryTimer > 0f) perfectParryTimer = (perfectParryTimer - rawDt).coerceAtLeast(0f)
                 if (absorbCooldown > 0f) absorbCooldown = (absorbCooldown - rawDt).coerceAtLeast(0f)
                 if (blinkCooldown > 0f) blinkCooldown = (blinkCooldown - rawDt).coerceAtLeast(0f)
                 if (playerInvulnTimer > 0f) playerInvulnTimer = (playerInvulnTimer - rawDt).coerceAtLeast(0f)
@@ -1022,11 +1149,12 @@ fun CosmicRooftopBossDuelDialog(
 
                     bossAttackTimer -= worldDt
                     if (bossAttackTimer <= 0f) {
-                        bossAttackTimer = when {
+                        val baseInterval = when {
                             bossHp <= 30 -> 1.25f
                             bossHp <= 65 -> 1.55f
                             else -> 1.85f
                         }
+                        bossAttackTimer = baseInterval * selectedDifficulty.attackIntervalScale
                         val roll = Random.nextFloat()
                         when {
                             // Pattern 1: Absorbable Energy Orb (Blue-Silver -> Parry to heal + counter!)
@@ -1050,6 +1178,16 @@ fun CosmicRooftopBossDuelDialog(
                                     )
                                 )
                                 soundEngine.play(CosmicSfx.LASER_FIRE, volume = 0.68f)
+                            }
+                            // Vaelor Signature Pattern: Synchronized Cross-Lane Cage!
+                            bossId == CosmicDuelBossId.VAELOR_ROOFTOP && bossHp <= 65 && roll < 0.84f -> {
+                                val warn = if (bossHp <= 30) 1.05f else 1.25f
+                                val cageLanes = if (playerLane % 2 == 0) listOf(0, 2, 4) else listOf(1, 3)
+                                cageLanes.forEach { ln ->
+                                    nextId++
+                                    telegraphs.add(RooftopTelegraphZone(nextId, ln, warn, warn))
+                                }
+                                soundEngine.play(CosmicSfx.LASER_WARNING, volume = 0.64f)
                             }
                             // Pattern 3: Ground Slam Crimson Telegraph Rings (Blink out!)
                             else -> {
@@ -1109,8 +1247,15 @@ fun CosmicRooftopBossDuelDialog(
                                 score += 220 * combo
                                 redEyeCharge = (redEyeCharge + 20).coerceAtMost(100)
                                 whiteEyeCharge = (whiteEyeCharge + 15).coerceAtMost(100)
+                                resonanceCharge = (resonanceCharge + 16).coerceAtMost(100)
                                 spawnSparks(LANE_X_FRACS[targetDr.lane], 0.46f, Color(0xFF34D399), 15)
-                                spawnFloatText(LANE_X_FRACS[targetDr.lane], 0.42f, profile.droneLabel, Color(0xFF34D399))
+                                if (bossId == CosmicDuelBossId.VAELOR_ROOFTOP) {
+                                    bossGuardUp = false
+                                    addBossPosture(32)
+                                    spawnFloatText(LANE_X_FRACS[targetDr.lane], 0.42f, "✦ MÜHÜR KRİSTALİ KIRILDI!", Color(0xFFFDE047))
+                                } else {
+                                    spawnFloatText(LANE_X_FRACS[targetDr.lane], 0.42f, profile.droneLabel, Color(0xFF34D399))
+                                }
                                 soundEngine.play(CosmicSfx.CRYSTAL_SHATTER, volume = 0.75f)
                             }
                             continue
@@ -1123,6 +1268,12 @@ fun CosmicRooftopBossDuelDialog(
                             whiteEyeCharge = (whiteEyeCharge + 6).coerceAtMost(100)
                             redEyeCharge = (redEyeCharge + 7).coerceAtMost(100)
                             supportCharge = (supportCharge + 6).coerceAtMost(100)
+                            resonanceCharge = (resonanceCharge + if (p.isSuperCounter) 16 else 4).coerceAtMost(100)
+                            if (bossId == CosmicDuelBossId.MIRROR_ZERO && mirrorDecoyLane != null && p.lane == bossLane) {
+                                mirrorDecoyLane = null
+                                addBossPosture(18)
+                                spawnFloatText(LANE_X_FRACS[bossLane], 0.16f, "✦ AYNA KLONU KIRILDI!", Color(0xFF7DD3FC))
+                            }
                             damageBoss(p.damage, postureAdd = if (p.isSuperCounter) 35 else if (p.isHeavyFinisher) 14 else 6, bypassGuard = p.isSuperCounter)
                         }
                     } else {
@@ -1131,24 +1282,54 @@ fun CosmicRooftopBossDuelDialog(
                             deadProj.add(p)
                             if (p.lane == playerLane) {
                                 if (absorbActiveTimer > 0f) {
-                                    // CANON DRIFT ABSORPTION + BLUE TISSUE HEALING + SUPER COUNTER!
-                                    hitStopTimer = 0.048f
-                                    playerHp = (playerHp + 10).coerceAtMost(100)
-                                    redEyeCharge = (redEyeCharge + 25).coerceAtMost(100)
-                                    whiteEyeCharge = (whiteEyeCharge + 22).coerceAtMost(100)
-                                    supportCharge = (supportCharge + 18).coerceAtMost(100)
-                                    combo = (combo + 1).coerceAtMost(6)
+                                    val isPerfectParry = perfectParryTimer > 0f
+                                    // CANON DRIFT ABSORPTION + PERFECT PARRY x2 SUPER COUNTER!
+                                    hitStopTimer = if (isPerfectParry) 0.09f else 0.048f
+                                    if (isPerfectParry) {
+                                        perfectParryCount++
+                                        reflexSlowTimer = maxOf(reflexSlowTimer, 1.25f)
+                                        soundEngine.setTimeSlowActive(true)
+                                        soundEngine.play(CosmicSfx.TIME_SLOW_ENTER, volume = 0.85f, affectedByTimeSlow = false)
+                                    }
+                                    val healAmt = if (isPerfectParry) 14 else 10
+                                    playerHp = (playerHp + healAmt).coerceAtMost(100)
+                                    redEyeCharge = (redEyeCharge + if (isPerfectParry) 32 else 25).coerceAtMost(100)
+                                    whiteEyeCharge = (whiteEyeCharge + if (isPerfectParry) 30 else 22).coerceAtMost(100)
+                                    supportCharge = (supportCharge + if (isPerfectParry) 24 else 18).coerceAtMost(100)
+                                    resonanceCharge = (resonanceCharge + if (isPerfectParry) 30 else 16).coerceAtMost(100)
+                                    combo = (combo + if (isPerfectParry) 2 else 1).coerceAtMost(8)
                                     if (combo > maxCombo) maxCombo = combo
-                                    score += 240 * combo
-                                    shockRings.add(ShockRingFx(LANE_X_FRACS[playerLane], 0.78f, Color(0xFF38BDF8), 0f, 0.44f))
-                                    spawnSparks(LANE_X_FRACS[playerLane], 0.78f, Color(0xFF34D399), 18)
-                                    spawnFloatText(LANE_X_FRACS[playerLane], 0.66f, "🛡 EMİLDİ! +10 CAN", Color(0xFF34D399))
-                                    soundEngine.play(CosmicSfx.SPARK_COLLECT, volume = 0.85f, affectedByTimeSlow = false)
-                                    soundEngine.play(CosmicSfx.TRIPLE_BURST, volume = 0.82f, affectedByTimeSlow = false)
+                                    score += (if (isPerfectParry) 420 else 240) * combo
+                                    shockRings.add(
+                                        ShockRingFx(
+                                            LANE_X_FRACS[playerLane],
+                                            0.78f,
+                                            if (isPerfectParry) Color(0xFFFDE047) else Color(0xFF38BDF8),
+                                            0f,
+                                            if (isPerfectParry) 0.62f else 0.44f
+                                        )
+                                    )
+                                    spawnSparks(LANE_X_FRACS[playerLane], 0.78f, if (isPerfectParry) Color(0xFFFDE047) else Color(0xFF34D399), if (isPerfectParry) 24 else 18)
+                                    spawnFloatText(
+                                        LANE_X_FRACS[playerLane],
+                                        0.66f,
+                                        if (isPerfectParry) "✦ MÜKEMMEL EMİLİM! x2 +$healAmt CAN" else "🛡 EMİLDİ! +$healAmt CAN",
+                                        if (isPerfectParry) Color(0xFFFDE047) else Color(0xFF34D399)
+                                    )
+                                    soundEngine.play(CosmicSfx.SPARK_COLLECT, volume = 0.90f, affectedByTimeSlow = false)
+                                    soundEngine.play(CosmicSfx.TRIPLE_BURST, volume = 0.88f, affectedByTimeSlow = false)
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     nextId++
                                     projectiles.add(
-                                        RooftopProjectile(nextId, fromPlayer = true, lane = playerLane, progress = 0.16f, color = Color(0xFFBAE6FD), damage = 14, isSuperCounter = true)
+                                        RooftopProjectile(
+                                            nextId,
+                                            fromPlayer = true,
+                                            lane = playerLane,
+                                            progress = 0.16f,
+                                            color = if (isPerfectParry) Color(0xFFFDE047) else Color(0xFFBAE6FD),
+                                            damage = if (isPerfectParry) 22 else 14,
+                                            isSuperCounter = true
+                                        )
                                     )
                                 } else {
                                     damagePlayer(p.damage)
@@ -1368,6 +1549,50 @@ fun CosmicRooftopBossDuelDialog(
                             fontSize = 10.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
+                    }
+
+                    // Boss-Specific Telemetry Strip (Ultron Vibranium Armor / Mirror Decoy / Cosmic Resonance Ultimate)
+                    if (bossId == CosmicDuelBossId.ULTRON_PRIME || mirrorDecoyLane != null || resonanceCharge >= 20) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (bossId == CosmicDuelBossId.ULTRON_PRIME) {
+                                Text(
+                                    text = "🛡 ZIRH: ${"◆".repeat(ultronArmorPlates)}${"◇".repeat((3 - ultronArmorPlates).coerceAtLeast(0))}",
+                                    fontFamily = InterFontFamily,
+                                    color = if (ultronArmorPlates > 0) Color(0xFFFCA5A5) else Color(0xFF6EE7B7),
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            } else if (mirrorDecoyLane != null) {
+                                Text(
+                                    text = "✦ AYNA KLONU AKTİF · GERÇEK SIFIR'I VUR!",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFF7DD3FC),
+                                    fontSize = 8.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("REZONANS", fontFamily = InterFontFamily, color = Color(0xFFFDE047), fontSize = 8.sp, fontWeight = FontWeight.ExtraBold)
+                                Box(modifier = Modifier.weight(1f).height(5.dp).clip(RoundedCornerShape(50)).background(Color(0xBB1E1B3A))) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth((resonanceCharge / 100f).coerceIn(0f, 1f))
+                                            .fillMaxHeight()
+                                            .clip(RoundedCornerShape(50))
+                                            .background(Brush.horizontalGradient(listOf(Color(0xFF38BDF8), Color(0xFFFDE047), Color(0xFFF43F5E))))
+                                    )
+                                }
+                                Text("%$resonanceCharge", fontFamily = InterFontFamily, color = Color(0xFFFDE047), fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
 
@@ -1853,6 +2078,28 @@ fun CosmicRooftopBossDuelDialog(
                             )
                         }
 
+                        if (resonanceCharge >= 100) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Brush.horizontalGradient(listOf(Color(0xEE2563EB), Color(0xEED97706), Color(0xEEDC2626))))
+                                    .border(1.4.dp, Color(0xFFFDE047), RoundedCornerShape(12.dp))
+                                    .clickable { triggerCosmicResonanceUltimate() }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "✦ KOZMİK REZONANS HAZIR · SÜPER BİTİRİCİ ATEŞLE! ✦",
+                                    fontFamily = InterFontFamily,
+                                    color = Color.White,
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                        }
+
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             DuelPowerBtn(
                                 title = "⚡ DARBE",
@@ -1900,6 +2147,82 @@ fun CosmicRooftopBossDuelDialog(
                                 modifier = Modifier.weight(1f)
                             ) { triggerRedEyeFinisher() }
                         }
+                    }
+                }
+            }
+
+            // ULTRON PRIME PHASE 3 INTERACTIVE FINAL BEAM CLASH OVERLAY!
+            if (duelPhase == RooftopDuelPhase.PLAYING && beamClashActive) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xCC050312))
+                        .pointerInput(Unit) {
+                            detectTapGestures {
+                                beamClashProgress = (beamClashProgress + 0.085f).coerceAtMost(1f)
+                                cameraShake = 0.65f
+                                soundEngine.play(CosmicSfx.COSMIC_BEAM, volume = 0.72f, affectedByTimeSlow = false)
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth(0.90f)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xF00B0622))
+                            .border(1.6.dp, Color(0xFFFDE047), RoundedCornerShape(24.dp))
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Text(
+                            text = "✦ FİNAL IŞIN ÇARPIŞMASI · SOKOVİA ✦",
+                            fontFamily = DisplaySerifFontFamily,
+                            color = Color(0xFFFDE047),
+                            fontSize = 16.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(
+                            text = "Vision, Thor, Wanda ve Tony seninle! Ultron Prime'ın vibranyum ışınını kırmak için EKRANA HIZLA DOKUN!",
+                            fontFamily = InterFontFamily,
+                            color = Color(0xFFE2D9F8),
+                            fontSize = 12.sp,
+                            textAlign = TextAlign.Center
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(26.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0xFF991B1B))
+                                .border(1.4.dp, Color(0xFFFDE047), RoundedCornerShape(50))
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(beamClashProgress.coerceIn(0.05f, 1f))
+                                    .fillMaxHeight()
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Brush.horizontalGradient(listOf(Color(0xFF38BDF8), Color(0xFFFDE047), Color.White)))
+                            )
+                            Text(
+                                text = "AIDEN & AVENGERS %${(beamClashProgress * 100).toInt()} ⚔ ULTRON",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFF04030D),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.align(Alignment.Center)
+                            )
+                        }
+                        Text(
+                            text = "⚡ HIZLI DOKUN! ⚡",
+                            fontFamily = DisplaySerifFontFamily,
+                            color = Color(0xFF7DD3FC),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
             }
@@ -2026,6 +2349,42 @@ fun CosmicRooftopBossDuelDialog(
                             lineHeight = 17.sp,
                             textAlign = TextAlign.Center
                         )
+
+                        if (duelPhase != RooftopDuelPhase.VICTORY) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                CosmicDuelDifficulty.entries.forEach { diff ->
+                                    val selected = selectedDifficulty == diff
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 40.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (selected) Color(0xCC2563EB) else Color(0x66160C30))
+                                            .border(
+                                                1.dp,
+                                                if (selected) Color(0xFFBAE6FD) else Color(0x44FFFFFF),
+                                                RoundedCornerShape(12.dp)
+                                            )
+                                            .clickable { selectedDifficulty = diff }
+                                            .padding(horizontal = 4.dp, vertical = 6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = diff.labelTr,
+                                            fontFamily = InterFontFamily,
+                                            color = if (selected) Color.White else Color(0xFFCBD5E1),
+                                            fontSize = 9.5.sp,
+                                            fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
 
                         Box(
                             modifier = Modifier

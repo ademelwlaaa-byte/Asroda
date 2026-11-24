@@ -153,6 +153,12 @@ class CastMemberManager(
         val (canonicalName, titleRole) = CastDetectorEngine.extractCanonicalNameAndRole(rawClean)
         val cleanName = CastDetectorEngine.normalizeTurkishEntityName(canonicalName.ifBlank { rawClean })
         if (cleanName.length < 2) return@withContext
+        // Hard gate: never register unnamed/generic background extras (e.g., "zorba çocuk", "garson", "school bully")
+        if (CastDetectorEngine.isGenericBackgroundExtra(rawClean, role) ||
+            CastDetectorEngine.isGenericBackgroundExtra(cleanName, titleRole ?: role)
+        ) {
+            return@withContext
+        }
 
         val targetBot = bot ?: botDao.getBotById(botId)
         if (targetBot != null && isMainOrUserCharacter(cleanName, targetBot)) return@withContext
@@ -264,6 +270,7 @@ class CastMemberManager(
             } else {
                 existing.currentAge
             }
+            val autoConfirmedOnRecurrence = existing.isAutoAdded && existing.pendingUserConfirmation && newCount >= 2
             castMemberDao.updateCastMember(
                 existing.copy(
                     role = if (existing.role.isBlank() || existing.role == "Yan Karakter") resolvedRole else existing.role,
@@ -274,6 +281,7 @@ class CastMemberManager(
                     affectionScore = updatedAffection,
                     importanceScore = promotedImportance,
                     appearanceCount = newCount,
+                    pendingUserConfirmation = if (autoConfirmedOnRecurrence) false else existing.pendingUserConfirmation,
                     multiRoleJson = mergedMultiRole,
                     lastRoleEvaluationIndex = currentMessageIndex?.let { maxOf(existing.lastRoleEvaluationIndex, it) } ?: existing.lastRoleEvaluationIndex,
                     lastSceneContext = if (cueSentence.isNotBlank()) cueSentence.take(200) else existing.lastSceneContext,

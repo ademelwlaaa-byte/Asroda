@@ -1461,6 +1461,8 @@ internal fun CustomApiEditorDialog(
     var showKey by remember { mutableStateOf(false) }
     var isTesting by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<EmochiRepository.ProviderTestResult?>(null) }
+    var isTestingUtility by remember { mutableStateOf(false) }
+    var utilityTestResult by remember { mutableStateOf<EmochiRepository.ProviderTestResult?>(null) }
     var isFetching by remember { mutableStateOf(false) }
     var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var fetchInfo by remember { mutableStateOf<String?>(null) }
@@ -1913,11 +1915,85 @@ internal fun CustomApiEditorDialog(
                 // Optional Utility (Fast/Cheap) Model for RAG, Memory Curator & Audits
                 GlobalGlassInputField(
                     value = utilityModel,
-                    onValueChange = { utilityModel = it },
+                    onValueChange = { utilityModel = it; utilityTestResult = null },
                     label = if (utilityModel.isNotBlank()) "Küçük / Yardımcı Model (Manuel Seçili)" else "Küçük / Yardımcı Model (İsteğe Bağlı)",
                     placeholder = "Boş bırakılırsa otomatik küçük model seçilir",
                     modifier = Modifier.testTag("custom_api_utility_model_input")
                 )
+
+                val effectiveUtilityTarget = utilityModel.trim().ifBlank { modelName.trim() }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x550F2B28))
+                            .border(0.95.dp, Color(0x8834D399), RoundedCornerShape(12.dp))
+                            .clickable(enabled = !isTestingUtility && baseUrl.trim().length > 8 && effectiveUtilityTarget.isNotBlank()) {
+                                scope.launch {
+                                    isTestingUtility = true
+                                    utilityTestResult = onTestConnection(
+                                        baseUrl.trim(),
+                                        apiKey.trim(),
+                                        effectiveUtilityTarget,
+                                        apiFormat
+                                    )
+                                    isTestingUtility = false
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                            .testTag("custom_api_test_utility_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            if (isTestingUtility) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFF6EE7B7),
+                                    strokeWidth = 1.6.dp,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Bolt,
+                                    contentDescription = "Yardımcı Modeli Test Et",
+                                    tint = Color(0xFF6EE7B7),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                            Text(
+                                text = "Yardımcı Modeli Test Et",
+                                color = Color(0xFFD1FAE5),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                fontFamily = InterFontFamily
+                            )
+                        }
+                    }
+
+                    utilityTestResult?.let { uRes ->
+                        Text(
+                            text = if (uRes.isSuccess) {
+                                "✓ ${uRes.latencyMs}ms • $effectiveUtilityTarget"
+                            } else {
+                                "✕ ${uRes.errorMessage.ifBlank { "Bağlantı başarısız" }.take(72)}"
+                            },
+                            color = if (uRes.isSuccess) Color(0xFF86EFAC) else Color(0xFFFCA5A5),
+                            fontSize = 10.8.sp,
+                            fontWeight = FontWeight.Medium,
+                            fontFamily = InterFontFamily,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
 
                 val recommendedUtil = remember(fetchedModels, modelName) {
                     com.example.util.CustomApiModelRecommendationHelper.pickFastestUtilityModel(

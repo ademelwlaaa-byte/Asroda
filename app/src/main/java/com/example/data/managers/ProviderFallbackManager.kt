@@ -1318,6 +1318,7 @@ class ProviderFallbackManager(
 
             val rawUtilityModel = EmochiRepository.resolveUtilityModel(providerKey, settings, customEntity)
             val utilityModel = if (customEntity != null) rawUtilityModel.trim() else EmochiRepository.sanitizeModelName(rawUtilityModel)
+            val mainModelFallback = resolveMainModelForUtilityFallback(providerKey, settings, customEntity)
 
             val startMs = System.currentTimeMillis()
             try {
@@ -1332,44 +1333,133 @@ class ProviderFallbackManager(
                     maxTokens = maxTokens
                 ) ?: continue
 
+                var needsMainModelRetry = false
                 utilityClient.newCall(request).awaitResponse().use { resp ->
                     val rawBody = resp.body?.string().orEmpty()
                     val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
                     if (!resp.isSuccessful) {
-                        val retryAfterSec = resp.header("Retry-After")?.trim()?.toLongOrNull()
-                        val failureType = ProviderHealthTracker.classifyFailure(
-                            httpCode = resp.code,
-                            errorMessage = rawBody.take(160)
-                        )
-                        ProviderHealthTracker.recordFailure(
-                            providerKey = providerKey,
-                            failureType = failureType,
-                            errorMessage = "HTTP ${resp.code}: ${rawBody.take(160)}",
-                            retryAfterSeconds = retryAfterSec
-                        )
-                        throw IllegalStateException("Utility HTTP ${resp.code} ($providerKey): ${rawBody.take(160)}")
+                        if (isUtilityModelMismatchError(resp.code, rawBody)) {
+                            // Utility-only model mismatch MUST NOT poison main chat ProviderHealthTracker cooldown!
+                            val utilSource = com.example.util.AppFeatureFlags.getAiUtilityModelSource(providerKey)
+                            if (utilSource != "manual") {
+                                com.example.util.AppFeatureFlags.clearAiUtilityModel(providerKey)
+                            }
+                            if (mainModelFallback.isNotBlank() && !mainModelFallback.equals(utilityModel, ignoreCase = true)) {
+                                needsMainModelRetry = true
+                            } else {
+                                throw IllegalStateException("Utility model mismatch HTTP ${resp.code} ($providerKey/$utilityModel): ${rawBody.take(160)}")
+                            }
+                        } else {
+                            val retryAfterSec = resp.header("Retry-After")?.trim()?.toLongOrNull()
+                            val failureType = ProviderHealthTracker.classifyFailure(
+                                httpCode = resp.code,
+                                errorMessage = rawBody.take(160)
+                            )
+                            ProviderHealthTracker.recordFailure(
+                                providerKey = providerKey,
+                                failureType = failureType,
+                                errorMessage = "HTTP ${resp.code}: ${rawBody.take(160)}",
+                                retryAfterSeconds = retryAfterSec
+                            )
+                            throw IllegalStateException("Utility HTTP ${resp.code} ($providerKey): ${rawBody.take(160)}")
+                        }
+                    } else {
+                        val parsed = parseUtilityHttpResponse(rawBody, format, providerKey)
+                        if (parsed.text.isNotBlank()) {
+                            ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
+                            return@withContext parsed
+                        }
                     }
-                    val parsed = parseUtilityHttpResponse(rawBody, format, providerKey)
-                    if (parsed.text.isNotBlank()) {
-                        ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
-                        return@withContext parsed
+                }
+
+                if (needsMainModelRetry) {
+                    val retryStartMs = System.currentTimeMillis()
+                    val (retryReq, retryFormat) = buildUtilityHttpRequest(
+                        providerKey = providerKey,
+                        model = mainModelFallback,
+                        settings = settings,
+                        customEntity = customEntity,
+                        buildConfigGeminiKey = buildConfigGeminiKey,
+                        systemPrompt = systemPrompt,
+                        userMessage = userMessage,
+                        maxTokens = maxTokens
+                    ) ?: continue
+                    utilityClient.newCall(retryReq).awaitResponse().use { retryResp ->
+                        val retryBody = retryResp.body?.string().orEmpty()
+                        val retryLatencyMs = (System.currentTimeMillis() - retryStartMs).coerceAtLeast(1L)
+                        if (!retryResp.isSuccessful) {
+                            if (!isUtilityModelMismatchError(retryResp.code, retryBody)) {
+                                val retryAfterSec = retryResp.header("Retry-After")?.trim()?.toLongOrNull()
+                                val failureType = ProviderHealthTracker.classifyFailure(
+                                    httpCode = retryResp.code,
+                                    errorMessage = retryBody.take(160)
+                                )
+                                ProviderHealthTracker.recordFailure(
+                                    providerKey = providerKey,
+                                    failureType = failureType,
+                                    errorMessage = "HTTP ${retryResp.code}: ${retryBody.take(160)}",
+                                    retryAfterSeconds = retryAfterSec
+                                )
+                            }
+                            throw IllegalStateException("Utility HTTP ${retryResp.code} ($providerKey/$mainModelFallback): ${retryBody.take(160)}")
+                        }
+                        val parsed = parseUtilityHttpResponse(retryBody, retryFormat, providerKey)
+                        if (parsed.text.isNotBlank()) {
+                            ProviderHealthTracker.recordSuccess(providerKey, retryLatencyMs)
+                            return@withContext parsed
+                        }
                     }
                 }
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
                 lastError = e
-                if (e.message?.startsWith("Utility HTTP ") != true) {
-                    val failureType = ProviderHealthTracker.classifyFailure(errorMessage = e.message)
+                val msg = e.message.orEmpty()
+                if (!msg.startsWith("Utility HTTP ") && !msg.startsWith("Utility model mismatch HTTP ")) {
+                    val failureType = ProviderHealthTracker.classifyFailure(errorMessage = msg)
                     ProviderHealthTracker.recordFailure(
                         providerKey = providerKey,
                         failureType = failureType,
-                        errorMessage = e.message ?: "Utility call error"
+                        errorMessage = msg.ifBlank { "Utility call error" }
                     )
                 }
             }
         }
         throw lastError ?: IllegalStateException("Utility model çağrısı başarısız oldu.")
+    }
+
+    internal fun isUtilityModelMismatchError(httpCode: Int, rawBody: String): Boolean {
+        if (httpCode !in setOf(400, 404, 422)) return false
+        val lower = rawBody.lowercase(Locale.ROOT)
+        return httpCode == 404 ||
+            lower.contains("model_not_found") ||
+            lower.contains("invalid_model") ||
+            lower.contains("does not exist") ||
+            lower.contains("unknown model") ||
+            lower.contains("unsupported model") ||
+            lower.contains("is not found for api version") ||
+            (lower.contains("model") && lower.contains("not found"))
+    }
+
+    private fun resolveMainModelForUtilityFallback(
+        providerKey: String,
+        settings: UserSettingsEntity,
+        customEntity: CustomProviderEntity?
+    ): String {
+        if (customEntity != null) return customEntity.modelName.trim()
+        return when (providerKey.lowercase(Locale.ROOT)) {
+            "gemini" -> settings.geminiModel.ifBlank { "gemini-2.0-flash" }
+            "openai" -> settings.openaiModel.ifBlank { "gpt-4o-mini" }
+            "claude" -> settings.claudeModel.ifBlank { "claude-3-5-sonnet-20241022" }
+            "groq" -> settings.groqModel.ifBlank { "llama-3.3-70b-versatile" }
+            "openrouter" -> settings.openRouterModel.ifBlank { "deepseek/deepseek-chat" }
+            "nvidia" -> settings.nvidiaModel.ifBlank { "meta/llama-3.3-70b-instruct" }
+            "mistral" -> settings.mistralModel.ifBlank { "mistral-small-latest" }
+            "pollinations" -> settings.pollinationsModel.ifBlank { "openai" }
+            "ovh" -> settings.ovhModel.ifBlank { "Meta-Llama-3_3-70B-Instruct" }
+            "llm7" -> "default"
+            else -> ""
+        }.trim()
     }
 
     private fun buildUtilityHttpRequest(
@@ -2015,7 +2105,14 @@ class ProviderFallbackManager(
         "pollinations" -> listOf("openai-fast", "mistral", "openai", "llama")
         "ovh" -> listOf("Llama-3.2-3B-Instruct", "Meta-Llama-3_1-8B-Instruct", "Mistral-7B-Instruct-v0.3", "Meta-Llama-3_3-70B-Instruct")
         "llm7" -> listOf("gpt-4o-mini", "default", "mistral-small")
-        else -> listOfNotNull(customEntity?.modelName?.takeIf { it.isNotBlank() }, settings.selectedModel.takeIf { it.isNotBlank() }).distinct()
+        else -> if (providerKey.startsWith("custom_") || customEntity != null) {
+            listOfNotNull(
+                customEntity?.utilityModel?.takeIf { it.isNotBlank() },
+                customEntity?.modelName?.takeIf { it.isNotBlank() }
+            ).distinct()
+        } else {
+            listOfNotNull(settings.selectedModel.takeIf { it.isNotBlank() }).distinct()
+        }
     }
 
     /**

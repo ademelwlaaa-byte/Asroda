@@ -771,14 +771,25 @@ fun BotQuickProfileSheet(
             val quickVm: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
             val quickTriggers by quickVm.sensitiveTriggers.collectAsStateWithLifecycle()
             val quickReappraisals by quickVm.pendingReappraisals.collectAsStateWithLifecycle()
+            var quickCastMembers by remember(bot.id) { mutableStateOf<List<com.example.data.local.CastMemberEntity>>(emptyList()) }
             LaunchedEffect(bot.id) {
                 quickVm.loadEmotionalDefenseState(bot.id)
+                quickCastMembers = try {
+                    quickVm.getCastMembersForBot(bot.id).filter { !it.isBlacklisted }
+                } catch (_: Exception) {
+                    emptyList()
+                }
             }
 
             EmotionStatusSection(
                 bot = bot,
                 characterEmotions = characterEmotions,
+                keyCharacters = keyCharacters,
+                castMembers = quickCastMembers,
                 affectionEvents = affectionEvents,
+                onUpdateCharacterEmotion = { charName, mood, aff, trust, tension ->
+                    quickVm.updateCharacterEmotion(bot.id, charName, mood, aff, trust, tension)
+                },
                 sensitiveTriggers = quickTriggers,
                 pendingReappraisals = quickReappraisals,
                 onAddTrigger = { kw -> quickVm.addSensitiveTrigger(bot.id, kw) },

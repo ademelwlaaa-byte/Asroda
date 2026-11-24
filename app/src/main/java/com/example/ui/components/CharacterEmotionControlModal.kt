@@ -68,33 +68,137 @@ import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 
+private val EMOTION_STUDIO_TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
+
+/**
+ * Merges all known story characters for the Emotion Control Menu from:
+ * 1) persisted [characterEmotions],
+ * 2) explicit [keyCharacters],
+ * 3) [bot.keyCharactersJson] fallback, and
+ * 4) non-blacklisted [castMembers] (both manual & auto-detected).
+ *
+ * Deduplicates case-insensitively and preserves display order.
+ */
+fun collectEmotionStudioCharacters(
+    bot: BotEntity,
+    characterEmotions: List<com.example.data.local.CharacterEmotionEntity>,
+    keyCharacters: List<KeyCharacter>,
+    castMembers: List<com.example.data.local.CastMemberEntity>
+): List<Pair<String, String>> {
+    val result = mutableListOf<Pair<String, String>>()
+    val seenLower = mutableSetOf<String>()
+    val mainLower = bot.aiName.trim().lowercase(EMOTION_STUDIO_TR_LOCALE)
+    val userLower = bot.userCharName.trim().lowercase(EMOTION_STUDIO_TR_LOCALE)
+
+    fun tryAdd(rawName: String, desc: String = "", allowUserName: Boolean = false, bypassExtraFilter: Boolean = false) {
+        val clean = rawName.trim()
+        if (clean.isBlank()) return
+        if (!bypassExtraFilter && com.example.data.repository.CastDetectorEngine.isGenericBackgroundExtra(clean, desc)) {
+            return
+        }
+        val key = clean.lowercase(EMOTION_STUDIO_TR_LOCALE)
+        if (key == mainLower) return
+        if (!allowUserName && userLower.isNotBlank() && key == userLower) return
+        if (seenLower.add(key)) {
+            result.add(clean to desc.trim())
+        }
+    }
+
+    // 1. Existing per-character emotion records (skip unnamed generic background extras)
+    characterEmotions.forEach { ce ->
+        tryAdd(ce.characterName, allowUserName = true)
+    }
+
+    // 2. Passed keyCharacters list (explicit main cast)
+    keyCharacters.forEach { kc ->
+        tryAdd(kc.name, kc.desc, bypassExtraFilter = true)
+    }
+
+    // 3. Direct fallback parse of bot.keyCharactersJson (in case caller passed stale/empty list)
+    if (bot.keyCharactersJson.isNotBlank() && bot.keyCharactersJson.trim() != "[]") {
+        try {
+            val arr = org.json.JSONArray(bot.keyCharactersJson)
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                tryAdd(obj.optString("name", ""), obj.optString("desc", ""), bypassExtraFilter = true)
+            }
+        } catch (_: Exception) {}
+    }
+
+    // 4. Room cast_members: always include manual cast; include auto-detected characters only when confirmed or recurring (>=2 appearances) and not generic background extras
+    castMembers
+        .filter { cm ->
+            if (cm.isBlacklisted) return@filter false
+            if (!cm.isAutoAdded) return@filter true
+            val isSignificant = !cm.pendingUserConfirmation || cm.appearanceCount >= 2 || cm.importanceScore >= 75
+            isSignificant && !com.example.data.repository.CastDetectorEngine.isGenericBackgroundExtra(cm.name, cm.role)
+        }
+        .forEach { cm ->
+            val combinedDesc = listOf(cm.role, cm.description).filter { it.isNotBlank() }.joinToString(" — ")
+            tryAdd(cm.name, combinedDesc, bypassExtraFilter = !cm.isAutoAdded)
+        }
+
+    return result
+}
+
 @Composable
 fun CharacterEmotionControlModal(
     bot: BotEntity,
     characterEmotions: List<com.example.data.local.CharacterEmotionEntity> = emptyList(),
     keyCharacters: List<KeyCharacter> = emptyList(),
+    castMembers: List<com.example.data.local.CastMemberEntity> = emptyList(),
+    initialSelectedCharacter: String = "main",
     onDismiss: () -> Unit,
     onSaveBotEmotion: (String) -> Unit,
     onSaveCharacterEmotionState: (String, String) -> Unit
 ) {
-    var selectedTab by remember { mutableStateOf("main") }
+    var selectedTab by remember(bot.id, initialSelectedCharacter) { mutableStateOf(initialSelectedCharacter) }
     var activeSection by remember { mutableStateOf("mood") }
     val viewModel: com.example.ui.viewmodel.EmochiViewModel = androidx.lifecycle.viewmodel.compose.viewModel()
     var emotionHistory by remember { mutableStateOf<List<com.example.data.local.EmotionHistoryEntity>>(emptyList()) }
     var historyLoaded by remember { mutableStateOf(false) }
+    var loadedCastMembers by remember(bot.id) { mutableStateOf<List<com.example.data.local.CastMemberEntity>>(emptyList()) }
 
-    val characterStatesMap = remember(bot.emotionState, characterEmotions, keyCharacters) {
-        val map = mutableMapOf<String, com.example.data.local.EmotionState>()
+    LaunchedEffect(bot.id) {
+        loadedCastMembers = try {
+            viewModel.getCastMembersForBot(bot.id).filter { !it.isBlacklisted }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    val effectiveCast = remember(castMembers, loadedCastMembers) {
+        if (loadedCastMembers.isNotEmpty()) loadedCastMembers else castMembers
+    }
+
+    val mergedSideCharacters = remember(bot.id, bot.keyCharactersJson, characterEmotions, keyCharacters, effectiveCast) {
+        collectEmotionStudioCharacters(
+            bot = bot,
+            characterEmotions = characterEmotions,
+            keyCharacters = keyCharacters,
+            castMembers = effectiveCast
+        )
+    }
+
+    val characterStatesMap = remember(bot.emotionState, characterEmotions, mergedSideCharacters) {
+        val map = linkedMapOf<String, com.example.data.local.EmotionState>()
         map["main"] = com.example.data.local.EmotionState.fromJson(bot.emotionState)
-        val existingMap = characterEmotions.associateBy { it.characterName }
-        val sideNames = (characterEmotions.map { it.characterName } + keyCharacters.map { it.name })
-            .filter { it.isNotBlank() }.distinct()
-        sideNames.forEach { name ->
-            val entity = existingMap[name]
-            if (entity != null) map[name] = com.example.data.local.EmotionState.fromJson(entity.emotionState)
-            else map[name] = com.example.data.local.EmotionState.calculateBaselineEmotionState(bot.aiName, name, "")
+        val existingByLower = characterEmotions.associateBy { it.characterName.trim().lowercase(EMOTION_STUDIO_TR_LOCALE) }
+        mergedSideCharacters.forEach { (name, desc) ->
+            val entity = existingByLower[name.lowercase(EMOTION_STUDIO_TR_LOCALE)]
+            if (entity != null) {
+                map[name] = com.example.data.local.EmotionState.fromJson(entity.emotionState)
+            } else {
+                map[name] = com.example.data.local.EmotionState.calculateBaselineEmotionState(bot.aiName, name, desc)
+            }
         }
         mutableStateMapOf<String, com.example.data.local.EmotionState>().apply { putAll(map) }
+    }
+
+    LaunchedEffect(characterStatesMap.keys.toList()) {
+        if (selectedTab != "main" && !characterStatesMap.containsKey(selectedTab)) {
+            selectedTab = "main"
+        }
     }
 
     val curState = characterStatesMap[selectedTab] ?: com.example.data.local.EmotionState()
@@ -211,13 +315,20 @@ fun CharacterEmotionControlModal(
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // Character Tabs
+            val allCharTabs = listOf("main") + mergedSideCharacters.map { it.first }
+            Text(
+                text = "Karakterler (${allCharTabs.size})",
+                fontFamily = InterFontFamily,
+                color = MorCamTokens.LavenderMuted,
+                fontSize = 11.sp,
+                modifier = Modifier.padding(bottom = 6.dp)
+            )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val allCharTabs = listOf("main") + characterStatesMap.keys.filter { it != "main" }
                 allCharTabs.forEach { tabKey ->
                     MorCamChipPill(
                         label = if (tabKey == "main") bot.aiName else tabKey,

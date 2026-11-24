@@ -930,16 +930,177 @@ object BookStateRepository {
     ): BookReadState {
         val appCtx = context.applicationContext
         lastSavedScroll.remove(bookId)
-        appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
+        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val editor = prefs.edit()
             .remove("state_$bookId")
             .remove("scroll_idx_$bookId")
             .remove("scroll_off_$bookId")
-            .apply()
+        prefs.all.keys
+            .filter {
+                it.startsWith("minigame_rank_${bookId}_") ||
+                    it.startsWith("minigame_applied_${bookId}_") ||
+                    it.startsWith("boss_medal_${bookId}_")
+            }
+            .forEach { editor.remove(it) }
+        editor.apply()
         val fresh = createInitialState(bookId, chapterNumber = 1)
         ChapterProgressManager.resetProgress(appCtx, bookId)
         persistAndEmit(appCtx, bookId, fresh)
         return fresh
+    }
+
+    private fun rankTier(rank: String?): Int = when (rank?.uppercase()) {
+        "S" -> 3
+        "A" -> 2
+        "B" -> 1
+        else -> 0
+    }
+
+    /**
+     * 100% offline/API-free persistence for embedded [[MINIGAME|...]] stages.
+     * Never downgrades a previously earned rank (S > A > B), and applies the delta
+     * to real deterministic [StoryFlagAxis] numericFlags so story chapters & chronicle react!
+     */
+    @Synchronized
+    fun recordMiniGameOutcome(
+        context: Context,
+        gameKey: String,
+        rank: String,
+        score: Int,
+        bookId: String = CosmicDriftBookRegistry.BOOK_ID
+    ): BookReadState {
+        val appCtx = context.applicationContext
+        val normalizedKey = gameKey.trim().uppercase()
+        val normalizedRank = rank.trim().uppercase().takeIf { it in setOf("S", "A", "B") } ?: "B"
+        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val rankPrefKey = "minigame_rank_${bookId}_$normalizedKey"
+        val appliedPrefKey = "minigame_applied_${bookId}_$normalizedKey"
+
+        val previousRank = prefs.getString(rankPrefKey, null)
+        val prevTier = rankTier(previousRank)
+        val newTier = rankTier(normalizedRank)
+        val bestRank = if (newTier >= prevTier) normalizedRank else (previousRank ?: normalizedRank)
+        prefs.edit().putString(rankPrefKey, bestRank).apply()
+
+        val current = getState(appCtx, bookId)
+        val alreadyAppliedTier = prefs.getInt(appliedPrefKey, 0)
+        if (newTier <= alreadyAppliedTier) {
+            return current
+        }
+
+        // Compute incremental flag reward so replaying and upgrading B -> S grants only the difference!
+        fun rewardForTier(tier: Int): Map<StoryFlagAxis, Int> = when (normalizedKey) {
+            "WHITE_EYE_RESONANCE" -> when (tier) {
+                3 -> mapOf(StoryFlagAxis.WHITE_EYE_CONTROL to 3, StoryFlagAxis.MENTAL_FATIGUE to -1)
+                2 -> mapOf(StoryFlagAxis.WHITE_EYE_CONTROL to 2, StoryFlagAxis.PSYCHIC_RESONANCE to 1)
+                1 -> mapOf(StoryFlagAxis.WHITE_EYE_CONTROL to 1)
+                else -> emptyMap()
+            }
+            "BOSPHORUS_CORE_BALANCE" -> when (tier) {
+                3 -> mapOf(StoryFlagAxis.PSYCHIC_RESONANCE to 3, StoryFlagAxis.HUMANITY_ANCHOR to 2)
+                2 -> mapOf(StoryFlagAxis.PSYCHIC_RESONANCE to 2, StoryFlagAxis.HUMANITY_ANCHOR to 1)
+                1 -> mapOf(StoryFlagAxis.PSYCHIC_RESONANCE to 1)
+                else -> emptyMap()
+            }
+            "RED_EYE_WILLPOWER" -> when (tier) {
+                3 -> mapOf(StoryFlagAxis.RED_EYE_INSTABILITY to -3, StoryFlagAxis.HUMANITY_ANCHOR to 2)
+                2 -> mapOf(StoryFlagAxis.RED_EYE_INSTABILITY to -2, StoryFlagAxis.HUMANITY_ANCHOR to 1)
+                1 -> mapOf(StoryFlagAxis.RED_EYE_INSTABILITY to -1)
+                else -> emptyMap()
+            }
+            else -> emptyMap()
+        }
+
+        val prevMap = rewardForTier(alreadyAppliedTier)
+        val nextMap = rewardForTier(newTier)
+        val updatedNumeric = current.numericFlags.toMutableMap()
+        var fatigueDelta = 0
+        var redEyeDelta = 0
+        val allAxes = prevMap.keys + nextMap.keys
+        for (axis in allAxes) {
+            val delta = (nextMap[axis] ?: 0) - (prevMap[axis] ?: 0)
+            if (delta != 0) {
+                val mapKey = "story:${axis.key}"
+                updatedNumeric[mapKey] = ((updatedNumeric[mapKey] ?: 0) + delta).coerceIn(-50, 100)
+                if (axis == StoryFlagAxis.MENTAL_FATIGUE) fatigueDelta += delta
+                if (axis == StoryFlagAxis.RED_EYE_INSTABILITY) redEyeDelta += delta
+            }
+        }
+
+        val updatedFlags = current.flags.toMutableMap().apply {
+            put("minigame_$normalizedKey", bestRank)
+            put("minigame_${normalizedKey}_score", score.coerceAtLeast(0).toString())
+        }
+        val updatedState = current.copy(
+            numericFlags = updatedNumeric,
+            flags = updatedFlags,
+            fatigue = (current.fatigue + fatigueDelta).coerceIn(0, 100),
+            redEyeInstability = (current.redEyeInstability + redEyeDelta).coerceIn(0, 100)
+        )
+        prefs.edit().putInt(appliedPrefKey, newTier).apply()
+        persistAndEmit(appCtx, bookId, updatedState)
+        return updatedState
+    }
+
+    fun getSavedMiniGameRank(
+        context: Context,
+        gameKey: String,
+        bookId: String = CosmicDriftBookRegistry.BOOK_ID
+    ): String? {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getString("minigame_rank_${bookId}_${gameKey.trim().uppercase()}", null)
+    }
+
+    fun getAllMiniGameRanks(
+        context: Context,
+        bookId: String = CosmicDriftBookRegistry.BOOK_ID
+    ): Map<String, String> {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefix = "minigame_rank_${bookId}_"
+        val result = linkedMapOf<String, String>()
+        prefs.all.forEach { (k, v) ->
+            if (k.startsWith(prefix) && v is String && v.isNotBlank()) {
+                result[k.removePrefix(prefix)] = v
+            }
+        }
+        return result
+    }
+
+    @Synchronized
+    fun recordBossMedal(
+        context: Context,
+        bossKey: String,
+        rank: String,
+        score: Int,
+        bookId: String = CosmicDriftBookRegistry.BOOK_ID
+    ): String {
+        val appCtx = context.applicationContext
+        val normalizedKey = bossKey.trim().uppercase()
+        val normalizedRank = rank.trim().uppercase().takeIf { it in setOf("S", "A", "B") } ?: "B"
+        val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefKey = "boss_medal_${bookId}_$normalizedKey"
+        val prev = prefs.getString(prefKey, null)
+        val best = if (rankTier(normalizedRank) >= rankTier(prev)) normalizedRank else (prev ?: normalizedRank)
+        prefs.edit()
+            .putString(prefKey, best)
+            .putInt("boss_score_${bookId}_$normalizedKey", maxOf(score, prefs.getInt("boss_score_${bookId}_$normalizedKey", 0)))
+            .apply()
+        return best
+    }
+
+    fun getAllBossMedals(
+        context: Context,
+        bookId: String = CosmicDriftBookRegistry.BOOK_ID
+    ): Map<String, String> {
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val prefix = "boss_medal_${bookId}_"
+        val result = linkedMapOf<String, String>()
+        prefs.all.forEach { (k, v) ->
+            if (k.startsWith(prefix) && v is String && v.isNotBlank()) {
+                result[k.removePrefix(prefix)] = v
+            }
+        }
+        return result
     }
 
     private fun createInitialState(bookId: String, chapterNumber: Int): BookReadState {

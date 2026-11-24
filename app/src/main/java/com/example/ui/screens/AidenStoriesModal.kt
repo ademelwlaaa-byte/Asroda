@@ -297,6 +297,126 @@ private val AIDEN_CATALOG_SPECS = listOf(
         badges = listOf(
             AidenBadgeSpec(AidenBadgeIconType.LIGHTNING, "Siber Gerilim • Tokyo", Color(0xFFD946EF))
         )
+    ),
+    AidenCatalogRowSpec(
+        presetId = "preset_aiden_nevermore_wednesday",
+        title = "Nevermore: Son Blackwood",
+        fullTitle = "Nevermore: Son Blackwood — Wednesday Evreni & Kurucu Mirası",
+        carouselTitle = "Nevermore: Son Blackwood",
+        carouselSubtitle = "Nevermore Akademisi'nin yarı-sahibi, kırmızı gözlü son Blackwood varisi, 5 Güç Formu ve Wednesday evreni.",
+        description = "Kurucu soyun tek hayatta kalanı Aiden Blackwood, kırmızı gözleri ve Galatasaray aile kolyesiyle Nevermore Akademisi'nin gölgelerine adım atıyor.",
+        fullDescription = "Netflix'in Wednesday evreninde geçen bu gotik hikâyede sen Aiden Blackwood'sun: Nevermore Akademisi'nin gerçek kurucularının tek hayatta kalanı ve okulun yasal yarı-sahibi. Doğduğun gece dışlanmış ailelerin birleşik saldırısıyla soyun yok edilirken yüzyıllık güç mühürlenip sana aktarıldı. Şu an 2. Form (Uyanış) seviyesindesin; kırmızı gözlerin, gölge enerjin ve göğsünde kızıl parlayan Galatasaray amblemli aile kolyenle istemeden nakil olduğun Nevermore'da Wednesday Addams, Enid Sinclair, Bianca Barclay, Xavier Thorpe, Baş Öğretmen Weems ve Kurucular Konseyi'nin gizli hesaplarıyla yüzleşeceksin.",
+        universeRulesSummary = "• Güçler & 5 Form: Şu an 2. Form (Uyanış) — Kırmızı Gözlü Tahakküm, Karanlık Enerji, Gelişmiş Fizyoloji, Psikometrik Dokunuş, Işınlanma ve Atalar Bağlantısı aktif.\n• Kesin Bedeller: Zihin kontrolü aşımında her fiziksel temasta sinir yakan acı + 3 Kademeli Aşırı Yüklenme (3. kademede kırmızı gözler sönüp kahverengiye döner, güçler günlerce kapanır).\n• Yadigar & Sırlar: Güç çektikçe ısınıp kızıl parlayan Galatasaray aile kolyesi, Ophelia Hall altındaki Kurucu Mahzeni (Kan Defteri) ve 18 karakterlik tam Nevermore kadrosu.",
+        openingScenePreview = "Yağmur Nevermore Akademisi'nin demir kapılarını döverken avluya attığın ilk adımda tüm fısıltılar kesildi. Gömleğinin altında Galatasaray amblemli aile kolyesi hafifçe ısındı. Baş Öğretmen Weems taş merdivenlerden inerken, revak sütunlarının gerisinde Wednesday Addams tek bir kez bile gözünü kırpmadan fısıldadı: \"Mirasını denetlemeye gelen bir kurucu hayaleti... Ne kadar da zahmetli bir tesadüf.\"",
+        thumbDrawableRes = R.drawable.img_aiden_wide_thumb6_nevermore_1795547716938,
+        carouselDrawableRes = R.drawable.img_aiden_wide_thumb6_nevermore_1795547716938,
+        accentTint = Color(0xFFEF4444),
+        reactiveTheme = AidenReactiveThemeColors(
+            primaryOrb = Color(0xFFDC2626),    // Crimson 600
+            secondaryOrb = Color(0xFF6D28D9),  // Gothic Violet 700
+            deepAtmosphere = Color(0xFF1A071F),// Obsidian Plum
+            emberAccent = Color(0xFFF87171)    // Blood Ruby Glow
+        ),
+        badges = listOf(
+            AidenBadgeSpec(AidenBadgeIconType.RED_ORB, "Gotik Gizem • Wednesday", Color(0xFFEF4444)),
+            AidenBadgeSpec(AidenBadgeIconType.EYE, "18 Karakter • 5 Form", Color(0xFFA855F7))
+        )
+    ),
+    AidenCatalogRowSpec(
+        presetId = "preset_aiden_lambo_football",
+        title = "Bir Lambo Her Zaman Bir Lambo'dur",
+        fullTitle = "Bir Lambo Her Zaman Bir Lambo'dur — Aiden Blackwood (PSG & Futbol)",
+        carouselTitle = "Bir Lambo Her Zaman Bir Lambo'dur",
+        carouselSubtitle = "105 kiloluk genetik fenomen, Real Madrid & Liverpool geçmişi, PSG kiralık krizi ve İspanyol fırtınası.",
+        description = "25 yaşında 105 kiloluk top cambazı: Ballon d'Or 2.si, gece hayatı skandalları, Marie Blackwood disiplini ve Ocak 2027 PSG krizi.",
+        fullDescription = "25 yaşındaki Aiden Blackwood, 1.85 boy ve 105 kiloluk (110–125 kg görünen) eşsiz genetiğiyle futbol dünyasının en tehlikeli ve kontrol edilemez figürüdür. Real Madrid ve Liverpool sonrası PSG'de Ballon d'Or 2.liğine yürürken ağır diz sakatlığı, Lucía Vega ile skandallı ayrılık, İspanya Milli Takımı krizi ve bitmeyen gece kulübü vukuatlarıyla sarsıldı. 200M€ değerinden 70M€ tekliflere düşerken PSG onu Ocak 2027'de kiralamak istiyor. Ama Aiden'ın kuralı net: 'Bir Lambo her zaman bir Lambo'dur.'",
+        universeRulesSummary = "• Fizik & Saha: 1.85m / 105kg (temiz anti-doping), patlayıcı hız & serbest kanat/#10/santrfor; 30 dk dikkat süresi & saygısızlığa İspanyol tokadı.\n• Kilit İsimler: Çelik disiplinli annesi Marie Blackwood (tek otorite), eski sevgilisi Lucía Vega, PSG ve eski hocaları (9 karakter).\n• Dil Kuralı: Anlaşılır Türkçe ana akış içinde doğal İspanyolca dokunuşlar ('Mira...', 'No me importa', 'Coño', 'Vale?').",
+        openingScenePreview = "PSG Sportif Direktörü 70 milyonluk teklifleri ve kiralık dosyasını masaya koyduğunda 105 kiloluk cüssenle öne eğildin: \"Mira... bana 30 dakikadan fazla bir şey anlatırsan sıkılırım, vale? Kağıt üstüne ne yazarsanız yazın, no me importa. Bir Lambo her zaman bir Lambo'dur.\"",
+        thumbDrawableRes = R.drawable.img_aiden_modal_carousel_gs,
+        carouselDrawableRes = R.drawable.img_aiden_modal_carousel_gs,
+        accentTint = Color(0xFFF59E0B),
+        reactiveTheme = AidenReactiveThemeColors(
+            primaryOrb = Color(0xFFF59E0B),    // Stadium Gold
+            secondaryOrb = Color(0xFFEF4444),  // Spanish Crimson
+            deepAtmosphere = Color(0xFF1E1038),// Paris Night Indigo
+            emberAccent = Color(0xFFFDE047)    // Spotlight Amber
+        ),
+        badges = listOf(
+            AidenBadgeSpec(AidenBadgeIconType.TROPHY, "Futbol • PSG & İspanya", Color(0xFFF59E0B)),
+            AidenBadgeSpec(AidenBadgeIconType.STAR, "9 Karakter • Spanglish", Color(0xFFEF4444))
+        )
+    ),
+    AidenCatalogRowSpec(
+        presetId = "preset_aiden_marvel_thanos",
+        title = "Thanos'un Üçüncü Çocuğu",
+        fullTitle = "Thanos'un Üçüncü Çocuğu — Marvel Evreni (Infinity War Sonrası)",
+        carouselTitle = "Thanos'un Üçüncü Çocuğu",
+        carouselSubtitle = "Gamora ve Nebula'nın ardından Thanos'un hayatta kalan tek çocuğu, Carol Danvers'ın çağrısı ve Stark Kulesi.",
+        description = "19 yaşında, 105 kiloluk kural tanımaz kozmik savaşçı. İki yıl hapis sonrası Kaptan Marvel'ın borç çağrısıyla Avengers'ın karşısında.",
+        fullDescription = "Infinity War sonrası evrenin yarısı yok olmuş, Gamora ve Nebula ölmüştür. 19 yaşındaki Aiden Blackwood, Thanos'un evlat edindiği üçüncü ve hayatta kalan tek çocuğudur. 17 yaşında Thanos'un katliamına karşı çıktığı için iki yıl güç bastıran kozmik bir hapishanede tutulmuş, Kaptan Marvel (Carol Danvers) tarafından kurtarılmıştır. Elinden eksik etmediği sigarası, 30 dakikalık dikkat süresi ve hiçbir otoriteyi tanımayan sert tavrıyla Stark Kulesi'ndeki Avengers'ın son kozu olarak çağrılır.",
+        universeRulesSummary = "• Profil: 19 yaş, 1.85m / 105kg (110–125kg görünüm), mavi gözler, patlayıcı hız & yerçekimine meydan okuyan savaş refleksleri.\n• Tavır & Alışkanlıklar: Savaşta bile sigara yakar; Stark, Rogers veya Danvers'ın emrini dinlemez; saygısızlığa anında yumrukla karşılık verir.\n• Kadro (9 Karakter): Carol Danvers, Tony Stark, Steve Rogers, Natasha Romanoff, Thor, Bruce Banner, Rocket, Rhodey ve Thanos.",
+        openingScenePreview = "Stark Kulesi'nde Carol hoparlörü açtığında önce çakmak sesi, ardından ciğerlere çekilen sigara dumanının üflenişi duyuldu: \"Söyle Carol... Beni yine hangi cehennemin ortasından çağırmak için arıyorsun?\"",
+        thumbDrawableRes = R.drawable.img_postcredits_twin_aiden,
+        carouselDrawableRes = R.drawable.img_postcredits_twin_aiden,
+        accentTint = Color(0xFFA855F7),
+        reactiveTheme = AidenReactiveThemeColors(
+            primaryOrb = Color(0xFF9333EA),    // Infinity Purple
+            secondaryOrb = Color(0xFFF59E0B),  // Titan Gold
+            deepAtmosphere = Color(0xFF140726),// Deep Space Obsidian
+            emberAccent = Color(0xFFC084FC)    // Cosmic Violet
+        ),
+        badges = listOf(
+            AidenBadgeSpec(AidenBadgeIconType.LIGHTNING, "Marvel • Infinity War", Color(0xFFA855F7)),
+            AidenBadgeSpec(AidenBadgeIconType.STAR, "9 Karakter • Avengers", Color(0xFFF59E0B))
+        )
+    ),
+    AidenCatalogRowSpec(
+        presetId = "preset_aiden_impossible_spiderman",
+        title = "Impossible Spider-Man",
+        fullTitle = "Impossible Spider-Man — Aiden Blackwood (MCU Queens)",
+        carouselTitle = "Impossible Spider-Man",
+        carouselSubtitle = "Queens lisesinde saklanan deha, Gwen Stacy & MJ, doğal örümcek ısırığı ve iki katmanlı imkânsız güçler.",
+        description = "17 yaşında gizli deha Aiden: May Hala, Gwen Stacy & Mary Jane Watson, organik ağ, bio-elektrik, kamuflaj ve mühürlü 2. Katman kozmik güç.",
+        fullDescription = "Gerçek MCU kurallarına bağlı New York'ta, 17 yaşındaki Aiden Blackwood Queens'te May Halası ile yaşar. 5 yaşındayken ailesini gizemli bir enerji kaçağında kaybetmiş, babasından miras kalan olağanüstü zekâsını okulda bilerek saklayarak görünmez kalmayı seçmiştir. Gwen Stacy ve Mary Jane Watson'ın bulunduğu lise günlerinin ardından tamamen doğal bir örümcek ısırığıyla ertesi sabah değişmiş uyanır: organik ağ, bio-elektrik şok, kamuflaj ve derinlerde uyuyan kozmik 2. Katman güçleriyle şehrin 'Impossible Spider-Man' efsanesi doğar.",
+        universeRulesSummary = "• 1. Katman (Örümcek & Hibrit): Organik ağ, Elektro-Ağ, Venom Pulse, Titreşim Radarı, Hayalet Kombosu, Kamuflaj ve Örümcek Hissi.\n• 2. Katman (Kozmik Sır): Ölümcül tehlikede kontrolsüz kısa ışınlanma, soluk Beyaz Gözler ve Zaman Kırılmaları (ağır yorgunluk bedeli).\n• Ana Kadro (6 Karakter): May Hala, Gwen Stacy, Mary Jane Watson, J. Jonah Jameson, Tony Stark ve Nick Fury.",
+        openingScenePreview = "Midtown Lisesi'nde Gwen silinmiş kuantum çözümlerini fark ederken MJ uzaktan seni süzdü. Bir hafta sonra, doğal örümcek ısırığının ertesi sabahında gözlüğün olmadan her şey kristal netliğindeydi — ve pirinç kapı kolu parmaklarının altında çatlayıp kıvılcım saçtı.",
+        thumbDrawableRes = R.drawable.img_ch1_c5_tower_night,
+        carouselDrawableRes = R.drawable.img_ch1_c5_tower_night,
+        accentTint = Color(0xFFEF4444),
+        reactiveTheme = AidenReactiveThemeColors(
+            primaryOrb = Color(0xFFDC2626),    // Spider Crimson
+            secondaryOrb = Color(0xFF2563EB),  // Bio-Electric Blue
+            deepAtmosphere = Color(0xFF140A29),// Queens Midnight
+            emberAccent = Color(0xFF38BDF8)    // Static Spark Cyan
+        ),
+        badges = listOf(
+            AidenBadgeSpec(AidenBadgeIconType.LIGHTNING, "MCU Queens • 2 Katman", Color(0xFF38BDF8)),
+            AidenBadgeSpec(AidenBadgeIconType.RED_ORB, "Gwen & MJ • 6 Karakter", Color(0xFFEF4444))
+        )
+    ),
+    AidenCatalogRowSpec(
+        presetId = "preset_aiden_eilish_family",
+        title = "Aiden Eilish",
+        fullTitle = "Aiden Eilish — Aile, Emma Myers & İspanyol Kalbi",
+        carouselTitle = "Aiden Eilish",
+        carouselSubtitle = "14 yaşında melek yüzlü, utangaç Aiden; 5 yaşında İspanya'dan evlat ediniliş, Billie Eilish & Emma Myers.",
+        description = "Mavi gözlü, masum ve İspanyol aksanlı 14 yaşındaki Aiden Eilish'in Billie, Maggie, Finneas, Patrick ve Emma Myers'la villa hayatı.",
+        fullDescription = "14 yaşındaki Aiden Eilish, mavi gözleri, narin yapısı ve tamamen saf kalbiyle aşırı utangaç bir gençtir. Beş yaşındayken Eilish ailesinin Amerika'dan kalkıp İspanya'ya gelerek kendisini neden evlat edindiğini hâlâ gizemli bulur. Amerika'daki büyük villalarında Maggie'nin sonsuz şefkati, ünlü şarkıcı ablası Billie Eilish'in gerçek kardeş sevgisi, Finneas'ın sakin sabrı, Patrick'in zaman zaman kırıcı olabilen öfkesi ve en yakın arkadaşı Emma Myers ile ailesinin sıcaklığı arasında büyür. Üzüldüğünde ya da utandığında kusursuz İspanyolcasına sığınır.",
+        universeRulesSummary = "• Kimlik & Dil: 14 yaş, aşırı utangaç ve masum; belirgin Spanglish aksan ('Lo siento...', 'No sé...', 'Muchas gracias...', 'Por favor...') ve duygusal anlarda ağırlıklı/tam İspanyolca geçişi.\n• Eilish Ailesi: Maggie Eilish, Patrick Eilish, Billie Eilish ve Finneas Eilish.\n• Myers Ailesi: En yakın arkadaşı Emma Myers (14), ablası Jenna Myers, Robert Myers ve Elizabeth Myers (8 Karakter).",
+        openingScenePreview = "Güneşli Eilish villasında Maggie özenli İspanyolcasıyla 'No tienes que apurarte, cariño' derken kapı açıldı: Billie elinde soğuk içeceklerle 'Selam, hermanito!' diye seslendi ve hemen ardından en yakın arkadaşın Emma Myers sıcacık gülümseyerek yanına oturdu.",
+        thumbDrawableRes = R.drawable.img_aiden_portrait,
+        carouselDrawableRes = R.drawable.img_aiden_portrait,
+        accentTint = Color(0xFF38BDF8),
+        reactiveTheme = AidenReactiveThemeColors(
+            primaryOrb = Color(0xFF38BDF8),    // Angelic Sky Blue
+            secondaryOrb = Color(0xFFA855F7),  // Soft Villa Lavender
+            deepAtmosphere = Color(0xFF150E2E),// Warm Dusk Indigo
+            emberAccent = Color(0xFF7DD3FC)    // Soft Blue Glow
+        ),
+        badges = listOf(
+            AidenBadgeSpec(AidenBadgeIconType.STAR, "Aile & Yaşam • Spanglish", Color(0xFF38BDF8)),
+            AidenBadgeSpec(AidenBadgeIconType.EYE, "Billie & Emma • 8 Karakter", Color(0xFFC084FC))
+        )
     )
 )
 

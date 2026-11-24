@@ -1,12 +1,21 @@
 package com.example.ui.screens
 
+import android.content.Context
 import android.graphics.drawable.ColorDrawable
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.view.WindowManager
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.compose.animation.AnimatedVisibility
@@ -79,6 +88,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.ui.animation.LocalCosmicMotionConfig
 import com.example.ui.components.morCamCosmicGlow
 import com.example.ui.screens.cosmic3d.Cosmic3DSoundEngine
 import com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine
@@ -88,7 +98,9 @@ import com.example.ui.screens.cosmic3d.CosmicSfx
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.random.Random
@@ -156,6 +168,9 @@ fun InStoryAnimatedScene(
         else -> chapterAccent
     }
 
+    val motionConfig = LocalCosmicMotionConfig.current
+    val (gyroYaw, gyroPitch) = rememberGyroscopeTilt(enabled = motionConfig.enableAmbientLoops && !isFullscreenOpen)
+
     LaunchedEffect(inlineAudioEnabled, isFullscreenOpen) {
         if (inlineAudioEnabled && !isFullscreenOpen) {
             if (inlineSoundRef == null) {
@@ -191,15 +206,15 @@ fun InStoryAnimatedScene(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp)
-            .morCamCosmicGlow(cornerRadius = 22.dp, glowColor = accent, alpha = 0.44f, blurDp = 18.dp)
+            .morCamCosmicGlow(cornerRadius = 22.dp, glowColor = accent, alpha = 0.46f, blurDp = 20.dp)
             .clip(RoundedCornerShape(22.dp))
             .background(Color(0xF5070516))
-            .border(1.2.dp, accent.copy(alpha = 0.72f), RoundedCornerShape(22.dp))
+            .border(1.2.dp, accent.copy(alpha = 0.74f), RoundedCornerShape(22.dp))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(232.dp)
+                .height(238.dp)
                 .pointerInput(sceneId) {
                     detectHorizontalDragGestures(
                         onDragEnd = { tiltX = 0f },
@@ -212,8 +227,9 @@ fun InStoryAnimatedScene(
         ) {
             LiveActionCinemaMotionCanvas(
                 sceneId = sceneId,
-                tiltYawDeg = tiltX,
-                tiltPitchDeg = 0f,
+                tiltYawDeg = (tiltX + gyroYaw * 0.65f).coerceIn(-14f, 14f),
+                tiltPitchDeg = (gyroPitch * 0.55f).coerceIn(-9f, 9f),
+                directorProgress = -1f,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -228,9 +244,9 @@ fun InStoryAnimatedScene(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(50.dp)
                     .align(Alignment.BottomCenter)
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xDC0A061C))))
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE00A061C))))
             )
 
             // Top-left Live Cinema Badge
@@ -240,16 +256,16 @@ fun InStoryAnimatedScene(
                     .padding(10.dp)
                     .clip(RoundedCornerShape(50))
                     .background(Color(0xCC09061B))
-                    .border(0.85.dp, accent.copy(alpha = 0.75f), RoundedCornerShape(50))
+                    .border(0.85.dp, accent.copy(alpha = 0.78f), RoundedCornerShape(50))
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = "✦ SİNEMATİK SAHNE",
+                    text = "✦ 2.5D SİNEMA · 4 PERDE",
                     fontFamily = InterFontFamily,
                     color = accent,
                     fontSize = 9.sp,
                     fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
+                    letterSpacing = 0.9.sp
                 )
             }
 
@@ -263,11 +279,13 @@ fun InStoryAnimatedScene(
             ) {
                 Box(
                     modifier = Modifier
+                        .heightIn(min = 34.dp)
                         .clip(RoundedCornerShape(50))
                         .background(if (inlineAudioEnabled) accent.copy(alpha = 0.30f) else Color(0xCC110B2E))
                         .border(0.9.dp, if (inlineAudioEnabled) accent else Color(0x99BAE6FD), RoundedCornerShape(50))
                         .clickable { inlineAudioEnabled = !inlineAudioEnabled }
-                        .padding(horizontal = 9.dp, vertical = 5.dp)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = if (inlineAudioEnabled) "🔊 SES" else "🔇 SES",
@@ -280,28 +298,31 @@ fun InStoryAnimatedScene(
 
                 Box(
                     modifier = Modifier
+                        .heightIn(min = 34.dp)
                         .clip(RoundedCornerShape(50))
                         .background(Color(0xCC110B2E))
                         .border(0.9.dp, Color(0xCCBAE6FD), RoundedCornerShape(50))
                         .clickable { isFullscreenOpen = true }
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                        .testTag("cinema_fullscreen_$sceneId")
+                        .padding(horizontal = 11.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "⤢ TAM EKRAN",
+                        text = "⤢ YÖNETMEN MODU",
                         fontFamily = InterFontFamily,
                         color = Color.White,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp
+                        letterSpacing = 0.7.sp
                     )
                 }
             }
 
             Text(
-                text = "↔ 2.5D Derinlik için sürükle · Tam ekranda sinema sesli izle",
+                text = "↔ Telefonu eğ veya sürükle · Tam ekranda 4 Perde yönetmen sahnesini izle",
                 fontFamily = InterFontFamily,
                 color = Color(0xCCE2D9F8),
-                fontSize = 9.5.sp,
+                fontSize = 9.2.sp,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(horizontal = 12.dp, vertical = 7.dp)
@@ -347,15 +368,180 @@ fun InStoryAnimatedScene(
 }
 
 /**
- * Reusable 60fps Live-Action 2.5D Motion + Atmospheric VFX Canvas Engine.
+ * Hardware Gyroscope / Accelerometer 2.5D tilt tracker for living parallax depth.
+ * Automatically unregisters on ON_PAUSE & respects reduced-motion settings.
+ */
+@Composable
+private fun rememberGyroscopeTilt(enabled: Boolean): Pair<Float, Float> {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var yaw by remember { mutableFloatStateOf(0f) }
+    var pitch by remember { mutableFloatStateOf(0f) }
+
+    DisposableEffect(context, lifecycleOwner, enabled) {
+        if (!enabled) {
+            yaw = 0f
+            pitch = 0f
+            return@DisposableEffect onDispose {}
+        }
+        val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
+            ?: return@DisposableEffect onDispose {}
+        val sensor = sensorManager.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+            ?: return@DisposableEffect onDispose {}
+
+        val rotationMatrix = FloatArray(9)
+        val orientation = FloatArray(3)
+        var smoothX = 0f
+        var smoothY = 0f
+
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                val targetX: Float
+                val targetY: Float
+                if (event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR) {
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+                    SensorManager.getOrientation(rotationMatrix, orientation)
+                    targetX = (orientation[2] * 14f).coerceIn(-10f, 10f)
+                    targetY = ((orientation[1] + 0.6f) * 10f).coerceIn(-8f, 8f)
+                } else {
+                    targetX = (-event.values[0] * 1.4f).coerceIn(-10f, 10f)
+                    targetY = ((event.values[1] - 5.5f) * 1.1f).coerceIn(-8f, 8f)
+                }
+                smoothX += (targetX - smoothX) * 0.14f
+                smoothY += (targetY - smoothY) * 0.14f
+                yaw = smoothX
+                pitch = smoothY
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+
+        fun register() {
+            sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        }
+        register()
+
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> sensorManager.unregisterListener(listener)
+                Lifecycle.Event.ON_RESUME -> register()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            sensorManager.unregisterListener(listener)
+        }
+    }
+
+    return yaw to pitch
+}
+
+private fun cinemaBeatLabels(sceneId: String): List<String> = when (sceneId) {
+    "BLUE_SKY_2006" -> listOf(
+        "Perde 1/4 · 2006 Gökyüzü",
+        "Perde 2/4 · Boyut Çatlağı",
+        "Perde 3/4 · Mavi Şimşek Zirvesi",
+        "Perde 4/4 · Kozmik İz"
+    )
+    "WHITE_EYE_AWAKENING" -> listOf(
+        "Perde 1/4 · Konferans Sessizliği",
+        "Perde 2/4 · Göz Bebekleri Ağarıyor",
+        "Perde 3/4 · Üç Saniyelik Boşluk",
+        "Perde 4/4 · Zihin Yankısı"
+    )
+    "BOSPHORUS_RESONANCE" -> listOf(
+        "Perde 1/4 · Boğaz Altı Mağarası",
+        "Perde 2/4 · İkiz Enerji Girdabı",
+        "Perde 3/4 · Rezonans Çekirdeği",
+        "Perde 4/4 · Fırtına Dengesi"
+    )
+    "MANHATTAN_ARMADA" -> listOf(
+        "Perde 1/4 · Bulutların Ardındaki Gölge",
+        "Perde 2/4 · Gümüş Halka Tarama",
+        "Perde 3/4 · Gök Yaran Yıldırım",
+        "Perde 4/4 · Kuşatma Başlıyor"
+    )
+    else -> listOf(
+        "Perde 1/4 · Çatıda Sağanak",
+        "Perde 2/4 · Zaman Yavaşlıyor",
+        "Perde 3/4 · Donmuş Yağmur & Mutlak Uyanış",
+        "Perde 4/4 · Kozmik Mührün Doğuşu"
+    )
+}
+
+/**
+ * Procedural branching lightning renderer for Manhattan Armada & Blue Sky 2006 cinematics.
+ */
+private fun DrawScope.drawBranchingLightning(
+    start: Offset,
+    end: Offset,
+    seed: Int,
+    glowColor: Color,
+    alpha: Float
+) {
+    if (alpha <= 0.02f) return
+    val rng = Random(seed)
+    val segments = 6
+    val mainPoints = mutableListOf(start)
+    for (i in 1 until segments) {
+        val t = i / segments.toFloat()
+        val jitterX = (rng.nextFloat() - 0.5f) * size.width * 0.085f
+        val jitterY = (rng.nextFloat() - 0.5f) * size.height * 0.03f
+        mainPoints.add(
+            Offset(
+                start.x + (end.x - start.x) * t + jitterX,
+                start.y + (end.y - start.y) * t + jitterY
+            )
+        )
+    }
+    mainPoints.add(end)
+
+    val mainPath = Path().apply {
+        moveTo(mainPoints.first().x, mainPoints.first().y)
+        mainPoints.drop(1).forEach { lineTo(it.x, it.y) }
+    }
+    drawPath(mainPath, glowColor.copy(alpha = alpha * 0.42f), style = Stroke(width = 11f, cap = StrokeCap.Round))
+    drawPath(mainPath, glowColor.copy(alpha = alpha * 0.85f), style = Stroke(width = 4.5f, cap = StrokeCap.Round))
+    drawPath(mainPath, Color.White.copy(alpha = alpha), style = Stroke(width = 1.9f, cap = StrokeCap.Round))
+
+    // 2 procedural secondary forks
+    listOf(2, 4).forEachIndexed { idx, nodeIdx ->
+        val origin = mainPoints.getOrNull(nodeIdx) ?: return@forEachIndexed
+        val dir = if (idx == 0) -1f else 1f
+        val mid = Offset(
+            origin.x + dir * size.width * (0.045f + rng.nextFloat() * 0.04f),
+            origin.y + size.height * 0.085f
+        )
+        val tip = Offset(
+            mid.x + dir * size.width * 0.035f,
+            mid.y + size.height * 0.075f
+        )
+        val branch = Path().apply {
+            moveTo(origin.x, origin.y)
+            lineTo(mid.x, mid.y)
+            lineTo(tip.x, tip.y)
+        }
+        drawPath(branch, glowColor.copy(alpha = alpha * 0.55f), style = Stroke(width = 3.2f, cap = StrokeCap.Round))
+        drawPath(branch, Color.White.copy(alpha = alpha * 0.80f), style = Stroke(width = 1.2f, cap = StrokeCap.Round))
+    }
+}
+
+/**
+ * Reusable 60fps Live-Action 2.5D Multi-Beat Directed Cinema + Procedural GPU VFX Engine.
  */
 @Composable
 private fun LiveActionCinemaMotionCanvas(
     sceneId: String,
     tiltYawDeg: Float,
     tiltPitchDeg: Float,
+    directorProgress: Float = -1f,
     modifier: Modifier = Modifier
 ) {
+    val motionConfig = LocalCosmicMotionConfig.current
     val inf = rememberInfiniteTransition(label = "cinema_vfx_$sceneId")
     val flowPhase by inf.animateFloat(
         initialValue = 0f,
@@ -363,31 +549,58 @@ private fun LiveActionCinemaMotionCanvas(
         animationSpec = infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Restart),
         label = "flow"
     )
-    val cameraPush by inf.animateFloat(
+    val ambientTimeline by inf.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(9500, easing = LinearEasing), RepeatMode.Reverse),
-        label = "push"
+        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Restart),
+        label = "ambient_timeline"
     )
     val energyPulse by inf.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1900, easing = LinearEasing), RepeatMode.Reverse),
+        animationSpec = infiniteRepeatable(tween(1750, easing = LinearEasing), RepeatMode.Reverse),
         label = "energy"
     )
 
+    val timeline = when {
+        directorProgress >= 0f -> directorProgress.coerceIn(0f, 1f)
+        motionConfig.enableAmbientLoops -> ambientTimeline
+        else -> 0.35f
+    }
+
+    // 4-Beat dramatic intensity curve peaking cleanly across Act 3 (0.55..0.82)
+    val climaxIntensity = when {
+        timeline < 0.25f -> timeline / 0.25f * 0.35f
+        timeline < 0.55f -> 0.35f + ((timeline - 0.25f) / 0.30f) * 0.45f
+        timeline < 0.82f -> 0.80f + sin(((timeline - 0.55f) / 0.27f) * PI.toFloat()) * 0.20f
+        else -> (1f - ((timeline - 0.82f) / 0.18f)) * 0.65f + 0.18f
+    }.coerceIn(0f, 1f)
+
+    // Directed camera dolly curve across the 4 acts
+    val directedZoom = when {
+        timeline < 0.25f -> 1.02f + (timeline / 0.25f) * 0.03f
+        timeline < 0.55f -> 1.05f + ((timeline - 0.25f) / 0.30f) * 0.045f
+        timeline < 0.82f -> 1.095f + sin(((timeline - 0.55f) / 0.27f) * PI.toFloat()) * 0.025f
+        else -> 1.095f - ((timeline - 0.82f) / 0.18f) * 0.055f
+    }
+    val directedPanX = sin(timeline * 2f * PI.toFloat()) * 9f
+    val directedPanY = cos(timeline * 2f * PI.toFloat()) * 4f
+    val microShake = if (motionConfig.enableAmbientLoops && climaxIntensity > 0.86f && (sceneId == "MANHATTAN_ARMADA" || sceneId == "BLUE_SKY_2006")) {
+        sin(flowPhase * 42f) * 3.2f
+    } else 0f
+
     val particles = remember(sceneId) {
-        List(34) { idx ->
+        List(44) { idx ->
             Triple(
                 Random(idx * 41 + 9).nextFloat(),
                 Random(idx * 67 + 5).nextFloat(),
-                0.6f + Random(idx * 23 + 3).nextFloat() * 0.9f
+                0.55f + Random(idx * 23 + 3).nextFloat() * 0.95f
             )
         }
     }
 
     Box(modifier = modifier.clip(RoundedCornerShape(0.dp))) {
-        // Layer 1: High-Res Photorealistic Live-Action Movie Frame loaded via Coil RGB_565 (OOM-safe, zero Size.ORIGINAL)
+        // Layer 1 (Depth 0.6x): High-Res Photorealistic Live-Action Movie Frame (Coil RGB_565 OOM-safe)
         val canvasContext = LocalContext.current
         val backdropRes = remember(sceneId) { sceneBackdropRes(sceneId) }
         val backdropRequest = remember(canvasContext, backdropRes) {
@@ -404,126 +617,232 @@ private fun LiveActionCinemaMotionCanvas(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    val zoom = 1.03f + cameraPush * 0.03f
-                    scaleX = zoom
-                    scaleY = zoom
-                    translationX = sin(cameraPush * PI.toFloat()) * 6f - tiltYawDeg * 1.1f
-                    translationY = cos(cameraPush * PI.toFloat()) * 3f - tiltPitchDeg * 0.9f
-                    rotationY = tiltYawDeg * 0.55f
-                    rotationX = -tiltPitchDeg * 0.45f
+                    scaleX = directedZoom
+                    scaleY = directedZoom
+                    translationX = directedPanX + microShake - tiltYawDeg * 1.45f
+                    translationY = directedPanY - tiltPitchDeg * 1.15f
+                    rotationY = tiltYawDeg * 0.58f
+                    rotationX = -tiltPitchDeg * 0.48f
                     cameraDistance = 16f * density
                 }
         )
 
-        // Layer 2: Scene-Specific 60fps Live Cinema VFX (Rain, Cosmic Lightning, Eye Bloom, Frozen Sparks)
+        // Layer 2 & 3 (Midground 1.15x + Foreground 1.75x 2.5D Parallax GPU VFX)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
             val cx = w / 2f
             val cy = h / 2f
+            val midParallaxX = -tiltYawDeg * 2.2f
+            val midParallaxY = -tiltPitchDeg * 1.6f
+            val fgParallaxX = -tiltYawDeg * 3.8f
+            val fgParallaxY = -tiltPitchDeg * 2.6f
 
             // Subtle storm rain across nocturnal Manhattan & Istanbul scenes
             if (sceneId != "MUTLAK_UYANIS") {
-                particles.forEach { (px, py, spd) ->
-                    val prog = (py + flowPhase * spd * 1.8f) % 1f
-                    val sx = ((px - prog * 0.14f) + 1f) % 1f * w
+                val rainSpeedScale = if (sceneId == "WHITE_EYE_AWAKENING") (1f - climaxIntensity * 0.85f).coerceAtLeast(0.08f) else 1f
+                particles.forEachIndexed { idx, (px, py, spd) ->
+                    val prog = (py + flowPhase * spd * 1.85f * rainSpeedScale) % 1f
+                    val parallaxMul = if (idx % 3 == 0) fgParallaxX else midParallaxX
+                    val sx = ((((px - prog * 0.14f) + 1f) % 1f) * w + parallaxMul + w) % w
                     val sy = prog * h
                     drawLine(
-                        color = Color(0x44BAE6FD),
+                        color = Color(0x4CBADFFD),
                         start = Offset(sx, sy),
-                        end = Offset(sx - 5f, sy + 18f),
-                        strokeWidth = 1.3f
+                        end = Offset(sx - 5f * rainSpeedScale, sy + 18f * rainSpeedScale + 3f),
+                        strokeWidth = if (idx % 3 == 0) 1.7f else 1.15f
                     )
                 }
             }
 
             when (sceneId) {
                 "BLUE_SKY_2006" -> {
-                    // Crackling blue sky rift flash + glowing falling sparks
-                    val flash = if (energyPulse > 0.84f) (energyPulse - 0.84f) * 2.4f else 0f
-                    if (flash > 0.01f) {
-                        drawRect(Color(0xFF38BDF8).copy(alpha = flash * 0.24f))
+                    // Multi-branch procedural sky rift lightning + luminous falling rift embers + horizon flare
+                    val boltAlpha = if (climaxIntensity > 0.72f || energyPulse > 0.82f) {
+                        ((climaxIntensity * 0.7f) + (if (energyPulse > 0.82f) 0.45f else 0f)).coerceIn(0f, 1f)
+                    } else 0f
+                    if (boltAlpha > 0.05f) {
+                        drawRect(Color(0xFF38BDF8).copy(alpha = boltAlpha * 0.22f))
+                        drawBranchingLightning(
+                            start = Offset(w * 0.52f + midParallaxX, h * 0.06f),
+                            end = Offset(w * 0.48f + midParallaxX, h * 0.62f),
+                            seed = ((flowPhase * 12).toInt() + 17),
+                            glowColor = Color(0xFF38BDF8),
+                            alpha = boltAlpha * 0.92f
+                        )
                     }
-                    particles.take(20).forEachIndexed { idx, (px, py, spd) ->
-                        val prog = (py + flowPhase * spd * 0.9f) % 1f
-                        val sx = w * (0.28f + px * 0.44f) + sin(flowPhase * 6.28f + idx) * 12f
-                        val sy = h * 0.15f + prog * h * 0.82f
+                    // Horizontal anamorphic blue rift flare
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(Color.Transparent, Color(0xFF7DD3FC).copy(alpha = 0.24f * climaxIntensity), Color.Transparent)
+                        ),
+                        topLeft = Offset(0f, h * 0.26f + midParallaxY),
+                        size = androidx.compose.ui.geometry.Size(w, h * 0.08f)
+                    )
+                    particles.take(26).forEachIndexed { idx, (px, py, spd) ->
+                        val prog = (py + flowPhase * spd * 0.95f) % 1f
+                        val sx = w * (0.20f + px * 0.60f) + sin(flowPhase * 6.28f + idx) * 14f + fgParallaxX
+                        val sy = h * 0.10f + prog * h * 0.86f
                         drawCircle(
-                            color = Color(0xFFBAE6FD).copy(alpha = (1f - prog) * 0.85f),
-                            radius = 1.8f + (idx % 3),
+                            color = Color(0xFFBAE6FD).copy(alpha = (1f - prog) * 0.90f),
+                            radius = 1.8f + (idx % 3) * 0.9f,
                             center = Offset(sx, sy)
                         )
                     }
                 }
 
                 "WHITE_EYE_AWAKENING" -> {
-                    // Pulsing White Eye radiant glare + expanding telepathic rings
-                    val glowRad = w * (0.20f + energyPulse * 0.08f)
+                    // Radial White-Eye desaturation/freeze pulse wave across Act 2-3 + telepathic rings
+                    val eyeCenter = Offset(cx + midParallaxX * 0.6f, h * 0.37f + midParallaxY * 0.6f)
+                    val freezeWaveRadius = w * (0.14f + climaxIntensity * 0.82f)
                     drawCircle(
                         brush = Brush.radialGradient(
-                            listOf(Color.White.copy(alpha = 0.28f * energyPulse), Color(0xFF38BDF8).copy(alpha = 0.14f), Color.Transparent),
-                            center = Offset(cx, h * 0.37f),
-                            radius = glowRad
+                            listOf(
+                                Color.White.copy(alpha = 0.36f * climaxIntensity),
+                                Color(0xFFCBD5E1).copy(alpha = 0.24f * climaxIntensity),
+                                Color(0xFF0F172A).copy(alpha = 0.26f * climaxIntensity),
+                                Color.Transparent
+                            ),
+                            center = eyeCenter,
+                            radius = freezeWaveRadius.coerceAtLeast(10f)
                         ),
-                        radius = glowRad,
-                        center = Offset(cx, h * 0.37f)
+                        radius = freezeWaveRadius,
+                        center = eyeCenter
                     )
-                    for (r in 0..2) {
-                        val p = (flowPhase + r * 0.33f) % 1f
+                    for (r in 0..3) {
+                        val p = (flowPhase + r * 0.25f) % 1f
                         drawCircle(
-                            color = Color(0xFFE0F2FE).copy(alpha = (1f - p) * 0.36f),
-                            radius = 22f + p * w * 0.46f,
-                            center = Offset(cx, h * 0.37f),
-                            style = Stroke(width = 1.8f)
+                            color = Color(0xFFF8FAFC).copy(alpha = (1f - p) * (0.30f + climaxIntensity * 0.35f)),
+                            radius = 18f + p * w * 0.56f,
+                            center = eyeCenter,
+                            style = Stroke(width = 1.6f + climaxIntensity * 1.4f)
+                        )
+                    }
+                    // Suspended floating dust motes frozen in the telepathic void
+                    particles.take(24).forEachIndexed { idx, (px, py, _) ->
+                        val sx = px * w + fgParallaxX
+                        val sy = py * h + sin(flowPhase * 6.28f + idx) * (4f * (1f - climaxIntensity * 0.7f))
+                        drawCircle(
+                            color = Color.White.copy(alpha = 0.35f + climaxIntensity * 0.45f),
+                            radius = 1.5f + (idx % 3) * 0.7f,
+                            center = Offset(sx, sy)
                         )
                     }
                 }
 
                 "BOSPHORUS_RESONANCE" -> {
-                    // Swirling twin blue & crimson rising energy sparks around the Bosphorus vortex
-                    particles.take(24).forEachIndexed { idx, (px, py, spd) ->
+                    // Counter-rotating twin blue (Aiden) & crimson (Mira) energy ribbons + vortex sparks
+                    val vortexX = w * 0.54f + midParallaxX
+                    val blueRibbon = Path()
+                    val crimsonRibbon = Path()
+                    val steps = 28
+                    for (i in 0..steps) {
+                        val t = i / steps.toFloat()
+                        val y = h * (0.88f - t * 0.78f) + midParallaxY
+                        val radius = (16f + sin(t * PI.toFloat()) * (44f + climaxIntensity * 32f))
+                        val angA = t * 9.5f - flowPhase * 6.28f * 1.6f
+                        val angB = -t * 9.5f + flowPhase * 6.28f * 1.6f + PI.toFloat()
+                        val ax = vortexX + cos(angA) * radius
+                        val bx = vortexX + cos(angB) * radius
+                        if (i == 0) {
+                            blueRibbon.moveTo(ax, y)
+                            crimsonRibbon.moveTo(bx, y)
+                        } else {
+                            blueRibbon.lineTo(ax, y)
+                            crimsonRibbon.lineTo(bx, y)
+                        }
+                    }
+                    drawPath(blueRibbon, Color(0xFF38BDF8).copy(alpha = 0.35f + climaxIntensity * 0.45f), style = Stroke(width = 6f, cap = StrokeCap.Round))
+                    drawPath(blueRibbon, Color(0xFFE0F2FE).copy(alpha = 0.55f + climaxIntensity * 0.35f), style = Stroke(width = 2f, cap = StrokeCap.Round))
+                    drawPath(crimsonRibbon, Color(0xFFF43F5E).copy(alpha = 0.35f + climaxIntensity * 0.45f), style = Stroke(width = 6f, cap = StrokeCap.Round))
+                    drawPath(crimsonRibbon, Color(0xFFFDA4AF).copy(alpha = 0.50f + climaxIntensity * 0.35f), style = Stroke(width = 2f, cap = StrokeCap.Round))
+
+                    particles.take(26).forEachIndexed { idx, (px, py, spd) ->
                         val prog = (1f - ((py + flowPhase * spd) % 1f))
-                        val angle = flowPhase * 6.28f * 1.5f + idx
-                        val sx = w * 0.56f + cos(angle) * (18f + px * 58f)
-                        val sy = h * 0.14f + prog * h * 0.72f
+                        val angle = flowPhase * 6.28f * 1.8f + idx
+                        val sx = vortexX + cos(angle) * (20f + px * 68f) + fgParallaxX * 0.4f
+                        val sy = h * 0.12f + prog * h * 0.76f
                         val col = if (idx % 2 == 0) Color(0xFF38BDF8) else Color(0xFFF43F5E)
-                        drawCircle(col.copy(alpha = 0.75f * sin(prog * PI.toFloat())), radius = 2.4f, center = Offset(sx, sy))
+                        drawCircle(col.copy(alpha = 0.80f * sin(prog * PI.toFloat())), radius = 2.4f, center = Offset(sx, sy))
                     }
                 }
 
                 "MANHATTAN_ARMADA" -> {
-                    // Periodic sky lightning arcs illuminating the dreadnought + silver ring pulse
-                    if (energyPulse > 0.80f) {
-                        val a = (energyPulse - 0.80f) / 0.20f
-                        drawRect(Color(0xFFBAE6FD).copy(alpha = a * 0.20f))
-                        val bolt = Path().apply {
-                            moveTo(w * 0.50f, h * 0.38f)
-                            lineTo(w * 0.47f, h * 0.49f)
-                            lineTo(w * 0.52f, h * 0.57f)
-                            lineTo(w * 0.49f, h * 0.68f)
-                        }
-                        drawPath(bolt, Color(0xFF7DD3FC).copy(alpha = a * 0.85f), style = Stroke(width = 5f, cap = StrokeCap.Round))
-                        drawPath(bolt, Color.White.copy(alpha = a), style = Stroke(width = 2f, cap = StrokeCap.Round))
+                    // Dreadnought scanning halo + procedural branching sky lightning + dramatic flash
+                    val scanCenter = Offset(w * 0.50f + midParallaxX, h * 0.34f + midParallaxY)
+                    drawCircle(
+                        color = Color(0xFF93C5FD).copy(alpha = 0.20f + climaxIntensity * 0.25f),
+                        radius = w * (0.14f + energyPulse * 0.12f),
+                        center = scanCenter,
+                        style = Stroke(width = 2.2f)
+                    )
+                    val strikeAlpha = when {
+                        climaxIntensity > 0.76f -> ((climaxIntensity - 0.76f) / 0.24f).coerceIn(0f, 1f)
+                        energyPulse > 0.80f -> ((energyPulse - 0.80f) / 0.20f) * 0.85f
+                        else -> 0f
+                    }
+                    if (strikeAlpha > 0.04f) {
+                        drawRect(Color(0xFFBAE6FD).copy(alpha = strikeAlpha * 0.22f))
+                        drawBranchingLightning(
+                            start = Offset(w * 0.48f + midParallaxX, h * 0.22f),
+                            end = Offset(w * 0.52f + midParallaxX, h * 0.78f),
+                            seed = ((flowPhase * 10).toInt() + 91),
+                            glowColor = Color(0xFF60A5FA),
+                            alpha = strikeAlpha
+                        )
                     }
                 }
 
                 else -> {
-                    // MUTLAK_UYANIS: Time-frozen glistening raindrops & dual blue/crimson energy arcs!
-                    particles.forEachIndexed { idx, (px, py, _) ->
-                        val hoverY = py * h + sin(flowPhase * 6.28f + idx) * 3.5f
-                        val sx = px * w
-                        val col = if (idx % 3 == 0) Color(0xFFF43F5E) else Color(0xFF7DD3FC)
-                        drawCircle(col.copy(alpha = 0.45f + energyPulse * 0.45f), radius = 2.2f, center = Offset(sx, hoverY))
+                    // MUTLAK_UYANIS: Raindrops decelerate to COMPLETE TIME-FREEZE mid-air with crystalline refraction glints!
+                    val freezeFactor = climaxIntensity.coerceIn(0f, 1f) // 0 = falling rain, 1 = completely frozen crystal droplets
+                    val dropSpeed = (1f - freezeFactor * 0.96f).coerceAtLeast(0.03f)
+                    particles.forEachIndexed { idx, (px, py, spd) ->
+                        val prog = (py + flowPhase * spd * 1.4f * dropSpeed) % 1f
+                        val hoverJitter = sin(flowPhase * 6.28f + idx) * (3.2f * freezeFactor)
+                        val sx = (px * w + (if (idx % 2 == 0) fgParallaxX else midParallaxX) + w) % w
+                        val sy = prog * h + hoverJitter
+                        val col = when {
+                            idx % 4 == 0 -> Color(0xFFF43F5E)
+                            idx % 3 == 0 -> Color(0xFFFDE047)
+                            else -> Color(0xFF7DD3FC)
+                        }
+                        if (freezeFactor < 0.45f) {
+                            // Still falling rain streak shortening as time slows
+                            val tailLen = 18f * (1f - freezeFactor * 1.8f).coerceAtLeast(0.15f)
+                            drawLine(
+                                color = col.copy(alpha = 0.65f),
+                                start = Offset(sx, sy),
+                                end = Offset(sx - 3f, sy + tailLen),
+                                strokeWidth = 1.6f
+                            )
+                        } else {
+                            // Time-frozen glistening crystalline raindrop + cross specular glint
+                            val r = 2.2f + (idx % 3) * 1.05f
+                            drawCircle(col.copy(alpha = 0.55f + energyPulse * 0.42f), radius = r, center = Offset(sx, sy))
+                            drawCircle(Color.White.copy(alpha = 0.75f * freezeFactor), radius = r * 0.42f, center = Offset(sx - r * 0.25f, sy - r * 0.25f))
+                        }
                     }
-                    // Pulsing cosmic aura around Aiden's hands on the rooftop
+                    // Dual blue & crimson cosmic aura + anamorphic flare at climax
                     drawCircle(
                         brush = Brush.radialGradient(
-                            listOf(Color(0xFF38BDF8).copy(alpha = 0.22f * energyPulse), Color.Transparent),
-                            center = Offset(cx, cy),
-                            radius = w * 0.34f
+                            listOf(
+                                Color(0xFF38BDF8).copy(alpha = 0.26f * climaxIntensity),
+                                Color(0xFFF43F5E).copy(alpha = 0.14f * climaxIntensity),
+                                Color.Transparent
+                            ),
+                            center = Offset(cx + midParallaxX, cy + midParallaxY),
+                            radius = w * (0.30f + climaxIntensity * 0.18f)
                         ),
-                        radius = w * 0.34f,
-                        center = Offset(cx, cy)
+                        radius = w * (0.30f + climaxIntensity * 0.18f),
+                        center = Offset(cx + midParallaxX, cy + midParallaxY)
+                    )
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            listOf(Color.Transparent, Color(0xFFFDE047).copy(alpha = 0.20f * climaxIntensity), Color.Transparent)
+                        ),
+                        topLeft = Offset(0f, cy - h * 0.03f + midParallaxY),
+                        size = androidx.compose.ui.geometry.Size(w, h * 0.06f)
                     )
                 }
             }
@@ -540,10 +859,19 @@ private fun LiveActionFullscreenCinemaDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val motionConfig = LocalCosmicMotionConfig.current
     var isMuted by remember { mutableStateOf(false) }
+    var isPlaying by remember { mutableStateOf(true) }
+    var directorProgress by remember { mutableFloatStateOf(0f) }
     var tiltYaw by remember { mutableFloatStateOf(0f) }
     var tiltPitch by remember { mutableFloatStateOf(0f) }
+    var lastHapticBeat by remember { mutableIntStateOf(-1) }
+
+    val (gyroYaw, gyroPitch) = rememberGyroscopeTilt(enabled = motionConfig.enableAmbientLoops)
+    val beatLabels = remember(sceneId) { cinemaBeatLabels(sceneId) }
+    val currentBeatIndex = (directorProgress * 4f).toInt().coerceIn(0, 3)
 
     val soundEngine = remember(sceneId) {
         Cosmic3DSoundEngine(context, enableOrchestralMusic = true)
@@ -564,6 +892,29 @@ private fun LiveActionFullscreenCinemaDialog(
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 60fps 12-second 4-Act Director Timeline loop
+    LaunchedEffect(isPlaying, sceneId) {
+        if (!isPlaying) return@LaunchedEffect
+        var lastNanos = 0L
+        while (isPlaying) {
+            withFrameNanos { now ->
+                if (lastNanos != 0L) {
+                    val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
+                    directorProgress = (directorProgress + dt / 12f) % 1f
+                }
+                lastNanos = now
+            }
+        }
+    }
+
+    // Haptic climax pulse right as Act 3 (Kırılma Zirvesi) begins!
+    LaunchedEffect(currentBeatIndex) {
+        if (currentBeatIndex == 2 && lastHapticBeat != 2) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+        lastHapticBeat = currentBeatIndex
     }
 
     Dialog(
@@ -592,7 +943,10 @@ private fun LiveActionFullscreenCinemaDialog(
                     )
                 }
         ) {
-            // Subtle ambient theater aura backdrop (dimmed, Coil RGB_565 decoded)
+            val combinedYaw = (tiltYaw + gyroYaw * 0.75f).coerceIn(-14f, 14f)
+            val combinedPitch = (tiltPitch + gyroPitch * 0.65f).coerceIn(-10f, 10f)
+
+            // Ambient theater aura backdrop (dimmed, Coil RGB_565 decoded)
             val auraRequest = remember(context, sceneId) {
                 ImageRequest.Builder(context)
                     .data(sceneBackdropRes(sceneId))
@@ -606,19 +960,19 @@ private fun LiveActionFullscreenCinemaDialog(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
-                    .graphicsLayer { alpha = 0.22f; scaleX = 1.15f; scaleY = 1.15f }
+                    .graphicsLayer { alpha = 0.24f; scaleX = 1.15f; scaleY = 1.15f }
             )
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
                         Brush.verticalGradient(
-                            listOf(Color(0xE603020A), Color(0x99060414), Color(0xEC03020A))
+                            listOf(Color(0xE603020A), Color(0x99060414), Color(0xF003020A))
                         )
                     )
             )
 
-            // Centerpiece TRUE 16:9 Full-Frame 2.5D Cinema Stage (ZERO over-zoom / ZERO edge cropping!)
+            // Centerpiece TRUE 16:9 Full-Frame 2.5D Cinema Stage
             Box(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -626,21 +980,23 @@ private fun LiveActionFullscreenCinemaDialog(
                     .padding(horizontal = 8.dp)
                     .aspectRatio(16f / 9f)
                     .graphicsLayer {
-                        rotationY = tiltYaw * 0.72f
-                        rotationX = -tiltPitch * 0.62f
+                        rotationY = combinedYaw * 0.70f
+                        rotationX = -combinedPitch * 0.60f
                         cameraDistance = 18f * density
                     }
                     .clip(RoundedCornerShape(18.dp))
-                    .border(1.2.dp, accent.copy(alpha = 0.65f), RoundedCornerShape(18.dp))
+                    .border(1.3.dp, accent.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
             ) {
                 LiveActionCinemaMotionCanvas(
                     sceneId = sceneId,
-                    tiltYawDeg = tiltYaw * 0.45f,
-                    tiltPitchDeg = tiltPitch * 0.45f,
+                    tiltYawDeg = combinedYaw * 0.55f,
+                    tiltPitchDeg = combinedPitch * 0.55f,
+                    directorProgress = directorProgress,
                     modifier = Modifier.fillMaxSize()
                 )
             }
 
+            // Top Director Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -654,23 +1010,23 @@ private fun LiveActionFullscreenCinemaDialog(
                     modifier = Modifier
                         .clip(RoundedCornerShape(50))
                         .background(Color(0xCC09061B))
-                        .border(1.dp, accent.copy(alpha = 0.78f), RoundedCornerShape(50))
+                        .border(1.dp, accent.copy(alpha = 0.80f), RoundedCornerShape(50))
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = "✦ SİNEMA MODU · 2.5D DERİNLİK",
+                        text = "✦ ${beatLabels[currentBeatIndex]}",
                         fontFamily = InterFontFamily,
                         color = accent,
-                        fontSize = 9.5.sp,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp
+                        letterSpacing = 0.6.sp
                     )
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(Color(0xD9100926))
                             .border(1.dp, accent.copy(alpha = 0.8f), CircleShape)
@@ -679,34 +1035,122 @@ private fun LiveActionFullscreenCinemaDialog(
                                 soundEngine.setMuted(isMuted)
                             },
                         contentAlignment = Alignment.Center
-                    ) { Text(if (isMuted) "🔇" else "🔊", fontSize = 15.sp) }
+                    ) { Text(if (isMuted) "🔇" else "🔊", fontSize = 16.sp) }
 
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(Color(0xD9100926))
                             .border(1.dp, Color(0xAAFFFFFF), CircleShape)
-                            .clickable { onDismiss() },
+                            .clickable { onDismiss() }
+                            .testTag("cinema_fullscreen_close"),
                         contentAlignment = Alignment.Center
-                    ) { Text("✕", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
+                    ) { Text("✕", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
                 }
             }
 
+            // Bottom Director Timeline Scrubber + Replay + Caption
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
-                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF2070415))))
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF5070415))))
                     .navigationBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // 4-Act Interactive Timeline Scrubber + Play/Pause + Replay
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xCC160C30))
+                            .border(1.dp, accent.copy(alpha = 0.78f), CircleShape)
+                            .clickable { isPlaying = !isPlaying }
+                            .testTag("cinema_play_pause_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (isPlaying) "⏸" else "▶",
+                            color = Color.White,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        for (act in 0 until 4) {
+                            val actStart = act * 0.25f
+                            val fillFrac = ((directorProgress - actStart) / 0.25f).coerceIn(0f, 1f)
+                            val isActiveAct = currentBeatIndex == act
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 36.dp)
+                                    .clickable {
+                                        directorProgress = actStart + 0.01f
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    }
+                                    .testTag("cinema_beat_segment_$act"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(if (isActiveAct) 7.dp else 5.dp)
+                                        .clip(RoundedCornerShape(50))
+                                        .background(Color(0x44FFFFFF))
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth(fillFrac)
+                                            .height(if (isActiveAct) 7.dp else 5.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(if (act == 2) Color(0xFFFDE047) else accent)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xCC160C30))
+                            .border(1.dp, Color(0x99BAE6FD), CircleShape)
+                            .clickable {
+                                directorProgress = 0f
+                                isPlaying = true
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            .testTag("cinema_replay_button"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "↺",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
                 Text(
                     text = caption,
                     fontFamily = DisplaySerifFontFamily,
                     color = Color.White,
-                    fontSize = 20.sp,
+                    fontSize = 19.sp,
                     fontWeight = FontWeight.Bold
                 )
                 if (subtitle.isNotBlank()) {
@@ -715,8 +1159,8 @@ private fun LiveActionFullscreenCinemaDialog(
                         fontFamily = LiterarySerifFontFamily,
                         fontStyle = FontStyle.Italic,
                         color = Color(0xFFE0D6F8),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp
+                        fontSize = 13.5.sp,
+                        lineHeight = 19.sp
                     )
                 }
             }
@@ -725,9 +1169,8 @@ private fun LiveActionFullscreenCinemaDialog(
 }
 
 /**
- * Chapter 10 Mandatory Grounded Rooftop Boss Duel Launch Card!
+ * Chapter 10/13/24 Mandatory Grounded Boss Duel Launch Card!
  * NO FLYING — 100% Canon Aiden Blackwood (Işınlanma, Drift Emilim, Beyaz Göz, Kırmızı Göz + Sesli Avengers Desteği).
- * Winning this duel unlocks Chapter 10 Scene 5 story progression.
  */
 @Composable
 fun Cosmic3DRiftMiniGame(
@@ -736,12 +1179,14 @@ fun Cosmic3DRiftMiniGame(
     bossId: CosmicDuelBossId = CosmicDuelBossId.VAELOR_ROOFTOP,
     pietroSaved: Boolean = false,
     isCompleted: Boolean = false,
+    savedBestRank: String? = null,
+    onVictoryWithRank: ((score: Int, rank: String) -> Unit)? = null,
     onVictoryUnlocked: () -> Unit = {}
 ) {
     var isDuelOpen by remember { mutableStateOf(false) }
     var localWon by remember(isCompleted) { mutableStateOf(isCompleted) }
     var bestScore by remember { mutableIntStateOf(0) }
-    var bestRank by remember { mutableStateOf("") }
+    var bestRank by remember(savedBestRank) { mutableStateOf(savedBestRank.orEmpty()) }
 
     val borderAccent = if (localWon) Color(0xFF34D399) else when (bossId) {
         CosmicDuelBossId.MIRROR_ZERO -> Color(0xFF38BDF8)
@@ -913,6 +1358,7 @@ fun Cosmic3DRiftMiniGame(
                     bestScore = finalScore
                     bestRank = rank
                 }
+                onVictoryWithRank?.invoke(finalScore, rank)
                 onVictoryUnlocked()
             },
             onDismiss = { isDuelOpen = false }

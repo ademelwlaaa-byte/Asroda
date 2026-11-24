@@ -246,8 +246,15 @@ fun BotSettingsModal(
 
     // ── 6. Cast (Manual KeyCharacters + Auto-Detected Cast Preserved) ──
     var charList by remember(bot.id) { mutableStateOf(keyCharacters.toMutableList()) }
-    val autoDetectedCast = remember { mutableStateOf<List<CastMemberEntity>>(emptyList()) }
+    val allCastMembers = remember(bot.id) { mutableStateOf<List<CastMemberEntity>>(emptyList()) }
+    val autoDetectedCast = remember(bot.id) { mutableStateOf<List<CastMemberEntity>>(emptyList()) }
     var deleteConfirmCast by remember { mutableStateOf<CastMemberEntity?>(null) }
+
+    LaunchedEffect(bot.id, keyCharacters) {
+        if (keyCharacters.isNotEmpty() && charList.isEmpty()) {
+            charList = keyCharacters.toMutableList()
+        }
+    }
 
     // ── 7. Clean Category & Sub-View Navigation State ──
     // 0 = Sahne, 1 = Duygu, 2 = Kimlik, 3 = Hafıza
@@ -262,7 +269,9 @@ fun BotSettingsModal(
     var confirmResetChat by remember { mutableStateOf(false) }
     var confirmDeleteBot by remember { mutableStateOf(false) }
     var showNeuralVault by remember { mutableStateOf(false) }
+    var showLorebookModal by remember { mutableStateOf(false) }
     var showEmotionControlModal by remember { mutableStateOf(false) }
+    var emotionStudioInitialChar by remember { mutableStateOf("main") }
     var showSystemPromptSheet by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
     var showReanalyzeBaselineConfirm by remember { mutableStateOf(false) }
@@ -279,11 +288,17 @@ fun BotSettingsModal(
     val activeFacts by activeFactsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val activeEventsFlow = remember(bot.id) { viewModel.getActiveEventsFlow(bot.id) }
     val activeEvents by activeEventsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val linkedLorebookIdsFlow = remember(bot.id) { viewModel.getLinkedLorebookIdsFlow(bot.id) }
+    val linkedLorebookIds by linkedLorebookIdsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     LaunchedEffect(bot.id) {
+        if (charList.isEmpty()) {
+            viewModel.backfillAidenPresetCharactersIfEmpty(bot.id)
+        }
         filterCount = viewModel.getContentFilterCountForBot(bot.id)
-        autoDetectedCast.value = viewModel.getCastMembersForBot(bot.id)
-            .filter { it.isAutoAdded && !it.isBlacklisted }
+        val cast = viewModel.getCastMembersForBot(bot.id).filter { !it.isBlacklisted }
+        allCastMembers.value = cast
+        autoDetectedCast.value = cast.filter { it.isAutoAdded }
     }
 
     // Zero-permission Photo Picker -> 256x256 Micro-WebP (~15 KB Base64, EXIF + OOM safe)
@@ -1316,14 +1331,66 @@ fun BotSettingsModal(
                                 milestones = milestones
                             )
 
+                            // Quick Cast Character Emotion Strip so every character is immediately visible in Tab 1
+                            val sideStudioChars = remember(bot.id, bot.keyCharactersJson, characterEmotions, charList, allCastMembers.value) {
+                                collectEmotionStudioCharacters(
+                                    bot = bot,
+                                    characterEmotions = characterEmotions,
+                                    keyCharacters = charList,
+                                    castMembers = allCastMembers.value
+                                )
+                            }
+                            if (sideStudioChars.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "✦ Kadro Karakterleri (${sideStudioChars.size}) — dokunup duygu düzenle",
+                                    fontFamily = LiterarySerifFontFamily,
+                                    color = Color(0xFFE9D5FF),
+                                    fontSize = 12.sp
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                val emotionLookup = remember(characterEmotions) {
+                                    characterEmotions.associateBy { it.characterName.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
+                                }
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    sideStudioChars.forEach { (charName, _) ->
+                                        val existingEm = emotionLookup[charName.lowercase(java.util.Locale.forLanguageTag("tr-TR"))]
+                                        val parsed = existingEm?.let { EmotionState.fromJson(it.emotionState) }
+                                        val badgeLabel = if (parsed != null) {
+                                            "${parsed.getMoodEmoji()} $charName %${parsed.affection}"
+                                        } else {
+                                            "✦ $charName"
+                                        }
+                                        MorCamChoicePill(
+                                            label = badgeLabel,
+                                            isSelected = false,
+                                            onClick = {
+                                                emotionStudioInitialChar = charName
+                                                showEmotionControlModal = true
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(10.dp))
 
                             // Open Full Emotion Studio
                             MorCamChoicePill(
-                                label = "✦ Gelişmiş Duygu & Yan Karakter Stüdyosunu Aç ›",
+                                label = "✦ Gelişmiş Duygu & Yan Karakter Stüdyosunu Aç (${sideStudioChars.size + 1} Karakter) ›",
                                 isSelected = true,
-                                onClick = { showEmotionControlModal = true },
-                                modifier = Modifier.fillMaxWidth()
+                                onClick = {
+                                    emotionStudioInitialChar = "main"
+                                    showEmotionControlModal = true
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("bot_settings_open_emotion_studio_btn")
                             )
                         }
 
@@ -1591,6 +1658,18 @@ fun BotSettingsModal(
                                 isSelected = true,
                                 onClick = { showNeuralVault = true },
                                 modifier = Modifier.fillMaxWidth()
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Faz 3: Dynamic Lorebook / Universe Encyclopedia Launch Pill
+                            MorCamChoicePill(
+                                label = "✦ Evren Ansiklopedisi / Lorebook (${linkedLorebookIds.size} Bağlı) ›",
+                                isSelected = linkedLorebookIds.isNotEmpty(),
+                                onClick = { showLorebookModal = true },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("bot_settings_open_lorebook_btn")
                             )
 
                             Spacer(modifier = Modifier.height(10.dp))
@@ -2205,11 +2284,13 @@ fun BotSettingsModal(
 
     // 3. Advanced Character & Side-Character Emotion Control Studio Modal
     if (showEmotionControlModal) {
-        val currentDraft = remember(localEmotionState) { buildUpdatedBotEntity() }
+        val currentDraft = remember(localEmotionState, charList) { buildUpdatedBotEntity() }
         CharacterEmotionControlModal(
             bot = currentDraft,
             characterEmotions = characterEmotions,
             keyCharacters = charList,
+            castMembers = allCastMembers.value,
+            initialSelectedCharacter = emotionStudioInitialChar,
             onDismiss = { showEmotionControlModal = false },
             onSaveBotEmotion = { newEmotionJson ->
                 localEmotionState = EmotionState.fromJson(newEmotionJson)
@@ -2217,6 +2298,16 @@ fun BotSettingsModal(
             onSaveCharacterEmotionState = { charName, charEmotionJson ->
                 viewModel.updateCharacterEmotionState(bot.id, charName, charEmotionJson)
             }
+        )
+    }
+
+    // 3b. Faz 3: Dynamic Lorebook / Universe Encyclopedia Manager Modal
+    if (showLorebookModal) {
+        LorebookManagerModal(
+            botId = bot.id,
+            botName = aiName.ifBlank { bot.aiName },
+            viewModel = viewModel,
+            onDismiss = { showLorebookModal = false }
         )
     }
 

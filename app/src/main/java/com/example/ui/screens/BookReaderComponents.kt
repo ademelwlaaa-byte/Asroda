@@ -518,14 +518,18 @@ fun ManuscriptParagraphBlock(
     useDropCap: Boolean = false,
     isMiniGameCompleted: Boolean = false,
     pietroSaved: Boolean = false,
+    savedMiniGameRanks: Map<String, String> = emptyMap(),
+    savedBossMedals: Map<String, String> = emptyMap(),
     activeVoiceCardKey: String? = null,
     onToggleSpeakCard: ((speakerKey: String, text: String, cardKey: String) -> Unit)? = null,
+    onStoryMiniGameCompleted: ((gameId: com.example.ui.screens.cosmic3d.StoryMiniGameId, rank: String, score: Int) -> Unit)? = null,
+    onBossDuelVictoryWithRank: ((bossId: com.example.ui.screens.cosmic3d.CosmicDuelBossId, score: Int, rank: String) -> Unit)? = null,
     onMiniGameVictory: () -> Unit = {}
 ) {
     val trimmed = rawText.trim()
 
-    // Interactive In-Story Special Cards, 60fps Animated Scenes & Mandatory Rooftop Boss Duel:
-    // [[ANIM|SceneId|Caption|Subtitle]], [[GAME3D|GameId|Title|Subtitle]],
+    // Interactive In-Story Special Cards, 60fps Animated Scenes, Story Mini-Games & Mandatory Boss Duels:
+    // [[ANIM|SceneId|Caption|Subtitle]], [[MINIGAME|GameId|Title|Subtitle]], [[GAME3D|GameId|Title|Subtitle]],
     // [[DOSSIER|Title|Body]], [[AUDIO|Title|Body]], [[ALARM|Title|Body]], [[COMMS|Speaker|Body]], [[MIND|Speaker|Body]]
     if (trimmed.startsWith("[[") && trimmed.endsWith("]]")) {
         val inner = trimmed.removePrefix("[[").removeSuffix("]]")
@@ -551,14 +555,32 @@ fun ManuscriptParagraphBlock(
                 )
                 return
             }
+            tag == "MINIGAME" && parts.size >= 3 -> {
+                val gameId = com.example.ui.screens.cosmic3d.StoryMiniGameId.fromTag(parts[1])
+                com.example.ui.screens.cosmic3d.InStoryMiniGameCard(
+                    gameId = gameId,
+                    title = parts[2].trim(),
+                    subtitle = parts.getOrNull(3)?.trim().orEmpty().ifBlank { gameId.howToPlay },
+                    savedBestRank = savedMiniGameRanks[gameId.key],
+                    onCompleted = { rank, score ->
+                        onStoryMiniGameCompleted?.invoke(gameId, rank, score)
+                    }
+                )
+                return
+            }
             tag == "GAME3D" && parts.size >= 3 -> {
+                val bossId = com.example.ui.screens.cosmic3d.CosmicDuelBossId.fromTag(parts[1])
                 Cosmic3DRiftMiniGame(
                     title = parts[2].trim(),
                     subtitle = parts.getOrNull(3)?.trim()
                         ?: "ZORUNLU SAVAŞ — Boss'u yenmeden hikayede ilerleyemezsin!",
-                    bossId = com.example.ui.screens.cosmic3d.CosmicDuelBossId.fromTag(parts[1]),
+                    bossId = bossId,
                     pietroSaved = pietroSaved,
                     isCompleted = isMiniGameCompleted,
+                    savedBestRank = savedBossMedals[bossId.name],
+                    onVictoryWithRank = { score, rank ->
+                        onBossDuelVictoryWithRank?.invoke(bossId, score, rank)
+                    },
                     onVictoryUnlocked = onMiniGameVictory
                 )
                 return

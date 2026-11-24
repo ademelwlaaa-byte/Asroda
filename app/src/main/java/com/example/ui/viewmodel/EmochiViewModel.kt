@@ -232,6 +232,49 @@ class EmochiViewModel @JvmOverloads constructor(
             initialValue = emptyList()
         )
 
+    // ── Faz 3: Dinamik Lorebook & Evren Ansiklopedisi ──
+    val allLorebooks: StateFlow<List<com.example.data.local.LorebookEntity>> = repository.getAllLorebooksFlow()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000L),
+            initialValue = emptyList()
+        )
+
+    fun getLorebookEntriesFlow(lorebookId: String) = repository.getEntriesForLorebookFlow(lorebookId)
+
+    fun getLinkedLorebookIdsFlow(botId: String) = repository.getLinkedLorebookIdsFlow(botId)
+
+    fun upsertLorebook(lorebook: com.example.data.local.LorebookEntity) {
+        viewModelScope.launch { repository.upsertLorebook(lorebook) }
+    }
+
+    fun deleteLorebook(lorebookId: String) {
+        viewModelScope.launch { repository.deleteLorebook(lorebookId) }
+    }
+
+    fun upsertLorebookEntry(entry: com.example.data.local.LorebookEntryEntity) {
+        viewModelScope.launch { repository.upsertLorebookEntry(entry) }
+    }
+
+    fun deleteLorebookEntry(entryId: String) {
+        viewModelScope.launch { repository.deleteLorebookEntry(entryId) }
+    }
+
+    fun setLorebookLinkedToBot(botId: String, lorebookId: String, linked: Boolean) {
+        viewModelScope.launch { repository.setLorebookLinkedToBot(botId, lorebookId, linked) }
+    }
+
+    suspend fun exportLorebookToJson(lorebookId: String): String? = repository.exportLorebookToJson(lorebookId)
+
+    suspend fun importLorebookFromJson(rawJson: String, linkToBotId: String? = null) =
+        repository.importLorebookFromJson(rawJson, linkToBotId)
+
+    suspend fun installNevermoreStarterLorebook(linkToBotId: String? = null) =
+        repository.installNevermoreStarterLorebook(linkToBotId)
+
+    suspend fun backfillAidenPresetCharactersIfEmpty(botId: String): Boolean =
+        repository.backfillAidenPresetCharactersIfEmpty(botId)
+
     suspend fun testCustomProviderConnection(
         baseUrl: String,
         apiKey: String,
@@ -659,6 +702,11 @@ class EmochiViewModel @JvmOverloads constructor(
         if (botId != null) {
             loadEntityRelations(botId)
             loadEmotionalDefenseState(botId)
+            viewModelScope.launch {
+                try {
+                    repository.backfillAidenPresetCharactersIfEmpty(botId)
+                } catch (_: Exception) {}
+            }
         } else {
             _entityRelations.value = emptyList()
             _sensitiveTriggers.value = emptyList()
@@ -1586,6 +1634,13 @@ class EmochiViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             try {
                 repository.createBotFromTemplateAtomic(preset = preset, targetId = botToSave.id)
+                if (preset.id == "preset_aiden_nevermore_wednesday" ||
+                    preset.universeName.contains("Nevermore", ignoreCase = true)
+                ) {
+                    try {
+                        repository.installNevermoreStarterLorebook(linkToBotId = botToSave.id)
+                    } catch (_: Exception) {}
+                }
             } finally {
                 _isCreatingFromTemplate.value = false
                 templateCreationLock.set(false)

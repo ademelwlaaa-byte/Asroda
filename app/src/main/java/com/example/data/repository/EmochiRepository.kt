@@ -122,7 +122,10 @@ data class BackupSnapshot(
     val milestones: List<com.example.data.local.MilestoneEntity> = emptyList(),
     val customProviders: List<com.example.data.local.CustomProviderEntity> = emptyList(),
     val pendingReappraisals: List<com.example.data.local.PendingReappraisalEntity> = emptyList(),
-    val archivedMemories: List<com.example.data.local.ArchivedMemoryEntity> = emptyList()
+    val archivedMemories: List<com.example.data.local.ArchivedMemoryEntity> = emptyList(),
+    val lorebooks: List<com.example.data.local.LorebookEntity> = emptyList(),
+    val lorebookEntries: List<com.example.data.local.LorebookEntryEntity> = emptyList(),
+    val botLorebookLinks: List<com.example.data.local.BotLorebookLinkEntity> = emptyList()
 )
 
 data class BackupImportSummary(
@@ -800,6 +803,8 @@ class EmochiRepository(
     internal val routineDao = db.routineDao()
     internal val implicitCorrectionLogDao = db.implicitCorrectionLogDao()
     internal val archivedMemoryDao = db.archivedMemoryDao()
+    internal val lorebookDao = db.lorebookDao()
+    val lorebookManager = com.example.data.managers.LorebookManager(lorebookDao)
 
     val lastRetrievalStageMap = java.util.concurrent.ConcurrentHashMap<String, String>()
     internal val regenerateCountMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -1234,6 +1239,16 @@ class EmochiRepository(
                 }
             } catch (_: Exception) {}
 
+            // Preserve shared Lorebook links on cloned bot
+            try {
+                val linkedIds = lorebookDao.getLinkedLorebookIds(sourceBotId)
+                for (lid in linkedIds) {
+                    lorebookDao.linkBotToLorebook(
+                        com.example.data.local.BotLorebookLinkEntity(botId = newBotId, lorebookId = lid)
+                    )
+                }
+            } catch (_: Exception) {}
+
             // Create initial opening message
             val openingText = resolveOpeningText(clonedBot)
 
@@ -1259,12 +1274,123 @@ class EmochiRepository(
         return clonedBot
     }
 
+    // ── Faz 3: Dinamik Lorebook & Evren Ansiklopedisi ──
+
+    fun getAllLorebooksFlow() = lorebookDao.getAllLorebooksFlow()
+
+    fun getEntriesForLorebookFlow(lorebookId: String) = lorebookDao.getEntriesForLorebookFlow(lorebookId)
+
+    fun getLinkedLorebookIdsFlow(botId: String) = lorebookDao.getLinkedLorebookIdsFlow(botId)
+
+    suspend fun getEntriesForLorebook(lorebookId: String) = lorebookDao.getEntriesForLorebook(lorebookId)
+
+    suspend fun upsertLorebook(lorebook: com.example.data.local.LorebookEntity) {
+        lorebookDao.upsertLorebook(lorebook.copy(updatedAt = System.currentTimeMillis()))
+        autoBackupToStorage()
+    }
+
+    suspend fun deleteLorebook(lorebookId: String) {
+        db.withTransaction {
+            lorebookDao.deleteLinksForLorebook(lorebookId)
+            lorebookDao.deleteEntriesForLorebook(lorebookId)
+            lorebookDao.deleteLorebookById(lorebookId)
+        }
+        autoBackupToStorage()
+    }
+
+    suspend fun upsertLorebookEntry(entry: com.example.data.local.LorebookEntryEntity) {
+        lorebookDao.upsertEntry(entry.copy(updatedAt = System.currentTimeMillis()))
+        lorebookDao.getLorebookById(entry.lorebookId)?.let { lb ->
+            lorebookDao.upsertLorebook(lb.copy(updatedAt = System.currentTimeMillis()))
+        }
+        autoBackupToStorage()
+    }
+
+    suspend fun deleteLorebookEntry(entryId: String) {
+        lorebookDao.deleteEntryById(entryId)
+        autoBackupToStorage()
+    }
+
+    suspend fun setLorebookLinkedToBot(botId: String, lorebookId: String, linked: Boolean) {
+        if (linked) {
+            lorebookDao.linkBotToLorebook(
+                com.example.data.local.BotLorebookLinkEntity(botId = botId, lorebookId = lorebookId)
+            )
+        } else {
+            lorebookDao.unlinkBotFromLorebook(botId, lorebookId)
+        }
+        autoBackupToStorage()
+    }
+
+    suspend fun exportLorebookToJson(lorebookId: String): String? {
+        val lb = lorebookDao.getLorebookById(lorebookId) ?: return null
+        val entries = lorebookDao.getEntriesForLorebook(lorebookId)
+        return com.example.data.managers.LorebookManager.exportLorebookJson(lb, entries)
+    }
+
+    suspend fun importLorebookFromJson(rawJson: String, linkToBotId: String? = null): com.example.data.local.LorebookEntity {
+        val bundle = com.example.data.managers.LorebookManager.importLorebookJson(rawJson)
+        val saved = lorebookManager.saveImportedBundle(bundle, linkToBotId)
+        autoBackupToStorage()
+        return saved
+    }
+
+    suspend fun installNevermoreStarterLorebook(linkToBotId: String? = null): com.example.data.local.LorebookEntity {
+        val existing = lorebookDao.getAllLorebooks().firstOrNull {
+            it.name.equals("Nevermore & Blackwood Mirası", ignoreCase = true)
+        }
+        if (existing != null) {
+            if (!linkToBotId.isNullOrBlank()) {
+                lorebookDao.linkBotToLorebook(
+                    com.example.data.local.BotLorebookLinkEntity(botId = linkToBotId, lorebookId = existing.id)
+                )
+            }
+            return existing
+        }
+        val bundle = com.example.data.managers.LorebookManager.createNevermoreStarterPack()
+        val saved = lorebookManager.saveImportedBundle(bundle, linkToBotId)
+        autoBackupToStorage()
+        return saved
+    }
+
+    /**
+     * Backfills scenario-specific key characters for previously started Aiden Blackwood preset chats
+     * whose keyCharactersJson was empty ("[]") before scenario rosters were populated.
+     */
+    suspend fun backfillAidenPresetCharactersIfEmpty(botId: String): Boolean {
+        val bot = botDao.getBotById(botId) ?: return false
+        val existingChars = parseKeyCharacters(bot.keyCharactersJson)
+        if (existingChars.isNotEmpty()) return false
+
+        val matchedPreset = (com.example.ui.screens.getAidenPresetsList(false) +
+            com.example.ui.screens.getAidenPresetsList(true)).firstOrNull { preset ->
+            preset.keyCharactersJson.isNotBlank() &&
+                preset.keyCharactersJson != "[]" && (
+                    bot.universeName.equals(preset.universeName, ignoreCase = true) ||
+                        bot.aiName.equals(preset.aiName, ignoreCase = true) ||
+                        (preset.pinnedMemory.isNotBlank() && bot.pinnedMemory == preset.pinnedMemory)
+                    )
+        } ?: return false
+
+        val presetChars = parseKeyCharacters(matchedPreset.keyCharactersJson)
+        if (presetChars.isEmpty()) return false
+
+        botDao.insertOrUpdate(bot.copy(keyCharactersJson = matchedPreset.keyCharactersJson))
+        for (kc in presetChars) {
+            try {
+                ensureKeyCharacterMirroredAsCastMember(bot.id, kc)
+            } catch (_: Exception) {}
+        }
+        return true
+    }
+
     suspend fun deleteBot(id: String) {
         val existingBot = try { botDao.getBotById(id) } catch (_: Exception) { null }
         db.withTransaction {
             messageDao.deleteMessagesForBot(id)
             emotionDao.deleteEmotionsForBot(id)
             fragmentDao.deleteFragmentsForBot(id)
+            lorebookDao.deleteLinksForBot(id)
             botDao.deleteBotById(id)
         }
         context?.let { ctx ->
@@ -8631,7 +8757,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         userSubtextHint: String = "",
         latestUserMessage: String = "",
         isPureOocTurn: Boolean = false,
-        sensitiveTriggerDirective: String = ""
+        sensitiveTriggerDirective: String = "",
+        lorebookPromptBlock: String = ""
     ): String {
         val consistencyNote = pendingConsistencyNoteMap.remove(bot.id)
         val decayNote = pendingDecayNoteMap.remove(bot.id)
@@ -8665,7 +8792,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 userSubtextHint = userSubtextHint,
                 latestUserMessage = latestUserMessage,
                 isPureOocTurn = isPureOocTurn,
-                sensitiveTriggerDirective = sensitiveTriggerDirective
+                sensitiveTriggerDirective = sensitiveTriggerDirective,
+                lorebookPromptBlock = lorebookPromptBlock
             )
         )
     }
@@ -8861,6 +8989,16 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             emptyList()
         }
 
+        val lorebookSelection = try {
+            lorebookManager.buildLorebookPromptBlockForBot(
+                botId = effectiveBot.id,
+                recentMessages = contextMessages.takeLast(12).map { it.text },
+                compactMode = modelContextWindow <= 32_768
+            )
+        } catch (_: Exception) {
+            com.example.data.managers.LorebookManager.SelectionResult(emptyList(), 0, "")
+        }
+
         val userSubtextHint = UserSentimentAnalyzer.buildSubtextPromptHint(sentimentResult)
         val baseSysPrompt = buildSystemPrompt(
             bot = effectiveBot,
@@ -8887,7 +9025,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             userSubtextHint = userSubtextHint,
             latestUserMessage = latestUserMessageText,
             isPureOocTurn = sentimentResult.isOocMeta,
-            sensitiveTriggerDirective = triggerEval.promptDirective
+            sensitiveTriggerDirective = triggerEval.promptDirective,
+            lorebookPromptBlock = lorebookSelection.promptBlock
         )
 
         val detectedMood = if (sentimentResult.usedMicroAi) sentimentResult.mood else UserSentimentAnalyzer.analyze(contextMessages)

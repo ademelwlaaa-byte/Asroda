@@ -79,6 +79,8 @@ import com.example.ui.theme.LiterarySerifFontFamily
 fun EmotionStatusSection(
     bot: BotEntity,
     characterEmotions: List<CharacterEmotionEntity> = emptyList(),
+    keyCharacters: List<com.example.data.repository.KeyCharacter> = emptyList(),
+    castMembers: List<com.example.data.local.CastMemberEntity> = emptyList(),
     affectionEvents: List<AffectionEventEntity> = emptyList(),
     filterCount: Int = 0,
     onUpdateCharacterEmotion: ((characterName: String, mood: String, affection: Int, trust: Int, tension: Int) -> Unit)? = null,
@@ -415,13 +417,30 @@ fun EmotionStatusSection(
             }
         }
 
-        // Character Emotions List & Manual Editor
-        if (characterEmotions.isNotEmpty()) {
+        // Character Emotions List & Manual Editor (merges persisted emotions + keyCharacters + bot.keyCharactersJson + castMembers)
+        val mergedEmotionEntities = remember(bot.id, bot.keyCharactersJson, characterEmotions, keyCharacters, castMembers) {
+            val trLocale = java.util.Locale.forLanguageTag("tr-TR")
+            val byLower = characterEmotions.associateBy { it.characterName.trim().lowercase(trLocale) }
+            val mergedNames = collectEmotionStudioCharacters(
+                bot = bot,
+                characterEmotions = characterEmotions,
+                keyCharacters = keyCharacters,
+                castMembers = castMembers
+            )
+            mergedNames.map { (name, desc) ->
+                byLower[name.lowercase(trLocale)] ?: CharacterEmotionEntity(
+                    botId = bot.id,
+                    characterName = name,
+                    emotionState = EmotionState.calculateBaselineEmotionState(bot.aiName, name, desc).toJson()
+                )
+            }
+        }
+        if (mergedEmotionEntities.isNotEmpty()) {
             Spacer(modifier = Modifier.height(12.dp))
             MorCamDivider()
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "Yan Karakterler Duygu Durumu",
+                text = "Yan Karakterler Duygu Durumu (${mergedEmotionEntities.size})",
                 fontFamily = DisplaySerifFontFamily,
                 color = MorCamTokens.SilverLavenderBright,
                 fontSize = 13.sp,
@@ -432,7 +451,7 @@ fun EmotionStatusSection(
             var editingCharacter by remember { mutableStateOf<CharacterEmotionEntity?>(null) }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                characterEmotions.forEach { charEntity ->
+                mergedEmotionEntities.forEach { charEntity ->
                     val charEmotion = remember(charEntity.emotionState) { EmotionState.fromJson(charEntity.emotionState) }
                     Column(
                         modifier = Modifier

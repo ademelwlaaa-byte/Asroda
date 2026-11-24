@@ -49,6 +49,7 @@ import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -304,6 +305,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
         cosmicBookState.savedScrollIndex > 0
 
     var showChapterModal by remember { mutableStateOf(false) }
+    var showMediaTestShowcase by remember { mutableStateOf(false) }
     var pendingLaunchChapter by remember { mutableStateOf<Int?>(null) }
     var showLaunchDownloadDialog by remember { mutableStateOf(false) }
     var pendingRemoteUpdate by remember { mutableStateOf<com.example.book.BookContentPackManager.RemoteStoryUpdateInfo?>(null) }
@@ -396,6 +398,12 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 showChapterModal = false
                 requestLaunchCosmicBook(chapterIndex)
             }
+        )
+    }
+
+    if (showMediaTestShowcase) {
+        BookMediaTestShowcaseModal(
+            onDismiss = { showMediaTestShowcase = false }
         )
     }
 
@@ -1317,6 +1325,73 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                 modifier = Modifier
                                     .align(Alignment.CenterEnd)
                                     .size(22.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // Temporary All-In-One Test Showcase Button (Games, Animations, Live 3D & Photos)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(
+                                            Color(0x521E1142),
+                                            Color(0x663B1B70),
+                                            Color(0x521E1142)
+                                        )
+                                    )
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    brush = Brush.horizontalGradient(
+                                        listOf(
+                                            Color(0x9938BDF8),
+                                            Color(0xBBFDE047),
+                                            Color(0x99C084FC)
+                                        )
+                                    ),
+                                    shape = RoundedCornerShape(50)
+                                )
+                                .clickable { showMediaTestShowcase = true }
+                                .testTag("books_open_media_test_showcase_btn")
+                                .padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.SportsEsports,
+                                    contentDescription = null,
+                                    tint = Color(0xFFFDE047),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                                Text(
+                                    text = if (isEnglish) {
+                                        "Test Showcase: Games, Animations & Photos"
+                                    } else {
+                                        "Test Vitrini: Oyunlar, Animasyonlar & Fotolar"
+                                    },
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFFAF5FF),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = if (isEnglish) "Open Test Showcase" else "Test Vitrini Aç",
+                                tint = Color(0xFFFDE047),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }

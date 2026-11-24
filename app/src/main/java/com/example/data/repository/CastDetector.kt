@@ -85,9 +85,79 @@ object CastDetectorEngine {
     )
 
     private val GENERIC_EXTRAS_BLACKLIST = setOf(
-        "garson", "zorba", "zorba çocuk", "çocuk", "adam", "kadın", "polis", "müşteri",
-        "yoldan geçen", "şoför", "taksici", "nöbetçi", "biri", "herkes", "hizmetli", "tezgahtar"
+        "garson", "zorba", "zorba çocuk", "okul zorbası", "sınıf zorbası", "lise zorbası", "zorba öğrenci",
+        "çocuk", "adam", "kadın", "genç", "yaşlı", "kız", "oğlan", "delikanlı", "polis", "polis memuru",
+        "müşteri", "yoldan geçen", "şoför", "taksici", "nöbetçi", "bekçi", "güvenlik", "güvenlik görevlisi",
+        "biri", "herkes", "hizmetli", "tezgahtar", "kasiyer", "barmen", "muhabir", "paparazzi", "serseri",
+        "öğrenci", "lise öğrencisi", "sınıf arkadaşı", "okul arkadaşı", "taraftar", "hayran", "seyirci",
+        "yabancı", "figüran", "kalabalık", "grup", "çete üyesi", "koruma", "görevli", "memur", "kurye",
+        "bully", "school bully", "random bully", "jock", "student", "classmate", "waiter", "waitress",
+        "bartender", "cashier", "guard", "security guard", "officer", "cop", "driver", "reporter",
+        "stranger", "passerby", "bystander", "thug", "goon", "crowd", "extra", "npc", "kid", "boy", "girl",
+        "guy", "man", "woman"
     )
+
+    private val GENERIC_EXTRA_ADJECTIVES = setOf(
+        "zorba", "kaba", "sinirli", "öfkeli", "uzun", "kısa", "iri", "şişman", "zayıf", "genç", "yaşlı",
+        "küçük", "büyük", "yabancı", "tanımadık", "bilinmeyen", "isimsiz", "rastgele", "sıradan", "kötü",
+        "alaycı", "küstah", "sarhoş", "serseri", "esmer", "sarışın", "kızıl", "maskeli", "silahlı",
+        "okul", "sınıf", "lise", "koridor", "sokak", "mahalle", "bar", "kulüp", "restoran", "kafe",
+        "angry", "rude", "tall", "big", "random", "unnamed", "unknown", "generic", "minor", "school",
+        "high", "hallway", "drunk", "masked", "armed", "passing", "background"
+    )
+
+    private val GENERIC_EXTRA_NOUNS = setOf(
+        "zorba", "zorbası", "çocuk", "çocuğu", "öğrenci", "öğrencisi", "arkadaş", "arkadaşı",
+        "adam", "kadın", "kız", "oğlan", "genç", "delikanlı", "garson", "barmen", "kasiyer",
+        "şoför", "taksici", "polis", "memur", "memuru", "güvenlik", "görevli", "görevlisi",
+        "bekçi", "nöbetçi", "koruma", "hizmetli", "tezgahtar", "müşteri", "muhabir", "paparazzi",
+        "taraftar", "hayran", "seyirci", "yabancı", "serseri", "haydut", "çete", "figüran", "kurye",
+        "bully", "kid", "boy", "girl", "guy", "man", "woman", "student", "classmate", "jock",
+        "waiter", "waitress", "bartender", "guard", "officer", "cop", "driver", "stranger",
+        "thug", "goon", "extra", "npc", "reporter", "fan", "customer", "clerk"
+    )
+
+    private val MINOR_ROLE_KEYWORDS = setOf(
+        "figüran", "arka plan", "geçici figüran", "isimsiz", "rastgele", "yoldan geçen",
+        "background", "unnamed", "extra", "random extra", "minor extra"
+    )
+
+    /**
+     * Returns true when [candidateName] (or its [role]) represents an unnamed generic/background extra
+     * such as "Zorba Çocuk", "Okul Zorbası", "Garson", "Sınıf Arkadaşı", "School Bully", etc.
+     * Named story characters (e.g., "Gwen Stacy", "Flash Thompson", "Kadir") return false so the
+     * cast list can organically grow as meaningful named characters enter the chat.
+     */
+    fun isGenericBackgroundExtra(candidateName: String, role: String = ""): Boolean {
+        val clean = normalizeTurkishEntityName(candidateName).ifBlank { candidateName.trim() }
+        val lower = clean.lowercase(TR_LOCALE).replace(Regex("""\s+"""), " ").trim()
+        if (lower.length < 2) return true
+        if (lower in GENERIC_EXTRAS_BLACKLIST) return true
+
+        val roleLower = role.trim().lowercase(TR_LOCALE)
+        if (roleLower.isNotBlank() && MINOR_ROLE_KEYWORDS.any { roleLower.contains(it) }) {
+            return true
+        }
+
+        val tokens = lower.split(" ").filter { it.isNotBlank() }
+        if (tokens.isEmpty()) return true
+
+        // Multi-word generic phrases like "zorba çocuk", "kaba lise öğrencisi", "angry school bully"
+        val allGenericTokens = tokens.all { tok ->
+            tok in GENERIC_EXTRAS_BLACKLIST ||
+                tok in GENERIC_EXTRA_ADJECTIVES ||
+                tok in GENERIC_EXTRA_NOUNS ||
+                tok in DEFAULT_FALLBACK_BLACKLIST
+        }
+        val containsGenericNoun = tokens.any { it in GENERIC_EXTRA_NOUNS || it in GENERIC_EXTRAS_BLACKLIST }
+        if (allGenericTokens && containsGenericNoun) return true
+
+        // Single-word generic archetype
+        if (tokens.size == 1 && (tokens[0] in GENERIC_EXTRA_NOUNS || tokens[0] in GENERIC_EXTRA_ADJECTIVES)) {
+            return true
+        }
+        return false
+    }
 
     private val HONORIFICS = listOf(
         "Bey", "Hanım", "Efendi", "Ağa", "Usta", "Abi", "Abla", "Komutan",
@@ -281,7 +351,7 @@ object CastDetectorEngine {
         val lower = clean.lowercase(TR_LOCALE)
         val blacklist = getBlacklist(context)
 
-        if (GENERIC_EXTRAS_BLACKLIST.contains(lower) || blacklist.contains(lower) || clean.length < 2) {
+        if (isGenericBackgroundExtra(clean, inferredRole) || blacklist.contains(lower) || clean.length < 2) {
             return CandidateScore(
                 isSignificant = false,
                 role = "Figüran",
@@ -370,6 +440,7 @@ object CastDetectorEngine {
             if (canonical.isBlank() || canonical.length < 2) return
             if (strength == SignalStrength.WEAK && canonical.length <= 2) return
             val lower = canonical.lowercase(TR_LOCALE)
+            if (isGenericBackgroundExtra(canonical, role)) return
             if (lower in AMBIGUOUS_PROPER_NAMES && strength == SignalStrength.WEAK) return
             if (lower in blacklist && lower !in AMBIGUOUS_PROPER_NAMES) return
             if (lower in blacklist && lower in AMBIGUOUS_PROPER_NAMES && strength == SignalStrength.WEAK) return
@@ -609,16 +680,16 @@ object CastDetectorEngine {
         }
 
         val systemPrompt = """
-Sen Emochi'nin yan karakter çıkarıcı ve yanlış pozitif eleyici yardımcı motorusun.
+Sen Emochi'nin hikâye karakteri çıkarıcı ve figüran/yanlış pozitif eleyici yardımcı motorusun.
 Yalnızca GEÇERLİ tek JSON nesnesi üret; markdown veya açıklama YAZMA.
 Kurallar:
-1. Yalnızca gerçek İNSAN/VARLIK yan karakterlerini "cast" dizisine al ("is_person": true).
+1. Yalnızca GERÇEK ÖZEL İSMİ olan ve hikâyede/olay örgüsünde anlamlı veya tekrar eden rolü bulunan karakterleri "cast" dizisine al ("is_person": true).
 2. Ana bot ($botName) ve kullanıcı karakterini ($userCharName) ASLA ekleme.
-3. Şehir, semt, mekan, gün/ay, soyut kavram veya yanlış pozitif adayları ("Galata", "Karanlık" vb.) "rejected" dizisine koy.
+3. İsimsiz, tek sahnelik veya sıradan figüranları ("zorba çocuk", "okul zorbası", "garson", "öğrenci", "sınıf arkadaşı", "güvenlik görevlisi", "polis", "şoför", "yabancı" vb.) ve şehir/mekan/soyut kavramları ("Galata", "Karanlık" vb.) ASLA cast'e alma, doğrudan "rejected" dizisine koy.
 4. Türkçe çekim eklerini soyup kanonik ad yaz ("Leyla'nın" -> "Leyla").
 5. Şu anda fiziksel olarak sahnede aktif olanlar için "in_scene": true, sadece geçmişten anılanlar için false yaz.
 JSON ŞEMASI:
-{"cast":[{"name":"Kadir","is_person":true,"aliases":["yaşlı saatçi"],"role":"saat ustası","relation":"mahalle tanıdığı","age":62,"in_scene":true}],"rejected":["Galata"]}
+{"cast":[{"name":"Kadir","is_person":true,"aliases":["yaşlı saatçi"],"role":"saat ustası","relation":"mahalle tanıdığı","age":62,"in_scene":true}],"rejected":["Galata","zorba çocuk"]}
         """.trimIndent()
 
         val suspiciousCandidates = localHits.map { it.canonicalName }.distinct().take(8)
@@ -747,6 +818,10 @@ JSON ŞEMASI:
             }
             if (normalizedName.length < 2) continue
             if (lower in excludedMain || lower in rejectedNormalized) continue
+            if (isGenericBackgroundExtra(normalizedName, rawMember.role)) {
+                rejectedNormalized.add(lower)
+                continue
+            }
             if (lower in blacklist && lower !in AMBIGUOUS_PROPER_NAMES) {
                 rejectedNormalized.add(lower)
                 continue

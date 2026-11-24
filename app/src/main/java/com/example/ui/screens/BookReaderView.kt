@@ -45,9 +45,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -239,9 +241,17 @@ fun BookReaderView(
     var showTwinAidenPostCredits by remember { mutableStateOf(false) }
     var showSeason2PostCredits by remember { mutableStateOf(false) }
     var showChronicleModal by remember { mutableStateOf(false) }
+    var showFateTreeModal by remember { mutableStateOf(false) }
     var showChapterSwitcher by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     var showQuickMandatoryDuel by remember { mutableStateOf(false) }
+    var showMediaTestShowcase by remember { mutableStateOf(false) }
+    var savedMiniGameRanks by remember(context) {
+        mutableStateOf(BookStateRepository.getAllMiniGameRanks(context, CosmicDriftBookRegistry.BOOK_ID))
+    }
+    var savedBossMedals by remember(context) {
+        mutableStateOf(BookStateRepository.getAllBossMedals(context, CosmicDriftBookRegistry.BOOK_ID))
+    }
 
     // Stop any playing scene voice card cleanly on chapter/scene transitions or modal switches
     LaunchedEffect(
@@ -696,6 +706,29 @@ fun BookReaderView(
         )
     }
 
+    if (showFateTreeModal && useDeterministicEngine) {
+        BookFateTreeModal(
+            state = engineState,
+            savedMiniGameRanks = savedMiniGameRanks,
+            savedBossMedals = savedBossMedals,
+            onJumpToChapter = { targetChapter ->
+                showFateTreeModal = false
+                ambientMusicEnabled = false
+                BookAudioController.stop(fadeOutMs = 2000L)
+                val switching = targetChapter != engineState.activeChapter
+                BookStateRepository.jumpToChapter(
+                    context = context,
+                    chapterNumber = targetChapter,
+                    forceRestartIfSame = switching
+                )
+                if (switching) {
+                    chapterResetNonce += 1
+                }
+            },
+            onDismiss = { showFateTreeModal = false }
+        )
+    }
+
     if (showChapterSwitcher && useDeterministicEngine) {
         InReaderChapterSwitcherDialog(
             state = engineState,
@@ -714,6 +747,12 @@ fun BookReaderView(
                     chapterResetNonce += 1
                 }
             }
+        )
+    }
+
+    if (showMediaTestShowcase) {
+        BookMediaTestShowcaseModal(
+            onDismiss = { showMediaTestShowcase = false }
         )
     }
 
@@ -741,6 +780,8 @@ fun BookReaderView(
                     completedMiniGameNodes = emptySet()
                     miniGamePrefs.edit().remove("completed_nodes").apply()
                     BookStateRepository.resetEntireBook(context, CosmicDriftBookRegistry.BOOK_ID)
+                    savedMiniGameRanks = emptyMap()
+                    savedBossMedals = emptyMap()
                     chapterResetNonce += 1
                 } else {
                     onResetChat(true)
@@ -772,7 +813,15 @@ fun BookReaderView(
             title = currentNodeBossInfo.second,
             bossId = currentNodeBossInfo.first,
             pietroSaved = engineState.flags["s2_pietro_fate"] == "saved",
-            onVictory = { _, _ ->
+            onVictory = { finalScore, rank ->
+                BookStateRepository.recordBossMedal(
+                    context = context,
+                    bossKey = currentNodeBossInfo.first.name,
+                    rank = rank,
+                    score = finalScore,
+                    bookId = CosmicDriftBookRegistry.BOOK_ID
+                )
+                savedBossMedals = BookStateRepository.getAllBossMedals(context, CosmicDriftBookRegistry.BOOK_ID)
                 markMiniGameCompleted(engineState.currentNodeId)
             },
             onDismiss = { showQuickMandatoryDuel = false }
@@ -941,6 +990,22 @@ fun BookReaderView(
                         }
 
                         if (useDeterministicEngine) {
+                            ReaderMorCamIconOrb(
+                                icon = Icons.Default.SportsEsports,
+                                contentDescription = "Test Vitrini: Oyunlar, Animasyonlar & Fotolar",
+                                testTag = "book_reader_media_test_showcase_btn",
+                                isActive = true,
+                                activeColor = Color(0xFF38BDF8),
+                                onClick = { showMediaTestShowcase = true }
+                            )
+                            ReaderMorCamIconOrb(
+                                icon = Icons.Default.Hub,
+                                contentDescription = "Görsel Kader Ağacı & Madalyalar",
+                                testTag = "book_fate_tree_button",
+                                isActive = savedMiniGameRanks.isNotEmpty() || savedBossMedals.isNotEmpty() || engineState.discoveredBranches.isNotEmpty(),
+                                activeColor = Color(0xFFFDE047),
+                                onClick = { showFateTreeModal = true }
+                            )
                             ReaderMorCamIconOrb(
                                 icon = Icons.AutoMirrored.Filled.MenuBook,
                                 contentDescription = "Aiden'ın Dosyası & Evren",
@@ -1211,6 +1276,8 @@ fun BookReaderView(
                                         useDropCap = row.useDropCap,
                                         isMiniGameCompleted = row.nodeId in completedMiniGameNodes,
                                         pietroSaved = engineState.flags["s2_pietro_fate"] == "saved",
+                                        savedMiniGameRanks = savedMiniGameRanks,
+                                        savedBossMedals = savedBossMedals,
                                         activeVoiceCardKey = activeVoiceCardKey,
                                         onToggleSpeakCard = { speakerKey, bodyText, cardKey ->
                                             if (activeVoiceCardKey == cardKey) {
@@ -1220,6 +1287,36 @@ fun BookReaderView(
                                                 activeVoiceCardKey = cardKey
                                                 readerVoiceEngine.speak(speakerKey, bodyText)
                                             }
+                                        },
+                                        onStoryMiniGameCompleted = { gameId, rank, score ->
+                                            BookStateRepository.recordMiniGameOutcome(
+                                                context = context,
+                                                gameKey = gameId.key,
+                                                rank = rank,
+                                                score = score,
+                                                bookId = CosmicDriftBookRegistry.BOOK_ID
+                                            )
+                                            savedMiniGameRanks = BookStateRepository.getAllMiniGameRanks(
+                                                context,
+                                                CosmicDriftBookRegistry.BOOK_ID
+                                            )
+                                            choicePulseColor = gameId.accentColor
+                                            choicePulseTrigger += 1
+                                            choiceSparkTrigger += 1
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        },
+                                        onBossDuelVictoryWithRank = { bossId, score, rank ->
+                                            BookStateRepository.recordBossMedal(
+                                                context = context,
+                                                bossKey = bossId.name,
+                                                rank = rank,
+                                                score = score,
+                                                bookId = CosmicDriftBookRegistry.BOOK_ID
+                                            )
+                                            savedBossMedals = BookStateRepository.getAllBossMedals(
+                                                context,
+                                                CosmicDriftBookRegistry.BOOK_ID
+                                            )
                                         },
                                         onMiniGameVictory = { markMiniGameCompleted(row.nodeId) }
                                     )

@@ -68,7 +68,8 @@ object SystemPromptBuilder {
         val userSubtextHint: String = "",
         val latestUserMessage: String = "",
         val isPureOocTurn: Boolean = false,
-        val sensitiveTriggerDirective: String = ""
+        val sensitiveTriggerDirective: String = "",
+        val lorebookPromptBlock: String = ""
     )
 
     private val TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
@@ -178,6 +179,9 @@ object SystemPromptBuilder {
         if (bot.pinnedMemory.isNotBlank()) {
             sb.appendLine("\n[SABİTLENMİŞ HAFIZA / EVREN KURALLARI]")
             sb.appendLine(trimToTokenLimit(bot.pinnedMemory, if (isAutoCompact) 350 else 750))
+        }
+        if (input.lorebookPromptBlock.isNotBlank()) {
+            sb.appendLine(input.lorebookPromptBlock)
         }
         if (bot.userCharDesc.isNotBlank()) {
             sb.appendLine("\n[KULLANICI KARAKTERİ: $userTitle]")
