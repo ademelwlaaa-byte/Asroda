@@ -1641,6 +1641,19 @@ internal fun CustomApiEditorDialog(
                     modifier = Modifier.testTag("custom_api_key_input")
                 )
 
+                val keyFormatWarning = remember(apiKey) {
+                    com.example.util.ApiKeyFormatValidator.detectWarning(apiKey)
+                }
+                if (keyFormatWarning != null) {
+                    Text(
+                        text = "⚠ $keyFormatWarning",
+                        color = Color(0xFFFDE047),
+                        fontSize = 11.sp,
+                        fontFamily = InterFontFamily,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                }
+
                 GlobalGlassInputField(
                     value = modelName,
                     onValueChange = { modelName = it; testResult = null },

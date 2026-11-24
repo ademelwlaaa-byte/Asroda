@@ -46,6 +46,13 @@ internal fun ChatStoryStatsDialog(
     val stats = remember(validMessages) { ChatStoryStats.compute(validMessages) }
     val atmosphere = remember(validMessages) { com.example.util.StoryMoodAnalytics.detectDominantAtmosphere(validMessages) }
     val pacing = remember(validMessages) { com.example.util.StoryPacingAnalyzer.analyze(validMessages) }
+    val bestQuote = remember(validMessages, displayName) {
+        com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
+    }
+    val estAudioText = remember(stats.totalWordCount) {
+        val secs = com.example.util.TtsSpeechEstimator.estimateSeconds(stats.totalWordCount)
+        com.example.util.TtsSpeechEstimator.formatDurationTurkish(secs)
+    }
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.forLanguageTag("tr-TR")) }
     MorCamDialogShell(
         onDismissRequest = onDismiss,
@@ -67,6 +74,7 @@ internal fun ChatStoryStatsDialog(
                 "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
                 "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
                 "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
+                "Tahmini Sesli Dinleme" to estAudioText,
                 "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
                     "${dateFmt.format(Date(stats.firstTimestampMs))} — ${dateFmt.format(Date(stats.lastTimestampMs))}"
                 } else "Henüz başlamadı"
@@ -88,6 +96,24 @@ internal fun ChatStoryStatsDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+            if (bestQuote != null) {
+                Text(
+                    text = "✨ $bestQuote",
+                    color = Color(0xFFE9D5FF),
+                    fontSize = 11.5.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color(0x441B0D36))
+                        .border(0.7.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
+                        .clickable {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                            cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, bestQuote))
+                            Toast.makeText(context, "Replik panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                )
             }
             MorCamCapsuleButton(
                 text = "📋 Karakter Kartını Kopyala",
