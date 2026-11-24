@@ -97,7 +97,8 @@ internal fun ChatBottomInputDock(
     autoTtsEnabled: Boolean = false,
     onToggleAutoTts: (() -> Unit)? = null,
     onOpenDirector: (() -> Unit)? = null,
-    onOpenScratchpad: (() -> Unit)? = null
+    onOpenScratchpad: (() -> Unit)? = null,
+    onJumpToStart: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -124,7 +125,8 @@ internal fun ChatBottomInputDock(
                 autoTtsEnabled = autoTtsEnabled,
                 onToggleAutoTts = onToggleAutoTts,
                 onOpenDirector = onOpenDirector,
-                onOpenScratchpad = onOpenScratchpad
+                onOpenScratchpad = onOpenScratchpad,
+                onJumpToStart = onJumpToStart
             )
 
             Box(
@@ -349,7 +351,8 @@ internal fun ChatPlusToolkitDrawer(
     autoTtsEnabled: Boolean = false,
     onToggleAutoTts: (() -> Unit)? = null,
     onOpenDirector: (() -> Unit)? = null,
-    onOpenScratchpad: (() -> Unit)? = null
+    onOpenScratchpad: (() -> Unit)? = null,
+    onJumpToStart: (() -> Unit)? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -434,6 +437,10 @@ internal fun ChatPlusToolkitDrawer(
                 Triple("📝 Not Defteri", "plus_toolkit_scratchpad") {
                     onDismiss()
                     onOpenScratchpad?.invoke()
+                },
+                Triple("⏮ Başa Dön", "plus_toolkit_jump_start") {
+                    onDismiss()
+                    onJumpToStart?.invoke()
                 }
             )
             tools.forEach { (label, tag, action) ->

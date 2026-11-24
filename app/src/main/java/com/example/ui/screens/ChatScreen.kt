@@ -622,7 +622,13 @@ fun ChatScreen(
                             ).show()
                         },
                         onOpenDirector = { showDirectorDialog = true },
-                        onOpenScratchpad = { showScratchpadDialog = true }
+                        onOpenScratchpad = { showScratchpadDialog = true },
+                        onJumpToStart = {
+                            isStickyToBottom = false
+                            coroutineScope.launch {
+                                try { listState.animateScrollToItem(0) } catch (_: Exception) {}
+                            }
+                        }
                     )
                 }
             ) { innerPadding ->

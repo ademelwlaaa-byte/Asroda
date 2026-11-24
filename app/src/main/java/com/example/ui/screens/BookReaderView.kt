@@ -1016,6 +1016,39 @@ fun BookReaderView(
                             )
                         }
 
+                        // Compact Book Soundtrack Volume Cycle Pill (♪ 85% -> 50% -> 25% -> 100%)
+                        var musicVolume by remember {
+                            mutableFloatStateOf(com.example.book.BookAudioPreferences.loadMusicVolume(context))
+                        }
+                        Box(
+                            modifier = Modifier
+                                .height(30.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(Color(0x8A1C0C3A))
+                                .border(0.85.dp, Color(0x66C4B5FD), RoundedCornerShape(50))
+                                .clickable {
+                                    val nextVol = when {
+                                        musicVolume > 0.90f -> 0.85f
+                                        musicVolume > 0.65f -> 0.50f
+                                        musicVolume > 0.35f -> 0.25f
+                                        else -> 1.0f
+                                    }
+                                    musicVolume = com.example.book.BookAudioPreferences.saveMusicVolume(context, nextVol)
+                                    BookAudioController.setPreferredVolume(musicVolume)
+                                }
+                                .padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "♪ ${(musicVolume * 100).toInt()}%",
+                                fontFamily = InterFontFamily,
+                                color = MorCamTokens.LavenderLight,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
+                            )
+                        }
+
                         // Compact Typography Capsule [A− | A+]
                         Row(
                             modifier = Modifier
