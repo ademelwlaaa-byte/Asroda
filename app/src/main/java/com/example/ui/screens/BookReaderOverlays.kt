@@ -425,6 +425,7 @@ fun BookChronicleModal(
             decorFitsSystemWindows = false
         )
     ) {
+        com.example.ui.components.ConfigureEdgeToEdgeDialogWindow()
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1051,6 +1052,7 @@ fun InReaderChapterSwitcherDialog(
             decorFitsSystemWindows = false
         )
     ) {
+        com.example.ui.components.ConfigureEdgeToEdgeDialogWindow()
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1271,6 +1273,7 @@ fun BookResetOptionsDialog(
             decorFitsSystemWindows = false
         )
     ) {
+        com.example.ui.components.ConfigureEdgeToEdgeDialogWindow()
         Box(
             modifier = Modifier
                 .fillMaxWidth()

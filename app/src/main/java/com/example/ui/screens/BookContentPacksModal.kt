@@ -116,6 +116,7 @@ fun StoryLaunchDownloadDialog(
             dismissOnClickOutside = !isDownloading
         )
     ) {
+        com.example.ui.components.ConfigureEdgeToEdgeDialogWindow()
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()

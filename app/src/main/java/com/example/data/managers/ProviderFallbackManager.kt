@@ -226,9 +226,9 @@ class ProviderFallbackManager(
 
             override fun onResponse(call: Call, response: Response) {
                 if (cont.isActive) {
-                    cont.resume(response) {
+                    cont.resume(response) { _, value, _ ->
                         try {
-                            response.close()
+                            value.close()
                         } catch (_: Throwable) {}
                     }
                 } else {

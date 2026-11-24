@@ -2131,6 +2131,7 @@ fun ChapterSelectionModal(
             decorFitsSystemWindows = false
         )
     ) {
+        com.example.ui.components.ConfigureEdgeToEdgeDialogWindow()
         Box(
             modifier = Modifier
                 .fillMaxWidth()
