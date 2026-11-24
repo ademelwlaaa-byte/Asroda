@@ -532,12 +532,13 @@ fun BookChronicleModal(
 
                 val progressRibbon = remember(state) {
                     val s = com.example.book.BookProgressSummaryFormatter.compute(state)
+                    val badge = com.example.book.BookChapterCompletionBadgeHelper.resolveBadge(s.completionPercent)
                     val bond = com.example.book.BookBondSummaryHelper.compute(state)
                     val transcriptStats = com.example.book.BookTranscriptStatsHelper.compute(state)
                     val readPart = if (transcriptStats.totalWords > 0) {
                         " • Okunan: ${com.example.book.BookTranscriptStatsHelper.formatCompact(transcriptStats)}"
                     } else ""
-                    "${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}$readPart"
+                    "$badge • ${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}$readPart"
                 }
                 Box(
                     modifier = Modifier
