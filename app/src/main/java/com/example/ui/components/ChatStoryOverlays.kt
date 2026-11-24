@@ -364,6 +364,34 @@ internal fun ChatStoryDirectorDialog(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
+            var newMacroLabel by remember { mutableStateOf("") }
+            var newMacroText by remember { mutableStateOf("") }
+            OutlinedTextField(
+                value = newMacroLabel,
+                onValueChange = { newMacroLabel = it },
+                singleLine = true,
+                placeholder = { Text("Yeni makro adı (örn. Savunma)", color = Color(0x99C4B5FD), fontSize = 11.5.sp) },
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = newMacroText,
+                onValueChange = { newMacroText = it },
+                singleLine = true,
+                placeholder = { Text("Makro metni (örn. *Kılıcını çekip bekler.*)", color = Color(0x99C4B5FD), fontSize = 11.5.sp) },
+                modifier = Modifier.fillMaxWidth()
+            )
+            if (newMacroLabel.isNotBlank() && newMacroText.isNotBlank()) {
+                MorCamCapsuleButton(
+                    text = "+ Makro Ekle",
+                    onClick = {
+                        macros = com.example.util.RoleplayMacroStore.addMacro(context, newMacroLabel, newMacroText)
+                        newMacroLabel = ""
+                        newMacroText = ""
+                        Toast.makeText(context, "Özel makro kaydedildi", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 macros.forEach { macro ->
                     Row(

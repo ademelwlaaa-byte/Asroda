@@ -121,6 +121,7 @@ fun ChatScreen(
     var showBookmarksDialog by remember { mutableStateOf(false) }
     var showDirectorDialog by remember { mutableStateOf(false) }
     var showScratchpadDialog by remember { mutableStateOf(false) }
+    var chatFontScale by remember { mutableStateOf(com.example.util.ChatTypographyStore.loadFontScale(context)) }
     var storyBookmarks by remember(bot.id) {
         mutableStateOf(com.example.util.StoryBookmarkStore.loadBookmarks(context, bot.id))
     }
@@ -638,6 +639,13 @@ fun ChatScreen(
                 }
 
                 Box(modifier = Modifier.fillMaxSize()) {
+                    val baseDensity = androidx.compose.ui.platform.LocalDensity.current
+                    CompositionLocalProvider(
+                        androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                            density = baseDensity.density,
+                            fontScale = baseDensity.fontScale * chatFontScale
+                        )
+                    ) {
                     Column(modifier = Modifier.fillMaxSize()) {
                         ChatMessageTimelineList(
                             bot = bot,
@@ -724,6 +732,7 @@ fun ChatScreen(
                             },
                             modifier = Modifier.weight(1f)
                         )
+                    }
                     }
 
                     val showScrollToBottom = remember {
@@ -845,7 +854,6 @@ fun ChatScreen(
     }
 
     if (showDirectorDialog) {
-        var chatFontScale by remember { mutableStateOf(com.example.util.ChatTypographyStore.loadFontScale(context)) }
         com.example.ui.components.ChatStoryDirectorDialog(
             context = context,
             displayName = displayName,
