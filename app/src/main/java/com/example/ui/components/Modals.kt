@@ -398,7 +398,11 @@ fun FallbackLogModal(
             val summary = com.example.util.ProviderHealthSummaryFormatter.summarize(liveHealth)
             val base = com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)
             val rateLine = com.example.util.ProviderFallbackSuccessRateHelper.formatCompact(logs)
-            if (rateLine.isNotBlank()) "$base\n$rateLine" else base
+            val latestFailure = logs.firstOrNull { it.status == "FAILED" }
+            val tipLine = if (latestFailure != null) {
+                "💡 ${com.example.util.ProviderErrorRecoveryAdvisor.adviseForStatusCode(latestFailure.statusCode)}"
+            } else ""
+            listOf(base, rateLine, tipLine).filter { it.isNotBlank() }.joinToString("\n")
         }
         Box(
             modifier = Modifier
