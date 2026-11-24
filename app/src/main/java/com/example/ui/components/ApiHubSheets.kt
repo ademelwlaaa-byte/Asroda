@@ -1590,6 +1590,27 @@ internal fun CustomApiEditorDialog(
                     modifier = Modifier.testTag("custom_api_label_input")
                 )
 
+                val suggestedName = remember(baseUrl) {
+                    com.example.util.CustomApiNameAutoSuggester.suggestLabel(baseUrl)
+                }
+                if (label.isBlank() && suggestedName.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x447C3AED))
+                            .border(0.8.dp, Color(0x88C4B5FD), RoundedCornerShape(10.dp))
+                            .clickable { label = suggestedName }
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = "✦ Önerilen Ad (Dokun): $suggestedName",
+                            color = Color(0xFFE9D5FF),
+                            fontSize = 10.5.sp,
+                            fontFamily = InterFontFamily
+                        )
+                    }
+                }
+
                 // Protocol selector
                 Row(
                     modifier = Modifier.fillMaxWidth(),
