@@ -81,7 +81,8 @@ class Systems4_6_12_14_15_21_TenOutOfTenTest {
     private fun resolveProjectRootDir(): File {
         val resDir = resolveAppResDir().canonicalFile
         // .../app/src/main/res -> .../
-        return resDir.parentFile.parentFile.parentFile.parentFile
+        return resDir.parentFile?.parentFile?.parentFile?.parentFile
+            ?: error("Could not resolve project root from: ${resDir.absolutePath}")
     }
 
     private fun hasValidWebpHeader(file: File): Boolean {
