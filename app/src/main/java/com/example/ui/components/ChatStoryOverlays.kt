@@ -58,6 +58,9 @@ internal fun ChatStoryStatsDialog(
     val promptBudget = remember(bot) {
         com.example.util.BotPromptBudgetEstimator.estimate(bot)
     }
+    val vocabRichness = remember(validMessages) {
+        com.example.util.StoryVocabularyRichnessHelper.analyze(validMessages)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -91,6 +94,7 @@ internal fun ChatStoryStatsDialog(
                 "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
                 "Son Sahne Tonu" to lastAiTone,
                 "Edebi Üslup" to com.example.util.StoryReadingLevelEstimator.formatCompact(proseMetrics),
+                "Kelime Zenginliği" to com.example.util.StoryVocabularyRichnessHelper.formatCompact(vocabRichness),
                 "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
