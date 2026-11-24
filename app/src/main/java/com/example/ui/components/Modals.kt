@@ -502,19 +502,49 @@ fun FallbackLogModal(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (liveHealth.isNotEmpty()) {
+                    val modalCtx = androidx.compose.ui.platform.LocalContext.current
                     MorCamGlassCard(
                         cornerRadius = 16.dp,
                         highlighted = true,
                         paddingHorizontal = 12.dp,
                         paddingVertical = 10.dp
                     ) {
-                        Text(
-                            text = "Devre Kesici & Canlı Sağlık",
-                            fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
-                            color = MorCamTokens.SilverLavenderBright,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Devre Kesici & Canlı Sağlık",
+                                fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
+                                color = MorCamTokens.SilverLavenderBright,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(Color(0x667C3AED))
+                                    .border(0.8.dp, Color(0xAAE9D5FF), RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        com.example.data.managers.ProviderHealthTracker.resetAll()
+                                        android.widget.Toast.makeText(
+                                            modalCtx,
+                                            "Tüm sağlayıcı devre kesicileri sıfırlandı",
+                                            android.widget.Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = "Tümünü Sıfırla",
+                                    fontFamily = com.example.ui.theme.InterFontFamily,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         val now = System.currentTimeMillis()
                         liveHealth.values.sortedBy { it.providerKey }.forEach { st ->
@@ -523,6 +553,16 @@ fun FallbackLogModal(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
+                                    .then(
+                                        if (inCd) Modifier.clickable {
+                                            com.example.data.managers.ProviderHealthTracker.resetHealth(st.providerKey)
+                                            android.widget.Toast.makeText(
+                                                modalCtx,
+                                                "${st.providerKey} devre kesici sıfırlandı",
+                                                android.widget.Toast.LENGTH_SHORT
+                                            ).show()
+                                        } else Modifier
+                                    )
                                     .padding(vertical = 3.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
@@ -536,7 +576,7 @@ fun FallbackLogModal(
                                 )
                                 Text(
                                     text = if (inCd) {
-                                        "⏳ ${st.lastFailureType?.name ?: "COOLDOWN"} (${rem}s)"
+                                        "⏳ ${st.lastFailureType?.name ?: "COOLDOWN"} (${rem}s) • Sıfırla"
                                     } else {
                                         "● Hazır • ${st.lastLatencyMs} ms • ${st.totalSuccessCount}✓/${st.totalFailureCount}✗"
                                     },
