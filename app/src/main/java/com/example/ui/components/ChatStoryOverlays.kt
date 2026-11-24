@@ -158,6 +158,19 @@ internal fun ChatStoryStatsDialog(
                     fontWeight = FontWeight.Medium
                 )
             }
+            val coachTip = remember(stats.assistantMessages, stats.assistantWordCount, dialogueRatio.dialoguePercent) {
+                com.example.util.StoryDialogueDensityCoach.generateTip(
+                    assistantMessages = stats.assistantMessages,
+                    assistantWordCount = stats.assistantWordCount,
+                    dialoguePercent = dialogueRatio.dialoguePercent
+                )
+            }
+            Text(
+                text = "Yönetmen Önerisi: $coachTip",
+                color = Color(0xFFFDE68A),
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.Medium
+            )
             if (castMentions.isNotEmpty()) {
                 Text(
                     text = "Sahnedeki Karakterler: ${castMentions.joinToString(" • ") { "${it.name} (${it.count})" }}",
