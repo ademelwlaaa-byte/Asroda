@@ -593,12 +593,33 @@ fun FallbackLogModal(
         }
 
         Spacer(modifier = Modifier.height(14.dp))
-        MorCamCapsuleButton(
-            text = "Kapat",
-            onClick = onDismiss,
-            variant = MorCamButtonVariant.Secondary,
-            modifier = Modifier.fillMaxWidth()
-        )
+        val footerCtx = androidx.compose.ui.platform.LocalContext.current
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            MorCamCapsuleButton(
+                text = "📋 Raporu Kopyala",
+                onClick = {
+                    val report = com.example.util.ApiDiagnosticsFormatter.formatReport(
+                        appVersion = com.example.BuildConfig.VERSION_NAME,
+                        healthMap = liveHealth,
+                        logs = logs
+                    )
+                    val cm = footerCtx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("Asroda API Raporu", report))
+                    android.widget.Toast.makeText(footerCtx, "API tanılama raporu kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
+                },
+                variant = MorCamButtonVariant.Secondary,
+                modifier = Modifier.weight(1.25f)
+            )
+            MorCamCapsuleButton(
+                text = "Kapat",
+                onClick = onDismiss,
+                variant = MorCamButtonVariant.Secondary,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 

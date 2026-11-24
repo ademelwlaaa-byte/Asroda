@@ -28,6 +28,7 @@ object ResponseSanitizer {
         text = text.trim()
         text = leadingRolePrefixRegex.replaceFirst(text, "")
         text = multiBlankLinesRegex.replace(text, "\n\n")
+        text = NarrativeTextFormatter.formatWallOfText(text)
         return text.trim()
     }
 }

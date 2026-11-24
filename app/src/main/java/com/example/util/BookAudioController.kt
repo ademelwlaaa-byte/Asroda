@@ -76,6 +76,18 @@ object BookAudioController {
         }
     }
 
+    /** Updates the active soundtrack target volume smoothly (e.g. from Book Mode volume control). */
+    fun setPreferredVolume(volume: Float) {
+        scope.launch {
+            val clamped = volume.coerceIn(0.15f, 1.0f)
+            resumeTargetVolume = clamped
+            if (!isFadingOut && !_isMutedFlow.value && _isPlayingFlow.value) {
+                val effective = if (isVoiceDucked) (clamped * 0.26f).coerceIn(0.08f, 0.30f) else clamped
+                transitionVolume(targetVolume = effective, durationMs = 220L)
+            }
+        }
+    }
+
     /**
      * Starts playback automatically ON from silence (0f) and smoothly ramps to full volume (1.0f)
      * over [fadeInMs] (default 1500ms).
