@@ -2409,6 +2409,37 @@ fun GlobalSettingsModal(
                                     }
                                 )
                             }
+                            var dailyGoalProgress by remember {
+                                mutableStateOf(com.example.util.StorySessionGoalStore.getTodayProgress(context))
+                            }
+                            GlobalGlassCard(
+                                rootSize = rootSize,
+                                blurredBg = blurredBg,
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                ApiHubEntryRow(
+                                    refPlates = refPlates,
+                                    icon = Icons.Default.AutoAwesome,
+                                    iconAccent = if (dailyGoalProgress.goalReached) Color(0xFF86EFAC) else Color(0xFFC4B5FD),
+                                    title = "Günlük Hikaye Hedefi",
+                                    subtitle = if (dailyGoalProgress.goalReached) {
+                                        "Hedef tamamlandı! (${dailyGoalProgress.sentToday}/${dailyGoalProgress.dailyGoal} mesaj) • Değiştirmek için dokun"
+                                    } else {
+                                        "Bugün ${dailyGoalProgress.sentToday} / ${dailyGoalProgress.dailyGoal} mesaj (%${dailyGoalProgress.percentComplete}) • Hedefi değiştirmek için dokun"
+                                    },
+                                    badgeText = if (dailyGoalProgress.goalReached) "✓ %100" else "%${dailyGoalProgress.percentComplete}",
+                                    onClick = {
+                                        val nextTarget = com.example.util.StorySessionGoalStore.nextGoalPreset(dailyGoalProgress.dailyGoal)
+                                        dailyGoalProgress = com.example.util.StorySessionGoalStore.setDailyGoal(context, nextTarget)
+                                        Toast.makeText(
+                                            context,
+                                            "Günlük hikaye hedefi $nextTarget mesaj olarak güncellendi",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
                             var cacheReport by remember {
                                 mutableStateOf(com.example.util.AppCacheCleaner.inspectCache(context))
                             }

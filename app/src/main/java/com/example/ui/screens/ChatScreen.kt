@@ -552,6 +552,7 @@ fun ChatScreen(
                         },
                         onSendMessage = { text ->
                             com.example.util.ChatDraftStore.clearDraft(context, bot.id)
+                            com.example.util.StorySessionGoalStore.recordTurn(context)
                             isStickyToBottom = true
                             onSendMessage(text)
                         },
