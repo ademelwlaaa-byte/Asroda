@@ -238,6 +238,19 @@ internal fun ChatStoryBookmarksDialog(
                     fontSize = 12.sp
                 )
             } else {
+                MorCamCapsuleButton(
+                    text = "📋 Yer İmlerini Kopyala (${storyBookmarks.size})",
+                    variant = MorCamButtonVariant.Secondary,
+                    onClick = {
+                        val md = com.example.util.StoryBookmarkExporter.formatMarkdown(displayName, storyBookmarks)
+                        if (md.isNotBlank()) {
+                            val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                            cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, md))
+                            Toast.makeText(context, "Yer imleri panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
