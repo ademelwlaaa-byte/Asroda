@@ -604,6 +604,45 @@ internal fun ChatStoryDirectorDialog(
             }
 
             Text(
+                text = "Hızlı Rol Yapma Biçimleri (Dokun & Ekle)",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "*Aksiyon*" to com.example.util.ChatInputQuickSyntaxHelper.wrapAction("..."),
+                    "\"Diyalog\"" to com.example.util.ChatInputQuickSyntaxHelper.wrapDialogue("..."),
+                    "[OOC]" to com.example.util.ChatInputQuickSyntaxHelper.wrapOoc("...")
+                ).forEach { (chipLabel, snippet) ->
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x44211044))
+                            .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
+                            .clickable {
+                                onInsertMacro(snippet)
+                                onDismiss()
+                            }
+                            .padding(vertical = 7.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = chipLabel,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            Text(
                 text = "Hızlı Rol Yapma Makroları (Dokun & Ekle)",
                 color = Color(0xFFC4B5FD),
                 fontSize = 12.sp,
