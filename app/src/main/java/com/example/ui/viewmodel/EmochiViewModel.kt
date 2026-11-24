@@ -1343,6 +1343,7 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun deleteBot(botId: String) {
         viewModelScope.launch {
+            com.example.util.ChatDraftStore.clearDraft(getApplication(), botId)
             repository.deleteBot(botId)
             if (_activeBotId.value == botId) {
                 openMenu()

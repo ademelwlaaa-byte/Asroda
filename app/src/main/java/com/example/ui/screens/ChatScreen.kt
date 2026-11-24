@@ -86,7 +86,20 @@ fun ChatScreen(
     isStreamingThinkingFlow: StateFlow<Boolean> = MutableStateFlow(false),
     onStopGeneration: (() -> Unit)? = null
 ) {
-    var inputText by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    var inputText by remember(bot.id) {
+        mutableStateOf(com.example.util.ChatDraftStore.loadDraft(context, bot.id))
+    }
+    val latestInputText by androidx.compose.runtime.rememberUpdatedState(inputText)
+    LaunchedEffect(bot.id, inputText) {
+        delay(300L)
+        com.example.util.ChatDraftStore.saveDraft(context, bot.id, inputText)
+    }
+    DisposableEffect(bot.id) {
+        onDispose {
+            com.example.util.ChatDraftStore.saveDraft(context, bot.id, latestInputText)
+        }
+    }
     var showBotSettings by remember { mutableStateOf(false) }
     var showQuickProfile by remember { mutableStateOf(false) }
     var showBackgroundPicker by remember { mutableStateOf(false) }
@@ -106,7 +119,6 @@ fun ChatScreen(
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
-    val context = LocalContext.current
     val viewModel: EmochiViewModel = viewModel()
 
     val searchResults by viewModel.searchResults.collectAsState()
@@ -519,6 +531,7 @@ fun ChatScreen(
                             if (onContinueScene != null) onContinueScene() else viewModel.continueStoryScene()
                         },
                         onSendMessage = { text ->
+                            com.example.util.ChatDraftStore.clearDraft(context, bot.id)
                             isStickyToBottom = true
                             onSendMessage(text)
                         },

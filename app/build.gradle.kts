@@ -20,7 +20,7 @@ android {
         applicationId = "com.aistudio.emochi.uczaob"
         minSdk = 24
         targetSdk = 36
-        val baseVersionCode = 24
+        val baseVersionCode = 25
         val overrideVersionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull()
         versionCode = if (overrideVersionCode != null) {
             require(overrideVersionCode > baseVersionCode) {
@@ -30,7 +30,7 @@ android {
         } else {
             baseVersionCode
         }
-        versionName = "3.9"
+        versionName = "4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
