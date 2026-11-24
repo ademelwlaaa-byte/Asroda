@@ -545,6 +545,22 @@ fun ChatScreen(
                         onTriggerSendBurst = { sendBurstTrigger += 1 },
                         onStopGeneration = {
                             if (onStopGeneration != null) onStopGeneration() else viewModel.stopGeneration()
+                        },
+                        onCopyTranscript = {
+                            val md = com.example.util.ChatTranscriptFormatter.formatMarkdown(
+                                botDisplayName = displayName,
+                                userDisplayName = bot.userCharName.ifBlank { "Sen" },
+                                messages = validMessages
+                            )
+                            if (md.isNotBlank()) {
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, md))
+                                android.widget.Toast.makeText(
+                                    context,
+                                    "Hikaye panoya kopyalandı (${validMessages.size} mesaj)",
+                                    android.widget.Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
                     )
                 }

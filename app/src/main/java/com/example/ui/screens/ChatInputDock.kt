@@ -89,7 +89,8 @@ internal fun ChatBottomInputDock(
     onEditLastMessage: () -> Unit,
     onOpenBackgroundPicker: () -> Unit,
     onTriggerSendBurst: () -> Unit,
-    onStopGeneration: (() -> Unit)? = null
+    onStopGeneration: (() -> Unit)? = null,
+    onCopyTranscript: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -108,7 +109,8 @@ internal fun ChatBottomInputDock(
                 onOpenStarredSheet = onOpenStarredSheet,
                 onContinueScene = onContinueScene,
                 onSendPrompt = onSendMessage,
-                onUpdateInputText = onInputTextChange
+                onUpdateInputText = onInputTextChange,
+                onCopyTranscript = onCopyTranscript
             )
 
             Box(
@@ -325,7 +327,8 @@ internal fun ChatPlusToolkitDrawer(
     onOpenStarredSheet: () -> Unit,
     onContinueScene: () -> Unit,
     onSendPrompt: (String) -> Unit,
-    onUpdateInputText: (String) -> Unit
+    onUpdateInputText: (String) -> Unit,
+    onCopyTranscript: (() -> Unit)? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -382,6 +385,10 @@ internal fun ChatPlusToolkitDrawer(
                 Triple("🧠 İç Ses", "plus_toolkit_inner") {
                     onDismiss()
                     if (!isSending) onSendPrompt("Karakterin şu an dışarıya belli etmediği gerçek iç düşüncelerini ve duygularını hissettirerek devam et.")
+                },
+                Triple("📋 Hikayeyi Kopyala", "plus_toolkit_copy_transcript") {
+                    onDismiss()
+                    onCopyTranscript?.invoke()
                 }
             )
             tools.forEach { (label, tag, action) ->
