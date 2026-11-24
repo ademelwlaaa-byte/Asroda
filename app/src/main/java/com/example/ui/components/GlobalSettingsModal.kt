@@ -2387,6 +2387,10 @@ fun GlobalSettingsModal(
 
                             // Separate Floating Neon Cards for Reading Streak, Cache Cleaner, Updates & Feature Flags
                             val streakState = remember { com.example.util.ReadingStreakTracker.getState(context) }
+                            val dailyGoalSnapshot = remember { com.example.util.StorySessionGoalStore.getTodayProgress(context) }
+                            val readerBadge = remember(streakState, dailyGoalSnapshot) {
+                                com.example.util.ReadingMilestoneBadges.resolveBadge(streakState, dailyGoalSnapshot)
+                            }
                             GlobalGlassCard(
                                 rootSize = rootSize,
                                 blurredBg = blurredBg,
@@ -2398,7 +2402,7 @@ fun GlobalSettingsModal(
                                     icon = Icons.Default.AutoAwesome,
                                     iconAccent = Color(0xFFFDE68A),
                                     title = "Okuma & Hikaye Serisi",
-                                    subtitle = "En uzun seri: ${streakState.longestStreakDays} gün • Toplam aktif: ${streakState.totalActiveDays} gün",
+                                    subtitle = "${com.example.util.ReadingMilestoneBadges.formatCompact(readerBadge)} • En uzun: ${streakState.longestStreakDays} gün • Toplam: ${streakState.totalActiveDays} gün",
                                     badgeText = "🔥 ${streakState.currentStreakDays} Gün",
                                     onClick = {
                                         Toast.makeText(
