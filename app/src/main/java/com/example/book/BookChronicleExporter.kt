@@ -18,6 +18,8 @@ object BookChronicleExporter {
                 .append(" / ").append(CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS).append("\n")
             append("- **Açılan Karakterler (").append(unlocked.size).append("):** ")
                 .append(unlocked.joinToString(", ") { it.displayName }).append("\n")
+            val bondHighlight = BookBondSummaryHelper.compute(state)
+            append("- **İlişki Özeti:** ").append(BookBondSummaryHelper.formatCompact(bondHighlight)).append("\n")
             append("- **Keşfedilen Sırlar:** ").append(state.discoveredSecrets.size).append("\n\n")
 
             if (allDecisions.isNotEmpty()) {
