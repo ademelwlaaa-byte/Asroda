@@ -845,10 +845,13 @@ fun ChatScreen(
     }
 
     if (showDirectorDialog) {
+        var chatFontScale by remember { mutableStateOf(com.example.util.ChatTypographyStore.loadFontScale(context)) }
         com.example.ui.components.ChatStoryDirectorDialog(
+            context = context,
             displayName = displayName,
             currentResponseLength = userSettings?.responseLength ?: "standard",
             currentTtsSpeed = userSettings?.ttsSpeed ?: 1.0f,
+            currentFontScale = chatFontScale,
             onSelectResponseLength = { len ->
                 userSettings?.let { viewModel.updateSettings(it.copy(responseLength = len)) }
                 android.widget.Toast.makeText(context, "Yanıt uzunluğu güncellendi", android.widget.Toast.LENGTH_SHORT).show()
@@ -856,6 +859,13 @@ fun ChatScreen(
             onSelectTtsSpeed = { spd ->
                 userSettings?.let { viewModel.updateSettings(it.copy(ttsSpeed = spd)) }
                 android.widget.Toast.makeText(context, "Ses hızı: ${spd}x", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onSelectFontScale = { sc ->
+                chatFontScale = com.example.util.ChatTypographyStore.saveFontScale(context, sc)
+                android.widget.Toast.makeText(context, "Sohbet yazı boyutu kaydedildi", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            onInsertMacro = { macroText ->
+                inputText = if (inputText.isBlank()) macroText else "${inputText.trimEnd()}\n$macroText"
             },
             onDismiss = { showDirectorDialog = false }
         )

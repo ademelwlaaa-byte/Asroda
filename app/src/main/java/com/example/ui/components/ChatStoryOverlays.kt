@@ -52,10 +52,13 @@ internal fun ChatStoryStatsDialog(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            val estTokens = com.example.util.TokenBudgetEstimator.estimateTokens(stats.totalWordCount)
+            val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
             listOf(
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
+                "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
                 "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
                 "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
                 "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
@@ -212,20 +215,28 @@ internal fun ChatStoryBookmarksDialog(
 
 @Composable
 internal fun ChatStoryDirectorDialog(
+    context: Context,
     displayName: String,
     currentResponseLength: String,
     currentTtsSpeed: Float,
+    currentFontScale: Float,
     onSelectResponseLength: (String) -> Unit,
     onSelectTtsSpeed: (Float) -> Unit,
+    onSelectFontScale: (Float) -> Unit,
+    onInsertMacro: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var macros by remember { mutableStateOf(com.example.util.RoleplayMacroStore.loadMacros(context)) }
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Hikaye Yönetmeni",
-        subtitle = "$displayName • Anlatım uzunluğu & ses hızı"
+        subtitle = "$displayName • Uzunluk, ses, yazı boyutu & makrolar"
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 420.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
@@ -305,6 +316,96 @@ internal fun ChatStoryDirectorDialog(
                             fontSize = 11.sp,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
                         )
+                    }
+                }
+            }
+
+            Text(
+                text = "Sohbet Yazı Boyutu",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            val fontScales = listOf(0.92f to "Küçük", 1.0f to "Normal", 1.12f to "Rahat", 1.24f to "Büyük")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                fontScales.forEach { (sc, label) ->
+                    val selected = kotlin.math.abs(currentFontScale - sc) < 0.04f
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (selected) Color(0xCC7C3AED) else Color(0x551B0D36))
+                            .border(
+                                0.9.dp,
+                                if (selected) Color(0xFFE9D5FF) else Color(0x55B794F4),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSelectFontScale(sc) }
+                            .padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = label,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = "Hızlı Rol Yapma Makroları (Dokun & Ekle)",
+                color = Color(0xFFC4B5FD),
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                macros.forEach { macro ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Color(0x441B0D36))
+                            .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
+                            .clickable {
+                                onInsertMacro(macro.text)
+                                onDismiss()
+                            }
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "⚡ ${macro.label}",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = macro.text,
+                                color = Color(0xFFC4B5FD),
+                                fontSize = 10.5.sp,
+                                maxLines = 1
+                            )
+                        }
+                        if (!macro.id.startsWith("def_")) {
+                            Text(
+                                text = "Sil",
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 10.5.sp,
+                                modifier = Modifier
+                                    .clickable {
+                                        macros = com.example.util.RoleplayMacroStore.removeMacro(context, macro.id)
+                                    }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
                 }
             }

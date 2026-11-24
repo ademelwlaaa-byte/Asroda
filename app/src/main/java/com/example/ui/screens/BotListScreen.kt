@@ -1627,6 +1627,7 @@ fun ChatsTabContent(
                             val sortOptions = listOf(
                                 Triple("recent", "Varsayılan Sıralama", Icons.Default.AutoAwesome),
                                 Triple("favorites_first", "Önce Favoriler", Icons.Default.Star),
+                                Triple("drafts_first", "Önce Taslaklar", Icons.Default.AutoAwesome),
                                 Triple("favorites_only", "Sadece Favoriler", Icons.Default.Favorite),
                                 Triple("name_asc", "İsme Göre (A-Z)", Icons.Default.SortByAlpha)
                             )
