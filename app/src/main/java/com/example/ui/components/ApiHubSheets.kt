@@ -1653,7 +1653,18 @@ internal fun CustomApiEditorDialog(
                 val endpointInfo = remember(baseUrl) {
                     com.example.util.CustomApiEndpointInfoHelper.inspect(baseUrl)
                 }
-                if (baseUrl.isNotBlank()) {
+                val urlValidationError = remember(baseUrl) {
+                    if (baseUrl.isBlank()) null else com.example.util.CustomApiUrlValidationHelper.validate(baseUrl)
+                }
+                if (urlValidationError != null) {
+                    Text(
+                        text = "⚠ $urlValidationError",
+                        color = Color(0xFFFCA5A5),
+                        fontSize = 11.sp,
+                        fontFamily = InterFontFamily,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    )
+                } else if (baseUrl.isNotBlank()) {
                     Text(
                         text = endpointInfo.badgeText,
                         color = when {
