@@ -29,6 +29,7 @@ object ResponseSanitizer {
         text = leadingRolePrefixRegex.replaceFirst(text, "")
         text = multiBlankLinesRegex.replace(text, "\n\n")
         text = MarkdownEmphasisCleaner.clean(text)
+        text = StoryDialoguePunctuationNormalizer.normalize(text)
         text = NarrativeTextFormatter.formatWallOfText(text)
         return text.trim()
     }
