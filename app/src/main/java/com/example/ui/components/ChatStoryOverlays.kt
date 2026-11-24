@@ -333,9 +333,9 @@ internal fun ChatStoryDirectorDialog(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Text(
-                text = "Yanıt Uzunluğu",
+                text = "Yanıt Uzunluğu • ${com.example.util.ResponseLengthTargetHelper.describeTarget(currentResponseLength)}",
                 color = Color(0xFFC4B5FD),
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold
             )
             val lengths = listOf(

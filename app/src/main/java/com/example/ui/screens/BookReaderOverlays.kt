@@ -503,7 +503,8 @@ fun BookChronicleModal(
 
                 val progressRibbon = remember(state) {
                     val s = com.example.book.BookProgressSummaryFormatter.compute(state)
-                    com.example.book.BookProgressSummaryFormatter.formatRibbon(s)
+                    val bond = com.example.book.BookBondSummaryHelper.compute(state)
+                    "${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}"
                 }
                 Box(
                     modifier = Modifier
