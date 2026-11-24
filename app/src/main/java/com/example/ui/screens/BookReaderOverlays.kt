@@ -539,7 +539,10 @@ fun BookChronicleModal(
                         " • Okunan: ${com.example.book.BookTranscriptStatsHelper.formatCompact(transcriptStats)}"
                     } else ""
                     val statusLine = com.example.book.BookFatigueAlertHelper.formatStatusRibbon(state)
-                    "$badge • ${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}$readPart\n$statusLine"
+                    val branchLine = com.example.book.BookBranchDiscoveryHelper.formatCompact(
+                        com.example.book.BookBranchDiscoveryHelper.compute(state)
+                    )
+                    "$badge • ${com.example.book.BookProgressSummaryFormatter.formatRibbon(s)}\n${com.example.book.BookBondSummaryHelper.formatCompact(bond)}$readPart\n$statusLine • $branchLine"
                 }
                 Box(
                     modifier = Modifier

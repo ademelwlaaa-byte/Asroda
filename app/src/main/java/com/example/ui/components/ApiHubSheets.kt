@@ -1713,7 +1713,8 @@ internal fun CustomApiEditorDialog(
                 val modelTags = remember(modelName) {
                     val base = com.example.util.ProviderModelTagClassifier.formatCompact(modelName)
                     val ctx = com.example.util.CustomApiModelContextEstimator.estimateContextLabel(modelName)
-                    listOfNotNull(base.takeIf { it.isNotBlank() }, ctx).joinToString(" • ")
+                    val temp = com.example.util.CustomApiTemperatureAdvisor.recommendBadge(modelName)
+                    listOfNotNull(base.takeIf { it.isNotBlank() }, ctx, temp).joinToString(" • ")
                 }
                 if (modelTags.isNotBlank()) {
                     Text(
