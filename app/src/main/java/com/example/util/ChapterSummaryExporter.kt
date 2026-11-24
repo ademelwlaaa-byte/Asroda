@@ -17,12 +17,19 @@ object ChapterSummaryExporter {
         val stats = ChatStoryStats.compute(storyMsgs)
         val atmosphere = StoryMoodAnalytics.detectDominantAtmosphere(storyMsgs)
         val pacing = StoryPacingAnalyzer.analyze(storyMsgs)
+        val prose = StoryReadingLevelEstimator.estimate(storyMsgs)
+        val themes = CharacterWordCloudHelper.extractTopThemes(storyMsgs, maxThemes = 5)
         val bestQuote = StoryQuoteExtractor.extractBestQuote(storyMsgs, title)
 
         return buildString {
             append("# ").append(title.ifBlank { "Asroda Hikayesi" }).append(" — Bölüm Özeti\n\n")
+            append("- **Seviye:** ").append(StoryDepthTierClassifier.formatLabel(stats.totalWordCount)).append("\n")
             append("- **Atmosfer:** ").append(atmosphere).append("\n")
             append("- **Anlatım Dengesi:** ").append(StoryPacingAnalyzer.formatCompact(pacing)).append("\n")
+            append("- **Edebi Üslup:** ").append(StoryReadingLevelEstimator.formatCompact(prose)).append("\n")
+            if (themes.isNotEmpty()) {
+                append("- **Temalar:** ").append(themes.joinToString(" ")).append("\n")
+            }
             append("- **Hacim:** ").append(stats.totalMessages).append(" mesaj • ")
                 .append(stats.totalWordCount).append(" kelime (~")
                 .append(stats.estimatedNovelPages).append(" sayfa)\n")
