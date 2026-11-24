@@ -115,17 +115,37 @@ internal fun ChatStoryStatsDialog(
                         .padding(horizontal = 10.dp, vertical = 8.dp)
                 )
             }
-            MorCamCapsuleButton(
-                text = "📋 Karakter Kartını Kopyala",
-                variant = MorCamButtonVariant.Secondary,
-                onClick = {
-                    val cardMd = com.example.util.BotProfileExporter.formatCharacterCardMarkdown(bot)
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                    cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, cardMd))
-                    Toast.makeText(context, "Karakter kartı panoya kopyalandı", Toast.LENGTH_SHORT).show()
-                },
-                modifier = Modifier.fillMaxWidth()
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                MorCamCapsuleButton(
+                    text = "📖 Bölüm Özeti",
+                    variant = MorCamButtonVariant.Primary,
+                    onClick = {
+                        val recapMd = com.example.util.ChapterSummaryExporter.formatRecapMarkdown(
+                            title = displayName,
+                            userName = bot.userCharName.ifBlank { "Sen" },
+                            messages = validMessages
+                        )
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, recapMd))
+                        Toast.makeText(context, "Bölüm özeti panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+                MorCamCapsuleButton(
+                    text = "📋 Karakter Kartı",
+                    variant = MorCamButtonVariant.Secondary,
+                    onClick = {
+                        val cardMd = com.example.util.BotProfileExporter.formatCharacterCardMarkdown(bot)
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, cardMd))
+                        Toast.makeText(context, "Karakter kartı panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.weight(1f)
+                )
+            }
         }
     }
 }
@@ -215,8 +235,9 @@ internal fun ChatStoryBookmarksDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
+                                val relTime = com.example.util.MessageTimestampFormatter.formatRelative(bm.createdAtMs)
                                 Text(
-                                    text = "🔖 ${bm.title}",
+                                    text = if (relTime.isNotBlank()) "🔖 ${bm.title} • $relTime" else "🔖 ${bm.title}",
                                     color = Color.White,
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.SemiBold,

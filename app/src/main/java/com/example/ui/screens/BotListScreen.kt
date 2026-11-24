@@ -1359,11 +1359,7 @@ fun ChatsTabContent(
 
     val filteredBots = remember(chatsOnlyList, searchQuery, selectedFilter, sortMode, favoriteBotIds) {
         val base = chatsOnlyList.filter { bot ->
-            val query = searchQuery.trim().lowercase()
-            val matchesQuery = query.isEmpty() ||
-                    bot.aiName.lowercase().contains(query) ||
-                    bot.universeName.lowercase().contains(query) ||
-                    bot.scenario.lowercase().contains(query)
+            val matchesQuery = com.example.util.BotSearchFilterHelper.matches(bot, searchQuery)
 
             val matchesFilter = when (selectedFilter) {
                 "favorites" -> favoriteBotIds.contains(bot.id)
