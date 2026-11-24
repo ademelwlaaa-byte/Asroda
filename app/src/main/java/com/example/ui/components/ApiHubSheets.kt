@@ -1534,6 +1534,54 @@ internal fun CustomApiEditorDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                if (!isEditing) {
+                    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(
+                            text = "Hızlı Şablonlar (Tek Dokunuşla Doldur):",
+                            color = GlobalMorCamColors.MutedLavender,
+                            fontSize = 10.5.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = InterFontFamily
+                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            com.example.data.managers.CustomApiQuickPresets.presets.forEach { preset ->
+                                val isActive = baseUrl.trim().trimEnd('/').equals(preset.baseUrl.trimEnd('/'), ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isActive) Color(0xCC7C3AED) else Color(0x55180A30))
+                                        .border(
+                                            0.9.dp,
+                                            if (isActive) Color(0xFFE9D5FF) else Color(0x55B794F4),
+                                            RoundedCornerShape(10.dp)
+                                        )
+                                        .clickable {
+                                            label = preset.displayName
+                                            baseUrl = preset.baseUrl
+                                            apiFormat = preset.apiFormat
+                                            if (modelName.isBlank()) modelName = preset.suggestedModel
+                                            testResult = null
+                                        }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = preset.chipLabel,
+                                        color = GlobalMorCamColors.PearlText,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                        fontFamily = InterFontFamily
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 GlobalGlassInputField(
                     value = label,
                     onValueChange = { label = it },
