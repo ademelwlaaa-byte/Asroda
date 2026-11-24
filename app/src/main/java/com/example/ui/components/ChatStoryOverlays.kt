@@ -114,7 +114,7 @@ internal fun ChatStoryStatsDialog(
                 "Karakter Kartı Yükü" to com.example.util.BotPromptBudgetEstimator.formatCompact(promptBudget),
                 "Kart Hazırlığı" to "${cardCompleteness.label} (%${cardCompleteness.percent})",
                 "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
-                "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
+                "Tahmini Okuma Süresi" to com.example.util.StoryReadingEstimateRangeHelper.formatRange(stats.totalWordCount),
                 "Tahmini Sesli Dinleme" to estAudioText,
                 "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
                     "${dateFmt.format(Date(stats.firstTimestampMs))} — ${dateFmt.format(Date(stats.lastTimestampMs))}"
