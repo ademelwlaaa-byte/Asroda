@@ -27,7 +27,8 @@ object ChatTranscriptFormatter {
 
         val dateFmt = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.forLanguageTag("tr-TR"))
         return buildString {
-            append("# ").append(cleanBot).append(" — Hikaye Kaydı\n\n")
+            append("# ").append(cleanBot).append(" — Hikaye Kaydı\n")
+            append("_").append(StoryTranscriptHeaderHelper.formatHeaderLine(cleanBot, valid)).append("_\n\n")
             valid.forEachIndexed { idx, msg ->
                 val speaker = if (msg.role == "user") cleanUser else cleanBot
                 val timeStr = if (msg.timestamp > 0L) " _(${dateFmt.format(Date(msg.timestamp))})_" else ""
