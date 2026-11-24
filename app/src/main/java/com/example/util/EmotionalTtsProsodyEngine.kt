@@ -47,7 +47,6 @@ object EmotionalTtsProsodyEngine {
 
     private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
     private val SEGMENT_TOKEN_REGEX = Regex("""(\*[^*]+\*|"[^"]+"|«[^»]+»|“[^”]+”)""", setOf(RegexOption.DOT_MATCHES_ALL))
-    private val SENTENCE_SPLIT_REGEX = Regex("""(?<=[.!?…—])\s+""")
 
     /**
      * Resolves the dominant expressive prosody profile from the character's live [EmotionState].
@@ -355,7 +354,7 @@ object EmotionalTtsProsodyEngine {
     }
 
     private fun splitIntoBoundedSentences(text: String, maxChars: Int): List<String> {
-        val rawSentences = text.split(SENTENCE_SPLIT_REGEX).map { it.trim() }.filter { it.isNotEmpty() }
+        val rawSentences = TtsSentenceChunker.splitSentences(text)
         val result = mutableListOf<String>()
         for (sentence in rawSentences) {
             if (sentence.length <= maxChars) {
