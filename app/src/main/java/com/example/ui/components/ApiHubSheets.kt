@@ -1472,7 +1472,8 @@ internal fun CustomApiEditorDialog(
     val canSave = baseUrl.trim().length > 8 && modelName.isNotBlank()
 
     val filteredFetchedModels = remember(fetchedModels, modelSearchQuery) {
-        com.example.util.ProviderModelFilterHelper.filterModels(fetchedModels, modelSearchQuery)
+        val sorted = com.example.util.CustomApiModelSorter.sortForPicker(fetchedModels)
+        com.example.util.ProviderModelFilterHelper.filterModels(sorted, modelSearchQuery)
     }
 
     FullScreenMorCamSheetContainer(onDismiss = onDismiss) {
