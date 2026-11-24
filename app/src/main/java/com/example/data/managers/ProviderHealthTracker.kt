@@ -128,6 +128,9 @@ object ProviderHealthTracker {
 
     fun recordSuccess(providerKey: String, latencyMs: Long = 0L) {
         val key = providerKey.lowercase(Locale.ROOT)
+        if (latencyMs > 0L) {
+            com.example.util.ProviderRollingLatencyTracker.recordSample(key, latencyMs)
+        }
         val now = clockMs()
         states.compute(key) { _, prev ->
             val current = prev ?: ProviderHealthState(providerKey = key)

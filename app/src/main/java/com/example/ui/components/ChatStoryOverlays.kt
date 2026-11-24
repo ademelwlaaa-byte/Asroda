@@ -64,6 +64,9 @@ internal fun ChatStoryStatsDialog(
     val genreTags = remember(bot) {
         com.example.util.StoryGenreTagClassifier.inferTags(bot)
     }
+    val readability = remember(validMessages) {
+        com.example.util.StoryParagraphReadabilityHelper.evaluate(validMessages)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -98,6 +101,7 @@ internal fun ChatStoryStatsDialog(
                 "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
                 "Son Sahne Tonu" to lastAiTone,
                 "Edebi Üslup" to com.example.util.StoryReadingLevelEstimator.formatCompact(proseMetrics),
+                "Okuma Akıcılığı" to readability.label,
                 "Kelime Zenginliği" to com.example.util.StoryVocabularyRichnessHelper.formatCompact(vocabRichness),
                 "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
