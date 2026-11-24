@@ -392,6 +392,29 @@ fun FallbackLogModal(
             }
         }
 
+        Spacer(modifier = Modifier.height(8.dp))
+
+        val healthBannerText = remember(liveHealth) {
+            val summary = com.example.util.ProviderHealthSummaryFormatter.summarize(liveHealth)
+            com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0x451D0E3A))
+                .border(0.7.dp, Color(0x55C4B5FD), RoundedCornerShape(12.dp))
+                .padding(horizontal = 10.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = healthBannerText,
+                fontFamily = com.example.ui.theme.InterFontFamily,
+                color = MorCamTokens.SilverLavenderBright,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+
         Spacer(modifier = Modifier.height(10.dp))
 
         if (selectedTab == 0) {
@@ -1038,7 +1061,7 @@ fun UpdateCheckerModal(
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
-        title = "Velora Güncelleme Merkezi",
+        title = "Asroda Güncelleme Merkezi",
         subtitle = "Sürüm ve paket denetimi",
         icon = Icons.Default.AutoAwesome
     ) {
@@ -1154,7 +1177,7 @@ fun UpdateCheckerModal(
                                 .padding(horizontal = 9.dp, vertical = 3.dp)
                         ) {
                             Text(
-                                text = "v1.5",
+                                text = "v${com.example.BuildConfig.VERSION_NAME}",
                                 fontFamily = com.example.ui.theme.InterFontFamily,
                                 color = MorCamTokens.SilverLavenderBright,
                                 fontSize = 11.sp,

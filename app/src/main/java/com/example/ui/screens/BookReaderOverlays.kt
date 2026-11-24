@@ -499,7 +499,30 @@ fun BookChronicleModal(
                     MorCamCloseOrb(onClick = onDismiss, tag = "book_chronicle_close")
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
+
+                val progressRibbon = remember(state) {
+                    val s = com.example.book.BookProgressSummaryFormatter.compute(state)
+                    com.example.book.BookProgressSummaryFormatter.formatRibbon(s)
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0x441B0D36))
+                        .border(0.7.dp, accentColor.copy(alpha = 0.45f), RoundedCornerShape(12.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = progressRibbon,
+                        fontFamily = InterFontFamily,
+                        color = MorCamTokens.SilverLavenderBright,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
 
                 // 3 Immersive Tabs: Aiden • Karakterler • Arşiv
                 val tabs = listOf("Aiden", "Karakterler", "Sır Arşivi")

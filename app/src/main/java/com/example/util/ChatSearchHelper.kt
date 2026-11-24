@@ -4,7 +4,7 @@ import com.example.data.local.MessageEntity
 import java.util.Locale
 
 /**
- * Turkish-locale-aware in-chat message search & context snippet extractor.
+ * Turkish-locale & diacritic-tolerant in-chat message search & context snippet extractor.
  */
 object ChatSearchHelper {
 
@@ -16,20 +16,43 @@ object ChatSearchHelper {
         val matchCountInMessage: Int
     )
 
+    /**
+     * Folds Turkish diacritics (ç, ğ, ı, ö, ş, ü) to ASCII equivalents after Turkish-locale
+     * lowercasing so queries like "isik" match "Işık" and "soguk" matches "soğuk".
+     */
+    fun foldTurkish(text: String): String {
+        val lower = text.lowercase(trLocale)
+        val sb = StringBuilder(lower.length)
+        for (ch in lower) {
+            sb.append(
+                when (ch) {
+                    'ç' -> 'c'
+                    'ğ' -> 'g'
+                    'ı', 'İ' -> 'i'
+                    'ö' -> 'o'
+                    'ş' -> 's'
+                    'ü' -> 'u'
+                    else -> ch
+                }
+            )
+        }
+        return sb.toString()
+    }
+
     fun findMatches(messages: List<MessageEntity>, rawQuery: String): List<SearchMatch> {
-        val q = rawQuery.trim().lowercase(trLocale)
+        val q = foldTurkish(rawQuery.trim())
         if (q.length < 2) return emptyList()
         val out = mutableListOf<SearchMatch>()
         for (m in messages) {
             if (m.role != "user" && m.role != "assistant") continue
-            val lower = m.text.lowercase(trLocale)
-            var idx = lower.indexOf(q)
+            val folded = foldTurkish(m.text)
+            var idx = folded.indexOf(q)
             if (idx < 0) continue
             val firstIdx = idx
             var count = 0
             while (idx >= 0) {
                 count++
-                idx = lower.indexOf(q, idx + q.length)
+                idx = folded.indexOf(q, idx + q.length)
             }
             val start = (firstIdx - 32).coerceAtLeast(0)
             val end = (firstIdx + q.length + 48).coerceAtMost(m.text.length)
