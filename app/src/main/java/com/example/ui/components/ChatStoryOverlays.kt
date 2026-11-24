@@ -411,9 +411,9 @@ internal fun ChatStoryDirectorDialog(
             }
 
             Text(
-                text = "Sesli Okuma Hızı",
+                text = "Sesli Okuma Hızı • ${com.example.util.TtsSpeedLabelFormatter.formatLabel(currentTtsSpeed)}",
                 color = Color(0xFFC4B5FD),
-                fontSize = 12.sp,
+                fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold
             )
             val speeds = listOf(0.85f to "0.85x", 1.0f to "1.0x", 1.15f to "1.15x", 1.3f to "1.3x")
