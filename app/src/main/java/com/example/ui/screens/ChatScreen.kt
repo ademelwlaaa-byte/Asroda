@@ -2,13 +2,17 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -105,6 +109,7 @@ fun ChatScreen(
     var showBackgroundPicker by remember { mutableStateOf(false) }
     var showPlusToolkit by remember { mutableStateOf(false) }
     var showStarredSheet by remember { mutableStateOf(false) }
+    var showStoryStatsDialog by remember { mutableStateOf(false) }
     var showQuickNeuralVault by remember { mutableStateOf(false) }
 
     var editingMessageId by remember { mutableStateOf<String?>(null) }
@@ -580,7 +585,8 @@ fun ChatScreen(
                                     )
                                 } catch (_: Exception) {}
                             }
-                        }
+                        },
+                        onOpenStoryStats = { showStoryStatsDialog = true }
                     )
                 }
             ) { innerPadding ->
@@ -781,4 +787,48 @@ fun ChatScreen(
         onSaveBotProfile = onSaveBotProfile,
         onResetChat = onResetChat
     )
+
+    if (showStoryStatsDialog) {
+        val stats = remember(validMessages) { com.example.util.ChatStoryStats.compute(validMessages) }
+        val dateFmt = remember { java.text.SimpleDateFormat("dd MMM yyyy", java.util.Locale.forLanguageTag("tr-TR")) }
+        com.example.ui.components.MorCamDialogShell(
+            onDismissRequest = { showStoryStatsDialog = false },
+            title = "Hikaye İstatistikleri",
+            subtitle = "$displayName • Roman Özeti"
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                listOf(
+                    "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
+                    "Toplam Kelime" to "${stats.totalWordCount} kelime",
+                    "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
+                    "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
+                    "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
+                    "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
+                        "${dateFmt.format(java.util.Date(stats.firstTimestampMs))} — ${dateFmt.format(java.util.Date(stats.lastTimestampMs))}"
+                    } else "Henüz başlamadı"
+                ).forEach { (label, value) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        androidx.compose.material3.Text(
+                            text = label,
+                            color = Color(0xFFC4B5FD),
+                            fontSize = 12.5.sp
+                        )
+                        androidx.compose.material3.Text(
+                            text = value,
+                            color = Color.White,
+                            fontSize = 12.5.sp,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
