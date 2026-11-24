@@ -456,6 +456,41 @@ internal fun ChatStoryDirectorDialog(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                com.example.util.StoryTonePresets.presets.forEach { preset ->
+                    val active = directorRule.trim() == preset.directive
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (active) Color(0xAA7C3AED) else Color(0x441B0D36))
+                            .border(
+                                0.8.dp,
+                                if (active) Color(0xFFE9D5FF) else Color(0x55B794F4),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable {
+                                directorRule = preset.directive
+                                com.example.util.BotDirectorNoteStore.saveRule(context, botId, preset.directive)
+                                Toast.makeText(context, "${preset.label} tonu uygulandı", Toast.LENGTH_SHORT).show()
+                            }
+                            .padding(vertical = 6.dp, horizontal = 3.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = preset.label,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
             OutlinedTextField(
                 value = directorRule,
                 onValueChange = { directorRule = it },
