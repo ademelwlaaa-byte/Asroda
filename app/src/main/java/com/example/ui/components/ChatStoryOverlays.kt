@@ -48,6 +48,13 @@ internal fun ChatStoryStatsDialog(
     val pacing = remember(validMessages) { com.example.util.StoryPacingAnalyzer.analyze(validMessages) }
     val cadence = remember(validMessages) { com.example.util.StoryTurnCadenceAnalyzer.analyze(validMessages) }
     val exprCounts = remember(validMessages) { com.example.util.StoryDialogueQuoteCounter.count(validMessages) }
+    val lastAiTone = remember(validMessages) {
+        val lastAi = validMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
+        com.example.util.CharacterDialogueToneDetector.detectTone(lastAi)
+    }
+    val proseMetrics = remember(validMessages) {
+        com.example.util.StoryReadingLevelEstimator.estimate(validMessages)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -79,6 +86,8 @@ internal fun ChatStoryStatsDialog(
                 "Baskın Atmosfer" to atmosphere,
                 "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
                 "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
+                "Son Sahne Tonu" to lastAiTone,
+                "Edebi Üslup" to com.example.util.StoryReadingLevelEstimator.formatCompact(proseMetrics),
                 "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
