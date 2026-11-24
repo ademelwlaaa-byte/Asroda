@@ -70,6 +70,12 @@ internal fun ChatStoryStatsDialog(
     val cardCompleteness = remember(bot) {
         com.example.util.BotCardCompletenessHelper.evaluate(bot)
     }
+    val userParticipation = remember(validMessages) {
+        com.example.util.StoryUserParticipationHelper.analyze(validMessages)
+    }
+    val emotionalArc = remember(validMessages) {
+        com.example.util.StoryEmotionalArcHelper.formatThreeActArc(validMessages)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -107,6 +113,7 @@ internal fun ChatStoryStatsDialog(
                 "Okuma Akıcılığı" to readability.label,
                 "Kelime Zenginliği" to com.example.util.StoryVocabularyRichnessHelper.formatCompact(vocabRichness),
                 "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
+                "Yazım Tarzın" to com.example.util.StoryUserParticipationHelper.formatCompact(userParticipation),
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
@@ -137,6 +144,14 @@ internal fun ChatStoryStatsDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+            if (emotionalArc.isNotBlank()) {
+                Text(
+                    text = "Duygu Akışı: $emotionalArc",
+                    color = Color(0xFFE9D5FF),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
             if (castMentions.isNotEmpty()) {
                 Text(
