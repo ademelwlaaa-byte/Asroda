@@ -35,10 +35,11 @@ object BookChronicleExporter {
                 append("\n")
             }
 
-            if (state.discoveredSecrets.isNotEmpty()) {
+            val sortedSecrets = BookSecretProgressHelper.sortedSecrets(state.discoveredSecrets)
+            if (sortedSecrets.isNotEmpty()) {
                 append("## Keşfedilen Sırlar\n")
-                state.discoveredSecrets.forEach { secret ->
-                    append("- ").append(secret.trim()).append("\n")
+                sortedSecrets.forEach { secret ->
+                    append("- ").append(secret).append("\n")
                 }
             }
         }.trim()

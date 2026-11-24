@@ -55,6 +55,9 @@ internal fun ChatStoryStatsDialog(
     val proseMetrics = remember(validMessages) {
         com.example.util.StoryReadingLevelEstimator.estimate(validMessages)
     }
+    val promptBudget = remember(bot) {
+        com.example.util.BotPromptBudgetEstimator.estimate(bot)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -93,6 +96,7 @@ internal fun ChatStoryStatsDialog(
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
                 "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
+                "Karakter Kartı Yükü" to com.example.util.BotPromptBudgetEstimator.formatCompact(promptBudget),
                 "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
                 "Tahmini Okuma Süresi" to "~${stats.estimatedReadingMinutes} dakika",
                 "Tahmini Sesli Dinleme" to estAudioText,
