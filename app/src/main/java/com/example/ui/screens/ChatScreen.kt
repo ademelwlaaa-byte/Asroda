@@ -561,6 +561,25 @@ fun ChatScreen(
                                     android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             }
+                        },
+                        onShareTranscript = {
+                            val md = com.example.util.ChatTranscriptFormatter.formatMarkdown(
+                                botDisplayName = displayName,
+                                userDisplayName = bot.userCharName.ifBlank { "Sen" },
+                                messages = validMessages
+                            )
+                            if (md.isNotBlank()) {
+                                try {
+                                    val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_SUBJECT, "$displayName — Asroda Hikayesi")
+                                        putExtra(android.content.Intent.EXTRA_TEXT, md)
+                                    }
+                                    context.startActivity(
+                                        android.content.Intent.createChooser(shareIntent, "Hikayeyi Paylaş")
+                                    )
+                                } catch (_: Exception) {}
+                            }
                         }
                     )
                 }

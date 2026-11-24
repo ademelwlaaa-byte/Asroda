@@ -90,7 +90,8 @@ internal fun ChatBottomInputDock(
     onOpenBackgroundPicker: () -> Unit,
     onTriggerSendBurst: () -> Unit,
     onStopGeneration: (() -> Unit)? = null,
-    onCopyTranscript: (() -> Unit)? = null
+    onCopyTranscript: (() -> Unit)? = null,
+    onShareTranscript: (() -> Unit)? = null
 ) {
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -110,7 +111,8 @@ internal fun ChatBottomInputDock(
                 onContinueScene = onContinueScene,
                 onSendPrompt = onSendMessage,
                 onUpdateInputText = onInputTextChange,
-                onCopyTranscript = onCopyTranscript
+                onCopyTranscript = onCopyTranscript,
+                onShareTranscript = onShareTranscript
             )
 
             Box(
@@ -328,7 +330,8 @@ internal fun ChatPlusToolkitDrawer(
     onContinueScene: () -> Unit,
     onSendPrompt: (String) -> Unit,
     onUpdateInputText: (String) -> Unit,
-    onCopyTranscript: (() -> Unit)? = null
+    onCopyTranscript: (() -> Unit)? = null,
+    onShareTranscript: (() -> Unit)? = null
 ) {
     AnimatedVisibility(
         visible = visible,
@@ -389,6 +392,10 @@ internal fun ChatPlusToolkitDrawer(
                 Triple("📋 Hikayeyi Kopyala", "plus_toolkit_copy_transcript") {
                     onDismiss()
                     onCopyTranscript?.invoke()
+                },
+                Triple("📤 Hikayeyi Paylaş", "plus_toolkit_share_transcript") {
+                    onDismiss()
+                    onShareTranscript?.invoke()
                 }
             )
             tools.forEach { (label, tag, action) ->

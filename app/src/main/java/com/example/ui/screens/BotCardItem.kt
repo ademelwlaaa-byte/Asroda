@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
@@ -711,10 +712,20 @@ fun BotCardItem(
                             icon = primaryTag.first,
                             label = primaryTag.second
                         )
-                        BotCardGlassTagPill(
-                            icon = secondaryTag.first,
-                            label = secondaryTag.second
-                        )
+                        val hasDraft = remember(bot.id) {
+                            com.example.util.ChatDraftStore.hasDraft(context, bot.id)
+                        }
+                        if (hasDraft) {
+                            BotCardGlassTagPill(
+                                icon = Icons.Default.Edit,
+                                label = "Taslak"
+                            )
+                        } else {
+                            BotCardGlassTagPill(
+                                icon = secondaryTag.first,
+                                label = secondaryTag.second
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.width(6.dp))
