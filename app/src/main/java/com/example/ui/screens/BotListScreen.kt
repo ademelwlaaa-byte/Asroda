@@ -2245,11 +2245,7 @@ fun DiscoverTabContent(
 ) {
     val filteredPublicBots = remember(botList, searchQuery, favoriteBotIds) {
         botList.filter { bot ->
-            val query = searchQuery.trim().lowercase()
-            query.isEmpty() ||
-                    bot.aiName.lowercase().contains(query) ||
-                    bot.universeName.lowercase().contains(query) ||
-                    bot.scenario.lowercase().contains(query)
+            com.example.util.BotSearchFilterHelper.matches(bot, searchQuery)
         }.sortedByDescending { if (favoriteBotIds.contains(it.id)) 1 else 0 }
     }
 

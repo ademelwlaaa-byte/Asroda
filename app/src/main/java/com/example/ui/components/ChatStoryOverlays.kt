@@ -49,6 +49,9 @@ internal fun ChatStoryStatsDialog(
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
+    val topThemes = remember(validMessages) {
+        com.example.util.CharacterWordCloudHelper.extractTopThemes(validMessages, maxThemes = 5)
+    }
     val estAudioText = remember(stats.totalWordCount) {
         val secs = com.example.util.TtsSpeechEstimator.estimateSeconds(stats.totalWordCount)
         com.example.util.TtsSpeechEstimator.formatDurationTurkish(secs)
@@ -96,6 +99,14 @@ internal fun ChatStoryStatsDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                 }
+            }
+            if (topThemes.isNotEmpty()) {
+                Text(
+                    text = "Öne Çıkan Temalar: ${topThemes.joinToString("  ")}",
+                    color = Color(0xFFC4B5FD),
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Medium
+                )
             }
             if (bestQuote != null) {
                 Text(

@@ -8900,7 +8900,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 UserSentimentAnalyzer.buildMoodHint(detectedMood)
             else -> ""
         }
-        val directorRule = context?.let { com.example.util.BotDirectorNoteStore.loadRule(it, effectiveBot.id) }.orEmpty().trim()
+        val rawDirectorRule = context?.let { com.example.util.BotDirectorNoteStore.loadRule(it, effectiveBot.id) }.orEmpty()
+        val directorRule = com.example.util.PromptInjectionSanitizer.sanitizeDirective(rawDirectorRule)
         val recentAssistantTexts = contextMessages.filter { it.role == "assistant" }.takeLast(5).map { it.text }
         val repeatingPhrases = com.example.util.RepetitionDetector.detectLoopingPhrases(recentAssistantTexts)
         val extraDirectives = buildString {
