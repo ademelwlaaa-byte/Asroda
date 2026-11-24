@@ -61,6 +61,9 @@ internal fun ChatStoryStatsDialog(
     val vocabRichness = remember(validMessages) {
         com.example.util.StoryVocabularyRichnessHelper.analyze(validMessages)
     }
+    val genreTags = remember(bot) {
+        com.example.util.StoryGenreTagClassifier.inferTags(bot)
+    }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
     }
@@ -89,6 +92,7 @@ internal fun ChatStoryStatsDialog(
             val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
             listOf(
                 "Hikaye Seviyesi" to com.example.util.StoryDepthTierClassifier.formatLabel(stats.totalWordCount),
+                "Türler" to genreTags.joinToString(" • "),
                 "Baskın Atmosfer" to atmosphere,
                 "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
                 "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),

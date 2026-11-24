@@ -14,7 +14,7 @@ object StoryGenreTagClassifier {
         val text = "${bot.universeName} ${bot.scenario} ${bot.aiPersonality} ${bot.writingStyle}"
             .lowercase(trLocale)
         val tags = mutableListOf<String>()
-        if (text.contains("büyü") || text.contains("ejder") || text.contains("krallık") || text.contains("kule") || text.contains("fantastik")) {
+        if (text.contains("büyücü") || text.contains("büyülü") || text.contains("sihir") || text.contains("ejder") || text.contains("krallık") || text.contains("kule") || text.contains("fantastik")) {
             tags.add("Fantastik")
         }
         if (text.contains("uzay") || text.contains("galaksi") || text.contains("siber") || text.contains("yapay zeka") || text.contains("kozmik")) {

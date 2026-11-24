@@ -396,7 +396,8 @@ fun FallbackLogModal(
 
         val healthBannerText = remember(liveHealth, logs) {
             val summary = com.example.util.ProviderHealthSummaryFormatter.summarize(liveHealth)
-            val base = com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)
+            val fleetScore = com.example.util.ProviderHealthScoreCalculator.compute(liveHealth)
+            val base = "Filo Puanı: ${fleetScore.score}/100 (${fleetScore.grade}) • ${com.example.util.ProviderHealthSummaryFormatter.formatBanner(summary)}"
             val rateLine = com.example.util.ProviderFallbackSuccessRateHelper.formatCompact(logs)
             val latestFailure = logs.firstOrNull { it.status == "FAILED" }
             val tipLine = if (latestFailure != null) {
