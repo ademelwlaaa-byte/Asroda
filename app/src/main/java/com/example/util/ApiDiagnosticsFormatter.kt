@@ -27,8 +27,8 @@ object ApiDiagnosticsFormatter {
                 append("\n[Sağlayıcı Sağlığı]\n")
                 healthMap.values.sortedBy { it.providerKey }.forEach { st ->
                     val status = if (st.cooldownUntilMs > nowMs) {
-                        val remSec = ((st.cooldownUntilMs - nowMs) / 1000L).coerceAtLeast(1L)
-                        "COOLDOWN (${st.lastFailureType?.name ?: "ERR"}, ${remSec}s)"
+                        val remLabel = ProviderCooldownFormatter.formatRemaining(st.cooldownUntilMs - nowMs)
+                        "COOLDOWN (${st.lastFailureType?.name ?: "ERR"}, $remLabel)"
                     } else {
                         "HAZIR (${st.lastLatencyMs}ms)"
                     }

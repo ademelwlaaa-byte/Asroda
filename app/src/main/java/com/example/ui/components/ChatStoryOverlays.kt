@@ -697,6 +697,19 @@ internal fun ChatScratchpadDialog(
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
             )
+            if (noteText.isNotBlank()) {
+                MorCamCapsuleButton(
+                    text = "📋 Notu Panoya Kopyala",
+                    variant = MorCamButtonVariant.Secondary,
+                    onClick = {
+                        val formatted = "# $displayName — Hikaye Notları\n\n${noteText.trim()}"
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                        cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, formatted))
+                        Toast.makeText(context, "Not panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
