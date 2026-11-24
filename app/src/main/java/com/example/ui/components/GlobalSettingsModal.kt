@@ -2385,7 +2385,30 @@ fun GlobalSettingsModal(
                                 }
                             }
 
-                            // Separate Floating Neon Cards for Cache Cleaner, Updates & Feature Flags
+                            // Separate Floating Neon Cards for Reading Streak, Cache Cleaner, Updates & Feature Flags
+                            val streakState = remember { com.example.util.ReadingStreakTracker.getState(context) }
+                            GlobalGlassCard(
+                                rootSize = rootSize,
+                                blurredBg = blurredBg,
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                ApiHubEntryRow(
+                                    refPlates = refPlates,
+                                    icon = Icons.Default.AutoAwesome,
+                                    iconAccent = Color(0xFFFDE68A),
+                                    title = "Okuma & Hikaye Serisi",
+                                    subtitle = "En uzun seri: ${streakState.longestStreakDays} gün • Toplam aktif: ${streakState.totalActiveDays} gün",
+                                    badgeText = "🔥 ${streakState.currentStreakDays} Gün",
+                                    onClick = {
+                                        Toast.makeText(
+                                            context,
+                                            "Harika gidiyorsun! Güncel serin: ${streakState.currentStreakDays} gün",
+                                            Toast.LENGTH_SHORT
+                                        ).show()
+                                    }
+                                )
+                            }
                             var cacheReport by remember {
                                 mutableStateOf(com.example.util.AppCacheCleaner.inspectCache(context))
                             }

@@ -56,6 +56,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         volumeControlStream = AudioManager.STREAM_MUSIC
         CosmicMotionPreferences.init(applicationContext)
+        com.example.util.ReadingStreakTracker.recordActivity(applicationContext)
         enableEdgeToEdge()
         // Handle proactive notification deep link
         if (intent?.action == "com.example.OPEN_CHAT") {
