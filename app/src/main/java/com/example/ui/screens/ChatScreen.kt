@@ -840,6 +840,8 @@ fun ChatScreen(
 
     if (showStoryStatsDialog) {
         com.example.ui.components.ChatStoryStatsDialog(
+            context = context,
+            bot = bot,
             displayName = displayName,
             validMessages = validMessages,
             onDismiss = { showStoryStatsDialog = false }

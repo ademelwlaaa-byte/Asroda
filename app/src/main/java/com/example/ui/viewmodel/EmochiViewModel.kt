@@ -275,9 +275,10 @@ class EmochiViewModel @JvmOverloads constructor(
                 detectedSmallModels.isNotBlank() && detectedSmallModels != "[]" -> "auto"
                 else -> ""
             }
+            val normalizedUrl = com.example.util.CustomApiUrlNormalizer.normalizeBaseUrl(baseUrl).ifBlank { baseUrl.trim() }
             val entity = com.example.data.local.CustomProviderEntity(
                 label = label.ifBlank { modelName },
-                baseUrl = baseUrl.trim(),
+                baseUrl = normalizedUrl,
                 apiKeyEncrypted = encryptedKey,
                 modelName = modelName.trim(),
                 apiFormat = apiFormat,
@@ -336,9 +337,10 @@ class EmochiViewModel @JvmOverloads constructor(
                 finalDetected != "[]" -> "auto"
                 else -> ""
             }
+            val normalizedUrl = com.example.util.CustomApiUrlNormalizer.normalizeBaseUrl(baseUrl).ifBlank { baseUrl.trim() }
             val updated = existing.copy(
                 label = label.ifBlank { modelName },
-                baseUrl = baseUrl.trim(),
+                baseUrl = normalizedUrl,
                 apiKeyEncrypted = finalEncryptedKey,
                 modelName = modelName.trim(),
                 apiFormat = apiFormat,

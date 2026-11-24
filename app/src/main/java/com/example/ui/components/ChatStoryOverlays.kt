@@ -37,11 +37,14 @@ import java.util.Locale
 
 @Composable
 internal fun ChatStoryStatsDialog(
+    context: Context,
+    bot: com.example.data.local.BotEntity,
     displayName: String,
     validMessages: List<MessageEntity>,
     onDismiss: () -> Unit
 ) {
     val stats = remember(validMessages) { ChatStoryStats.compute(validMessages) }
+    val atmosphere = remember(validMessages) { com.example.util.StoryMoodAnalytics.detectDominantAtmosphere(validMessages) }
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.forLanguageTag("tr-TR")) }
     MorCamDialogShell(
         onDismissRequest = onDismiss,
@@ -55,6 +58,7 @@ internal fun ChatStoryStatsDialog(
             val estTokens = com.example.util.TokenBudgetEstimator.estimateTokens(stats.totalWordCount)
             val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
             listOf(
+                "Baskın Atmosfer" to atmosphere,
                 "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
                 "Toplam Kelime" to "${stats.totalWordCount} kelime",
                 "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
@@ -83,6 +87,17 @@ internal fun ChatStoryStatsDialog(
                     )
                 }
             }
+            MorCamCapsuleButton(
+                text = "📋 Karakter Kartını Kopyala",
+                variant = MorCamButtonVariant.Secondary,
+                onClick = {
+                    val cardMd = com.example.util.BotProfileExporter.formatCharacterCardMarkdown(bot)
+                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                    cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, cardMd))
+                    Toast.makeText(context, "Karakter kartı panoya kopyalandı", Toast.LENGTH_SHORT).show()
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
