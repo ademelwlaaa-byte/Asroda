@@ -67,6 +67,29 @@ object BookContentPackManager {
     /** Current bundled offline content version (Season 1 + Season 2 = 20 Chapters). */
     const val BUNDLED_CONTENT_VERSION = 2
 
+    /** On-demand downloadable ElevenLabs Turkish Studio Voice Pack (15 characters, 119 lines, ~6.6 MB). */
+    const val STUDIO_VOICE_PACK_ID = "elevenlabs_studio_voices_v1"
+    const val STUDIO_VOICE_PACK_URL =
+        "https://raw.githubusercontent.com/ademelwlaaa-byte/Asroda/main/public/packs/asroda-studio-voices-v1.zip"
+
+    fun isStudioVoicePackInstalled(context: Context): Boolean {
+        ensureLoaded(context)
+        val dir = File(packsRootDir(context), STUDIO_VOICE_PACK_ID)
+        return _installedPacks.value.any { it.id == STUDIO_VOICE_PACK_ID } &&
+            dir.exists() && countFiles(dir) >= 100
+    }
+
+    suspend fun downloadStudioVoicePack(context: Context): Result<InstalledContentPack> {
+        return downloadPackFromUrl(
+            context = context.applicationContext,
+            packId = STUDIO_VOICE_PACK_ID,
+            title = "Kozmik Sürükleniş · ElevenLabs Türkçe Dublaj",
+            subtitle = "15 karakter • 119 çevrimdışı stüdyo repliği (6.6 MB)",
+            urlString = STUDIO_VOICE_PACK_URL,
+            kind = BookPackKind.VOICE_DUB_PACK
+        )
+    }
+
     /**
      * Optional remote manifest URL for automatic over-the-air chapter / art / voice updates.
      * Example JSON: { "version": 3, "sizeLabel": "6,4 MB", "notes": "3. Sezon paketi", "packUrl": "https://.../pack-v3.zip" }
@@ -247,8 +270,18 @@ object BookContentPackManager {
             }
         }
 
-        // First-time preparation of the high-efficiency offline HD WebP + Opus story pack
+        // First-time preparation: also download the optional ElevenLabs Turkish Studio Voice Pack (6.6 MB) if online!
         try {
+            if (!isStudioVoicePackInstalled(appCtx)) {
+                val voiceRes = downloadStudioVoicePack(appCtx)
+                if (cancelRequested) {
+                    _activeDownload.value = null
+                    return@withContext Result.failure(CancellationException("İptal edildi."))
+                }
+                // If offline or GitHub unreachable, continue seamlessly with built-in neural voice fallback
+                voiceRes.exceptionOrNull()?.let { /* silent graceful fallback */ }
+            }
+
             val totalSim = 8_500_000L
             val stages = listOf(
                 0.22f to "2.5D sahne görselleri ve portreler hazırlanıyor...",

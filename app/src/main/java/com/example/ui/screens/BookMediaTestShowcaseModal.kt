@@ -27,22 +27,31 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.ViewInAr
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -108,6 +117,14 @@ data class BookTestPhotoEntry(
     val title: String,
     val category: String,
     val drawableRes: Int
+)
+
+data class BookTestVoiceEntry(
+    val speakerKey: String,
+    val displayName: String,
+    val voiceActorLabel: String,
+    val sampleLine: String,
+    val accent: Color
 )
 
 /**
@@ -348,6 +365,24 @@ object BookMediaTestCatalog {
         BookTestPhotoEntry("p_char_thor", "Thor Odinson", "Karakter Portreleri", R.drawable.img_char_thor),
         BookTestPhotoEntry("p_char_vaelor", "Vaelor (Soluk Mühür Habercisi)", "Karakter Portreleri", R.drawable.img_char_vaelor)
     )
+
+    val studioVoices: List<BookTestVoiceEntry> = listOf(
+        BookTestVoiceEntry("NATASHA", "Natasha Romanoff", "Lily · Kadifemsi Ajan", "Aşağıdaki Manhattan ışıklarına bak Aiden... Yukarıda herkes gülüyor ama en gerçek sessizlik senin yanında.", Color(0xFFF472B6)),
+        BookTestVoiceEntry("WANDA", "Wanda Maximoff", "Sarah · Sıcak & Duygusal", "Gölün sularında yıldızlar parlıyor Aiden... İlk kez zihnimde hiç kâbus yok, sadece senin sıcaklığın var.", Color(0xFFC084FC)),
+        BookTestVoiceEntry("MIRA", "Mira · Denek 8-C", "Jessica · Genç & Parlak", "Aiden! Geldiğini kapıdan bile değil, enerjinin sakinliğinden anladım. Sana göstermek istediğim yeni bir şey öğrendim!", Color(0xFF38BDF8)),
+        BookTestVoiceEntry("AIDEN", "Aiden Blackwood", "Charlie · Karizmatik Kahraman", "Bütün ekibim için — BURADA BİTİYOR ULTRON!", Color(0xFF60A5FA)),
+        BookTestVoiceEntry("TWIN_AIDEN", "Twin Aiden · Post-Credits", "Callum · Karanlık Gelecek", "Kapıyı aç... zaman kırılmadan önce sana onları nasıl hayatta tutacağını göstereyim.", Color(0xFF818CF8)),
+        BookTestVoiceEntry("ZERO", "Sıfır · Yara İzli Aiden", "Callum · Kırık Ayna", "Kendi yüzüne beş yıl sonrasından bakmak garip, değil mi Aiden? Yara izime bakıp korkma — bu kaderi hâlâ değiştirebilirsin.", Color(0xFF38BDF8)),
+        BookTestVoiceEntry("VOSS", "Elias Voss · Denek 6-B", "Harry · Sert & Samimi", "Hoş geldin 7-A. Çay demledim — senin öğrettiğin nefes egzersizi sayesinde üç haftadır tek bir cam bile çatlatmadım.", Color(0xFFF87171)),
+        BookTestVoiceEntry("STEVE", "Steve Rogers", "Brian · Lider Bariton", "Kalkanımı yolladım Aiden! Gardı kırıldı, şimdi yüklen!", Color(0xFF3B82F6)),
+        BookTestVoiceEntry("TONY", "Tony Stark", "Chris · Zeki & Esprili", "Kenara ışınlan evlat — yörünge ışınını tam üstüne indiriyorum!", Color(0xFFF59E0B)),
+        BookTestVoiceEntry("THOR", "Thor Odinson", "Adam · Asgard Gücü", "Asgard'ın fırtınası üstüne insin! Hazır mısın Aiden?", Color(0xFF38BDF8)),
+        BookTestVoiceEntry("VAELOR", "Yüce Hakem Vaelor", "Adam · Kozmik Lord", "Diz çök Aiden Blackwood! O mavi kıvılcım Soluk Mühür'e aittir!", Color(0xFFF43F5E)),
+        BookTestVoiceEntry("ULTRON", "Ultron Prime", "Daniel · Soğuk Yapay Zekâ", "Kuklalarım koparıldı ama bu şehir gökten düşecek Aiden Blackwood! İplerim artık yok!", Color(0xFFEF4444)),
+        BookTestVoiceEntry("ARCHITECT", "Asıl Mimar", "Bill · Kadim & Ürpertici", "Birinci perde kapandı, Kayıp Anahtarım... Demir kuklayı kırdın, ama insanların korkusunu kıramazsın.", Color(0xFFFDE047)),
+        BookTestVoiceEntry("VISION", "Vision", "George · Dingin & Bilge", "Zihin Taşı'nı odaklıyorum Aiden — zırhı açıldı, şimdi vur!", Color(0xFF34D399)),
+        BookTestVoiceEntry("PIETRO", "Pietro Maximoff", "Liam · Hızlı & Enerjik", "Bunu görmedin mi Ultron?! Nöbetçileri temizledim — sıra sende Aiden!", Color(0xFF22D3EE))
+    )
 }
 
 /**
@@ -424,7 +459,7 @@ fun BookMediaTestShowcaseModal(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "6 Oyun · 7 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Fotoğraf",
+                            text = "6 Oyun · 7 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Foto · 15 Stüdyo Ses",
                             fontFamily = InterFontFamily,
                             fontSize = 11.5.sp,
                             color = Color(0xFFC4B5FD)
@@ -483,6 +518,13 @@ fun BookMediaTestShowcaseModal(
                         accent = Color(0xFF34D399),
                         tag = "test_showcase_tab_photos"
                     ) { selectedTab = 3 }
+                    ShowcaseTabPill(
+                        label = "Sesler (15)",
+                        icon = Icons.Default.VolumeUp,
+                        selected = selectedTab == 4,
+                        accent = Color(0xFFF472B6),
+                        tag = "test_showcase_tab_voices"
+                    ) { selectedTab = 4 }
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
@@ -502,9 +544,10 @@ fun BookMediaTestShowcaseModal(
                     2 -> ShowcaseLive3DTab(
                         onLaunchScene = { activeLive3D = it }
                     )
-                    else -> ShowcasePhotosTab(
+                    3 -> ShowcasePhotosTab(
                         onSelectPhoto = { zoomedPhoto = it }
                     )
+                    else -> ShowcaseVoicesTab()
                 }
             }
         }
@@ -1187,6 +1230,258 @@ private fun ShowcasePhotosTab(
                     if (pair.size == 1) {
                         Spacer(modifier = Modifier.weight(1f))
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShowcaseVoicesTab() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val installedPacks by com.example.book.BookContentPackManager.installedPacks.collectAsState()
+    val activeDownload by com.example.book.BookContentPackManager.activeDownload.collectAsState()
+    var statusNote by remember { mutableStateOf<String?>(null) }
+    var playingSpeaker by remember { mutableStateOf<String?>(null) }
+    val voiceEngine = remember {
+        com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine(context) { speaking ->
+            if (!speaking) playingSpeaker = null
+        }
+    }
+
+    DisposableEffect(Unit) {
+        com.example.book.BookContentPackManager.ensureLoaded(context)
+        onDispose { voiceEngine.stopAndRelease() }
+    }
+
+    val isPackInstalled = remember(installedPacks) {
+        com.example.book.BookContentPackManager.isStudioVoicePackInstalled(context)
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            ShowcaseSectionTitle(
+                title = "ElevenLabs Türkçe Stüdyo Ses Paketi",
+                subtitle = "İsteğe bağlı indirilebilir 119 replik (6.6 MB) — APK'yı şişirmeden çevrimdışı çalışır."
+            )
+        }
+
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xFF1A1034))
+                    .border(
+                        1.dp,
+                        if (isPackInstalled) Color(0xFF34D399).copy(alpha = 0.6f) else Color(0xFFF472B6).copy(alpha = 0.55f),
+                        RoundedCornerShape(18.dp)
+                    )
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = if (isPackInstalled) {
+                        "✅ ElevenLabs Stüdyo Dublaj Paketi Kurulu (119 replik • Çevrimdışı Hazır)"
+                    } else {
+                        "⬇ İsteğe Bağlı ElevenLabs Stüdyo Paketi Kurulu Değil (6.6 MB)"
+                    },
+                    fontFamily = InterFontFamily,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = if (isPackInstalled) Color(0xFF6EE7B7) else Color(0xFFFBCFE8)
+                )
+
+                activeDownload?.let { prog ->
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = prog.phaseLabel,
+                            fontFamily = InterFontFamily,
+                            fontSize = 11.5.sp,
+                            color = Color(0xFFE9D5FF)
+                        )
+                        if (prog.fraction >= 0f) {
+                            LinearProgressIndicator(
+                                progress = { prog.fraction },
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp)),
+                                color = Color(0xFFF472B6),
+                                trackColor = Color(0x33FFFFFF)
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp)),
+                                color = Color(0xFFF472B6),
+                                trackColor = Color(0x33FFFFFF)
+                            )
+                        }
+                    }
+                }
+
+                statusNote?.let { note ->
+                    Text(
+                        text = note,
+                        fontFamily = InterFontFamily,
+                        fontSize = 11.sp,
+                        color = Color(0xFFFDE68A)
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF7C3AED))
+                            .clickable(enabled = activeDownload == null) {
+                                statusNote = null
+                                scope.launch {
+                                    val res = com.example.book.BookContentPackManager.downloadStudioVoicePack(context)
+                                    statusNote = res.fold(
+                                        onSuccess = { "✓ 119 ElevenLabs Türkçe stüdyo sesi indirildi ve aktif!" },
+                                        onFailure = { "⚠ İndirme başarısız: ${it.message ?: "Bağlantı hatası"}" }
+                                    )
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isPackInstalled) "Paketi Yenile" else "Stüdyo Sesleri İndir (6.6 MB)",
+                            fontFamily = InterFontFamily,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+
+                    if (isPackInstalled) {
+                        Row(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0x44EF4444))
+                                .border(0.8.dp, Color(0x99F87171), RoundedCornerShape(12.dp))
+                                .clickable(enabled = activeDownload == null) {
+                                    scope.launch {
+                                        voiceEngine.stopCurrentLine()
+                                        com.example.book.BookContentPackManager.deletePack(
+                                            context,
+                                            com.example.book.BookContentPackManager.STUDIO_VOICE_PACK_ID
+                                        )
+                                        statusNote = "Paket silindi; ücretsiz yedek ses motoruna dönüldü."
+                                    }
+                                }
+                                .padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Sil",
+                                tint = Color(0xFFFCA5A5),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        items(BookMediaTestCatalog.studioVoices, key = { it.speakerKey }) { entry ->
+            val isPlayingThis = playingSpeaker == entry.speakerKey
+            val hashKey = remember(entry.speakerKey, entry.sampleLine) {
+                com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine
+                    .studioVoiceAssetFileName(entry.speakerKey, entry.sampleLine)
+                    .removeSuffix(".mp3")
+            }
+            val hasDownloadedClip = remember(installedPacks, isPackInstalled, hashKey) {
+                com.example.book.BookContentPackManager.findDownloadedVoiceFile(context, hashKey) != null
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF160D2D))
+                    .border(
+                        1.dp,
+                        if (isPlayingThis) entry.accent else entry.accent.copy(alpha = 0.35f),
+                        RoundedCornerShape(16.dp)
+                    )
+                    .clickable {
+                        if (isPlayingThis) {
+                            voiceEngine.stopCurrentLine()
+                            playingSpeaker = null
+                        } else {
+                            playingSpeaker = entry.speakerKey
+                            voiceEngine.speak(entry.speakerKey, entry.sampleLine)
+                        }
+                    }
+                    .padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(entry.accent.copy(alpha = if (isPlayingThis) 0.35f else 0.18f))
+                        .border(1.dp, entry.accent.copy(alpha = 0.65f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isPlayingThis) Icons.Default.Stop else Icons.Default.PlayArrow,
+                        contentDescription = if (isPlayingThis) "Durdur" else "Dinle",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = entry.displayName,
+                            fontFamily = InterFontFamily,
+                            fontSize = 13.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                        Text(
+                            text = if (hasDownloadedClip) "🎙 ElevenLabs" else "☁ Neural Yedek",
+                            fontFamily = InterFontFamily,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (hasDownloadedClip) Color(0xFF6EE7B7) else Color(0xFFC4B5FD)
+                        )
+                    }
+                    Text(
+                        text = entry.voiceActorLabel,
+                        fontFamily = InterFontFamily,
+                        fontSize = 11.sp,
+                        color = entry.accent
+                    )
+                    Text(
+                        text = "\"${entry.sampleLine}\"",
+                        fontFamily = InterFontFamily,
+                        fontSize = 11.5.sp,
+                        color = Color(0xFFE2D9F3),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }

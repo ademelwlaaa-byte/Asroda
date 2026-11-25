@@ -413,8 +413,10 @@ class CosmicCharacterVoiceEngine(
             if (released) return@execute
             for ((speaker, text, lineId) in lines) {
                 if (released || text.isBlank()) break
-                // Skip if Tier 0 DLC voice pack or Tier 1 bundled ElevenLabs studio / res/raw exists
-                if (bundledStudioVoices.contains(studioVoiceAssetFileName(speaker, text))) continue
+                // Skip if Tier 0 DLC voice pack (hash key or lineId) or Tier 1 bundled ElevenLabs studio / res/raw exists
+                val studioHashKey = studioVoiceAssetFileName(speaker, text).removeSuffix(".mp3")
+                if (com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, studioHashKey) != null) continue
+                if (bundledStudioVoices.contains("$studioHashKey.mp3")) continue
                 if (!lineId.isNullOrBlank()) {
                     if (com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId) != null) continue
                     val resId = appContext.resources.getIdentifier(lineId, "raw", appContext.packageName)
@@ -471,7 +473,16 @@ class CosmicCharacterVoiceEngine(
 
         val myGen = speakGeneration.incrementAndGet()
 
-        // Tier 0: Downloaded/Imported Optional Voice Dub Pack (.ogg/.mp3/.m4a/.wav)
+        // Tier 0A: Downloaded/Imported Optional ElevenLabs Studio Voice Pack (matched by deterministic speaker+text hash)
+        val studioAssetName = studioVoiceAssetFileName(speakerKey, text)
+        val studioHashKey = studioAssetName.removeSuffix(".mp3")
+        val dlcStudioAudio = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, studioHashKey)
+        if (dlcStudioAudio != null) {
+            playFileClip(dlcStudioAudio, myGen)
+            return
+        }
+
+        // Tier 0B: Downloaded/Imported Optional Voice Dub Pack matched by explicit lineId
         if (!lineId.isNullOrBlank()) {
             val dlcAudio = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId)
             if (dlcAudio != null) {
@@ -480,8 +491,7 @@ class CosmicCharacterVoiceEngine(
             }
         }
 
-        // Tier 1A: Bundled ElevenLabs studio audio file in assets/studio_voices/<hash>.mp3 (100% offline, instant)
-        val studioAssetName = studioVoiceAssetFileName(speakerKey, text)
+        // Tier 1A: Optional bundled studio audio file in assets/studio_voices/<hash>.mp3 (if present)
         if (bundledStudioVoices.contains(studioAssetName)) {
             playBundledStudioAsset("$STUDIO_VOICES_ASSET_DIR/$studioAssetName", myGen)
             return
