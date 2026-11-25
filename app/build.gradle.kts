@@ -20,7 +20,7 @@ android {
         applicationId = "com.aistudio.emochi.uczaob"
         minSdk = 24
         targetSdk = 36
-        val baseVersionCode = 98
+        val baseVersionCode = 99
         val overrideVersionCode = providers.gradleProperty("versionCodeOverride").orNull?.toIntOrNull()
         versionCode = if (overrideVersionCode != null) {
             require(overrideVersionCode > baseVersionCode) {
@@ -30,7 +30,7 @@ android {
         } else {
             baseVersionCode
         }
-        versionName = "11.5"
+        versionName = "11.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -38,6 +38,7 @@ android {
     androidResources {
         // AAA mobile optimization: keep only Turkish & English locales (strips 75+ unused AndroidX languages)
         localeFilters += listOf("tr", "en")
+        noCompress += listOf("mp3", "ogg")
     }
 
     packaging {

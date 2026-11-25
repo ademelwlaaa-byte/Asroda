@@ -95,6 +95,13 @@ class CosmicCharacterVoiceEngine(
 
     private val appContext = context.applicationContext
     private val cacheDir = File(appContext.cacheDir, "cosmic_studio_voices_v5").apply { mkdirs() }
+    private val bundledStudioVoices: Set<String> by lazy {
+        try {
+            appContext.assets.list(STUDIO_VOICES_ASSET_DIR)?.toHashSet() ?: emptySet()
+        } catch (_: Throwable) {
+            emptySet()
+        }
+    }
     private val synthExecutor = Executors.newSingleThreadExecutor { r ->
         Thread(r, "CosmicVoice-StudioMaster").apply { isDaemon = true }
     }
@@ -406,7 +413,8 @@ class CosmicCharacterVoiceEngine(
             if (released) return@execute
             for ((speaker, text, lineId) in lines) {
                 if (released || text.isBlank()) break
-                // Skip if Tier 0 DLC voice pack or Tier 1 bundled res/raw exists
+                // Skip if Tier 0 DLC voice pack or Tier 1 bundled ElevenLabs studio / res/raw exists
+                if (bundledStudioVoices.contains(studioVoiceAssetFileName(speaker, text))) continue
                 if (!lineId.isNullOrBlank()) {
                     if (com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId) != null) continue
                     val resId = appContext.resources.getIdentifier(lineId, "raw", appContext.packageName)
@@ -472,7 +480,14 @@ class CosmicCharacterVoiceEngine(
             }
         }
 
-        // Tier 1: Bundled custom studio audio file in res/raw/<lineId>
+        // Tier 1A: Bundled ElevenLabs studio audio file in assets/studio_voices/<hash>.mp3 (100% offline, instant)
+        val studioAssetName = studioVoiceAssetFileName(speakerKey, text)
+        if (bundledStudioVoices.contains(studioAssetName)) {
+            playBundledStudioAsset("$STUDIO_VOICES_ASSET_DIR/$studioAssetName", myGen)
+            return
+        }
+
+        // Tier 1B: Bundled custom studio audio file in res/raw/<lineId>
         if (!lineId.isNullOrBlank()) {
             val resId = appContext.resources.getIdentifier(lineId, "raw", appContext.packageName)
             if (resId != 0) {
@@ -557,6 +572,23 @@ class CosmicCharacterVoiceEngine(
         Companion.resolveFreeNeuralCast(speakerKey)
 
     companion object {
+        const val STUDIO_VOICES_ASSET_DIR = "studio_voices"
+
+        /**
+         * Deterministic filename for pre-rendered offline ElevenLabs studio voice clips
+         * bundled under `assets/studio_voices/`. Matches the generator script bit-for-bit.
+         */
+        fun studioVoiceAssetFileName(speakerKey: String, text: String): String {
+            val sp = speakerKey.trim().uppercase(Locale.ROOT)
+            val tx = text.trim()
+            val payload = "STUDIO_VOICE_V1|$sp|$tx"
+            val digest = MessageDigest.getInstance("SHA-1")
+                .digest(payload.toByteArray(Charsets.UTF_8))
+                .take(6)
+                .joinToString("") { "%02x".format(it) }
+            return "v1_${sp.lowercase(Locale.ROOT)}_$digest.mp3"
+        }
+
         /**
          * Distinct Human Cinema Casting: pairs native Turkish neural voices (`tr-TR-AhmetNeural`,
          * `tr-TR-EmelNeural`) with genuinely different Microsoft MultilingualNeural studio actors
@@ -1652,6 +1684,71 @@ class CosmicCharacterVoiceEngine(
     }
 
     // ── MEDIA PLAYER PLAYBACK WITH VOICE DUCKING ────────────────────────────────
+
+    @Synchronized
+    private fun playBundledStudioAsset(assetPath: String, expectedGen: Int) {
+        if (muted || released || expectedGen != speakGeneration.get()) return
+        try {
+            try {
+                clipPlayer?.stop()
+                clipPlayer?.release()
+            } catch (_: Throwable) {}
+            clipPlayer = null
+            activeEnvelope = null
+
+            val mp = MediaPlayer()
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            var preparedViaFd = false
+            try {
+                appContext.assets.openFd(assetPath).use { afd ->
+                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                }
+                preparedViaFd = true
+            } catch (_: Throwable) {
+                // Fallback if APK compressed the asset: extract once to cacheDir and play from file
+                val cached = File(cacheDir, assetPath.substringAfterLast('/'))
+                if (!cached.exists() || cached.length() < 1024L) {
+                    appContext.assets.open(assetPath).use { input ->
+                        FileOutputStream(cached).use { output -> input.copyTo(output) }
+                    }
+                }
+                mp.setDataSource(cached.absolutePath)
+                preparedViaFd = true
+            }
+            if (!preparedViaFd) {
+                mp.release()
+                return
+            }
+            mp.setOnCompletionListener { player ->
+                try { player.release() } catch (_: Throwable) {}
+                if (clipPlayer === player) {
+                    clipPlayer = null
+                    notifySpeaking(false)
+                }
+            }
+            mp.setOnErrorListener { player, _, _ ->
+                try { player.release() } catch (_: Throwable) {}
+                if (clipPlayer === player) {
+                    clipPlayer = null
+                    notifySpeaking(false)
+                }
+                true
+            }
+            mp.prepare()
+            mp.setVolume(1.0f, 1.0f)
+            directFallbackStartMs = System.currentTimeMillis()
+            clipPlayer = mp
+            notifySpeaking(true)
+            mp.start()
+        } catch (_: Throwable) {
+            notifySpeaking(false)
+        }
+    }
 
     private fun playRawClip(resId: Int, expectedGen: Int) {
         if (muted || released || expectedGen != speakGeneration.get()) return
