@@ -550,7 +550,7 @@ object SystemPromptBuilder {
                 append(",\"skip\":<opsiyonel>")
                 if (hasActiveCast) append(",\"cast_emo\":<opsiyonel>")
                 if (hasPendingReapp) append(",\"reapp\":<opsiyonel>")
-                append(",\"mile\":<opsiyonel>,\"u_tone\":<opsiyonel>")
+                append(",\"u_tone\":<opsiyonel>")
             }
             sb.appendLine(
                 "Yanıtının en son satırına yalnızca şu tek satırlık JSON'ı ekle (değişmeyen opsiyonel alanları HİÇ yazma): " +
@@ -571,7 +571,7 @@ object SystemPromptBuilder {
             if (hasPendingReapp) {
                 schemaParts.add("\"reapp\":<opsiyonel {\"id\":12,\"out\":\"softened|resolved|hardened\"}>")
             }
-            schemaParts.add("\"mile\":<opsiyonel {\"k\":\"benzersiz_anahtar\",\"t\":\"Kısa Başlık\",\"d\":\"Tek cümlelik dönüm noktası\"}>")
+            schemaParts.add("\"mile\":<ÇOK NADİR opsiyonel: yalnızca 15-20 mesajda bir gerçekleşen büyük hikaye kırılması/aşk itirafı/ihanette {\"k\":\"benzersiz_anahtar\",\"t\":\"Kısa Başlık\",\"d\":\"Tek cümle\"}; sıradan turlarda ASLA yazma>")
             schemaParts.add("\"u_tone\":<opsiyonel \"warm|hurt|tense|sarcastic|distant|playful\">")
 
             sb.appendLine("Yanıtının en son satırına yalnızca şu tek satırlık JSON'ı ekle (değişmeyen opsiyonel alanları HİÇ yazma; yalnızca sahnede gerçekten gerçekleştiğinde ekle):")

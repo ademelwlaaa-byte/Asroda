@@ -748,6 +748,97 @@ object MemoryEngine {
         return false
     }
 
+    /**
+     * Rejects raw user chat quotes, conversational meta-chatter ("kullanıcı merhaba dedi",
+     * "kullanıcı bunu sordu"), and verbatim copies of raw user messages from polluting Neural Vault.
+     */
+    fun isRawChatOrUserMessageFact(key: String, value: String, rawUserText: String = ""): Boolean {
+        val trimmedVal = value.trim()
+        if (trimmedVal.length < 4) return true
+        val normVal = TurkishTextAnalyzer.normalize(trimmedVal)
+        val normKey = TurkishTextAnalyzer.normalize(key)
+
+        // Pure question or conversational meta-narration
+        if (trimmedVal.endsWith("?") && trimmedVal.length < 140) return true
+        val metaChatPatterns = listOf(
+            Regex("""^(kullanıcı|oyuncu|user)\s+(dedi|söyledi|sordu|yazdı|cevapladı|yanıtladı|mesaj\s+attı|selam\s+verdi|merhaba\s+dedi)\b"""),
+            Regex("""\b(kullanıcı\s+az\s+önce|son\s+mesajında|sohbette\s+şunu\s+yazdı|kullanıcı\s+bunu\s+sordu|kullanıcı\s+selamlaş)"""),
+            Regex("""^(merhaba|selam|naber|nasılsın|tamam|peki|evet|hayır|olur|anladım|devam\s+et)\b""")
+        )
+        if (metaChatPatterns.any { it.containsMatchIn(normVal) }) return true
+
+        val metaKeys = setOf(
+            "son mesaj", "kullanıcı mesajı", "mesaj", "sohbet", "diyalog", "soru",
+            "cevap", "selamlama", "giriş", "last message", "user message"
+        )
+        if (normKey in metaKeys) return true
+
+        // Verbatim or near-verbatim copy of raw user message without distilling into a structured fact
+        if (rawUserText.isNotBlank()) {
+            val normUser = TurkishTextAnalyzer.normalize(rawUserText)
+            if (normUser.length >= 16) {
+                if (normVal == normUser) return true
+                val overlap = TurkishTextAnalyzer.stemOverlapRatio(normUser, normVal)
+                val looksLikeRawQuote = trimmedVal.startsWith("\"") || trimmedVal.startsWith("'") ||
+                    normVal.startsWith("ben ") || normVal.contains(" dedi") || normVal.contains(" sordu")
+                if (overlap >= 0.88f && (looksLikeRawQuote || normVal.length >= normUser.length - 6)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * Maps synonymous Turkish fact keys/values into canonical mutable state buckets so that
+     * when a state changes (e.g., "Konum" -> "Bulunduğu Yer", "Yara" -> "Fiziksel Durum",
+     * "İlişki" -> "Bağ Durumu"), upsertNeuralVaultFact ALWAYS updates/supersedes the old fact
+     * instead of accumulating stale contradicting entries.
+     */
+    fun resolveSemanticTopicBucket(key: String, value: String = ""): String? {
+        val k = TurkishTextAnalyzer.normalize(key)
+        val combined = TurkishTextAnalyzer.normalize("$key $value")
+        return when {
+            k.contains("konum") || k.contains("bulunduğu") || k.contains("nerede") || k.contains("yer") || k.contains("mekan") || k.contains("mekân") || k.contains("sahne") -> "location"
+            k.contains("ikamet") || k.contains("yaşadığı") || k.contains("memleket") || k.contains("ev adres") || k.contains("şehir") -> "residence"
+            k.contains("medeni") || k.contains("evlilik") || k.contains("nişan") -> "marital_status"
+            k.contains("ilişki") || k.contains("bağ") || k.contains("durum") && (combined.contains("sevgili") || combined.contains("dost") || combined.contains("düşman") || combined.contains("küs") || combined.contains("barış")) -> "relationship"
+            k.contains("sağlık") || k.contains("yara") || k.contains("fiziksel") || k.contains("hastalık") || k.contains("durumu") && (combined.contains("yaralı") || combined.contains("iyileş") || combined.contains("sargı") || combined.contains("hasta")) -> "health_injury"
+            k.contains("görev") || k.contains("plan") || k.contains("hedef") || k.contains("operasyon") -> "mission_plan"
+            k.contains("meslek") || k.contains("işi") || k.contains("unvan") || k.contains("görevi") -> "profession"
+            k.contains("yaş") || k.contains("doğum") -> "age"
+            k.contains("kıyafet") || k.contains("giysi") || k.contains("görünüm") -> "outfit_appearance"
+            k.contains("güven") || k.contains("şüphe") -> "trust_state"
+            k.contains("güç") || k.contains("yetenek") || k.contains("yetenekler") -> "power_ability"
+            k.contains("favori içecek") || k.contains("sevdiği içecek") -> "favorite_drink"
+            k.contains("favori yemek") || k.contains("sevdiği yemek") -> "favorite_food"
+            else -> null
+        }
+    }
+
+    /**
+     * Determines whether a stored fact belongs in the user-visible Neural Vault (CORE / high-priority)
+     * vs. remaining purely in background RAG memory (EPHEMERAL / transient details).
+     */
+    fun isVisibleInNeuralVault(fact: MemoryFactEntity): Boolean {
+        if (fact.userCorrected) return true
+        val meta = MemoryLifecycleCodec.parse(fact.confidence)
+        return meta.tier != MemoryTier.EPHEMERAL
+    }
+
+    /**
+     * Decides whether an automatically extracted memory should go to the separate hidden RAG table
+     * (`memory_fragments`) instead of cluttering the user-visible Neural Vault (`memory_facts`).
+     * Only truly important, lasting CORE/ARC facts (importance >= 7) enter the visible Neural Vault.
+     */
+    fun shouldRouteToHiddenRag(tier: MemoryTier, importance: Int, isUserExplicit: Boolean = false): Boolean {
+        if (isUserExplicit) return false
+        if (tier == MemoryTier.EPHEMERAL) return true
+        if (tier == MemoryTier.ARC && importance < 7) return true
+        if (importance < 7) return true
+        return false
+    }
+
     fun formatEventMicroIndex(event: MemoryEventEntity): String {
         val parsed = LivingMemoryCodec.parse(event.description, event.importanceScore)
         return if (parsed.isStructured) {

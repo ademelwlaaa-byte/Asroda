@@ -567,6 +567,13 @@ class EmochiViewModel @JvmOverloads constructor(
         }
 
         try {
+            val pairedUserMsgId = messagesForPrompt.lastOrNull { it.role == "user" }?.id.orEmpty()
+            repository.captureTurnPreSnapshot(
+                botId = bot.id,
+                messageId = liveMsgId,
+                userMessageId = pairedUserMsgId
+            )
+
             val replyResult = repository.generateAiReplyStream(
                 bot = bot,
                 messages = messagesForPrompt,
@@ -646,9 +653,11 @@ class EmochiViewModel @JvmOverloads constructor(
                 provider = replyResult.usedProvider
             )
             repository.saveMessage(finalAiMsg)
+            repository.finalizeTurnRollbackSnapshot(botId = bot.id, messageId = finalAiMsg.id)
             clearStreamingUiState()
             maybeAutoSpeakReply(finalAiMsg.id, sanitizedReply)
             loadEmotionalDefenseState(bot.id)
+            loadHiddenRagCount(bot.id)
             return Pair(finalAiMsg, replyResult)
         } catch (ce: kotlinx.coroutines.CancellationException) {
             synchronized(coalesceLock) {
@@ -1053,6 +1062,23 @@ class EmochiViewModel @JvmOverloads constructor(
     private val _archivedMemories = MutableStateFlow<List<com.example.data.local.ArchivedMemoryEntity>>(emptyList())
     val archivedMemories: StateFlow<List<com.example.data.local.ArchivedMemoryEntity>> = _archivedMemories.asStateFlow()
 
+    private val _hiddenRagCount = MutableStateFlow(0)
+    val hiddenRagCount: StateFlow<Int> = _hiddenRagCount.asStateFlow()
+
+    private val postTurnExtractionJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    private fun cancelPostTurnExtraction(botId: String) {
+        postTurnExtractionJobs.remove(botId)?.cancel()
+    }
+
+    fun loadHiddenRagCount(botId: String) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                _hiddenRagCount.value = repository.getHiddenRagFragmentCount(botId)
+            } catch (_: Exception) {}
+        }
+    }
+
     fun dismissMemoryCommitNotice() {
         _memoryCommitNotice.value = null
     }
@@ -1099,16 +1125,19 @@ class EmochiViewModel @JvmOverloads constructor(
         bot: BotEntity,
         allMsgs: List<MessageEntity>,
         userText: String,
-        aiReply: String
+        aiReply: String,
+        sourceMessageId: String? = null
     ) {
         if (bot.id.startsWith("book_") || bot.mode == "book") return
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+        cancelPostTurnExtraction(bot.id)
+        val job = viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
                 val summary = repository.extractAndCommitTurnMemories(
                     bot = bot,
                     recentMessages = allMsgs,
                     latestUserMsg = userText,
-                    latestAiReply = aiReply
+                    latestAiReply = aiReply,
+                    sourceMessageId = sourceMessageId
                 )
                 if (summary.hasAnyChange) {
                     emitMemoryCommitNotice(summary, bot.aiName)
@@ -1116,10 +1145,14 @@ class EmochiViewModel @JvmOverloads constructor(
                         _archivedMemories.value = repository.getArchivedMemories(bot.id)
                     }
                 }
+                if (_activeBotId.value == bot.id) {
+                    _hiddenRagCount.value = repository.getHiddenRagFragmentCount(bot.id)
+                }
             } catch (_: Exception) {
                 // Silent background extraction — never interrupts chat flow
             }
         }
+        postTurnExtractionJobs[bot.id] = job
     }
 
     private fun markSummarizationDone(botId: String, msgCount: Int) {
@@ -1180,7 +1213,7 @@ class EmochiViewModel @JvmOverloads constructor(
                         emitMemoryCommitNotice(replyResult.memoryCommitSummary, freshBot.aiName)
                         loadArchivedMemories(botId)
                     }
-                    schedulePostTurnMemoryExtraction(currentBot, finalMsgs, sanitizedText, replyText)
+                    schedulePostTurnMemoryExtraction(currentBot, finalMsgs, sanitizedText, replyText, sourceMessageId = aiMsg.id)
                     if (shouldRunSummarization(botId, finalMsgs.size)) {
                         repository.updateMemorySummaries(currentBot, finalMsgs)
                         markSummarizationDone(botId, finalMsgs.size)
@@ -1219,11 +1252,15 @@ class EmochiViewModel @JvmOverloads constructor(
 
         activeGenerationJob = viewModelScope.launch {
             withSendLock {
-                val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
                     _errorMessage.value = null
+                    cancelPostTurnExtraction(botId)
                     repository.deleteMessage(msgId)
+                    loadArchivedMemories(botId)
+                    loadEntityRelations(botId)
+                    loadHiddenRagCount(botId)
 
+                    val currentBot = repository.getBot(botId) ?: activeBot.value ?: return@withSendLock
                     val currentMsgs = repository.getMessageListForBot(botId)
                     val now = System.currentTimeMillis()
                     val (aiMsg, replyResult) = executeStreamingReplyAndPersist(
@@ -1244,10 +1281,10 @@ class EmochiViewModel @JvmOverloads constructor(
                     }
                     val lastUserText = currentMsgs.lastOrNull { it.role == "user" }?.text.orEmpty()
                     if (lastUserText.isNotBlank()) {
-                        schedulePostTurnMemoryExtraction(currentBot, finalMsgs, lastUserText, replyText)
+                        schedulePostTurnMemoryExtraction(freshBot, finalMsgs, lastUserText, replyText, sourceMessageId = aiMsg.id)
                     }
                     if (shouldRunSummarization(botId, finalMsgs.size)) {
-                        repository.updateMemorySummaries(currentBot, finalMsgs)
+                        repository.updateMemorySummaries(freshBot, finalMsgs)
                         markSummarizationDone(botId, finalMsgs.size)
                     }
                 } catch (_: kotlinx.coroutines.CancellationException) {
@@ -1267,9 +1304,9 @@ class EmochiViewModel @JvmOverloads constructor(
 
         activeGenerationJob = viewModelScope.launch {
             withSendLock {
-                val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
                     _errorMessage.value = null
+                    cancelPostTurnExtraction(botId)
 
                     val msgs = repository.getMessageListForBot(botId)
                     if (msgs.isEmpty()) return@withSendLock
@@ -1283,24 +1320,37 @@ class EmochiViewModel @JvmOverloads constructor(
                         else Pair(msgs.subList(0, lastAssistantIndex), msgs[lastAssistantIndex])
                     }
 
-                    val botToUse = if (currentBot.previousEmotionState.isNotBlank()) {
-                        val reverted = currentBot.copy(emotionState = currentBot.previousEmotionState)
-                        repository.saveBot(reverted)
-                        reverted
-                    } else currentBot
+                    // Full atomic rollback of all memories, RAG fragments, Living Memories, milestones,
+                    // bot emotion/calendar/age, and side cast emotions from the regenerated message BEFORE regenerating!
+                    if (targetMsg != null) {
+                        repository.rollbackMessageTurnData(
+                            botId = botId,
+                            targetMessageId = targetMsg.id,
+                            deleteTargetMessage = true
+                        )
+                        loadArchivedMemories(botId)
+                        loadEntityRelations(botId)
+                        loadHiddenRagCount(botId)
+                    }
 
+                    val botToUse = repository.getBot(botId) ?: activeBot.value ?: return@withSendLock
                     repository.incrementRegenerateCount(botId)
-                    val (_, replyResult) = executeStreamingReplyAndPersist(
+                    val (aiMsg, replyResult) = executeStreamingReplyAndPersist(
                         bot = botToUse,
                         messagesForPrompt = remainingMsgs,
-                        timestampHint = System.currentTimeMillis(),
-                        beforeFinalPersist = {
-                            if (targetMsg != null) {
-                                repository.deleteMessage(targetMsg.id)
-                            }
-                        }
+                        timestampHint = System.currentTimeMillis()
                     )
                     replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
+                    val freshBot = repository.getBot(botId) ?: botToUse
+                    val finalMsgs = remainingMsgs + aiMsg
+                    if (replyResult.memoryCommitSummary.hasAnyChange) {
+                        emitMemoryCommitNotice(replyResult.memoryCommitSummary, freshBot.aiName)
+                        loadArchivedMemories(botId)
+                    }
+                    val lastUserText = remainingMsgs.lastOrNull { it.role == "user" }?.text.orEmpty()
+                    if (lastUserText.isNotBlank()) {
+                        schedulePostTurnMemoryExtraction(freshBot, finalMsgs, lastUserText, aiMsg.text, sourceMessageId = aiMsg.id)
+                    }
                 } catch (_: kotlinx.coroutines.CancellationException) {
                     // Kullanıcı durdurdu
                 } catch (e: Exception) {
@@ -1318,9 +1368,9 @@ class EmochiViewModel @JvmOverloads constructor(
 
         activeGenerationJob = viewModelScope.launch {
             withSendLock {
-                val currentBot = activeBot.value ?: repository.getBot(botId) ?: return@withSendLock
                 try {
                     _errorMessage.value = null
+                    cancelPostTurnExtraction(botId)
                     val msgs = repository.getMessageListForBot(botId)
                     val idx = msgs.indexOfFirst { it.id == msgId }
                     if (idx == -1) return@withSendLock
@@ -1329,27 +1379,53 @@ class EmochiViewModel @JvmOverloads constructor(
                     val editedMsg = msgs[idx].copy(text = trimmedNewText, timestamp = System.currentTimeMillis())
 
                     if (isUserMsg) {
-                        val botToUse = if (currentBot.previousEmotionState.isNotBlank()) {
-                            val reverted = currentBot.copy(emotionState = currentBot.previousEmotionState)
-                            repository.saveBot(reverted)
-                            reverted
-                        } else currentBot
+                        // Roll back EVERY message after idx in reverse chronological order so every layer
+                        // of memory, hidden RAG, Living Memories, milestones & emotions unwinds cleanly!
+                        for (i in msgs.lastIndex downTo (idx + 1)) {
+                            repository.rollbackMessageTurnData(
+                                botId = botId,
+                                targetMessageId = msgs[i].id,
+                                deleteTargetMessage = true
+                            )
+                        }
+                        // Also unwind any snapshot keyed directly to the edited user message
+                        repository.rollbackMessageTurnData(
+                            botId = botId,
+                            targetMessageId = msgs[idx].id,
+                            deleteTargetMessage = false
+                        )
+                        repository.saveMessage(editedMsg)
+                        loadArchivedMemories(botId)
+                        loadEntityRelations(botId)
+                        loadHiddenRagCount(botId)
 
+                        val botToUse = repository.getBot(botId) ?: activeBot.value ?: return@withSendLock
                         val truncatedList = msgs.subList(0, idx) + editedMsg
-                        val (_, replyResult) = executeStreamingReplyAndPersist(
+                        val (aiMsg, replyResult) = executeStreamingReplyAndPersist(
                             bot = botToUse,
                             messagesForPrompt = truncatedList,
-                            timestampHint = editedMsg.timestamp + 10L,
-                            beforeFinalPersist = {
-                                for (i in (idx + 1) until msgs.size) {
-                                    repository.deleteMessage(msgs[i].id)
-                                }
-                                repository.saveMessage(editedMsg)
-                            }
+                            timestampHint = editedMsg.timestamp + 10L
                         )
                         replyResult.unlockedMilestone?.let { _milestoneEvent.tryEmit(it) }
+                        val freshBot = repository.getBot(botId) ?: botToUse
+                        val finalMsgs = truncatedList + aiMsg
+                        if (replyResult.memoryCommitSummary.hasAnyChange) {
+                            emitMemoryCommitNotice(replyResult.memoryCommitSummary, freshBot.aiName)
+                            loadArchivedMemories(botId)
+                        }
+                        schedulePostTurnMemoryExtraction(freshBot, finalMsgs, trimmedNewText, aiMsg.text, sourceMessageId = aiMsg.id)
                     } else {
+                        // Editing an assistant message: roll back all old side-effects produced by that message first
+                        repository.rollbackMessageTurnData(
+                            botId = botId,
+                            targetMessageId = msgId,
+                            deleteTargetMessage = false
+                        )
                         repository.saveMessage(editedMsg)
+                        loadArchivedMemories(botId)
+                        loadEntityRelations(botId)
+                        loadHiddenRagCount(botId)
+                        loadEmotionalDefenseState(botId)
                     }
                 } catch (_: kotlinx.coroutines.CancellationException) {
                     // Kullanıcı durdurdu
@@ -1361,15 +1437,28 @@ class EmochiViewModel @JvmOverloads constructor(
     }
 
     fun deleteMessage(msgId: String) {
+        val botId = _activeBotId.value
         viewModelScope.launch {
+            if (botId != null) cancelPostTurnExtraction(botId)
             repository.deleteMessage(msgId)
+            if (botId != null) {
+                loadArchivedMemories(botId)
+                loadEntityRelations(botId)
+                loadHiddenRagCount(botId)
+                loadEmotionalDefenseState(botId)
+            }
         }
     }
 
     fun rewindToMessage(botId: String, msgId: String) {
         viewModelScope.launch {
             try {
+                cancelPostTurnExtraction(botId)
                 repository.rewindToMessage(botId, msgId)
+                loadArchivedMemories(botId)
+                loadEntityRelations(botId)
+                loadHiddenRagCount(botId)
+                loadEmotionalDefenseState(botId)
             } catch (e: Exception) {
                 _errorMessage.value = e.message ?: "Geri alma başarısız oldu."
             }
@@ -1422,7 +1511,12 @@ class EmochiViewModel @JvmOverloads constructor(
 
     private suspend fun checkMilestones(botId: String, affection: Int, trust: Int) {
         try {
-            val newMilestone = repository.checkAndSaveMilestone(botId, affection, trust)
+            val newMilestone = repository.checkAndSaveMilestone(
+                botId = botId,
+                affection = affection,
+                trust = trust,
+                suppressBaselineSpam = true
+            )
             if (newMilestone != null) _milestoneEvent.tryEmit(newMilestone)
         } catch (_: Exception) {}
     }

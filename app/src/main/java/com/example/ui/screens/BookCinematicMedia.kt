@@ -7,22 +7,28 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Build
+import android.view.Gravity
 import android.view.WindowManager
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
@@ -77,6 +83,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -107,23 +115,47 @@ import kotlin.random.Random
 
 /**
  * Forces any Compose fullscreen [Dialog] window to fill 100% edge-to-edge across the entire phone
- * screen (including notch/cutout & nav bar areas) with zero floating dialog margin or black bars.
+ * screen (behind status bar, cutout, AND bottom gesture bar) with zero activity background peek
+ * at the top and immersive transient system bars.
  */
 @Composable
-fun ConfigureTrueFullscreenDialogWindow() {
+fun ConfigureTrueFullscreenDialogWindow(hideSystemBars: Boolean = true) {
     val view = LocalView.current
     SideEffect {
         val window = (view.parent as? DialogWindowProvider)?.window ?: return@SideEffect
-        window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
-        window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.TRANSPARENT))
+        window.addFlags(
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS
+        )
+        window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        window.setBackgroundDrawable(ColorDrawable(android.graphics.Color.BLACK))
         window.setDimAmount(0f)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        @Suppress("DEPRECATION")
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+        window.decorView.setPadding(0, 0, 0, 0)
+        val lp = window.attributes
+        lp.width = WindowManager.LayoutParams.MATCH_PARENT
+        lp.height = WindowManager.LayoutParams.MATCH_PARENT
+        lp.gravity = Gravity.FILL
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            val lp = window.attributes
-            if (lp.layoutInDisplayCutoutMode != WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES) {
-                lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                window.attributes = lp
-            }
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        window.attributes = lp
+        window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        val controller = WindowInsetsControllerCompat(window, view)
+        controller.isAppearanceLightStatusBars = false
+        controller.isAppearanceLightNavigationBars = false
+        if (hideSystemBars) {
+            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller.hide(WindowInsetsCompat.Type.systemBars())
         }
     }
 }
@@ -619,24 +651,70 @@ private fun LiveActionCinemaMotionCanvas(
                 .graphicsLayer {
                     scaleX = directedZoom
                     scaleY = directedZoom
-                    translationX = directedPanX + microShake - tiltYawDeg * 1.45f
-                    translationY = directedPanY - tiltPitchDeg * 1.15f
-                    rotationY = tiltYawDeg * 0.58f
-                    rotationX = -tiltPitchDeg * 0.48f
-                    cameraDistance = 16f * density
+                    translationX = directedPanX + microShake - tiltYawDeg * 1.65f
+                    translationY = directedPanY - tiltPitchDeg * 1.25f
+                    rotationY = tiltYawDeg * 0.72f
+                    rotationX = -tiltPitchDeg * 0.56f
+                    cameraDistance = 14f * density
                 }
         )
 
-        // Layer 2 & 3 (Midground 1.15x + Foreground 1.75x 2.5D Parallax GPU VFX)
+        // Layer 2 & 3 (3D Depth Volumetric Light Shafts + Midground 1.25x + Foreground 2.1x Parallax GPU VFX)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
             val cx = w / 2f
             val cy = h / 2f
-            val midParallaxX = -tiltYawDeg * 2.2f
-            val midParallaxY = -tiltPitchDeg * 1.6f
-            val fgParallaxX = -tiltYawDeg * 3.8f
-            val fgParallaxY = -tiltPitchDeg * 2.6f
+            val midParallaxX = -tiltYawDeg * 2.5f
+            val midParallaxY = -tiltPitchDeg * 1.8f
+            val fgParallaxX = -tiltYawDeg * 4.4f
+            val fgParallaxY = -tiltPitchDeg * 3.0f
+
+            // Volumetric 3D diagonal light shafts sweeping across depth plane
+            val shaftColor = when (sceneId) {
+                "WHITE_EYE_AWAKENING" -> Color(0xFFE2E8F0)
+                "BOSPHORUS_RESONANCE" -> Color(0xFFF43F5E)
+                "MUTLAK_UYANIS" -> Color(0xFFFDE047)
+                else -> Color(0xFF38BDF8)
+            }
+            for (s in 0..2) {
+                val baseX = w * (0.18f + s * 0.30f) + sin(flowPhase * 6.28f + s * 1.7f) * w * 0.05f + midParallaxX * 0.8f
+                val shaftPath = Path().apply {
+                    moveTo(baseX - w * 0.04f, 0f)
+                    lineTo(baseX + w * 0.06f, 0f)
+                    lineTo(baseX + w * 0.22f + fgParallaxX * 0.35f, h)
+                    lineTo(baseX + w * 0.06f + fgParallaxX * 0.35f, h)
+                    close()
+                }
+                drawPath(
+                    path = shaftPath,
+                    brush = Brush.verticalGradient(
+                        listOf(
+                            shaftColor.copy(alpha = (0.08f + climaxIntensity * 0.14f)),
+                            shaftColor.copy(alpha = (0.04f + climaxIntensity * 0.07f)),
+                            Color.Transparent
+                        )
+                    )
+                )
+            }
+
+            // 3D Perspective Depth Star/Debris Field rushing smoothly along Z-axis
+            for (d in 0 until 18) {
+                val seedX = ((d * 73 + 19) % 100) / 100f - 0.5f
+                val seedY = ((d * 41 + 7) % 100) / 100f - 0.5f
+                val z = 2.6f - ((flowPhase * 1.25f + d * 0.17f) % 2.2f)
+                val projScale = (0.85f / z.coerceAtLeast(0.28f))
+                val px = cx + seedX * w * projScale + fgParallaxX * (1.2f / z.coerceAtLeast(0.4f))
+                val py = cy + seedY * h * projScale + fgParallaxY * (1.2f / z.coerceAtLeast(0.4f))
+                if (px in -20f..(w + 20f) && py in -20f..(h + 20f)) {
+                    val alpha = ((2.6f - z) / 2.2f).coerceIn(0f, 1f) * 0.58f
+                    drawCircle(
+                        color = shaftColor.copy(alpha = alpha),
+                        radius = (1.1f + projScale * 1.35f).coerceAtMost(5.5f),
+                        center = Offset(px, py)
+                    )
+                }
+            }
 
             // Subtle storm rain across nocturnal Manhattan & Istanbul scenes
             if (sceneId != "MUTLAK_UYANIS") {
@@ -864,12 +942,24 @@ private fun LiveActionFullscreenCinemaDialog(
     val motionConfig = LocalCosmicMotionConfig.current
     var isMuted by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
+    var fillEntireScreen by remember { mutableStateOf(true) }
+    var gyroEnabled by remember { mutableStateOf(true) }
     var directorProgress by remember { mutableFloatStateOf(0f) }
     var tiltYaw by remember { mutableFloatStateOf(0f) }
     var tiltPitch by remember { mutableFloatStateOf(0f) }
     var lastHapticBeat by remember { mutableIntStateOf(-1) }
 
-    val (gyroYaw, gyroPitch) = rememberGyroscopeTilt(enabled = motionConfig.enableAmbientLoops)
+    val (gyroYaw, gyroPitch) = rememberGyroscopeTilt(enabled = gyroEnabled && motionConfig.enableAmbientLoops)
+    val smoothYaw by animateFloatAsState(
+        targetValue = (tiltYaw + if (gyroEnabled) gyroYaw * 0.85f else 0f).coerceIn(-36f, 36f),
+        animationSpec = tween(140),
+        label = "cinema_fps_yaw"
+    )
+    val smoothPitch by animateFloatAsState(
+        targetValue = (tiltPitch + if (gyroEnabled) gyroPitch * 0.70f else 0f).coerceIn(-14f, 14f),
+        animationSpec = tween(140),
+        label = "cinema_fps_pitch"
+    )
     val beatLabels = remember(sceneId) { cinemaBeatLabels(sceneId) }
     val currentBeatIndex = (directorProgress * 4f).toInt().coerceIn(0, 3)
 
@@ -933,75 +1023,85 @@ private fun LiveActionFullscreenCinemaDialog(
                 .background(Color(0xFF04030D))
                 .pointerInput(sceneId) {
                     detectDragGestures(
-                        onDragEnd = { tiltYaw = 0f; tiltPitch = 0f },
-                        onDragCancel = { tiltYaw = 0f; tiltPitch = 0f },
                         onDrag = { change, dragAmount ->
                             change.consume()
-                            tiltYaw = (tiltYaw + dragAmount.x * 0.035f).coerceIn(-12f, 12f)
-                            tiltPitch = (tiltPitch + dragAmount.y * 0.035f).coerceIn(-9f, 9f)
+                            // True persistent First-Person 3D camera pan across all 7 cinematic animations!
+                            tiltYaw = (tiltYaw - dragAmount.x * 0.14f).coerceIn(-34f, 34f)
+                            tiltPitch = (tiltPitch - dragAmount.y * 0.08f).coerceIn(-12f, 12f)
                         }
                     )
                 }
         ) {
-            val combinedYaw = (tiltYaw + gyroYaw * 0.75f).coerceIn(-14f, 14f)
-            val combinedPitch = (tiltPitch + gyroPitch * 0.65f).coerceIn(-10f, 10f)
+            val combinedYaw = smoothYaw
+            val combinedPitch = smoothPitch
 
-            // Ambient theater aura backdrop (dimmed, Coil RGB_565 decoded)
-            val auraRequest = remember(context, sceneId) {
-                ImageRequest.Builder(context)
-                    .data(sceneBackdropRes(sceneId))
-                    .allowRgb565(true)
-                    .crossfade(300)
-                    .build()
-            }
-            AsyncImage(
-                model = auraRequest,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer { alpha = 0.24f; scaleX = 1.15f; scaleY = 1.15f }
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color(0xE603020A), Color(0x99060414), Color(0xF003020A))
-                        )
-                    )
-            )
-
-            // Centerpiece TRUE 16:9 Full-Frame 2.5D Cinema Stage
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp)
-                    .aspectRatio(16f / 9f)
-                    .graphicsLayer {
-                        rotationY = combinedYaw * 0.70f
-                        rotationX = -combinedPitch * 0.60f
-                        cameraDistance = 18f * density
-                    }
-                    .clip(RoundedCornerShape(18.dp))
-                    .border(1.3.dp, accent.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
-            ) {
+            if (fillEntireScreen) {
+                // TRUE FULL-BLEED EDGE-TO-EDGE FIRST-PERSON IMAX STAGE (fills 100% of phone screen!)
                 LiveActionCinemaMotionCanvas(
                     sceneId = sceneId,
-                    tiltYawDeg = combinedYaw * 0.55f,
-                    tiltPitchDeg = combinedPitch * 0.55f,
+                    tiltYawDeg = combinedYaw,
+                    tiltPitchDeg = combinedPitch,
                     directorProgress = directorProgress,
                     modifier = Modifier.fillMaxSize()
                 )
+            } else {
+                // Wide 16:9 letterbox mode with ambient cinema aura
+                Image(
+                    painter = painterResource(id = sceneBackdropRes(sceneId)),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = 0.24f; scaleX = 1.15f; scaleY = 1.15f }
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0xE603020A), Color(0x99060414), Color(0xF003020A))
+                            )
+                        )
+                )
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp)
+                        .aspectRatio(16f / 9f)
+                        .graphicsLayer {
+                            rotationY = combinedYaw * 0.45f
+                            rotationX = -combinedPitch * 0.45f
+                            cameraDistance = 18f * density
+                        }
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(1.3.dp, accent.copy(alpha = 0.72f), RoundedCornerShape(18.dp))
+                ) {
+                    LiveActionCinemaMotionCanvas(
+                        sceneId = sceneId,
+                        tiltYawDeg = combinedYaw * 0.55f,
+                        tiltPitchDeg = combinedPitch * 0.55f,
+                        directorProgress = directorProgress,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
+
+            // Soft Top & Bottom Cinema Readability Vignettes
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(118.dp)
+                    .align(Alignment.TopCenter)
+                    .background(Brush.verticalGradient(listOf(Color(0xD903020A), Color.Transparent)))
+            )
 
             // Top Director Bar
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 10.dp)
                     .align(Alignment.TopCenter),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -1011,10 +1111,11 @@ private fun LiveActionFullscreenCinemaDialog(
                         .clip(RoundedCornerShape(50))
                         .background(Color(0xCC09061B))
                         .border(1.dp, accent.copy(alpha = 0.80f), RoundedCornerShape(50))
+                        .clickable { tiltYaw = 0f; tiltPitch = 0f }
                         .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = "✦ ${beatLabels[currentBeatIndex]}",
+                        text = if (abs(tiltYaw) > 4f) "↻ ${beatLabels[currentBeatIndex]}" else "✦ ${beatLabels[currentBeatIndex]}",
                         fontFamily = InterFontFamily,
                         color = accent,
                         fontSize = 10.sp,
@@ -1023,7 +1124,36 @@ private fun LiveActionFullscreenCinemaDialog(
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(if (gyroEnabled) accent.copy(alpha = 0.25f) else Color(0xD9100926))
+                            .border(1.dp, accent.copy(alpha = if (gyroEnabled) 0.90f else 0.45f), CircleShape)
+                            .clickable { gyroEnabled = !gyroEnabled },
+                        contentAlignment = Alignment.Center
+                    ) { Text("🧭", fontSize = 14.sp) }
+
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 42.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xD9100926))
+                            .border(1.dp, accent.copy(alpha = 0.72f), RoundedCornerShape(50))
+                            .clickable { fillEntireScreen = !fillEntireScreen }
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (fillEntireScreen) "16:9" else "⤢ TAM",
+                            fontFamily = InterFontFamily,
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
                     Box(
                         modifier = Modifier
                             .size(48.dp)
@@ -1050,14 +1180,14 @@ private fun LiveActionFullscreenCinemaDialog(
                 }
             }
 
-            // Bottom Director Timeline Scrubber + Replay + Caption
+            // Bottom Director Timeline Scrubber + Replay + Caption (Generous bottom safe clearance!)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
                     .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xF5070415))))
                     .navigationBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                    .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 38.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 // 4-Act Interactive Timeline Scrubber + Play/Pause + Replay
@@ -1407,22 +1537,26 @@ fun TwinAidenPostCreditsDialog(
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    var cutIndex by remember { mutableIntStateOf(0) }
+    var riftFlashAlpha by remember { mutableFloatStateOf(0f) }
+    var twinWalkProgress by remember { mutableFloatStateOf(0f) }
+    var twinLastStepCount by remember { mutableIntStateOf(0) }
+    var twinIsSpeaking by remember { mutableStateOf(false) }
+    var twinMouthOpen by remember { mutableFloatStateOf(0f) }
+
     val sfxEngine = remember { Cosmic3DSoundEngine(context, enableOrchestralMusic = false) }
     val voiceEngine = remember(sfxEngine) {
         CosmicCharacterVoiceEngine(context) { speaking ->
+            twinIsSpeaking = speaking
             sfxEngine.setVoiceDucking(speaking)
         }
     }
 
-    // 0 = Black Title Intro, 1 = Ruined Dark-Future Manhattan, 2 = Scarred Future Aiden Reveal,
-    // 3 = Interactive Rift Touch, 4 = Season 2 Title Card Slam
-    var cutIndex by remember { mutableIntStateOf(0) }
-    var riftFlashAlpha by remember { mutableFloatStateOf(0f) }
-
     val line1Text = "Sen kazandın Aiden... benim yapamadığımı başardın. Avengers'ı kurtardın. Ama Vaelor sadece bir habercidir — Asıl Mimar seni buldu... ve yakında demir fırtına başlayacak."
     val line2Text = "Kapıyı aç... zaman kırılmadan önce sana onları nasıl hayatta tutacağını göstereyim."
 
-    DisposableEffect(sfxEngine, voiceEngine) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, sfxEngine, voiceEngine) {
         sfxEngine.start(ambientSceneId = "BLUE_SKY_2006", ambientVolume = 0.50f)
         voiceEngine.prewarmLines(
             listOf(
@@ -1430,13 +1564,72 @@ fun TwinAidenPostCreditsDialog(
                 Triple("TWIN_AIDEN", line2Text, "voice_twin_aiden_2")
             )
         )
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    voiceEngine.stopCurrentLine()
+                    sfxEngine.setMuted(true)
+                }
+                Lifecycle.Event.ON_RESUME -> sfxEngine.setMuted(false)
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             sfxEngine.stopAndRelease()
             voiceEngine.stopAndRelease()
         }
     }
 
-    // Automatic cinema pacing (user can tap Next anytime)
+    // Real-time audio-synced lip-sync for Twin Aiden in Cuts 2 & 3!
+    LaunchedEffect(twinIsSpeaking) {
+        if (!twinIsSpeaking) {
+            twinMouthOpen = 0f
+            return@LaunchedEffect
+        }
+        var smooth = 0f
+        while (twinIsSpeaking) {
+            withFrameNanos {
+                val target = voiceEngine.currentSpeechAmplitude()
+                smooth += (target - smooth) * (if (target > smooth) 0.45f else 0.25f)
+                twinMouthOpen = smooth.coerceIn(0f, 1f)
+            }
+        }
+        twinMouthOpen = 0f
+    }
+
+    // 60fps Slow Deliberate Walking Approach for Twin Aiden in Cut 2 (7 slow heavy footsteps out of the misty rift!)
+    LaunchedEffect(cutIndex) {
+        if (cutIndex == 2) {
+            twinWalkProgress = 0f
+            twinLastStepCount = 0
+            var lastNs = 0L
+            while (cutIndex == 2 && twinWalkProgress < 1f) {
+                withFrameNanos { now ->
+                    if (lastNs == 0L) {
+                        lastNs = now
+                        return@withFrameNanos
+                    }
+                    val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
+                    lastNs = now
+                    twinWalkProgress = (twinWalkProgress + dt / 7.8f).coerceAtMost(1f)
+                    val stepNum = (twinWalkProgress * 7f).toInt()
+                    if (stepNum > twinLastStepCount && stepNum <= 7) {
+                        twinLastStepCount = stepNum
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        sfxEngine.play(CosmicSfx.PLAYER_SHIELD_HIT, volume = 0.24f, affectedByTimeSlow = false)
+                    }
+                }
+            }
+        } else if (cutIndex == 3) {
+            twinWalkProgress = 1f
+        } else {
+            twinWalkProgress = 0f
+        }
+    }
+
+    // Automatic cinema pacing — waits gracefully for voice line completion instead of cutting off mid-sentence
     LaunchedEffect(cutIndex) {
         when (cutIndex) {
             0 -> {
@@ -1446,7 +1639,7 @@ fun TwinAidenPostCreditsDialog(
             }
             1 -> {
                 sfxEngine.play(CosmicSfx.LASER_WARNING, volume = 0.48f)
-                delay(5200L)
+                delay(4800L)
                 if (cutIndex == 1) cutIndex = 2
             }
             2 -> {
@@ -1458,6 +1651,13 @@ fun TwinAidenPostCreditsDialog(
                     lineId = "voice_twin_aiden_1"
                 )
                 delay(8400L)
+                // Wait up to 6 extra seconds if Twin Aiden is still finishing his spoken sentence
+                var extraWaited = 0L
+                while (cutIndex == 2 && twinIsSpeaking && extraWaited < 6000L) {
+                    delay(200L)
+                    extraWaited += 200L
+                }
+                delay(450L)
                 if (cutIndex == 2) cutIndex = 3
             }
             3 -> {
@@ -1468,6 +1668,7 @@ fun TwinAidenPostCreditsDialog(
                 )
             }
             4 -> {
+                voiceEngine.stopCurrentLine()
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 sfxEngine.play(CosmicSfx.DASH_BLINK, volume = 0.95f)
                 sfxEngine.play(CosmicSfx.VICTORY_FANFARE, volume = 0.85f)
@@ -1498,7 +1699,7 @@ fun TwinAidenPostCreditsDialog(
     )
 
     val ashParticles = remember {
-        List(32) { i ->
+        List(36) { i ->
             Triple(Random(i * 43 + 7).nextFloat(), Random(i * 61 + 3).nextFloat(), 0.6f + Random(i * 17).nextFloat() * 0.9f)
         }
     }
@@ -1518,7 +1719,7 @@ fun TwinAidenPostCreditsDialog(
                 .fillMaxSize()
                 .background(Color(0xFF010207))
         ) {
-            // LAYER 1: FULLSCREEN LIVE-ACTION CINEMA CUTS WITH SMOOTH CROSSFADE & KEN BURNS CAMERA
+            // LAYER 1: FULLSCREEN LIVE-ACTION CINEMA CUTS WITH TWIN AIDEN SLOW WALKING APPROACH!
             Crossfade(
                 targetState = cutIndex,
                 animationSpec = tween(750),
@@ -1529,16 +1730,8 @@ fun TwinAidenPostCreditsDialog(
                         Box(modifier = Modifier.fillMaxSize().background(Color(0xFF02030A)))
                     }
                     1 -> {
-                        // CUT 1: Apocalyptic Ruined Parallel Manhattan + Broken Captain America Shield + Two Moons!
-                        val ruinedReq = remember(context) {
-                            ImageRequest.Builder(context)
-                                .data(R.drawable.img_postcredits_ruined_nyc)
-                                .allowRgb565(true)
-                                .crossfade(300)
-                                .build()
-                        }
-                        AsyncImage(
-                            model = ruinedReq,
+                        Image(
+                            painter = painterResource(id = R.drawable.img_postcredits_ruined_nyc),
                             contentDescription = "Yıkılmış Paralel Manhattan",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
@@ -1551,69 +1744,177 @@ fun TwinAidenPostCreditsDialog(
                         )
                     }
                     2, 3 -> {
-                        // CUT 2 & 3: Battle-Scarred Glowing-Blue-Eyed Twin Aiden Reaching Through the Rift!
-                        val twinReq = remember(context) {
-                            ImageRequest.Builder(context)
-                                .data(R.drawable.img_postcredits_twin_aiden)
-                                .allowRgb565(true)
-                                .crossfade(300)
-                                .build()
+                        // CUT 2 & 3: Twin Aiden INSTANTLY VISIBLE & SLOWLY WALKING FORWARD out of the ruined Manhattan rift!
+                        val walkPhase = twinWalkProgress * 7f * PI.toFloat()
+                        val isWalkingNow = activeCut == 2 && twinWalkProgress < 0.995f
+                        val strideBobY = if (isWalkingNow) -abs(sin(walkPhase)) * 16f else sin(kenBurns * 6.28f) * 3f
+                        val shoulderRollDeg = if (isWalkingNow) sin(walkPhase) * 2.0f else 0f
+                        val lateralWeightSway = if (isWalkingNow) sin(walkPhase) * 10f else -(kenBurns - 0.5f) * 8f
+                        val approachScale = if (activeCut == 3) {
+                            1.18f + kenBurns * 0.04f
+                        } else {
+                            0.98f + twinWalkProgress * 0.22f
                         }
-                        AsyncImage(
-                            model = twinReq,
-                            contentDescription = "Yara İzli İkiz Aiden",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val sc = if (activeCut == 3) 1.15f + kenBurns * 0.06f else 1.05f + kenBurns * 0.10f
-                                    scaleX = sc; scaleY = sc
-                                    translationX = -(kenBurns - 0.5f) * 18f
+                        val approachRiseY = if (activeCut == 2) (1f - twinWalkProgress) * 36f else 0f
+
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            // Synchronous Painter guarantees Twin Aiden NEVER flashes blank or gets stuck behind ruined NYC!
+                            val twinPainter = painterResource(id = R.drawable.img_postcredits_twin_aiden)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        scaleX = approachScale
+                                        scaleY = approachScale
+                                        translationX = lateralWeightSway
+                                        translationY = approachRiseY + strideBobY
+                                        rotationZ = shoulderRollDeg
+                                        rotationY = if (isWalkingNow) sin(walkPhase) * 3.2f else 0f
+                                        cameraDistance = 14f * density
+                                        alpha = (0.88f + twinWalkProgress * 0.12f).coerceIn(0f, 1f)
+                                    }
+                            ) {
+                                // BiasAlignment(0.06f, -0.08f) keeps Twin Aiden's scarred face, glowing blue eyes,
+                                // AND his crackling blue rift hand heroically framed on narrow portrait phones!
+                                Image(
+                                    painter = twinPainter,
+                                    contentDescription = "Yara İzli İkiz Aiden",
+                                    contentScale = ContentScale.Crop,
+                                    alignment = BiasAlignment(0.06f, -0.08f),
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Canvas(modifier = Modifier.fillMaxSize()) {
+                                    val w = size.width
+                                    val h = size.height
+                                    val src = twinPainter.intrinsicSize
+                                    val imgW = if (src.width.isFinite() && src.width > 1f) src.width else w
+                                    val imgH = if (src.height.isFinite() && src.height > 1f) src.height else h
+                                    val cropScale = maxOf(w / imgW, h / imgH)
+                                    val drawnW = imgW * cropScale
+                                    val drawnH = imgH * cropScale
+                                    // Match BiasAlignment(0.06f, -0.08f) exact pixel projection
+                                    val offX = (w - drawnW) * (0.5f + 0.06f * 0.5f)
+                                    val offY = (h - drawnH) * (0.5f - 0.08f * 0.5f)
+                                    fun px(nx: Float) = offX + nx * drawnW
+                                    fun py(ny: Float) = offY + ny * drawnH
+
+                                    val eyeIntensity = (0.48f + twinWalkProgress * 0.52f) * pulse
+                                    val lx = px(0.460f)
+                                    val rx = px(0.534f)
+                                    val ey = py(0.328f)
+                                    val eyeR = (rx - lx) * 0.25f
+
+                                    listOf(lx, rx).forEach { ex ->
+                                        drawCircle(
+                                            brush = Brush.radialGradient(
+                                                listOf(
+                                                    Color(0xFFE0F2FE).copy(alpha = 0.68f * eyeIntensity),
+                                                    Color(0xFF38BDF8).copy(alpha = 0.30f * eyeIntensity),
+                                                    Color.Transparent
+                                                ),
+                                                center = Offset(ex, ey),
+                                                radius = eyeR
+                                            ),
+                                            radius = eyeR,
+                                            center = Offset(ex, ey)
+                                        )
+                                    }
+
+                                    // Real-time audio-synced lip-sync on Twin Aiden when he speaks!
+                                    if (twinMouthOpen > 0.04f) {
+                                        val mx = px(0.495f)
+                                        val my = py(0.488f)
+                                        val mw = drawnW * 0.056f * (0.88f + twinMouthOpen * 0.16f)
+                                        val mh = (rx - lx) * 0.19f * twinMouthOpen
+                                        drawOval(
+                                            color = Color(0xE011070C).copy(alpha = 0.85f * twinMouthOpen),
+                                            topLeft = Offset(mx - mw * 0.44f, my - mh * 0.38f),
+                                            size = androidx.compose.ui.geometry.Size(mw * 0.88f, mh.coerceAtLeast(2f))
+                                        )
+                                    }
                                 }
-                        )
+                            }
+
+                            // Screen-space dark mist vignette & heavy bootstep blue shock-dust
+                            Canvas(modifier = Modifier.fillMaxSize()) {
+                                val w = size.width
+                                val h = size.height
+                                val cx = w * 0.50f + lateralWeightSway * 0.65f
+
+                                val fogAlpha = ((1f - twinWalkProgress) * 0.30f).coerceIn(0f, 0.32f)
+                                if (fogAlpha > 0.02f) {
+                                    drawRect(
+                                        brush = Brush.verticalGradient(
+                                            listOf(Color(0xFF040B1A).copy(alpha = fogAlpha), Color.Transparent, Color(0xFF020612).copy(alpha = fogAlpha * 1.2f))
+                                        )
+                                    )
+                                }
+
+                                val stepImpact = (1f - abs(sin(walkPhase))).coerceIn(0f, 1f)
+                                if (isWalkingNow && stepImpact > 0.72f) {
+                                    val dustA = ((stepImpact - 0.72f) / 0.28f) * 0.26f
+                                    drawOval(
+                                        brush = Brush.radialGradient(
+                                            listOf(Color(0xFF38BDF8).copy(alpha = dustA), Color.Transparent),
+                                            center = Offset(cx, h * 0.86f),
+                                            radius = w * 0.42f
+                                        ),
+                                        topLeft = Offset(cx - w * 0.42f, h * 0.78f),
+                                        size = androidx.compose.ui.geometry.Size(w * 0.84f, h * 0.16f)
+                                    )
+                                }
+                            }
+                        }
                     }
                     else -> {
-                        // CUT 4: Season 2 Dark Blue Rift Title Backdrop
-                        val s2Req = remember(context) {
-                            ImageRequest.Builder(context)
-                                .data(R.drawable.img_postcredits_ruined_nyc)
-                                .allowRgb565(true)
-                                .crossfade(300)
-                                .build()
-                        }
-                        AsyncImage(
-                            model = s2Req,
+                        Image(
+                            painter = painterResource(id = R.drawable.img_postcredits_ruined_nyc),
                             contentDescription = "2. Sezon",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer { alpha = 0.40f; scaleX = 1.12f; scaleY = 1.12f }
+                                .graphicsLayer { alpha = 0.42f; scaleX = 1.12f; scaleY = 1.12f }
                         )
                     }
                 }
             }
 
-            // LAYER 2: LIVE 60FPS ASH EMBERS, STORM RAIN & CRACKLING RIFT LIGHTNING
+            // LAYER 2: LIVE 60FPS 3D DEPTH-RUSHING ASH EMBERS, STORM RAIN & CRACKLING RIFT LIGHTNING
             if (cutIndex in 1..4) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
                     ashParticles.forEachIndexed { idx, (px, py, spd) ->
                         if (cutIndex == 1) {
-                            // Drifting glowing orange ash embers rising over the broken shield!
                             val prog = (1f - ((py + rainFlow * spd * 0.8f) % 1f))
                             val sx = px * w + sin(rainFlow * 6.28f + idx) * 16f
                             drawCircle(Color(0xFFFB923C).copy(alpha = 0.72f), radius = 2.2f + (idx % 3), center = Offset(sx, prog * h))
                         } else {
-                            // Electric blue dimensional sparks swirling around Twin Aiden's rift!
-                            val prog = (py + rainFlow * spd * 1.1f) % 1f
-                            val sx = px * w + cos(rainFlow * 6.28f + idx) * 14f
-                            drawCircle(Color(0xFF7DD3FC).copy(alpha = 0.75f * pulse), radius = 2f + (idx % 3), center = Offset(sx, prog * h))
+                            // 3D outward-rushing blue sparks & drifting ash sweeping past the camera as Twin Aiden walks forward
+                            val z = 2.2f - ((rainFlow * spd * 0.95f + idx * 0.08f) % 1.9f)
+                            val pScale = (0.75f / z.coerceAtLeast(0.25f))
+                            val sx = w * 0.5f + (px - 0.5f) * w * pScale * 1.1f
+                            val sy = h * 0.5f + (py - 0.5f) * h * pScale * 1.1f
+                            val alpha = ((2.2f - z) / 1.9f).coerceIn(0f, 1f) * 0.82f * pulse
+                            drawCircle(
+                                color = if (idx % 4 == 0) Color(0xFFFB923C).copy(alpha = alpha * 0.7f) else Color(0xFF7DD3FC).copy(alpha = alpha),
+                                radius = (1.6f + pScale * 1.6f).coerceAtMost(5.8f),
+                                center = Offset(sx, sy)
+                            )
                         }
-                        // Fine stormy night rain
                         val rProg = (py + rainFlow * spd * 2.0f) % 1f
                         val rx = ((px - rProg * 0.14f) + 1f) % 1f * w
                         drawLine(Color(0x36BAE6FD), Offset(rx, rProg * h), Offset(rx - 5f, rProg * h + 18f), strokeWidth = 1.2f)
+                    }
+                    // Periodic cracking blue dimensional lightning behind Twin Aiden
+                    if ((cutIndex == 2 || cutIndex == 3) && pulse > 0.86f) {
+                        drawBranchingLightning(
+                            start = Offset(w * 0.24f, h * 0.08f),
+                            end = Offset(w * 0.34f, h * 0.62f),
+                            seed = (rainFlow * 20).toInt() + 5,
+                            glowColor = Color(0xFF38BDF8),
+                            alpha = ((pulse - 0.86f) / 0.14f) * 0.75f
+                        )
                     }
                 }
             }
@@ -1639,7 +1940,7 @@ fun TwinAidenPostCreditsDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 10.dp)
                     .align(Alignment.TopCenter),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -1784,13 +2085,13 @@ fun TwinAidenPostCreditsDialog(
                 }
             }
 
-            // BOTTOM CINEMA SUBTITLES & FINAL CTA BUTTON
+            // BOTTOM CINEMA SUBTITLES & FINAL CTA BUTTON (Safe clearance above Android gesture bar!)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(horizontal = 20.dp, vertical = 18.dp),
+                    .padding(start = 22.dp, end = 22.dp, top = 12.dp, bottom = 44.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -1889,8 +2190,11 @@ fun Season2ArchitectPostCreditsDialog(
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
     val sfxEngine = remember { Cosmic3DSoundEngine(context, enableOrchestralMusic = false) }
+    var architectIsSpeaking by remember { mutableStateOf(false) }
+    var architectVoiceAmp by remember { mutableFloatStateOf(0f) }
     val voiceEngine = remember(sfxEngine) {
         CosmicCharacterVoiceEngine(context) { speaking ->
+            architectIsSpeaking = speaking
             sfxEngine.setVoiceDucking(speaking)
         }
     }
@@ -1901,15 +2205,45 @@ fun Season2ArchitectPostCreditsDialog(
     val line1 = "Birinci perde kapandı, Kayıp Anahtarım... Demir kuklayı kırdın, ama insanların korkusunu kıramazsın."
     val line2 = "Şimdi seni koruyan kahramanlar bile birbirine karşı duracak. Masadaki dosyayı aç... üçüncü perde başladı."
 
-    DisposableEffect(sfxEngine, voiceEngine) {
-        sfxEngine.start(ambientSceneId = "BLUE_SKY_2006", ambientVolume = 0.48f)
+    LaunchedEffect(architectIsSpeaking) {
+        if (!architectIsSpeaking) {
+            architectVoiceAmp = 0f
+            return@LaunchedEffect
+        }
+        var smoothed = 0f
+        while (architectIsSpeaking) {
+            withFrameNanos {
+                val target = voiceEngine.currentSpeechAmplitude()
+                val blend = if (target > smoothed) 0.50f else 0.25f
+                smoothed += (target - smoothed) * blend
+                architectVoiceAmp = smoothed.coerceIn(0f, 1f)
+            }
+        }
+        architectVoiceAmp = 0f
+    }
+
+    val s2LifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(s2LifecycleOwner, sfxEngine, voiceEngine) {
+        sfxEngine.start(ambientSceneId = "BLUE_SKY_2006", ambientVolume = 0.45f)
         voiceEngine.prewarmLines(
             listOf(
                 Triple("ARCHITECT", line1, "voice_s2_postcredits_1"),
                 Triple("ARCHITECT", line2, "voice_s2_postcredits_2")
             )
         )
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> {
+                    voiceEngine.stopCurrentLine()
+                    sfxEngine.setMuted(true)
+                }
+                Lifecycle.Event.ON_RESUME -> sfxEngine.setMuted(false)
+                else -> Unit
+            }
+        }
+        s2LifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            s2LifecycleOwner.lifecycle.removeObserver(observer)
             sfxEngine.stopAndRelease()
             voiceEngine.stopAndRelease()
         }
@@ -1931,7 +2265,13 @@ fun Season2ArchitectPostCreditsDialog(
                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                 sfxEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.88f)
                 voiceEngine.speak("ARCHITECT", line1, "voice_s2_postcredits_1")
-                delay(7600L)
+                delay(8200L)
+                // Never cut off the Architect mid-sentence: wait up to 6s extra until his line finishes
+                var extraWait = 0L
+                while (architectIsSpeaking && extraWait < 6000L && cutIndex == 2) {
+                    delay(200L)
+                    extraWait += 200L
+                }
                 if (cutIndex == 2) cutIndex = 3
             }
             3 -> {
@@ -1960,6 +2300,11 @@ fun Season2ArchitectPostCreditsDialog(
         animationSpec = infiniteRepeatable(tween(8500, easing = LinearEasing), RepeatMode.Reverse),
         label = "s2_kb"
     )
+    val emberPhase by inf.animateFloat(
+        initialValue = 0f, targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(6400, easing = LinearEasing), RepeatMode.Restart),
+        label = "s2_ember"
+    )
 
     Dialog(
         onDismissRequest = onContinueToChoicesSummary,
@@ -1976,46 +2321,119 @@ fun Season2ArchitectPostCreditsDialog(
                 .fillMaxSize()
                 .background(Color(0xFF020309))
         ) {
+            // Full-Bleed Dynamic Backdrop per Cut:
+            // Cut 1 -> Shattered Ultron Prime in Sokovia Ash
+            // Cut 2 & 3 -> Full-Bleed Asıl Mimar (Golden-Blue Eyes) with slow dramatic dolly zoom!
+            // Cut 4 -> Ruined Sokovia Crater behind Classified UN Accords Dossier
             if (cutIndex >= 1) {
-                val sokoviaReq = remember(context) {
-                    ImageRequest.Builder(context)
-                        .data(R.drawable.img_postcredits_ruined_nyc)
-                        .allowRgb565(true)
-                        .crossfade(300)
-                        .build()
+                val activeBackdropRes = when (cutIndex) {
+                    1 -> R.drawable.img_portrait_ultron_prime_1795557413989
+                    2, 3 -> R.drawable.img_portrait_architect_hero_1795559252160
+                    else -> R.drawable.img_postcredits_ruined_nyc
                 }
-                AsyncImage(
-                    model = sokoviaReq,
-                    contentDescription = "Sokovia Enkazı",
+                Image(
+                    painter = painterResource(id = activeBackdropRes),
+                    contentDescription = when (cutIndex) {
+                        1 -> "Sokovia Enkazında Ultron Prime"
+                        2, 3 -> "Asıl Mimar"
+                        else -> "Sokovia Enkazı"
+                    },
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            val sc = 1.08f + kenBurns * 0.10f
+                            val sc = when (cutIndex) {
+                                1 -> 1.06f + kenBurns * 0.08f
+                                2, 3 -> 1.04f + kenBurns * 0.09f + architectVoiceAmp * 0.025f
+                                else -> 1.10f + kenBurns * 0.08f
+                            }
                             scaleX = sc; scaleY = sc
-                            alpha = if (cutIndex == 4) 0.35f else 0.72f
+                            translationY = if (cutIndex == 2 || cutIndex == 3) -kenBurns * 16f else 0f
+                            alpha = when (cutIndex) {
+                                1 -> 0.84f
+                                2, 3 -> 0.92f
+                                else -> 0.38f
+                            }
                         }
+                )
+                // Cinema letterbox vignette so subtitle & buttons stay crystal legible
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(
+                                    Color(0xAA020309),
+                                    Color(0x28020309),
+                                    Color(0x66020309),
+                                    Color(0xEE020309)
+                                )
+                            )
+                        )
                 )
             }
 
-            // Gold-Blue Architect Eye Glow Overlay on Cut 2 & 3
-            if (cutIndex == 2 || cutIndex == 3) {
+            // Cut 1: Crimson-to-Gold Visor Glitch Pulse | Cut 2 & 3: Audio-Synced Celestial Rings & Golden Embers!
+            if (cutIndex == 1 || cutIndex == 2 || cutIndex == 3) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val cx = size.width / 2f
-                    val cy = size.height * 0.38f
-                    drawCircle(
-                        brush = Brush.radialGradient(
-                            listOf(
-                                Color(0xFFFEF08A).copy(alpha = 0.42f * pulse),
-                                Color(0xFF38BDF8).copy(alpha = 0.25f * pulse),
-                                Color.Transparent
+                    val cy = size.height * 0.36f
+                    if (cutIndex == 1) {
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                listOf(
+                                    Color(0xFFEF4444).copy(alpha = 0.34f * pulse),
+                                    Color(0xFFFDE047).copy(alpha = 0.18f * (1f - pulse)),
+                                    Color.Transparent
+                                ),
+                                center = Offset(cx, cy),
+                                radius = size.minDimension * 0.44f
                             ),
+                            radius = size.minDimension * 0.44f,
+                            center = Offset(cx, cy)
+                        )
+                    } else {
+                        val voiceBoost = architectVoiceAmp
+                        val haloR = size.minDimension * (0.34f + voiceBoost * 0.14f)
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                listOf(
+                                    Color(0xFFFEF08A).copy(alpha = 0.24f + voiceBoost * 0.28f),
+                                    Color(0xFF38BDF8).copy(alpha = 0.16f + voiceBoost * 0.20f),
+                                    Color.Transparent
+                                ),
+                                center = Offset(cx, cy),
+                                radius = haloR * 1.45f
+                            ),
+                            radius = haloR * 1.45f,
+                            center = Offset(cx, cy)
+                        )
+                        // Audio-reactive celestial geometry rings around the Architect
+                        drawCircle(
+                            color = Color(0xFFFDE047).copy(alpha = 0.32f + voiceBoost * 0.55f),
+                            radius = haloR,
                             center = Offset(cx, cy),
-                            radius = size.minDimension * 0.46f
-                        ),
-                        radius = size.minDimension * 0.46f,
-                        center = Offset(cx, cy)
-                    )
+                            style = Stroke(width = 2.2f + voiceBoost * 4.5f)
+                        )
+                        drawCircle(
+                            color = Color(0xFF38BDF8).copy(alpha = 0.26f + voiceBoost * 0.45f),
+                            radius = haloR * 1.18f,
+                            center = Offset(cx, cy),
+                            style = Stroke(width = 1.6f + voiceBoost * 3.0f)
+                        )
+                        // Drifting golden & electric-blue cosmic embers
+                        for (i in 0 until 22) {
+                            val seed = (i * 0.37f) % 1f
+                            val yFrac = (1.05f - ((emberPhase + seed) % 1.05f))
+                            val xFrac = ((i * 0.19f + sin(emberPhase * 6.28f + i) * 0.04f) % 1f + 1f) % 1f
+                            val col = if (i % 2 == 0) Color(0xFFFDE047) else Color(0xFF38BDF8)
+                            drawCircle(
+                                color = col.copy(alpha = (0.32f + voiceBoost * 0.42f) * (1f - kotlin.math.abs(yFrac - 0.5f) * 1.6f).coerceIn(0.15f, 1f)),
+                                radius = 2.4f + (i % 3) * 1.2f,
+                                center = Offset(size.width * xFrac, size.height * yFrac)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -2024,7 +2442,7 @@ fun Season2ArchitectPostCreditsDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .statusBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 20.dp, bottom = 10.dp)
                     .align(Alignment.TopCenter),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
@@ -2057,14 +2475,15 @@ fun Season2ArchitectPostCreditsDialog(
                 }
             }
 
-            // Centerpiece Cinema Content
+            // Centerpiece / Lower-Third Cinema Content (keeps Architect's face unobstructed on Cuts 1–3!)
             Column(
                 modifier = Modifier
-                    .align(Alignment.Center)
+                    .align(if (cutIndex in 1..3) Alignment.BottomCenter else Alignment.Center)
                     .fillMaxWidth()
+                    .then(if (cutIndex in 1..3) Modifier.navigationBarsPadding().padding(bottom = 44.dp) else Modifier)
                     .padding(horizontal = 24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 when (cutIndex) {
                     0 -> {
@@ -2086,79 +2505,110 @@ fun Season2ArchitectPostCreditsDialog(
                         )
                     }
                     1 -> {
-                        CinematicCharacterAvatar(
-                            key = CharacterPortraitKey.ULTRON,
-                            size = 82.dp,
-                            borderWidth = 2.dp,
-                            borderColor = Color(0xFFEF4444)
-                        )
-                        Text(
-                            text = "Kül ve betonun altında yarı gömülü bir Ultron kafası son kez kıvılcım saçıyor... Kırmızı mercek önce sönüyor — sonra imkânsız bir renge bürünüyor.",
-                            fontFamily = LiterarySerifFontFamily,
-                            fontStyle = FontStyle.Italic,
-                            color = Color(0xFFF3E8FF),
-                            fontSize = 15.5.sp,
-                            lineHeight = 23.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    2 -> {
-                        CinematicCharacterAvatar(
-                            key = CharacterPortraitKey.ARCHITECT,
-                            size = 92.dp,
-                            borderWidth = 2.4.dp,
-                            borderColor = Color(0xFFFDE047)
-                        )
-                        Text(
-                            text = "ASIL MİMAR · ALTIN-MAVİ YANKI",
-                            fontFamily = InterFontFamily,
-                            color = Color(0xFFFDE047),
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.6.sp
-                        )
-                        Text(
-                            text = "“$line1”",
-                            fontFamily = LiterarySerifFontFamily,
-                            fontStyle = FontStyle.Italic,
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            lineHeight = 24.sp,
-                            textAlign = TextAlign.Center
-                        )
-                    }
-                    3 -> {
-                        CinematicCharacterAvatar(
-                            key = CharacterPortraitKey.ARCHITECT,
-                            size = 78.dp,
-                            borderWidth = 2.dp,
-                            borderColor = Color(0xFF38BDF8)
-                        )
-                        Text(
-                            text = "“$line2”",
-                            fontFamily = LiterarySerifFontFamily,
-                            fontStyle = FontStyle.Italic,
-                            color = Color(0xFFBAE6FD),
-                            fontSize = 15.5.sp,
-                            lineHeight = 23.sp,
-                            textAlign = TextAlign.Center
-                        )
-                        Box(
+                        Column(
                             modifier = Modifier
+                                .fillMaxWidth()
                                 .clip(RoundedCornerShape(18.dp))
-                                .background(Brush.horizontalGradient(listOf(Color(0xFFB45309), Color(0xFF2563EB))))
-                                .border(1.5.dp, Color(0xFFFEF08A), RoundedCornerShape(18.dp))
-                                .clickable { cutIndex = 4 }
-                                .padding(horizontal = 24.dp, vertical = 14.dp)
+                                .background(Color(0xCC060412))
+                                .border(1.dp, Color(0x88EF4444), RoundedCornerShape(18.dp))
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "✦ GİZLİ BM DOSYASINI AÇ ✦",
+                                text = "ULTRON PRİME · SÖNEN MERCEK",
                                 fontFamily = InterFontFamily,
-                                color = Color.White,
-                                fontSize = 13.5.sp,
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 10.sp,
                                 fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.8.sp
+                                letterSpacing = 1.4.sp
                             )
+                            Text(
+                                text = "Kül ve betonun altında yarı gömülü bir Ultron kafası son kez kıvılcım saçıyor... Kırmızı mercek önce sönüyor — sonra imkânsız altın-mavi bir renge bürünüyor.",
+                                fontFamily = LiterarySerifFontFamily,
+                                fontStyle = FontStyle.Italic,
+                                color = Color(0xFFF3E8FF),
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    2 -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color(0xD2070618))
+                                .border(1.2.dp, Color(0xFFFDE047).copy(alpha = 0.72f + architectVoiceAmp * 0.28f), RoundedCornerShape(18.dp))
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = if (architectIsSpeaking) "🎙 ASIL MİMAR · ALTIN-MAVİ YANKI" else "ASIL MİMAR · ALTIN-MAVİ YANKI",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFFDE047),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.6.sp
+                            )
+                            Text(
+                                text = "“$line1”",
+                                fontFamily = LiterarySerifFontFamily,
+                                fontStyle = FontStyle.Italic,
+                                color = Color.White,
+                                fontSize = 15.5.sp,
+                                lineHeight = 23.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                    3 -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(18.dp))
+                                .background(Color(0xD2070618))
+                                .border(1.2.dp, Color(0xFF38BDF8).copy(alpha = 0.75f + architectVoiceAmp * 0.25f), RoundedCornerShape(18.dp))
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Text(
+                                text = if (architectIsSpeaking) "🎙 ASIL MİMAR · ÜÇÜNCÜ PERDE" else "ASIL MİMAR · ÜÇÜNCÜ PERDE",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFF7DD3FC),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 1.5.sp
+                            )
+                            Text(
+                                text = "“$line2”",
+                                fontFamily = LiterarySerifFontFamily,
+                                fontStyle = FontStyle.Italic,
+                                color = Color(0xFFBAE6FD),
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                                textAlign = TextAlign.Center
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(Brush.horizontalGradient(listOf(Color(0xFFB45309), Color(0xFF2563EB))))
+                                    .border(1.5.dp, Color(0xFFFEF08A), RoundedCornerShape(18.dp))
+                                    .clickable { cutIndex = 4 }
+                                    .padding(horizontal = 24.dp, vertical = 14.dp)
+                            ) {
+                                Text(
+                                    text = "✦ GİZLİ BM DOSYASINI AÇ ✦",
+                                    fontFamily = InterFontFamily,
+                                    color = Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.8.sp
+                                )
+                            }
                         }
                     }
                     4 -> {
@@ -2218,7 +2668,7 @@ fun Season2ArchitectPostCreditsDialog(
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                        .padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 44.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(Brush.horizontalGradient(listOf(Color(0xFF2563EB), Color(0xFF7C3AED))))
                         .border(1.3.dp, Color(0xFFBAE6FD), RoundedCornerShape(16.dp))

@@ -320,4 +320,66 @@ class V32SystemsAuditFixesTest {
         assertEquals("VOSS", extracted[2].first)
         assertEquals("Sistem çökmek üzere.|Ek satır", extracted[2].second)
     }
+
+    @Test
+    fun bookModeVoiceEngine_distinctActorsAndNaturalTwinAidenProsody() {
+        val engine = CosmicCharacterVoiceEngine(context)
+        try {
+            val natasha = engine.resolveFreeNeuralCast("NATASHA")
+            val wanda = engine.resolveFreeNeuralCast("WANDA")
+            val mira = engine.resolveFreeNeuralCast("MIRA")
+            val tony = engine.resolveFreeNeuralCast("TONY")
+            val steve = engine.resolveFreeNeuralCast("STEVE")
+            val twinAiden = engine.resolveFreeNeuralCast("TWIN_AIDEN")
+
+            assertTrue(
+                "Natasha, Wanda, and Mira must use distinct neural female actors",
+                setOf(natasha.voiceId, wanda.voiceId, mira.voiceId).size == 3
+            )
+            assertTrue(
+                "Tony, Steve, and Twin Aiden must use distinct neural male actors",
+                setOf(tony.voiceId, steve.voiceId, twinAiden.voiceId).size == 3
+            )
+            assertTrue(
+                "Twin Aiden rate must stay natural (not slurred slow-motion), got ${twinAiden.baseRate}",
+                twinAiden.baseRate in 0.92f..1.05f
+            )
+            assertTrue(
+                "Twin Aiden pitch must stay natural (not muddy bass), got ${twinAiden.basePitch}",
+                twinAiden.basePitch in 0.92f..1.05f
+            )
+        } finally {
+            engine.stopAndRelease()
+        }
+    }
+
+    @Test
+    fun edgeNeuralTtsClient_formatsOfficialFullEdgeVoiceNameInSsml() {
+        assertEquals(
+            "Microsoft Server Speech Text to Speech Voice (tr-TR, AhmetNeural)",
+            EdgeNeuralTtsClient.toFullEdgeVoiceName("tr-TR-AhmetNeural")
+        )
+        assertEquals(
+            "Microsoft Server Speech Text to Speech Voice (de-DE, SeraphinaMultilingualNeural)",
+            EdgeNeuralTtsClient.toFullEdgeVoiceName("de-DE-SeraphinaMultilingualNeural")
+        )
+        val built = EdgeNeuralTtsClient.buildEdgeSingleProsodySsml(
+            voiceId = "tr-TR-AhmetNeural",
+            plainText = "Demir fırtına başlayacak.",
+            ratePercent = -4,
+            pitchHz = -2
+        )
+        assertTrue(
+            "SSML must contain official full Edge ReadAloud voice name",
+            built.contains("Microsoft Server Speech Text to Speech Voice (tr-TR, AhmetNeural)")
+        )
+        val normalized = EdgeNeuralTtsClient.normalizeSsmlForEdgeReadAloud(
+            voiceId = "tr-TR-EmelNeural",
+            rawSsml = "<speak xml:lang='tr-TR'><voice name='tr-TR-EmelNeural'><prosody rate='+0%' pitch='+0Hz' volume='+0%'>Merhaba</prosody></voice></speak>"
+        )
+        assertTrue(
+            "Normalized SSML must upgrade short voice IDs to official full Edge voice name",
+            normalized.contains("Microsoft Server Speech Text to Speech Voice (tr-TR, EmelNeural)")
+        )
+    }
 }

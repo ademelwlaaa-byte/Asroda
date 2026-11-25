@@ -38,12 +38,13 @@ object EdgeNeuralTtsClient {
 
     private const val TAG = "EdgeNeuralTtsClient"
     private const val TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
-    private const val PRIMARY_CHROMIUM_VERSION = "131.0.2903.86"
-    private const val FALLBACK_CHROMIUM_VERSION = "130.0.2849.68"
+    private const val PRIMARY_CHROMIUM_VERSION = "143.0.3650.75"
+    private const val SECONDARY_CHROMIUM_VERSION = "136.0.3240.76"
+    private const val FALLBACK_CHROMIUM_VERSION = "131.0.2903.86"
     private const val WIN_EPOCH_OFFSET_SECONDS = 11644473600L
-    private const val CACHE_DIR_NAME = "tts_audio_cache"
-    private const val MAX_CACHE_BYTES = 15L * 1024L * 1024L // 15 MB LRU cap
-    private const val FIRST_AUDIO_READ_TIMEOUT_MS = 3_500L
+    private const val CACHE_DIR_NAME = "tts_audio_cache_v3"
+    private const val MAX_CACHE_BYTES = 24L * 1024L * 1024L // 24 MB LRU cap
+    private const val FIRST_AUDIO_READ_TIMEOUT_MS = 4_500L
     private const val TOTAL_STREAM_TIMEOUT_MS = 12_000L
 
     data class NeuralVoiceSpec(
@@ -51,51 +52,98 @@ object EdgeNeuralTtsClient {
         val displayName: String,
         val subtitle: String,
         val localeTag: String,
-        val isTurkish: Boolean
+        val isTurkish: Boolean,
+        val isFemale: Boolean = false
     )
 
     val NEURAL_VOICES: List<NeuralVoiceSpec> = listOf(
         NeuralVoiceSpec(
             id = "tr-TR-EmelNeural",
             displayName = "Emel (Nöral • Kadın)",
-            subtitle = "Doğal, sıcak Türkçe roman sesi",
+            subtitle = "Doğal, sıcak, kadifemsi Türkçe kadın sesi",
             localeTag = "tr-TR",
-            isTurkish = true
+            isTurkish = true,
+            isFemale = true
         ),
         NeuralVoiceSpec(
             id = "tr-TR-AhmetNeural",
             displayName = "Ahmet (Nöral • Erkek)",
-            subtitle = "Derin, akıcı Türkçe roman sesi",
+            subtitle = "Derin, karizmatik Türkçe erkek bariton sesi",
             localeTag = "tr-TR",
-            isTurkish = true
+            isTurkish = true,
+            isFemale = false
         ),
         NeuralVoiceSpec(
             id = "en-US-AvaMultilingualNeural",
             displayName = "Ava (Çok Dilli • Kadın)",
-            subtitle = "Doğal çok dilli (TR/EN) nöral ses",
+            subtitle = "Duygusal, içten çok dilli (TR/EN) kadın nöral ses",
             localeTag = "en-US",
-            isTurkish = true
+            isTurkish = true,
+            isFemale = true
+        ),
+        NeuralVoiceSpec(
+            id = "en-US-EmmaMultilingualNeural",
+            displayName = "Emma (Çok Dilli • Genç Kadın)",
+            subtitle = "Canlı, sıcak ve umutlu genç kadın nöral ses",
+            localeTag = "en-US",
+            isTurkish = true,
+            isFemale = true
+        ),
+        NeuralVoiceSpec(
+            id = "de-DE-SeraphinaMultilingualNeural",
+            displayName = "Seraphina (Çok Dilli • Kadın)",
+            subtitle = "Zarif, sakin ve sinematik kadın nöral ses",
+            localeTag = "de-DE",
+            isTurkish = true,
+            isFemale = true
         ),
         NeuralVoiceSpec(
             id = "en-US-AndrewMultilingualNeural",
             displayName = "Andrew (Çok Dilli • Erkek)",
-            subtitle = "Derin çok dilli (TR/EN) nöral ses",
+            subtitle = "Akıcı, zeki ve dinamik çok dilli (TR/EN) erkek ses",
             localeTag = "en-US",
-            isTurkish = true
+            isTurkish = true,
+            isFemale = false
+        ),
+        NeuralVoiceSpec(
+            id = "en-US-BrianMultilingualNeural",
+            displayName = "Brian (Çok Dilli • Derin Erkek)",
+            subtitle = "Gölgeli, yorgun ve ağırbaşlı erkek sinema sesi",
+            localeTag = "en-US",
+            isTurkish = true,
+            isFemale = false
+        ),
+        NeuralVoiceSpec(
+            id = "de-DE-FlorianMultilingualNeural",
+            displayName = "Florian (Çok Dilli • Bas Bariton)",
+            subtitle = "Otoriter, soğuk ve güçlü bas-bariton erkek ses",
+            localeTag = "de-DE",
+            isTurkish = true,
+            isFemale = false
+        ),
+        NeuralVoiceSpec(
+            id = "fr-FR-RemyMultilingualNeural",
+            displayName = "Remy (Çok Dilli • Dramatik Erkek)",
+            subtitle = "Güçlü, enerjik ve ifadeli erkek sinema sesi",
+            localeTag = "fr-FR",
+            isTurkish = true,
+            isFemale = false
         ),
         NeuralVoiceSpec(
             id = "en-US-AriaNeural",
             displayName = "Aria (Nöral • Kadın EN)",
             subtitle = "İfadeli İngilizce nöral ses",
             localeTag = "en-US",
-            isTurkish = false
+            isTurkish = false,
+            isFemale = true
         ),
         NeuralVoiceSpec(
             id = "en-US-GuyNeural",
             displayName = "Guy (Nöral • Erkek EN)",
             subtitle = "Sıcak İngilizce nöral ses",
             localeTag = "en-US",
-            isTurkish = false
+            isTurkish = false,
+            isFemale = false
         )
     )
 
@@ -109,7 +157,8 @@ object EdgeNeuralTtsClient {
     internal var synthesizerOverride: (suspend (voiceId: String, ssml: String) -> ByteArray?)? = null
 
     /**
-     * Synthesizes [ssml] into an MP3 [File] stored in the 15 MB LRU cache.
+     * Synthesizes [ssml] into an MP3 [File] stored in the 20 MB LRU cache.
+     * Automatically normalizes SSML to the single-prosody format accepted by Microsoft Edge ReadAloud.
      * Returns `null` silently on any network/timeout/protocol error so callers can seamlessly
      * fall back to on-device TTS.
      */
@@ -122,7 +171,8 @@ object EdgeNeuralTtsClient {
         val cacheDir = File(context.cacheDir, CACHE_DIR_NAME).apply {
             if (!exists()) mkdirs()
         }
-        val cacheKey = sha256Hex("$voiceId|$ssml")
+        val normalizedSsml = normalizeSsmlForEdgeReadAloud(voiceId, ssml)
+        val cacheKey = sha256Hex("$voiceId|$normalizedSsml")
         val cachedFile = File(cacheDir, "$cacheKey.mp3")
         if (cachedFile.exists() && cachedFile.length() > 128L) {
             cachedFile.setLastModified(System.currentTimeMillis())
@@ -132,12 +182,12 @@ object EdgeNeuralTtsClient {
         val overrideFn = synthesizerOverride
         val audioBytes: ByteArray? = if (overrideFn != null) {
             try {
-                withTimeoutOrNull(timeoutMs) { overrideFn(voiceId, ssml) }
+                withTimeoutOrNull(timeoutMs) { overrideFn(voiceId, normalizedSsml) }
             } catch (_: Exception) {
                 null
             }
         } else {
-            fetchWithClockSkewRetry(ssml, timeoutMs)
+            fetchWithClockSkewRetry(normalizedSsml, timeoutMs)
         }
 
         if (audioBytes == null || audioBytes.size < 128) {
@@ -163,6 +213,188 @@ object EdgeNeuralTtsClient {
         }
     }
 
+    /**
+     * Converts rich multi-segment SSML (which may include `<break/>` or multiple `<prosody>` tags)
+     * into the strict single-`<prosody>` SSML accepted by the public Microsoft Edge ReadAloud
+     * WebSocket endpoint, preventing silent 0-byte connection drops while preserving pitch/rate/pauses.
+     */
+    internal fun normalizeSsmlForEdgeReadAloud(voiceId: String, rawSsml: String): String {
+        val trimmed = rawSsml.trim()
+        val fullVoiceName = toFullEdgeVoiceName(voiceId)
+        if (!trimmed.contains("<break", ignoreCase = true) &&
+            Regex("<prosody\\b", RegexOption.IGNORE_CASE).findAll(trimmed).count() <= 1 &&
+            trimmed.contains("volume=", ignoreCase = true) &&
+            trimmed.contains(fullVoiceName)
+        ) {
+            return trimmed
+        }
+
+        val rateMatch = Regex("""rate=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
+        val pitchMatch = Regex("""pitch=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
+        val volMatch = Regex("""volume=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
+        val langMatch = Regex("""xml:lang=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
+
+        val rateVal = rateMatch?.groupValues?.getOrNull(1)?.ifBlank { "+0%" } ?: "+0%"
+        val pitchVal = pitchMatch?.groupValues?.getOrNull(1)?.ifBlank { "+0Hz" } ?: "+0Hz"
+        val volVal = volMatch?.groupValues?.getOrNull(1)?.ifBlank { "+0%" } ?: "+0%"
+        val langVal = langMatch?.groupValues?.getOrNull(1)?.ifBlank { "tr-TR" }
+            ?: when {
+                voiceId.startsWith("tr-", ignoreCase = true) -> "tr-TR"
+                voiceId.startsWith("de-", ignoreCase = true) -> "de-DE"
+                voiceId.startsWith("fr-", ignoreCase = true) -> "fr-FR"
+                else -> "en-US"
+            }
+
+        // Extract inner text while turning <break .../> into natural breath punctuation
+        val voiceInner = Regex("""<voice[^>]*>(.*)</voice>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+            .find(trimmed)?.groupValues?.getOrNull(1) ?: trimmed
+        val withPauses = voiceInner
+            .replace(Regex("""<break[^>]*/>""", RegexOption.IGNORE_CASE), "... ")
+            .replace(Regex("""</?prosody[^>]*>""", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("""</?lang[^>]*>""", RegexOption.IGNORE_CASE), " ")
+            .replace(Regex("""\s+"""), " ")
+            .trim()
+
+        if (withPauses.isBlank()) return trimmed
+
+        return "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$langVal'>" +
+            "<voice name='$fullVoiceName'>" +
+            "<prosody pitch='$pitchVal' rate='$rateVal' volume='$volVal'>$withPauses</prosody>" +
+            "</voice></speak>"
+    }
+
+    /**
+     * Converts a short Edge voice ID (e.g. `tr-TR-AhmetNeural`) into the official
+     * Microsoft Edge ReadAloud full voice name (`Microsoft Server Speech Text to Speech Voice (tr-TR, AhmetNeural)`),
+     * matching Microsoft Edge browser / edge-tts v7 exact protocol requirements.
+     */
+    internal fun toFullEdgeVoiceName(voiceId: String): String {
+        val trimmed = voiceId.trim()
+        if (trimmed.startsWith("Microsoft Server Speech", ignoreCase = true)) return trimmed
+        val parts = trimmed.split("-")
+        if (parts.size >= 3) {
+            val locale = "${parts[0]}-${parts[1]}"
+            val shortName = parts.drop(2).joinToString("-")
+            return "Microsoft Server Speech Text to Speech Voice ($locale, $shortName)"
+        }
+        return trimmed
+    }
+
+    /**
+     * Builds a clean, 100% Microsoft Edge ReadAloud compatible single-prosody SSML envelope.
+     */
+    fun buildEdgeSingleProsodySsml(
+        voiceId: String,
+        plainText: String,
+        ratePercent: Int = 0,
+        pitchHz: Int = 0,
+        volumePercent: Int = 0
+    ): String {
+        val safeRate = ratePercent.coerceIn(-40, 50).let { if (it >= 0) "+$it%" else "$it%" }
+        val safePitch = pitchHz.coerceIn(-20, 20).let { if (it >= 0) "+${it}Hz" else "${it}Hz" }
+        val safeVol = volumePercent.coerceIn(-25, 25).let { if (it >= 0) "+$it%" else "$it%" }
+        val lang = when {
+            voiceId.startsWith("tr-", ignoreCase = true) -> "tr-TR"
+            voiceId.startsWith("de-", ignoreCase = true) -> "de-DE"
+            voiceId.startsWith("fr-", ignoreCase = true) -> "fr-FR"
+            voiceId.startsWith("it-", ignoreCase = true) -> "it-IT"
+            else -> "en-US"
+        }
+        val fullVoiceName = toFullEdgeVoiceName(voiceId)
+        val escaped = EmotionalTtsProsodyEngine.escapeXml(plainText.trim())
+        return "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='$lang'>" +
+            "<voice name='$fullVoiceName'>" +
+            "<prosody pitch='$safePitch' rate='$safeRate' volume='$safeVol'>$escaped</prosody>" +
+            "</voice></speak>"
+    }
+
+    /**
+     * Tier 2.5 (100% FREE, ZERO API KEY, plain HTTPS):
+     * Fallback neural Turkish synthesis via Google Translate public TTS endpoint when
+     * WebSocket port / Edge ReadAloud is blocked by a corporate/emulator firewall.
+     */
+    suspend fun synthesizeFreeHttpNeuralBackup(
+        context: Context,
+        plainText: String,
+        langCode: String = "tr",
+        timeoutMs: Long = 6_000L
+    ): File? = withContext(Dispatchers.IO) {
+        val cleaned = plainText.trim()
+        if (cleaned.isBlank()) return@withContext null
+        val cacheDir = File(context.cacheDir, CACHE_DIR_NAME).apply { mkdirs() }
+        val hash = sha256Hex("GHTTP_V1|$langCode|$cleaned")
+        val targetFile = File(cacheDir, "ghttp_$hash.mp3")
+        if (targetFile.exists() && targetFile.length() > 256L) {
+            targetFile.setLastModified(System.currentTimeMillis())
+            return@withContext targetFile
+        }
+        try {
+            val chunks = chunkForHttpTts(cleaned, maxLen = 165)
+            val httpClient = RetrofitClient.okHttpClient.newBuilder()
+                .connectTimeout(3_500L, TimeUnit.MILLISECONDS)
+                .readTimeout(timeoutMs.coerceIn(3_500L, 9_000L), TimeUnit.MILLISECONDS)
+                .build()
+            val out = ByteArrayOutputStream(16_384)
+            for (chunk in chunks) {
+                val encoded = java.net.URLEncoder.encode(chunk, "UTF-8")
+                val url = "https://translate.googleapis.com/translate_tts?ie=UTF-8&client=tw-ob&tl=$langCode&q=$encoded"
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("Referer", "https://translate.google.com/")
+                    .build()
+                httpClient.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) return@withContext null
+                    val bodyBytes = resp.body?.bytes() ?: return@withContext null
+                    if (bodyBytes.size < 128) return@withContext null
+                    out.write(bodyBytes)
+                }
+            }
+            val finalBytes = out.toByteArray()
+            if (finalBytes.size < 256) return@withContext null
+            val tmp = File(cacheDir, "ghttp_$hash.tmp")
+            tmp.writeBytes(finalBytes)
+            if (!tmp.renameTo(targetFile)) {
+                tmp.copyTo(targetFile, overwrite = true)
+                tmp.delete()
+            }
+            enforceCacheLruLimit(cacheDir)
+            if (targetFile.exists() && targetFile.length() > 256L) targetFile else null
+        } catch (t: Throwable) {
+            Log.w(TAG, "Free HTTP neural TTS backup skipped: ${t.message}")
+            null
+        }
+    }
+
+    private fun chunkForHttpTts(text: String, maxLen: Int): List<String> {
+        if (text.length <= maxLen) return listOf(text)
+        val result = mutableListOf<String>()
+        val sentences = Regex("[^.!?,;]+[.!?,;]*").findAll(text).map { it.value.trim() }.filter { it.isNotEmpty() }.toList()
+        var current = StringBuilder()
+        for (s in sentences) {
+            if (current.isNotEmpty() && current.length + 1 + s.length > maxLen) {
+                result.add(current.toString().trim())
+                current = StringBuilder()
+            }
+            if (s.length > maxLen) {
+                val words = s.split(Regex("\\s+"))
+                for (w in words) {
+                    if (current.isNotEmpty() && current.length + 1 + w.length > maxLen) {
+                        result.add(current.toString().trim())
+                        current = StringBuilder()
+                    }
+                    if (current.isNotEmpty()) current.append(' ')
+                    current.append(w)
+                }
+            } else {
+                if (current.isNotEmpty()) current.append(' ')
+                current.append(s)
+            }
+        }
+        if (current.isNotEmpty()) result.add(current.toString().trim())
+        return result.ifEmpty { listOf(text.take(maxLen)) }
+    }
+
     private sealed class WsFetchOutcome {
         data class Success(val mp3Bytes: ByteArray) : WsFetchOutcome()
         data class ClockSkew403(val serverDateHeader: String?) : WsFetchOutcome()
@@ -175,10 +407,18 @@ object EdgeNeuralTtsClient {
             is WsFetchOutcome.Success -> first.mp3Bytes
             is WsFetchOutcome.ClockSkew403 -> {
                 adjustClockSkewFromHeader(first.serverDateHeader)
-                val second = runSingleWebSocketFetch(ssml, timeoutMs, FALLBACK_CHROMIUM_VERSION)
+                when (val second = runSingleWebSocketFetch(ssml, timeoutMs, SECONDARY_CHROMIUM_VERSION)) {
+                    is WsFetchOutcome.Success -> second.mp3Bytes
+                    else -> {
+                        val third = runSingleWebSocketFetch(ssml, timeoutMs, FALLBACK_CHROMIUM_VERSION)
+                        (third as? WsFetchOutcome.Success)?.mp3Bytes
+                    }
+                }
+            }
+            is WsFetchOutcome.Failed -> {
+                val second = runSingleWebSocketFetch(ssml, timeoutMs, SECONDARY_CHROMIUM_VERSION)
                 (second as? WsFetchOutcome.Success)?.mp3Bytes
             }
-            is WsFetchOutcome.Failed -> null
         }
     }
 
@@ -206,6 +446,7 @@ object EdgeNeuralTtsClient {
                     .url(wsUrl)
                     .header("Pragma", "no-cache")
                     .header("Cache-Control", "no-cache")
+                    .header("Accept-Language", "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7")
                     .header("Origin", "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold")
                     .header(
                         "User-Agent",
@@ -216,9 +457,9 @@ object EdgeNeuralTtsClient {
                     .build()
 
                 val wsClient = RetrofitClient.okHttpClient.newBuilder()
-                    .connectTimeout(3_500L, TimeUnit.MILLISECONDS)
+                    .connectTimeout(4_000L, TimeUnit.MILLISECONDS)
                     .readTimeout(perFrameReadTimeoutMs, TimeUnit.MILLISECONDS)
-                    .writeTimeout(3_500L, TimeUnit.MILLISECONDS)
+                    .writeTimeout(4_000L, TimeUnit.MILLISECONDS)
                     .build()
 
                 val audioOut = ByteArrayOutputStream(16_384)

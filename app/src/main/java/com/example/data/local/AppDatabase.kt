@@ -286,9 +286,10 @@ val MIGRATION_27_28 = object : Migration(27, 28) {
         MilestoneEntity::class,
         LorebookEntity::class,
         LorebookEntryEntity::class,
-        BotLorebookLinkEntity::class
+        BotLorebookLinkEntity::class,
+        TurnRollbackSnapshotEntity::class
     ],
-    version = 49,
+    version = 50,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -321,6 +322,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun routineDao(): RoutineDao
     abstract fun milestoneDao(): MilestoneDao
     abstract fun lorebookDao(): LorebookDao
+    abstract fun turnRollbackSnapshotDao(): TurnRollbackSnapshotDao
 
     companion object {
         val MIGRATION_28_29 = object : Migration(28, 29) {
@@ -810,6 +812,42 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_49_50 = object : Migration(49, 50) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `turn_rollback_snapshots` (" +
+                        "`messageId` TEXT NOT NULL, " +
+                        "`botId` TEXT NOT NULL, " +
+                        "`userMessageId` TEXT NOT NULL, " +
+                        "`turnStartedAt` INTEGER NOT NULL, " +
+                        "`turnCompletedAt` INTEGER NOT NULL, " +
+                        "`preBotEmotionJson` TEXT NOT NULL, " +
+                        "`preBotPrevEmotionJson` TEXT NOT NULL, " +
+                        "`preWorldAtmosphereJson` TEXT NOT NULL, " +
+                        "`preStoryDayCounter` INTEGER NOT NULL, " +
+                        "`preStoryCalendarDate` TEXT NOT NULL, " +
+                        "`preSceneTime` TEXT NOT NULL, " +
+                        "`preCurrentAge` INTEGER NOT NULL, " +
+                        "`preCastSnapshotJson` TEXT NOT NULL, " +
+                        "`createdFactIdsJson` TEXT NOT NULL, " +
+                        "`supersededFactsBackupJson` TEXT NOT NULL, " +
+                        "`createdEventIdsJson` TEXT NOT NULL, " +
+                        "`modifiedEventsBackupJson` TEXT NOT NULL, " +
+                        "`createdFragmentIdsJson` TEXT NOT NULL, " +
+                        "`createdMilestoneIdsJson` TEXT NOT NULL, " +
+                        "`createdRelationIdsJson` TEXT NOT NULL, " +
+                        "`createdCastIdsJson` TEXT NOT NULL, " +
+                        "`createdArchiveIdsJson` TEXT NOT NULL, " +
+                        "`createdEmotionHistoryIdsJson` TEXT NOT NULL, " +
+                        "`createdAffectionEventIdsJson` TEXT NOT NULL, " +
+                        "PRIMARY KEY(`messageId`)" +
+                        ")"
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_turn_rollback_snapshots_botId` ON `turn_rollback_snapshots` (`botId`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_turn_rollback_snapshots_userMessageId` ON `turn_rollback_snapshots` (`userMessageId`)")
+            }
+        }
+
         /** Bounded retention across all 7 diagnostic log tables so SQLite never grows unbounded. */
         val DIAGNOSTIC_LOG_TABLES = listOf(
             "prompt_violation_logs",
@@ -898,7 +936,8 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_45_46,
             MIGRATION_46_47,
             MIGRATION_47_48,
-            MIGRATION_48_49
+            MIGRATION_48_49,
+            MIGRATION_49_50
         )
 
         @Volatile

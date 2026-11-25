@@ -804,7 +804,29 @@ class EmochiRepository(
     internal val implicitCorrectionLogDao = db.implicitCorrectionLogDao()
     internal val archivedMemoryDao = db.archivedMemoryDao()
     internal val lorebookDao = db.lorebookDao()
+    internal val turnRollbackSnapshotDao = db.turnRollbackSnapshotDao()
     val lorebookManager = com.example.data.managers.LorebookManager(lorebookDao)
+
+    private data class TurnPreBaseline(
+        val botId: String,
+        val messageId: String,
+        val userMessageId: String,
+        val startedAt: Long,
+        val preFactIds: Set<Long>,
+        val preActiveFactMap: Map<Long, MemoryFactEntity>,
+        val preEventIds: Set<Long>,
+        val preActiveEventMap: Map<Long, MemoryEventEntity>,
+        val preFragmentIds: Set<Long>,
+        val preMilestoneIds: Set<String>,
+        val preRelationIds: Set<Long>,
+        val preCastIds: Set<Long>,
+        val preArchiveIds: Set<Long>,
+        val preEmotionHistoryIds: Set<Long>,
+        val preAffectionEventIds: Set<Long>
+    )
+
+    private val activeTurnBaselineMap = java.util.concurrent.ConcurrentHashMap<String, TurnPreBaseline>()
+    private val lastNarrativeMilestoneMsgCountMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     val lastRetrievalStageMap = java.util.concurrent.ConcurrentHashMap<String, String>()
     internal val regenerateCountMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -1391,6 +1413,7 @@ class EmochiRepository(
             emotionDao.deleteEmotionsForBot(id)
             fragmentDao.deleteFragmentsForBot(id)
             lorebookDao.deleteLinksForBot(id)
+            turnRollbackSnapshotDao.deleteForBot(id)
             botDao.deleteBotById(id)
         }
         context?.let { ctx ->
@@ -1403,6 +1426,7 @@ class EmochiRepository(
         db.withTransaction {
             emotionDao.deleteEmotionsForBot(botId)
             fragmentDao.deleteFragmentsForBot(botId)
+            turnRollbackSnapshotDao.deleteForBot(botId)
             val bot = botDao.getBotById(botId) ?: return@withTransaction
             val calculatedBaseline = EmotionState.calculateBaselineEmotionState(
                 aiName = bot.aiName,
@@ -1446,8 +1470,468 @@ class EmochiRepository(
     }
 
     suspend fun deleteMessage(id: String) {
-        messageDao.deleteMessageById(id)
+        val msg = try { messageDao.getMessageById(id) } catch (_: Exception) { null }
+        if (msg != null) {
+            rollbackMessageTurnData(
+                botId = msg.botId,
+                targetMessageId = id,
+                deleteTargetMessage = true
+            )
+        } else {
+            messageDao.deleteMessageById(id)
+        }
         autoBackupToStorage()
+    }
+
+    /**
+     * Captures exact pre-turn bot/cast state and existing record ID sets BEFORE a turn mutates DB.
+     * Paired with [finalizeTurnRollbackSnapshot] and [rollbackMessageTurnData] for 100% atomic rollback
+     * when a message is edited, regenerated, or deleted.
+     */
+    suspend fun captureTurnPreSnapshot(
+        botId: String,
+        messageId: String,
+        userMessageId: String = ""
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val bot = botDao.getBotById(botId) ?: return@withContext
+            val now = System.currentTimeMillis()
+            val allFacts = try { memoryFactDao.getActiveFacts(botId) } catch (_: Exception) { emptyList() }
+            val allEvents = try { memoryEventDao.getActiveEvents(botId) } catch (_: Exception) { emptyList() }
+            val allFragments = try { fragmentDao.getRecentFragments(botId, 400) } catch (_: Exception) { emptyList() }
+            val allMilestones = try { db.milestoneDao().getMilestonesForBot(botId) } catch (_: Exception) { emptyList() }
+            val allRelations = try { entityRelationDao.getRelationsForBot(botId) } catch (_: Exception) { emptyList() }
+            val allCast = try { castMemberDao.getCastMembersForBot(botId) } catch (_: Exception) { emptyList() }
+            val allCharEmotions = try { emotionDao.getEmotionsForBot(botId) } catch (_: Exception) { emptyList() }
+            val allArchives = try { archivedMemoryDao.getArchivesForBot(botId) } catch (_: Exception) { emptyList() }
+            val allEmoHistory = try { emotionHistoryDao.getRecentHistoryForBot(botId, 200) } catch (_: Exception) { emptyList() }
+            val allAffEventIds = queryLongIdsForTable("affection_events", botId)
+
+            val castJson = org.json.JSONObject().apply {
+                val castArr = org.json.JSONArray()
+                for (c in allCast) {
+                    castArr.put(org.json.JSONObject().apply {
+                        put("id", c.id)
+                        put("name", c.name)
+                        put("affectionScore", c.affectionScore)
+                        put("relationshipState", c.relationshipState)
+                        put("consecutivePositiveCount", c.consecutivePositiveCount)
+                        put("dailyAffectionGain", c.dailyAffectionGain)
+                        put("peakAffectionScore", c.peakAffectionScore)
+                        put("recoveryLockUntilMessageCount", c.recoveryLockUntilMessageCount)
+                        put("currentAge", c.currentAge)
+                        put("importanceScore", c.importanceScore)
+                    })
+                }
+                val emoArr = org.json.JSONArray()
+                for (ce in allCharEmotions) {
+                    emoArr.put(org.json.JSONObject().apply {
+                        put("characterName", ce.characterName)
+                        put("emotionState", ce.emotionState)
+                    })
+                }
+                put("cast", castArr)
+                put("charEmotions", emoArr)
+            }.toString()
+
+            activeTurnBaselineMap[messageId] = TurnPreBaseline(
+                botId = botId,
+                messageId = messageId,
+                userMessageId = userMessageId,
+                startedAt = now,
+                preFactIds = allFacts.map { it.id }.toSet(),
+                preActiveFactMap = allFacts.associateBy { it.id },
+                preEventIds = allEvents.map { it.id }.toSet(),
+                preActiveEventMap = allEvents.associateBy { it.id },
+                preFragmentIds = allFragments.map { it.id }.toSet(),
+                preMilestoneIds = allMilestones.map { it.id }.toSet(),
+                preRelationIds = allRelations.map { it.id }.toSet(),
+                preCastIds = allCast.map { it.id }.toSet(),
+                preArchiveIds = allArchives.map { it.id }.toSet(),
+                preEmotionHistoryIds = allEmoHistory.map { it.id }.toSet(),
+                preAffectionEventIds = allAffEventIds
+            )
+
+            turnRollbackSnapshotDao.upsert(
+                com.example.data.local.TurnRollbackSnapshotEntity(
+                    messageId = messageId,
+                    botId = botId,
+                    userMessageId = userMessageId,
+                    turnStartedAt = now,
+                    turnCompletedAt = now,
+                    preBotEmotionJson = bot.emotionState,
+                    preBotPrevEmotionJson = bot.previousEmotionState,
+                    preWorldAtmosphereJson = bot.worldAtmosphere,
+                    preStoryDayCounter = bot.storyDayCounter,
+                    preStoryCalendarDate = bot.storyCalendarDate,
+                    preSceneTime = bot.sceneTime,
+                    preCurrentAge = bot.currentAge,
+                    preCastSnapshotJson = castJson
+                )
+            )
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Diffs current DB records against the pre-turn baseline for [messageId] and records every
+     * newly created or mutated fact, Living Memory, hidden RAG fragment, milestone, relation,
+     * cast member, archive, emotion history, and affection event into `turn_rollback_snapshots`.
+     * Safe to invoke multiple times (once after main reply, again after post-turn extraction).
+     */
+    suspend fun finalizeTurnRollbackSnapshot(
+        botId: String,
+        messageId: String
+    ) = withContext(Dispatchers.IO) {
+        try {
+            val baseline = activeTurnBaselineMap[messageId] ?: return@withContext
+            val existingSnap = turnRollbackSnapshotDao.getByMessageId(messageId) ?: return@withContext
+
+            val curActiveFacts = try { memoryFactDao.getActiveFacts(botId) } catch (_: Exception) { emptyList() }
+            val curActiveEvents = try { memoryEventDao.getActiveEvents(botId) } catch (_: Exception) { emptyList() }
+            val curFragments = try { fragmentDao.getRecentFragments(botId, 400) } catch (_: Exception) { emptyList() }
+            val curMilestones = try { db.milestoneDao().getMilestonesForBot(botId) } catch (_: Exception) { emptyList() }
+            val curRelations = try { entityRelationDao.getRelationsForBot(botId) } catch (_: Exception) { emptyList() }
+            val curCast = try { castMemberDao.getCastMembersForBot(botId) } catch (_: Exception) { emptyList() }
+            val curArchives = try { archivedMemoryDao.getArchivesForBot(botId) } catch (_: Exception) { emptyList() }
+            val curEmoHistory = try { emotionHistoryDao.getRecentHistoryForBot(botId, 200) } catch (_: Exception) { emptyList() }
+            val curAffEventIds = queryLongIdsForTable("affection_events", botId)
+
+            fun mergeLongIds(existingJson: String, newIds: Iterable<Long>): String {
+                val merged = LinkedHashSet<Long>()
+                try {
+                    val arr = org.json.JSONArray(existingJson)
+                    for (i in 0 until arr.length()) merged.add(arr.getLong(i))
+                } catch (_: Exception) {}
+                merged.addAll(newIds)
+                return org.json.JSONArray(merged.toList()).toString()
+            }
+
+            fun mergeStringIds(existingJson: String, newIds: Iterable<String>): String {
+                val merged = LinkedHashSet<String>()
+                try {
+                    val arr = org.json.JSONArray(existingJson)
+                    for (i in 0 until arr.length()) merged.add(arr.getString(i))
+                } catch (_: Exception) {}
+                merged.addAll(newIds)
+                return org.json.JSONArray(merged.toList()).toString()
+            }
+
+            val createdFactIds = curActiveFacts.map { it.id }.filter { it !in baseline.preFactIds }
+            val curActiveFactIds = curActiveFacts.map { it.id }.toSet()
+
+            // Backup any pre-turn active fact that was superseded/deleted during this turn
+            val supersededArr = try { org.json.JSONArray(existingSnap.supersededFactsBackupJson) } catch (_: Exception) { org.json.JSONArray() }
+            val alreadyBackedUpFactIds = HashSet<Long>()
+            for (i in 0 until supersededArr.length()) {
+                alreadyBackedUpFactIds.add(supersededArr.optJSONObject(i)?.optLong("id", -1L) ?: -1L)
+            }
+            for ((oldId, oldFact) in baseline.preActiveFactMap) {
+                if (oldId !in curActiveFactIds && oldId !in alreadyBackedUpFactIds) {
+                    supersededArr.put(org.json.JSONObject().apply {
+                        put("id", oldFact.id)
+                        put("confidence", oldFact.confidence)
+                        put("userCorrected", oldFact.userCorrected)
+                        put("lastConfirmedAt", oldFact.lastConfirmedAt)
+                    })
+                    alreadyBackedUpFactIds.add(oldId)
+                }
+            }
+
+            val createdEventIds = curActiveEvents.map { it.id }.filter { it !in baseline.preEventIds }
+
+            // Backup any pre-turn active event that was enriched/modified during this turn
+            val modEventsArr = try { org.json.JSONArray(existingSnap.modifiedEventsBackupJson) } catch (_: Exception) { org.json.JSONArray() }
+            val alreadyBackedUpEventIds = HashSet<Long>()
+            for (i in 0 until modEventsArr.length()) {
+                alreadyBackedUpEventIds.add(modEventsArr.optJSONObject(i)?.optLong("id", -1L) ?: -1L)
+            }
+            val curEventById = curActiveEvents.associateBy { it.id }
+            for ((oldId, oldEv) in baseline.preActiveEventMap) {
+                val curEv = curEventById[oldId]
+                if ((curEv == null || curEv.description != oldEv.description || curEv.importanceScore != oldEv.importanceScore) && oldId !in alreadyBackedUpEventIds) {
+                    modEventsArr.put(org.json.JSONObject().apply {
+                        put("id", oldEv.id)
+                        put("description", oldEv.description)
+                        put("importanceScore", oldEv.importanceScore)
+                        put("timestamp", oldEv.timestamp)
+                        put("embedding", oldEv.embedding)
+                    })
+                    alreadyBackedUpEventIds.add(oldId)
+                }
+            }
+
+            val createdFragmentIds = curFragments.map { it.id }.filter { it !in baseline.preFragmentIds }
+            val createdMilestoneIds = curMilestones.map { it.id }.filter { it !in baseline.preMilestoneIds }
+            val createdRelationIds = curRelations.map { it.id }.filter { it !in baseline.preRelationIds }
+            val createdCastIds = curCast.map { it.id }.filter { it !in baseline.preCastIds }
+            val createdArchiveIds = curArchives.map { it.id }.filter { it !in baseline.preArchiveIds }
+            val createdEmoHistoryIds = curEmoHistory.map { it.id }.filter { it !in baseline.preEmotionHistoryIds }
+            val createdAffEventIds = curAffEventIds.filter { it !in baseline.preAffectionEventIds }
+
+            turnRollbackSnapshotDao.upsert(
+                existingSnap.copy(
+                    turnCompletedAt = System.currentTimeMillis(),
+                    createdFactIdsJson = mergeLongIds(existingSnap.createdFactIdsJson, createdFactIds),
+                    supersededFactsBackupJson = supersededArr.toString(),
+                    createdEventIdsJson = mergeLongIds(existingSnap.createdEventIdsJson, createdEventIds),
+                    modifiedEventsBackupJson = modEventsArr.toString(),
+                    createdFragmentIdsJson = mergeLongIds(existingSnap.createdFragmentIdsJson, createdFragmentIds),
+                    createdMilestoneIdsJson = mergeStringIds(existingSnap.createdMilestoneIdsJson, createdMilestoneIds),
+                    createdRelationIdsJson = mergeLongIds(existingSnap.createdRelationIdsJson, createdRelationIds),
+                    createdCastIdsJson = mergeLongIds(existingSnap.createdCastIdsJson, createdCastIds),
+                    createdArchiveIdsJson = mergeLongIds(existingSnap.createdArchiveIdsJson, createdArchiveIds),
+                    createdEmotionHistoryIdsJson = mergeLongIds(existingSnap.createdEmotionHistoryIdsJson, createdEmoHistoryIds),
+                    createdAffectionEventIdsJson = mergeLongIds(existingSnap.createdAffectionEventIdsJson, createdAffEventIds)
+                )
+            )
+        } catch (_: Exception) {}
+    }
+
+    private fun queryLongIdsForTable(tableName: String, botId: String): Set<Long> {
+        val out = HashSet<Long>()
+        try {
+            val cursor = db.openHelper.readableDatabase.query(
+                "SELECT id FROM `$tableName` WHERE botId = ?",
+                arrayOf<Any>(botId)
+            )
+            cursor.use {
+                while (it.moveToNext()) {
+                    out.add(it.getLong(0))
+                }
+            }
+        } catch (_: Exception) {}
+        return out
+    }
+
+    /**
+     * Atomically rolls back EVERY memory, hidden RAG fragment, Living Memory, milestone, relation,
+     * archive, auto-added cast member, bot emotion/calendar/age, and side-character emotion change
+     * produced by [targetMessageId] (supports both assistant and user message IDs, plus timestamp fallback
+     * for pre-v50 legacy messages).
+     */
+    suspend fun rollbackMessageTurnData(
+        botId: String,
+        targetMessageId: String,
+        deleteTargetMessage: Boolean = false
+    ): Boolean = withContext(Dispatchers.IO) {
+        val result = db.withTransaction {
+            val snapshot = turnRollbackSnapshotDao.getByMessageId(targetMessageId)
+                ?: turnRollbackSnapshotDao.getByUserMessageId(targetMessageId)
+
+            val targetMsg = try { messageDao.getMessageById(targetMessageId) } catch (_: Exception) { null }
+            val allMsgsBefore = try { messageDao.getMessagesForBotList(botId) } catch (_: Exception) { emptyList() }
+            val targetIdx = allMsgsBefore.indexOfFirst { it.id == targetMessageId }
+
+            fun parseLongIds(json: String): List<Long> {
+                val out = mutableListOf<Long>()
+                try {
+                    val arr = org.json.JSONArray(json)
+                    for (i in 0 until arr.length()) out.add(arr.getLong(i))
+                } catch (_: Exception) {}
+                return out
+            }
+
+            fun parseStringIds(json: String): List<String> {
+                val out = mutableListOf<String>()
+                try {
+                    val arr = org.json.JSONArray(json)
+                    for (i in 0 until arr.length()) out.add(arr.getString(i))
+                } catch (_: Exception) {}
+                return out
+            }
+
+            val sqlite = db.openHelper.writableDatabase
+
+            if (snapshot != null) {
+                // 1. Delete all newly created facts, events, hidden RAG fragments, milestones, relations, archives, history
+                for (id in parseLongIds(snapshot.createdFactIdsJson)) {
+                    try { memoryFactDao.deleteFact(id) } catch (_: Exception) {}
+                }
+                for (id in parseLongIds(snapshot.createdEventIdsJson)) {
+                    try { memoryEventDao.deleteEvent(id) } catch (_: Exception) {}
+                }
+                for (id in parseLongIds(snapshot.createdFragmentIdsJson)) {
+                    try { sqlite.execSQL("DELETE FROM memory_fragments WHERE id = ?", arrayOf<Any>(id)) } catch (_: Exception) {}
+                }
+                for (mId in parseStringIds(snapshot.createdMilestoneIdsJson)) {
+                    try { sqlite.execSQL("DELETE FROM milestones WHERE id = ?", arrayOf<Any>(mId)) } catch (_: Exception) {}
+                }
+                for (id in parseLongIds(snapshot.createdRelationIdsJson)) {
+                    try { entityRelationDao.deleteRelation(id) } catch (_: Exception) {}
+                }
+                for (id in parseLongIds(snapshot.createdArchiveIdsJson)) {
+                    try { sqlite.execSQL("DELETE FROM archived_memories WHERE id = ?", arrayOf<Any>(id)) } catch (_: Exception) {}
+                }
+                for (id in parseLongIds(snapshot.createdEmotionHistoryIdsJson)) {
+                    try { sqlite.execSQL("DELETE FROM emotion_history WHERE id = ?", arrayOf<Any>(id)) } catch (_: Exception) {}
+                }
+                for (id in parseLongIds(snapshot.createdAffectionEventIdsJson)) {
+                    try { sqlite.execSQL("DELETE FROM affection_events WHERE id = ?", arrayOf<Any>(id)) } catch (_: Exception) {}
+                }
+
+                // 2. Delete newly auto-added cast members & their character emotions
+                val createdCastIds = parseLongIds(snapshot.createdCastIdsJson).toSet()
+                if (createdCastIds.isNotEmpty()) {
+                    val curCast = try { castMemberDao.getCastMembersForBot(botId) } catch (_: Exception) { emptyList() }
+                    for (c in curCast) {
+                        if (c.id in createdCastIds) {
+                            try { emotionDao.deleteByCharacterName(botId, c.name) } catch (_: Exception) {}
+                            try { castMemberDao.deleteCastMember(c.id) } catch (_: Exception) {}
+                        }
+                    }
+                }
+
+                // 3. Restore superseded / deleted Neural Vault facts back to active state
+                try {
+                    val supArr = org.json.JSONArray(snapshot.supersededFactsBackupJson)
+                    for (i in 0 until supArr.length()) {
+                        val obj = supArr.optJSONObject(i) ?: continue
+                        val factId = obj.optLong("id", -1L)
+                        if (factId <= 0L) continue
+                        val fact = try { memoryFactDao.getFactById(factId) } catch (_: Exception) { null }
+                        if (fact != null) {
+                            memoryFactDao.updateFact(
+                                fact.copy(
+                                    supersededBy = null,
+                                    confidence = obj.optString("confidence", fact.confidence),
+                                    userCorrected = obj.optBoolean("userCorrected", fact.userCorrected),
+                                    lastConfirmedAt = obj.optLong("lastConfirmedAt", fact.lastConfirmedAt)
+                                )
+                            )
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                // 4. Restore enriched / modified Living Memories back to pre-turn text & score
+                try {
+                    val evArr = org.json.JSONArray(snapshot.modifiedEventsBackupJson)
+                    for (i in 0 until evArr.length()) {
+                        val obj = evArr.optJSONObject(i) ?: continue
+                        val evId = obj.optLong("id", -1L)
+                        if (evId <= 0L) continue
+                        sqlite.execSQL(
+                            "UPDATE memory_events SET description = ?, importanceScore = ?, timestamp = ?, embedding = ?, supersededBy = NULL WHERE id = ?",
+                            arrayOf<Any>(
+                                obj.optString("description", ""),
+                                obj.optInt("importanceScore", 70),
+                                obj.optLong("timestamp", System.currentTimeMillis()),
+                                obj.optString("embedding", ""),
+                                evId
+                            )
+                        )
+                    }
+                } catch (_: Exception) {}
+
+                // 5. Restore BotEntity emotion, previousEmotion, worldAtmosphere, calendar, day, sceneTime & age
+                val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
+                if (bot != null && snapshot.preBotEmotionJson.isNotBlank()) {
+                    botDao.insertOrUpdate(
+                        bot.copy(
+                            emotionState = snapshot.preBotEmotionJson,
+                            previousEmotionState = snapshot.preBotPrevEmotionJson.ifBlank { snapshot.preBotEmotionJson },
+                            worldAtmosphere = snapshot.preWorldAtmosphereJson.ifBlank { bot.worldAtmosphere },
+                            storyDayCounter = snapshot.preStoryDayCounter,
+                            storyCalendarDate = snapshot.preStoryCalendarDate,
+                            sceneTime = snapshot.preSceneTime,
+                            currentAge = snapshot.preCurrentAge,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+
+                // 6. Restore ALL side cast members & CharacterEmotionEntity states
+                try {
+                    val castRoot = org.json.JSONObject(snapshot.preCastSnapshotJson)
+                    val castArr = castRoot.optJSONArray("cast")
+                    if (castArr != null) {
+                        val currentCastById = castMemberDao.getCastMembersForBot(botId).associateBy { it.id }
+                        for (i in 0 until castArr.length()) {
+                            val obj = castArr.optJSONObject(i) ?: continue
+                            val cid = obj.optLong("id", -1L)
+                            val cur = currentCastById[cid] ?: continue
+                            castMemberDao.updateCastMember(
+                                cur.copy(
+                                    affectionScore = obj.optInt("affectionScore", cur.affectionScore),
+                                    relationshipState = obj.optString("relationshipState", cur.relationshipState),
+                                    consecutivePositiveCount = obj.optInt("consecutivePositiveCount", cur.consecutivePositiveCount),
+                                    dailyAffectionGain = obj.optInt("dailyAffectionGain", cur.dailyAffectionGain),
+                                    peakAffectionScore = obj.optInt("peakAffectionScore", cur.peakAffectionScore),
+                                    recoveryLockUntilMessageCount = obj.optInt("recoveryLockUntilMessageCount", cur.recoveryLockUntilMessageCount),
+                                    currentAge = obj.optInt("currentAge", cur.currentAge),
+                                    importanceScore = obj.optInt("importanceScore", cur.importanceScore)
+                                )
+                            )
+                        }
+                    }
+                    val emoArr = castRoot.optJSONArray("charEmotions")
+                    if (emoArr != null) {
+                        for (i in 0 until emoArr.length()) {
+                            val obj = emoArr.optJSONObject(i) ?: continue
+                            val name = obj.optString("characterName", "")
+                            val emoJson = obj.optString("emotionState", "")
+                            if (name.isNotBlank() && emoJson.isNotBlank()) {
+                                val existingCe = emotionDao.getEmotionForCharacter(botId, name)
+                                if (existingCe != null) {
+                                    emotionDao.insertOrUpdate(existingCe.copy(emotionState = emoJson))
+                                } else {
+                                    emotionDao.insertOrUpdate(
+                                        com.example.data.local.CharacterEmotionEntity(
+                                            botId = botId,
+                                            characterName = name,
+                                            emotionState = emoJson
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {}
+
+                memoryFactDao.clearOrphanedSupersededBy(botId)
+                memoryEventDao.clearOrphanedSupersededBy(botId)
+                turnRollbackSnapshotDao.deleteByMessageId(snapshot.messageId)
+                activeTurnBaselineMap.remove(snapshot.messageId)
+            } else if (targetMsg != null) {
+                // Legacy pre-v50 fallback: clean up side effects within this message's timestamp window
+                val windowStart = (targetMsg.timestamp - 2000L).coerceAtLeast(0L)
+                val nextMsgTs = if (targetIdx in 0 until (allMsgsBefore.size - 1)) {
+                    allMsgsBefore[targetIdx + 1].timestamp - 500L
+                } else {
+                    System.currentTimeMillis() + 60_000L
+                }
+                val windowEnd = maxOf(targetMsg.timestamp + 15_000L, nextMsgTs)
+                try { sqlite.execSQL("DELETE FROM memory_facts WHERE botId = ? AND isBotSaved = 1 AND userCorrected = 0 AND lastConfirmedAt >= ? AND lastConfirmedAt <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM memory_events WHERE botId = ? AND isBotSaved = 1 AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM memory_fragments WHERE botId = ? AND createdAt >= ? AND createdAt <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM milestones WHERE botId = ? AND reachedAt >= ? AND reachedAt <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM archived_memories WHERE botId = ? AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM emotion_history WHERE botId = ? AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM affection_events WHERE botId = ? AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM cast_members WHERE botId = ? AND isAutoAdded = 1 AND firstAppearedAt >= ? AND firstAppearedAt <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                memoryFactDao.clearOrphanedSupersededBy(botId)
+                memoryEventDao.clearOrphanedSupersededBy(botId)
+
+                // Restore BotEntity emotion to the latest remaining EmotionHistory (if this was the latest turn)
+                if (targetIdx == allMsgsBefore.lastIndex || targetIdx == allMsgsBefore.lastIndex - 1) {
+                    val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
+                    if (bot != null) {
+                        val lastHist = try { emotionHistoryDao.getRecentHistoryForBot(botId, 1).firstOrNull() } catch (_: Exception) { null }
+                        val restoredEmo = lastHist?.fullVectorJson?.takeIf { it.isNotBlank() }
+                            ?: bot.previousEmotionState.takeIf { it.isNotBlank() }
+                            ?: getStoredBaselineResult(bot).baselineEmotionState.toJson()
+                        botDao.insertOrUpdate(bot.copy(emotionState = restoredEmo, previousEmotionState = restoredEmo, updatedAt = System.currentTimeMillis()))
+                    }
+                }
+            }
+
+            if (deleteTargetMessage) {
+                messageDao.deleteMessageById(targetMessageId)
+            }
+            true
+        }
+        invalidateMemoryCache(botId)
+        lastUnlockedMilestoneMap.remove(botId)
+        result
     }
 
     private val lastUnlockedMilestoneMap = java.util.concurrent.ConcurrentHashMap<String, com.example.data.local.MilestoneEntity>()
@@ -1474,12 +1958,18 @@ class EmochiRepository(
     /**
      * Channel 1 (System #18): Deterministic numeric milestones (trust 25/50/75/95, affection 30/60/85/95).
      * Strictly deduplicated per (botId, milestoneKey) so score oscillations (e.g. 50 -> 45 -> 52) NEVER re-trigger.
+     * When [suppressBaselineSpam] is true (live chat turns), thresholds already met at baseline (e.g., default 50/50)
+     * are silently seeded without popping a celebration banner, and banners require genuine upward crossing + >= 6 messages.
      */
     suspend fun checkAndSaveMilestone(
         botId: String,
         affection: Int,
         trust: Int,
-        reachedAt: Long = System.currentTimeMillis()
+        reachedAt: Long = System.currentTimeMillis(),
+        previousAffection: Int? = null,
+        previousTrust: Int? = null,
+        messageCount: Int? = null,
+        suppressBaselineSpam: Boolean = false
     ): com.example.data.local.MilestoneEntity? {
         val milestoneDao = db.milestoneDao()
         val reached = milestoneDao.getReachedMilestoneTypes(botId).toMutableSet()
@@ -1487,6 +1977,10 @@ class EmochiRepository(
         val dayCounter = bot?.storyDayCounter ?: 1L
         val calDate = bot?.storyCalendarDate.orEmpty()
         var highestNewlyUnlocked: com.example.data.local.MilestoneEntity? = null
+
+        val baselineEmo = if (suppressBaselineSpam && bot != null) {
+            try { getStoredBaselineResult(bot).baselineEmotionState } catch (_: Exception) { null }
+        } else null
 
         for (def in com.example.data.local.MilestoneDefinitions.all) {
             if (def.type in reached || milestoneDao.hasMilestoneKey(botId, def.type)) continue
@@ -1509,7 +2003,22 @@ class EmochiRepository(
                 )
                 milestoneDao.insertMilestone(milestone)
                 reached.add(def.type)
-                highestNewlyUnlocked = milestone
+
+                if (suppressBaselineSpam) {
+                    val prevVal = if (def.field == "affection") {
+                        previousAffection ?: baselineEmo?.affection ?: 50
+                    } else {
+                        previousTrust ?: baselineEmo?.trust ?: 50
+                    }
+                    val baselineVal = if (def.field == "affection") (baselineEmo?.affection ?: 50) else (baselineEmo?.trust ?: 50)
+                    val crossedUpward = prevVal < def.threshold && baselineVal < def.threshold
+                    val enoughMessages = (messageCount ?: 0) >= 6
+                    if (crossedUpward && enoughMessages) {
+                        highestNewlyUnlocked = milestone
+                    }
+                } else {
+                    highestNewlyUnlocked = milestone
+                }
             }
         }
         return highestNewlyUnlocked
@@ -1517,7 +2026,9 @@ class EmochiRepository(
 
     /**
      * Channel 2 (System #18): AI narrative milestone from [[STATE_JSON]] "mile":{"k","t","d"} (0 extra API calls).
-     * Normalized unique key prevents duplicate inserts and stamps story calendar day/date.
+     * Normalized unique key + semantic title dedup prevents duplicate inserts.
+     * When [enforceAntiSpam] is true (live chat turns), enforces minimum 8 messages + 12-message cooldown
+     * so narrative milestones stay genuinely rare and meaningful.
      */
     suspend fun recordNarrativeMilestone(
         botId: String,
@@ -1526,7 +2037,9 @@ class EmochiRepository(
         rawDescription: String = "",
         affection: Int? = null,
         trust: Int? = null,
-        reachedAt: Long = System.currentTimeMillis()
+        reachedAt: Long = System.currentTimeMillis(),
+        currentMessageCount: Int? = null,
+        enforceAntiSpam: Boolean = false
     ): com.example.data.local.MilestoneEntity? {
         val cleanTitle = rawTitle.trim()
         val normalizedKey = com.example.data.local.MilestoneDefinitions.normalizeMilestoneKey(
@@ -1537,6 +2050,27 @@ class EmochiRepository(
 
         val milestoneDao = db.milestoneDao()
         if (milestoneDao.hasMilestoneKey(botId, normalizedKey)) return null
+
+        val existingMilestones = try { milestoneDao.getMilestonesForBot(botId) } catch (_: Exception) { emptyList() }
+        // Reject near-duplicate milestone titles even if LLM invented a new key
+        val duplicateTitle = existingMilestones.any { existing ->
+            val overlap = TurkishTextAnalyzer.stemOverlapRatio(existing.displayTitle, cleanTitle)
+            existing.displayTitle.equals(cleanTitle, ignoreCase = true) || overlap >= 0.62f
+        }
+        if (duplicateTitle) return null
+
+        if (enforceAntiSpam) {
+            val msgCount = currentMessageCount ?: try { messageDao.getMessageCountForBot(botId) } catch (_: Exception) { 0 }
+            if (msgCount < 8) return null
+            val lastNarrMsgCount = lastNarrativeMilestoneMsgCountMap[botId] ?: 0
+            val existingNarrCount = existingMilestones.count { it.isNarrative }
+            val lastNarrTime = existingMilestones.filter { it.isNarrative }.maxOfOrNull { it.reachedAt } ?: 0L
+            val msgsSinceLast = msgCount - lastNarrMsgCount
+            if (lastNarrMsgCount > 0 && msgsSinceLast < 12) return null
+            if (lastNarrTime > 0L && (reachedAt - lastNarrTime) < 10 * 60_000L && msgsSinceLast < 10) return null
+            // Overall density cap: never more than 1 narrative milestone per 10 messages
+            if (existingNarrCount >= (msgCount / 10).coerceAtLeast(1)) return null
+        }
 
         val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
         val emo = try { bot?.let { EmotionState.fromJson(it.emotionState) } } catch (_: Exception) { null }
@@ -1559,6 +2093,9 @@ class EmochiRepository(
             reachedAt = reachedAt
         )
         milestoneDao.insertMilestone(milestone)
+        if (currentMessageCount != null && currentMessageCount > 0) {
+            lastNarrativeMilestoneMsgCountMap[botId] = currentMessageCount
+        }
         return milestone
     }
 
@@ -1616,6 +2153,7 @@ class EmochiRepository(
             memoryCheckpointDao.deleteCheckpointsAfterMessageIndexOrTimestamp(botId, targetMsgCount, targetTimestamp)
             affectionEventDao.deleteAffectionEventsAfterTimestamp(botId, targetTimestamp)
             db.milestoneDao().deleteMilestonesAfterTimestamp(botId, targetTimestamp)
+            turnRollbackSnapshotDao.deleteAfterTimestamp(botId, targetTimestamp)
 
             val existingRelations = entityRelationDao.getRelationsForBot(botId)
             for (rel in existingRelations) {
@@ -2368,8 +2906,53 @@ class EmochiRepository(
     }
 
     /**
+     * Separate Hidden Background RAG writer (`memory_fragments`):
+     * Stores contextual, ephemeral, or mid-importance story details (importance 3..6)
+     * so Hybrid RAG recalls them seamlessly in future turns WITHOUT cluttering the user-visible Neural Vault.
+     */
+    suspend fun saveHiddenRagFragment(
+        botId: String,
+        content: String,
+        category: String = "RAG_CONTEXT",
+        rawUserText: String = ""
+    ): Boolean = withContext(Dispatchers.IO) {
+        val clean = content.trim().take(360)
+        if (clean.length < 8) return@withContext false
+        if (MemoryEngine.isTrivialNoiseFact(category, clean, 4)) return@withContext false
+        if (MemoryEngine.isRawChatOrUserMessageFact(category, clean, rawUserText)) return@withContext false
+
+        val recent = try { fragmentDao.getRecentFragments(botId, 60) } catch (_: Exception) { emptyList() }
+        val normClean = TurkishTextAnalyzer.normalize(clean)
+        val isDup = recent.any { existing ->
+            val exNorm = TurkishTextAnalyzer.normalize(existing.content)
+            exNorm == normClean || TurkishTextAnalyzer.stemOverlapRatio(exNorm, normClean) >= 0.82f
+        }
+        if (isDup) return@withContext false
+
+        fragmentDao.insertFragment(
+            MemoryFragmentEntity(
+                id = 0L,
+                botId = botId,
+                content = clean,
+                category = category.ifBlank { "RAG_CONTEXT" },
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        invalidateMemoryCache(botId)
+        true
+    }
+
+    suspend fun getHiddenRagFragmentCount(botId: String): Int = withContext(Dispatchers.IO) {
+        val fragCount = try { fragmentDao.getRecentFragments(botId, 400).size } catch (_: Exception) { 0 }
+        val hiddenFactCount = try {
+            memoryFactDao.getActiveFacts(botId).count { !MemoryEngine.isVisibleInNeuralVault(it) }
+        } catch (_: Exception) { 0 }
+        fragCount + hiddenFactCount
+    }
+
+    /**
      * Inserts or supersedes a structured fact in the Neural Vault with instant 256-dim Turkish embedding,
-     * subject+key / semantic deduplication, soft-archive history, ★ user-lock protection, and cache invalidation.
+     * subject+key / semantic topic bucket deduplication, soft-archive history, ★ user-lock protection, and cache invalidation.
      */
     suspend fun upsertNeuralVaultFact(
         botId: String,
@@ -2384,7 +2967,8 @@ class EmochiRepository(
         ttlDays: Int = 0,
         importance: Int = 6,
         storyDay: Long? = null,
-        currentMessageCount: Int = 0
+        currentMessageCount: Int = 0,
+        rawUserText: String = ""
     ): Boolean = withContext(Dispatchers.IO) {
         val cleanSubject = subject.trim().take(48).ifBlank { "kullanıcı" }
         val cleanKey = key.trim().take(48).ifBlank { MemoryEngine.inferFactKey(value) }
@@ -2392,9 +2976,12 @@ class EmochiRepository(
         if (cleanValue.length < 4) return@withContext false
 
         // Code-side Cognitive Selectivity safety gate (Section 2):
-        // Never persist DISCARD / importance <= 2 / trivial physical choreography noise!
+        // Never persist DISCARD / importance <= 2 / trivial physical choreography / raw user chat filler!
         if (tier == MemoryTier.DISCARD || importance <= 2) return@withContext false
         if (!explicitUserOverride && MemoryEngine.isTrivialNoiseFact(cleanKey, cleanValue, importance)) {
+            return@withContext false
+        }
+        if (isBotSaved && !explicitUserOverride && MemoryEngine.isRawChatOrUserMessageFact(cleanKey, cleanValue, rawUserText)) {
             return@withContext false
         }
 
@@ -2448,6 +3035,7 @@ class EmochiRepository(
             s == normSubject || (s.length >= 3 && normSubject.length >= 3 && (s.contains(normSubject) || normSubject.contains(s)))
         }
 
+        val newTopicBucket = MemoryEngine.resolveSemanticTopicBucket(cleanKey, cleanValue)
         val toSupersede = mutableListOf<MemoryFactEntity>()
         for (existing in sameSubjectFacts) {
             val exKey = TurkishTextAnalyzer.normalize(existing.key)
@@ -2455,7 +3043,11 @@ class EmochiRepository(
             val exVec = jsonToFloatArray(existing.embeddingJson).takeIf { it.size == embeddingVec.size }
                 ?: MemoryEngine.computeTurkishFeatureEmbedding("${existing.subject} ${existing.key} ${existing.value}")
             val sim = cosineSimilarity(embeddingVec, exVec)
-            val keyMatches = exKey == normKey || TurkishTextAnalyzer.stemToken(exKey) == TurkishTextAnalyzer.stemToken(normKey)
+            val exTopicBucket = MemoryEngine.resolveSemanticTopicBucket(existing.key, existing.value)
+            val topicBucketMatches = newTopicBucket != null && exTopicBucket == newTopicBucket
+            val keyMatches = exKey == normKey ||
+                TurkishTextAnalyzer.stemToken(exKey) == TurkishTextAnalyzer.stemToken(normKey) ||
+                topicBucketMatches
 
             if (exVal == normValue || (sim >= 0.90f && !isContradictingText(existing.value, cleanValue))) {
                 val (reinforcedConfidence, _) = MemoryLifecycleCodec.withAccessHit(
@@ -2478,7 +3070,7 @@ class EmochiRepository(
                 return@withContext false
             }
 
-            if (keyMatches || sim >= 0.84f || (sim >= 0.65f && isContradictingText(existing.value, cleanValue))) {
+            if (keyMatches || sim >= 0.84f || (sim >= 0.58f && isContradictingText(existing.value, cleanValue))) {
                 toSupersede.add(existing)
             }
         }
@@ -2783,6 +3375,14 @@ class EmochiRepository(
                 MemoryEngine.inferFactSubject(cleanContent, bot?.userCharName?.ifBlank { "kullanıcı" } ?: "kullanıcı")
             }
             val resolvedKey = key.trim().ifBlank { MemoryEngine.inferFactKey(cleanContent) }
+            // Separate Hidden RAG vs Visible Neural Vault: ephemeral / low-mid importance items go to hidden RAG fragments
+            if (MemoryEngine.shouldRouteToHiddenRag(resolvedTier, importance, isUserExplicit = false)) {
+                return@withContext saveHiddenRagFragment(
+                    botId = botId,
+                    content = "$resolvedSubject ($resolvedKey): $cleanContent",
+                    category = if (resolvedTier == MemoryTier.EPHEMERAL) "RAG_EPHEMERAL" else "RAG_CONTEXT"
+                )
+            }
             val msgCount = try { messageDao.getMessagesForBotList(botId).size } catch (_: Exception) { 0 }
             upsertNeuralVaultFact(
                 botId = botId,
@@ -2834,7 +3434,7 @@ class EmochiRepository(
                         val ok = processSaveMemory(
                             botId = botId,
                             content = content,
-                            category = if (category.equals("event", ignoreCase = true) && content.length > 60) "fact" else category,
+                            category = category,
                             importance = importance,
                             subject = subject,
                             key = key,
@@ -2915,10 +3515,10 @@ class EmochiRepository(
         storyCalendarDateStr: String = "",
         isBotSaved: Boolean = true
     ): Boolean = withContext(Dispatchers.IO) {
-        if (salience < 7) return@withContext false
+        if (salience < 5) return@withContext false
         val cleanNarrative = narrative.trim()
         val cleanInner = innerThought.trim()
-        if (cleanNarrative.length < 30 || cleanInner.length < 10) return@withContext false
+        if (cleanNarrative.length < 20) return@withContext false
 
         if (rawChatTexts.isNotEmpty() && LivingMemoryCodec.isCopyPasteOfChat(cleanNarrative, rawChatTexts)) {
             return@withContext false
@@ -2937,7 +3537,7 @@ class EmochiRepository(
         )
         val searchable = LivingMemoryCodec.toSearchableText(encoded)
         val embeddingVec = MemoryEngine.computeTurkishFeatureEmbedding(searchable)
-        val newImportance = (salience * 10).coerceIn(70, 100)
+        val newImportance = (salience * 10).coerceIn(50, 100)
         val normPov = TurkishTextAnalyzer.normalize(povCharacter)
 
         // Section 4.4: Enrich existing memory on same story day + same POV (cosine >= 0.78) instead of duplicating
@@ -2970,9 +3570,9 @@ class EmochiRepository(
                     povCharacter = povCharacter,
                     title = title.ifBlank { exParsed.title },
                     emotionTag = emotionTag.ifBlank { exParsed.emotionTag },
-                    salience = (upgradedImportance / 10).coerceIn(7, 10),
+                    salience = (upgradedImportance / 10).coerceIn(5, 10),
                     narrative = cleanNarrative,
-                    innerThought = cleanInner
+                    innerThought = cleanInner.ifBlank { exParsed.innerThought }
                 )
                 val enrichedVec = MemoryEngine.computeTurkishFeatureEmbedding(LivingMemoryCodec.toSearchableText(enrichedEncoded))
                 memoryEventDao.updateEvent(
@@ -2987,14 +3587,14 @@ class EmochiRepository(
                 return@withContext true
             }
 
-            if (sim >= 0.82f || overlap >= 0.75f) {
+            if (sim >= 0.84f || overlap >= 0.78f) {
                 return@withContext false
             }
         }
 
-        // Anti-spam cooldown for brand new memories unless extraordinary (salience >= 9)
+        // Light anti-spam cooldown (20s) for moderate memories; high-impact (>= 7) always commits immediately
         val latestTimestamp = activeEvents.maxOfOrNull { it.timestamp } ?: 0L
-        if (latestTimestamp > 0L && (now - latestTimestamp) < 90_000L && salience < 9) {
+        if (latestTimestamp > 0L && (now - latestTimestamp) < 20_000L && salience < 7) {
             return@withContext false
         }
 
@@ -3039,7 +3639,8 @@ class EmochiRepository(
         bot: BotEntity,
         recentMessages: List<MessageEntity>,
         latestUserMsg: String,
-        latestAiReply: String
+        latestAiReply: String,
+        sourceMessageId: String? = null
     ): MemoryCommitSummary = withContext(Dispatchers.IO) {
         if (bot.id.startsWith("book_") || bot.mode == "book") return@withContext MemoryCommitSummary()
 
@@ -3126,37 +3727,35 @@ class EmochiRepository(
         }
 
         val systemPrompt = """
-Sen Emochi'nin 10/10 İnsan Benzeri Neural Vault Küratörü ve Çoklu Bakış Açılı Anı Mimarısın.
+Sen Emochi'nin İki Katmanlı Bellek Küratörü (Görünür Neural Vault + Gizli Arka Plan RAG) ve Anı Mimarısın.
 Yalnızca GEÇERLİ JSON üret; markdown veya ek açıklama YAZMA.
 
-1) "vault_ops" (4 KATMANLI BİLİŞSEL SEÇİCİLİK + TAM CRUD):
-   - Mevcut kayıtları [#ID] biçiminde görürsün. ★ işaretli kayıtlar KULLANICI KİLİTLİDİR; kullanıcı bu turda açıkça değiştir/unut/sil demedikçe ★ kayıtlara dokunma.
-   - BAĞLAMSAL ELEME RUBRİĞİ (Kelimelere değil, olayın hikâyedeki sonucuna ve duygusal ağırlığına bak!):
-     * KURAL 1 (DISCARD / importance 1-2 — ASLA KAYDETME): Sahneyi ileri taşımayan rutin fiziksel hareketler ve dolgu jestler ("elini masaya koydu", "derin nefes aldı", "pencereden baktı", "arkasına yaslandı", "gülümsedi", "kapıyı kapattı", detaysız "yemek yedi") KESİNLİKLE kaydedilmez!
-     * KURAL 2 (BAĞLAMSAL YÜKSELTME İSTİSNASI): Aynı fiziksel hareket sahnenin kaderini, güveni, suçu veya duygusal sınırı değiştiriyorsa KAYDET:
-       - "Elini masaya koydu" -> AT (kaydetme)
-       - "Elini masadaki gizli dosyaya koyup kanıtı sakladı" -> KAYDET (tier="arc" veya "core", importance=8)
-       - "Elini omzuna koydu ve yürümeye devam etti" -> AT (kaydetme)
-       - "Yirmi yıl sonra ilk kez birine güvenip elini elinin üstüne koydu, geri çekilmedi" -> KAYDET (tier="core" + living_memory)
-       - Detaysız "Yemek yedi" -> AT | "Akşam sarımsaklı kremalı mantarlı makarna yaptı, birlikte yediler" -> KAYDET (tier="ephemeral", ttl_days=3, importance=4)
-     * KURAL 3 (KATMANLAR VE ÖMÜR):
-       - "ephemeral" (ttl_days: 2-3, importance: 3-5): 1-3 hikâye günü içinde atıf yapılabilecek gündelik geçici detaylar (yenen yemek, giyilen ceket, hafif baş ağrısı, sehpada bırakılan anahtar).
-       - "arc" (ttl_days: 10-14, importance: 6-7): Devam eden görev, yaralanma/sargı, geçici küslük gibi orta vadeli sahne durumları.
-       - "core" (ttl_days: 0, importance: 8-10): Kalıcı kimlik, sırlar, kalıcı tercihler, travmalar, ilişkiler, büyük yeminler.
-   - {"op":"add","subject":"...","key":"1-3 kelime","value":"net olgusal değer","confidence":"certain","tier":"ephemeral|arc|core","ttl_days":3,"importance":4}
-   - {"op":"update","id":19,"new_value":"güncel değer","reason":"kısa neden"} -> mevcut #ID değiştiyse.
-   - {"op":"delete","id":24,"reason":"kısa neden"} -> mevcut #ID geçersizleştiyse veya kullanıcı yanlış olduğunu belirttiyse.
+1) "vault_ops" (NEURAL VAULT vs GİZLİ RAG AYRIMI + ZORUNLU GÜNCELLEME/SİLME):
+   - Mevcut görünür Neural Vault kayıtlarını [#ID] biçiminde görürsün. ★ işaretli kayıtlar KULLANICI KİLİTLİDİR; kullanıcı bu turda açıkça değiştir/unut/sil demedikçe ★ kayıtlara dokunma.
+   - KURAL 1 (ASLA KAYDETME / DISCARD — importance 1-2):
+     * KULLANICI MESAJLARINI HAM HALİYLE ASLA KAYDETME! ("Kullanıcı merhaba dedi", "Kullanıcı bunu sordu", soru cümleleri, sohbet dolgu sözleri, rutin jestler: "elini masaya koydu", "derin nefes aldı", "gülümsedi") KESİNLİKLE KAYDEDİLMEZ!
+   - KURAL 2 (NEURAL VAULT = YALNIZCA EN ÖNEMLİ KALICI BİLGİLER — tier="core" veya "arc", importance: 7-10):
+     * Görünür Neural Vault'a SADECE hikâyeyi gerçekten şekillendiren, kalıcı ve yüksek öneme sahip olgular girer: kimlik, sırlar, verilen sözler, büyük ilişki değişimleri, kalıcı yetenekler/güçler, hayati görevler, kalıcı yaralar, kritik itiraflar.
+     * Özlü, 3. tekil şahıs, temiz olgusal cümle yaz (asla ham diyalog kopyalama!).
+   - KURAL 3 (GİZLİ ARKA PLAN RAG — tier="ephemeral", importance: 3-6):
+     * Yenen yemek, giyilen kıyafet, anlık mekân/hava, küçük ipuçları, orta seviye sahne detaylarını tier="ephemeral" ve importance=4-6 ile ver; uygulama bunları kullanıcıyı boğmadan GİZLİ ARKA PLAN RAG hafızasına yazar (Neural Vault'a koymaz!).
+   - KURAL 4 (DEĞİŞEN OLAYLARI MUTLAKA GÜNCELLE VEYA SİL!):
+     * Mevcut [#ID] kaydındaki bir durum değiştiyse (ör. konum değişti, yara iyileşti, kavga bitti, ilişki ilerledi, plan iptal oldu) YENİ KAYIT EKLEME; mutlaka {"op":"update","id":19,"new_value":"güncel durum","reason":"durum değişti"} veya artık geçersizse {"op":"delete","id":24,"reason":"artık geçersiz"} kullan!
+   - {"op":"add","subject":"...","key":"1-3 kelime","value":"özlü olgusal bilgi","confidence":"certain","tier":"ephemeral|arc|core","ttl_days":3,"importance":8}
    - Zaten kayıtlı olan veya Kanal A'da yapılmış işlemi ASLA tekrarlama; değişiklik yoksa [] bırak.
 
-2) "living_memory" (Yaşanan Anı — ACIMASIZ SEÇİCİLİK!):
-   - Sıradan turların %80-85'inde KESİNLİKLE null döndür!
-   - Yalnızca salience >= 7 (büyük itiraf, ihanet, hayati kurtarış, sarsıcı sır, kutsal yemin, kırılma noktası, derin yakınlaşma) ise doldur.
-   - ASLA sohbetten kopyala-yapıştır yapma!
-   - "pov_character": Bu sahnede duygusal olarak EN ÇOK sarsılan karakter ($userChar, $aiChar veya yan karakter).
+2) "living_memory" (Yaşanan Anılar — ÖNEMLİ ANLARI ASLA KAÇIRMA!):
+   - Sahnede anlamlı bir duygusal bağ, sıcak an, tartışma, sır paylaşımı, verilen söz, keşif, kritik karar, tehlike, yakınlaşma veya hikâye kırılması yaşandıysa (salience >= 5) MUTLAKA "living_memory" üret!
+   - Yalnızca tamamen boş selamlaşma veya sıradan geçiş turlarında null döndür.
+   - ASLA sohbetten kopyala-yapıştır yapma; sahneyi karakterin kendi gözünden 2-3 akıcı edebi cümleyle özetle.
+   - "pov_character": Bu sahnede duygusal olarak EN ÇOK etkilenen karakter ($userChar, $aiChar veya yan karakter).
+   - "title": 2-5 kelimelik vurucu anı başlığı.
+   - "emotion": Tek veya iki kelimelik duygu etiketi.
+   - "salience": 5..10 arası önem puanı.
    - "narrative": 2-4 edebi cümle, 1. tekil şahıs ("Ben...") ağzıyla yaşanmış anı.
-   - "inner_thought": Sohbette ASLA dile getirilmemiş gizli duygu/şüphe (1-2 cümle).
+   - "inner_thought": Karakterin içinde sakladığı 1 cümlelik duygu/düşünce (opsiyonel).
 3) "relations" (Bilgi Grafiği İlişkileri — Opsiyonel, yalnız kesin yeni/değişen ilişkiler):
-   - Sahnede iki kişi/yer/nesne arasında kesin bir ilişki açıklandıysa veya değiştiyse (ör. sevgilisi -> eski sevgilisi, müttefiki -> düşmanı, kardeşi, patronu, yaşadığı yer) {"s":"Özne","p":"ilişki","o":"Nesne"} ekle; yoksa [] bırak.
+   - Sahnede iki kişi/yer/nesne arasında kesin bir ilişki açıklandıysa veya değiştiyse {"s":"Özne","p":"ilişki","o":"Nesne"} ekle; yoksa [] bırak.
 ${if (shouldExtractCast) """
 4) "cast" & "rejected" (Birleşik Yan Karakter Çıkarımı — Ekstra API Çağrısı Yok):
    - Sahnede yeni geçen veya dolaylı tanıtılan gerçek İNSAN/VARLIK yan karakterlerini "cast" dizisine al (ana bot $aiChar ve kullanıcı $userChar HARİÇ).
@@ -3187,26 +3786,31 @@ $aiChar: ${latestAiReply.take(850)}
                 systemPrompt = systemPrompt,
                 userMessage = userPrompt,
                 botId = bot.id,
-                maxTokens = 520,
-                timeoutMs = 7000L
+                maxTokens = 560,
+                timeoutMs = 7500L
             )
         } catch (_: Exception) {
             ""
         }
 
         if (rawResponse.isBlank()) {
+            sourceMessageId?.let { finalizeTurnRollbackSnapshot(bot.id, it) }
             return@withContext MemoryCommitSummary(deletedFactsCount = implicitArchived)
         }
 
         val jsonObj = parseRobustJsonObject(rawResponse)
-            ?: return@withContext MemoryCommitSummary(deletedFactsCount = implicitArchived)
+        if (jsonObj == null) {
+            sourceMessageId?.let { finalizeTurnRollbackSnapshot(bot.id, it) }
+            return@withContext MemoryCommitSummary(deletedFactsCount = implicitArchived)
+        }
 
         var addedFacts = 0
         var updatedFacts = 0
         var deletedFacts = implicitArchived
+        var highestCoreHighlight: Triple<String, String, Int>? = null
         val totalMsgCount = try { messageDao.getMessagesForBotList(bot.id).size } catch (_: Exception) { recentMessages.size }
 
-        // 1) Preferred unified CRUD array: "vault_ops"
+        // 1) Preferred unified CRUD array: "vault_ops" (routes CORE >= 7 to visible Neural Vault, EPHEMERAL/3..6 to Hidden RAG!)
         val opsArr = jsonObj.optJSONArray("vault_ops")
         if (opsArr != null) {
             val limit = minOf(opsArr.length(), 6)
@@ -3226,27 +3830,44 @@ $aiChar: ${latestAiReply.take(850)}
                         } else {
                             when {
                                 importance <= 2 -> MemoryTier.DISCARD
-                                importance in 3..4 -> MemoryTier.EPHEMERAL
+                                importance in 3..6 -> MemoryTier.EPHEMERAL
                                 else -> MemoryTier.CORE
                             }
                         }
                         if (v.length >= 4 && parsedTier != MemoryTier.DISCARD && importance > 2) {
-                            val ok = upsertNeuralVaultFact(
-                                botId = bot.id,
-                                subject = subj,
-                                key = k.ifBlank { MemoryEngine.inferFactKey(v) },
-                                value = v,
-                                confidence = conf,
-                                isBotSaved = true,
-                                apiKey = getBuildConfigKey(),
-                                explicitUserOverride = explicitOverride,
-                                tier = parsedTier,
-                                ttlDays = ttlDays,
-                                importance = importance,
-                                storyDay = bot.storyDayCounter,
-                                currentMessageCount = totalMsgCount
-                            )
-                            if (ok) addedFacts++
+                            val resolvedKey = k.ifBlank { MemoryEngine.inferFactKey(v) }
+                            if (MemoryEngine.shouldRouteToHiddenRag(parsedTier, importance, isUserExplicit = false)) {
+                                // Separate Hidden RAG Memory (`memory_fragments`) — NEVER clutters visible Neural Vault
+                                saveHiddenRagFragment(
+                                    botId = bot.id,
+                                    content = "$subj ($resolvedKey): $v",
+                                    category = if (parsedTier == MemoryTier.EPHEMERAL) "RAG_EPHEMERAL" else "RAG_CONTEXT",
+                                    rawUserText = latestUserMsg
+                                )
+                            } else {
+                                val ok = upsertNeuralVaultFact(
+                                    botId = bot.id,
+                                    subject = subj,
+                                    key = resolvedKey,
+                                    value = v,
+                                    confidence = conf,
+                                    isBotSaved = true,
+                                    apiKey = getBuildConfigKey(),
+                                    explicitUserOverride = explicitOverride,
+                                    tier = parsedTier,
+                                    ttlDays = ttlDays,
+                                    importance = importance,
+                                    storyDay = bot.storyDayCounter,
+                                    currentMessageCount = totalMsgCount,
+                                    rawUserText = latestUserMsg
+                                )
+                                if (ok) {
+                                    addedFacts++
+                                    if (importance >= 8 && (highestCoreHighlight == null || importance > highestCoreHighlight!!.third)) {
+                                        highestCoreHighlight = Triple(resolvedKey, v, importance)
+                                    }
+                                }
+                            }
                         }
                     }
                     "update", "edit" -> {
@@ -3296,41 +3917,52 @@ $aiChar: ${latestAiReply.take(850)}
                 val rawTier = fObj.optString("tier", "").trim()
                 val importance = fObj.optInt("importance", 6)
                 val ttlDays = fObj.optInt("ttl_days", 0)
-                val parsedTier = if (rawTier.isNotBlank()) MemoryTier.fromRaw(rawTier) else MemoryTier.CORE
+                val parsedTier = if (rawTier.isNotBlank()) MemoryTier.fromRaw(rawTier) else if (importance < 7) MemoryTier.EPHEMERAL else MemoryTier.CORE
                 if (v.length >= 4 && parsedTier != MemoryTier.DISCARD && importance > 2) {
-                    val ok = upsertNeuralVaultFact(
-                        botId = bot.id,
-                        subject = subj,
-                        key = k.ifBlank { MemoryEngine.inferFactKey(v) },
-                        value = v,
-                        confidence = conf,
-                        isBotSaved = true,
-                        apiKey = getBuildConfigKey(),
-                        explicitUserOverride = explicitOverride,
-                        tier = parsedTier,
-                        ttlDays = ttlDays,
-                        importance = importance,
-                        storyDay = bot.storyDayCounter,
-                        currentMessageCount = totalMsgCount
-                    )
-                    if (ok) addedFacts++
+                    val resolvedKey = k.ifBlank { MemoryEngine.inferFactKey(v) }
+                    if (MemoryEngine.shouldRouteToHiddenRag(parsedTier, importance, isUserExplicit = false)) {
+                        saveHiddenRagFragment(
+                            botId = bot.id,
+                            content = "$subj ($resolvedKey): $v",
+                            category = "RAG_CONTEXT",
+                            rawUserText = latestUserMsg
+                        )
+                    } else {
+                        val ok = upsertNeuralVaultFact(
+                            botId = bot.id,
+                            subject = subj,
+                            key = resolvedKey,
+                            value = v,
+                            confidence = conf,
+                            isBotSaved = true,
+                            apiKey = getBuildConfigKey(),
+                            explicitUserOverride = explicitOverride,
+                            tier = parsedTier,
+                            ttlDays = ttlDays,
+                            importance = importance,
+                            storyDay = bot.storyDayCounter,
+                            currentMessageCount = totalMsgCount,
+                            rawUserText = latestUserMsg
+                        )
+                        if (ok) addedFacts++
+                    }
                 }
             }
         }
 
-        // 3) Strict Multi-POV Living Memory
+        // 3) Multi-POV Living Memory ("Anılar") — captures salience >= 5 reliably, innerThought optional
         var savedMemoryPov: String? = null
         var savedMemoryTitle: String? = null
         val memObj = jsonObj.optJSONObject("living_memory")
         if (memObj != null) {
             val pov = memObj.optString("pov_character", "").trim().ifBlank { aiChar }
-            val title = memObj.optString("title", "").trim().ifBlank { "Unutulmaz An" }
+            val title = memObj.optString("title", "").trim().ifBlank { "Önemli An" }
             val emotion = memObj.optString("emotion", "").trim().ifBlank { "Derin Etki" }
-            val salience = memObj.optInt("salience", 0)
+            val salience = memObj.optInt("salience", 6)
             val narrative = memObj.optString("narrative", "").trim()
             val innerThought = memObj.optString("inner_thought", "").trim()
 
-            if (salience >= 7 && narrative.length >= 30 && innerThought.length >= 12) {
+            if (salience >= 5 && narrative.length >= 20) {
                 val committed = commitLivingMemory(
                     botId = bot.id,
                     povCharacter = pov,
@@ -3347,6 +3979,31 @@ $aiChar: ${latestAiReply.take(850)}
                 if (committed) {
                     savedMemoryPov = pov
                     savedMemoryTitle = title
+                }
+            }
+        }
+
+        // Safety net: if a high-impact (importance >= 8) CORE event happened on this turn and LLM forgot living_memory, capture it cleanly
+        if (savedMemoryTitle == null && highestCoreHighlight != null) {
+            val (hiKey, hiVal, hiImp) = highestCoreHighlight!!
+            val synthNarrative = "$userChar ile yaşadığımız bu anda şu gerçek netleşti: $hiVal"
+            if (synthNarrative.length >= 24) {
+                val committed = commitLivingMemory(
+                    botId = bot.id,
+                    povCharacter = aiChar,
+                    title = hiKey.take(40),
+                    emotionTag = "Dönüm Noktası",
+                    salience = hiImp.coerceIn(6, 9),
+                    narrative = synthNarrative,
+                    innerThought = "",
+                    rawChatTexts = listOf(latestUserMsg, latestAiReply),
+                    storyDayIndex = bot.storyDayCounter,
+                    storyCalendarDateStr = bot.storyCalendarDate,
+                    isBotSaved = true
+                )
+                if (committed) {
+                    savedMemoryPov = aiChar
+                    savedMemoryTitle = hiKey.take(40)
                 }
             }
         }
@@ -3399,6 +4056,9 @@ $aiChar: ${latestAiReply.take(850)}
                 }
             } catch (_: Exception) {}
         }
+
+        // Record all post-turn side-effects into the turn's atomic rollback snapshot
+        sourceMessageId?.let { finalizeTurnRollbackSnapshot(bot.id, it) }
 
         MemoryCommitSummary(
             savedFactsCount = addedFacts,
@@ -3699,26 +4359,15 @@ $aiChar: ${latestAiReply.take(850)}
         hafizaText: String,
         apiKey: String? = null
     ) {
-        val bot = try { botDao.getBotById(botId) } catch (_: Exception) { null }
-        val defaultSubject = bot?.userCharName?.ifBlank { "kullanıcı" } ?: "kullanıcı"
-
+        // Periodic summary notes belong in separate Hidden Background RAG (`memory_fragments`) + Checkpoints,
+        // NOT cluttering the visible Neural Vault (`memory_facts`)!
         hafizaText.lines().map { it.trim() }.filter { it.isNotBlank() }.forEach { line ->
             val clean = line.removePrefix("-").removePrefix("*").removePrefix("•").trim()
-            if (clean.length >= 6 && !clean.startsWith("[")) {
-                val parts = clean.split(":", limit = 2)
-                val key = if (parts.size == 2) parts[0].trim() else MemoryEngine.inferFactKey(clean)
-                val value = if (parts.size == 2) parts[1].trim() else clean
-                val subject = MemoryEngine.inferFactSubject(value, defaultSubject)
-                val confidence = if (clean.contains("(çıkarım)") || clean.contains("(tahmin)")) "inferred" else "certain"
-
-                upsertNeuralVaultFact(
+            if (clean.length >= 8 && !clean.startsWith("[")) {
+                saveHiddenRagFragment(
                     botId = botId,
-                    subject = subject,
-                    key = key,
-                    value = value,
-                    confidence = confidence,
-                    isBotSaved = true,
-                    apiKey = apiKey
+                    content = clean,
+                    category = "RAG_SUMMARY"
                 )
             }
         }
@@ -4724,14 +5373,20 @@ $aiChar: ${latestAiReply.take(850)}
                             rawTitle = mTitle.ifBlank { mKey },
                             rawDescription = mDesc,
                             affection = finalUpdatedStateWithDecay.affection,
-                            trust = finalUpdatedStateWithDecay.trust
+                            trust = finalUpdatedStateWithDecay.trust,
+                            currentMessageCount = totalMsgCount,
+                            enforceAntiSpam = true
                         )
                     }
                 }
                 val numericMilestone = checkAndSaveMilestone(
                     botId = botId,
                     affection = finalUpdatedStateWithDecay.affection,
-                    trust = finalUpdatedStateWithDecay.trust
+                    trust = finalUpdatedStateWithDecay.trust,
+                    previousAffection = current.affection,
+                    previousTrust = current.trust,
+                    messageCount = totalMsgCount,
+                    suppressBaselineSpam = true
                 )
                 val bannerWinner = parsedNarrativeMilestone ?: numericMilestone
                 if (bannerWinner != null) {

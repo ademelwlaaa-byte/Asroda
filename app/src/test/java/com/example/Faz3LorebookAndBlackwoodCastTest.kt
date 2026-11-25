@@ -202,12 +202,59 @@ class Faz3LorebookAndBlackwoodCastTest {
         assertEquals(3, com.example.ui.screens.BookMediaTestCatalog.miniGames.size)
         assertEquals(5, com.example.ui.screens.BookMediaTestCatalog.animations.size)
         assertEquals(10, com.example.ui.screens.BookMediaTestCatalog.live3DEncounters.size)
-        assertEquals(32, com.example.ui.screens.BookMediaTestCatalog.photos.size)
+        assertEquals(43, com.example.ui.screens.BookMediaTestCatalog.photos.size)
+        assertTrue(
+            "Natasha & Aiden terrace duo ending photo must be in catalog",
+            com.example.ui.screens.BookMediaTestCatalog.photos.any { it.id == "p_end_nat_terrace" }
+        )
+        assertTrue(
+            "Wanda & Aiden pier duo ending photo must be in catalog",
+            com.example.ui.screens.BookMediaTestCatalog.photos.any { it.id == "p_end_wanda_pier" }
+        )
+        assertTrue(
+            "Dedicated hero & villain portraits must all be in catalog",
+            listOf(
+                "p_char_mira", "p_char_voss", "p_char_ultron",
+                "p_char_tony", "p_char_clint", "p_char_pietro", "p_char_vision", "p_char_strange", "p_char_architect"
+            ).all { id ->
+                com.example.ui.screens.BookMediaTestCatalog.photos.any { it.id == id }
+            }
+        )
         assertEquals(
             "All photo IDs must be unique",
             com.example.ui.screens.BookMediaTestCatalog.photos.size,
             com.example.ui.screens.BookMediaTestCatalog.photos.map { it.id }.distinct().size
         )
+    }
+
+    @Test
+    fun freeNeuralVoiceCastingRespectsCharacterGenderAndEdgeSsmlNormalization() {
+        val voiceMap = com.example.util.EdgeNeuralTtsClient.NEURAL_VOICES.associateBy { it.id }
+        val femaleCast = listOf("NATASHA", "WANDA", "MIRA")
+        val maleCast = listOf(
+            "TONY", "STEVE", "THOR", "BRUCE", "CLINT", "FURY", "PIETRO", "VISION", "STRANGE",
+            "VAELOR", "TWIN_AIDEN", "ZERO", "ULTRON", "VOSS", "ARCHITECT"
+        )
+
+        femaleCast.forEach { speaker ->
+            val cast = com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine.resolveFreeNeuralCast(speaker)
+            assertTrue("$speaker must be cast as female", cast.isFemale)
+            assertEquals("$speaker primary voice must be female", true, voiceMap[cast.voiceId]?.isFemale)
+            assertEquals("$speaker fallback voice must be female", true, voiceMap[cast.fallbackVoiceId]?.isFemale)
+        }
+        maleCast.forEach { speaker ->
+            val cast = com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine.resolveFreeNeuralCast(speaker)
+            assertFalse("$speaker must be cast as male", cast.isFemale)
+            assertEquals("$speaker primary voice must be male", false, voiceMap[cast.voiceId]?.isFemale)
+            assertEquals("$speaker fallback voice must be male", false, voiceMap[cast.fallbackVoiceId]?.isFemale)
+        }
+
+        // Edge ReadAloud SSML normalization must strip <break/> tags and emit a single valid <prosody> block
+        val rawSsml = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='tr-TR'>" +
+            "<voice name='tr-TR-AhmetNeural'><prosody pitch='-6Hz' rate='-8%'>Dur... <break time='250ms'/> hazır ol!</prosody></voice></speak>"
+        val normalized = com.example.util.EdgeNeuralTtsClient.normalizeSsmlForEdgeReadAloud("tr-TR-AhmetNeural", rawSsml)
+        assertFalse("Edge ReadAloud SSML must not contain <break tags", normalized.contains("<break", ignoreCase = true))
+        assertTrue("Edge ReadAloud SSML must preserve Turkish text", normalized.contains("hazır ol!"))
     }
 
     @Test

@@ -138,7 +138,7 @@ object BookMediaTestCatalog {
             chapterBadge = "2. SEZON · BÖLÜM 23 FİNAL",
             subtitle = "Vibranyum zırh kırma, ışın çarpışması ve Vision/Thor/Wanda/Steve/Natasha/Tony takım destekli final savaşı.",
             accent = Color(0xFFF43F5E),
-            previewRes = R.drawable.img_anim_armada
+            previewRes = R.drawable.img_portrait_ultron_prime_1795557413989
         )
     )
 
@@ -310,11 +310,15 @@ object BookMediaTestCatalog {
         BookTestPhotoEntry("p_ch1_c2_forced", "Bölüm 1 · Zorunlu Yarık Geçişi", "Bölüm Sahneleri", R.drawable.img_ch1_c2_forced_rift),
         BookTestPhotoEntry("p_ch1_c2_stealth", "Bölüm 1 · Terastan Gizli Gözlem", "Bölüm Sahneleri", R.drawable.img_ch1_c2_stealth_terrace),
         BookTestPhotoEntry("p_ch1_c3_stark", "Bölüm 1 · Tony Stark Yüzleşmesi", "Bölüm Sahneleri", R.drawable.img_ch1_c3_stark_faceoff),
-        BookTestPhotoEntry("p_ch1_c4_natasha", "Bölüm 1 · Natasha Göz Teması", "Bölüm Sahneleri", R.drawable.img_ch1_c4_natasha_gaze),
+        BookTestPhotoEntry("p_ch1_c4_natasha", "Bölüm 1 · Natasha Gece Balkonu", "Bölüm Sahneleri", R.drawable.natasha_3d_turned_1795640635973),
         BookTestPhotoEntry("p_ch1_c4_wanda", "Bölüm 1 · Wanda Göz Teması", "Bölüm Sahneleri", R.drawable.img_ch1_c4_wanda_gaze),
         BookTestPhotoEntry("p_ch1_c5_tower", "Bölüm 1 · Gece Avengers Kulesi", "Bölüm Sahneleri", R.drawable.img_ch1_c5_tower_night),
         BookTestPhotoEntry("p_ch5_voss", "Bölüm 5 · Voss Tipi Pususu", "Bölüm Sahneleri", R.drawable.img_ch5_voss_blizzard),
         BookTestPhotoEntry("p_ch6_istanbul", "Bölüm 6 · İstanbul Yerebatan Sarnıcı", "Bölüm Sahneleri", R.drawable.img_ch6_istanbul_cistern),
+
+        // Bölüm Sonu & Romantik Final Kareleri (2)
+        BookTestPhotoEntry("p_end_nat_terrace", "Bölüm Sonu · Natasha & Aiden (Teras)", "Bölüm Sonu & Final Sahneleri", R.drawable.img_scene_natasha_aiden_terrace_1795640635755),
+        BookTestPhotoEntry("p_end_wanda_pier", "Bölüm Sonu · Wanda & Aiden (Göl İskelesi)", "Bölüm Sonu & Final Sahneleri", R.drawable.img_end_wanda_aiden_pier_1795553970888),
 
         // Animasyon & Post-Credits Kareleri (6)
         BookTestPhotoEntry("p_anim_blue_sky", "Animasyon · 2006 Mavi Gökyüzü", "Animasyon & Post-Credits", R.drawable.img_anim_blue_sky_2006),
@@ -324,12 +328,21 @@ object BookMediaTestCatalog {
         BookTestPhotoEntry("p_post_nyc", "Post-Credits · Harabe New York", "Animasyon & Post-Credits", R.drawable.img_postcredits_ruined_nyc),
         BookTestPhotoEntry("p_post_twin", "Post-Credits · İkiz Aiden (Sıfır)", "Animasyon & Post-Credits", R.drawable.img_postcredits_twin_aiden),
 
-        // Karakter Portreleri (9)
+        // Karakter Portreleri (18)
         BookTestPhotoEntry("p_char_aiden_p", "Aiden Blackwood · Ana Portre", "Karakter Portreleri", R.drawable.img_aiden_portrait),
         BookTestPhotoEntry("p_char_aiden_a", "Aiden Blackwood · Profil Avatarı", "Karakter Portreleri", R.drawable.img_aiden_blackwood_avatar),
         BookTestPhotoEntry("p_char_steve", "Steve Rogers (Captain America)", "Karakter Portreleri", R.drawable.img_char_steve),
-        BookTestPhotoEntry("p_char_natasha", "Natasha Romanoff (Black Widow)", "Karakter Portreleri", R.drawable.img_char_natasha),
-        BookTestPhotoEntry("p_char_wanda", "Wanda Maximoff (Scarlet Witch)", "Karakter Portreleri", R.drawable.img_char_wanda),
+        BookTestPhotoEntry("p_char_natasha", "Natasha Romanoff (Black Widow)", "Karakter Portreleri", R.drawable.img_natasha_v5_portrait_1795640601606),
+        BookTestPhotoEntry("p_char_wanda", "Wanda Maximoff (Scarlet Witch)", "Karakter Portreleri", R.drawable.img_portrait_wanda_hero_1795557432332),
+        BookTestPhotoEntry("p_char_tony", "Tony Stark (Iron Man)", "Karakter Portreleri", R.drawable.img_portrait_tony_hero_1795559343343),
+        BookTestPhotoEntry("p_char_clint", "Clint Barton (Hawkeye)", "Karakter Portreleri", R.drawable.img_portrait_clint_hero_1795559319365),
+        BookTestPhotoEntry("p_char_pietro", "Pietro Maximoff (Quicksilver)", "Karakter Portreleri", R.drawable.img_portrait_pietro_hero_1795559251696),
+        BookTestPhotoEntry("p_char_vision", "Vision · Zihin Taşı Formu", "Karakter Portreleri", R.drawable.img_portrait_vision_hero_1795559320364),
+        BookTestPhotoEntry("p_char_strange", "Dr. Stephen Strange (Sanctum)", "Karakter Portreleri", R.drawable.img_portrait_strange_hero_1795616988269),
+        BookTestPhotoEntry("p_char_architect", "Asıl Mimar · Altın-Mavi Yankı", "Karakter Portreleri", R.drawable.img_portrait_architect_hero_1795559252160),
+        BookTestPhotoEntry("p_char_mira", "Mira · Denek 8-C (İstanbul)", "Karakter Portreleri", R.drawable.img_portrait_mira_8c_1795557413439),
+        BookTestPhotoEntry("p_char_voss", "Elias Voss · Denek 6-B (Brooklyn)", "Karakter Portreleri", R.drawable.img_portrait_voss_6b_1795557413860),
+        BookTestPhotoEntry("p_char_ultron", "Ultron Prime · Vibranyum Formu", "Karakter Portreleri", R.drawable.img_portrait_ultron_prime_1795557413989),
         BookTestPhotoEntry("p_char_bruce", "Bruce Banner (Hulk)", "Karakter Portreleri", R.drawable.img_char_bruce),
         BookTestPhotoEntry("p_char_fury", "Nick Fury (S.H.I.E.L.D.)", "Karakter Portreleri", R.drawable.img_char_fury),
         BookTestPhotoEntry("p_char_thor", "Thor Odinson", "Karakter Portreleri", R.drawable.img_char_thor),
@@ -349,6 +362,7 @@ fun BookMediaTestShowcaseModal(
     var selectedTab by remember { mutableIntStateOf(0) }
     var activeBossEntry by remember { mutableStateOf<BookTestBossEntry?>(null) }
     var showPostCredits by remember { mutableStateOf(false) }
+    var showSeason2PostCredits by remember { mutableStateOf(false) }
     var activeLive3D by remember { mutableStateOf<BookTestLive3DEntry?>(null) }
     var zoomedPhoto by remember { mutableStateOf<BookTestPhotoEntry?>(null) }
     val testBossRanks = remember { mutableStateMapOf<CosmicDuelBossId, String>() }
@@ -363,7 +377,7 @@ fun BookMediaTestShowcaseModal(
             dismissOnClickOutside = false
         )
     ) {
-        ConfigureTrueFullscreenDialogWindow()
+        ConfigureTrueFullscreenDialogWindow(hideSystemBars = false)
         BackHandler { onDismiss() }
 
         Box(
@@ -410,7 +424,7 @@ fun BookMediaTestShowcaseModal(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "6 Oyun · 6 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Fotoğraf",
+                            text = "6 Oyun · 7 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Fotoğraf",
                             fontFamily = InterFontFamily,
                             fontSize = 11.5.sp,
                             color = Color(0xFFC4B5FD)
@@ -419,7 +433,7 @@ fun BookMediaTestShowcaseModal(
                     IconButton(
                         onClick = onDismiss,
                         modifier = Modifier
-                            .size(44.dp)
+                            .size(48.dp)
                             .clip(CircleShape)
                             .background(Color(0x33A855F7))
                             .border(1.dp, Color(0x66D8B4FE), CircleShape)
@@ -449,7 +463,7 @@ fun BookMediaTestShowcaseModal(
                         tag = "test_showcase_tab_games"
                     ) { selectedTab = 0 }
                     ShowcaseTabPill(
-                        label = "Animasyonlar (6)",
+                        label = "Animasyonlar (7)",
                         icon = Icons.Default.Movie,
                         selected = selectedTab == 1,
                         accent = Color(0xFFF59E0B),
@@ -482,7 +496,8 @@ fun BookMediaTestShowcaseModal(
                         onMiniGameFinished = { id, rank -> testMiniGameRanks[id] = rank }
                     )
                     1 -> ShowcaseAnimationsTab(
-                        onLaunchPostCredits = { showPostCredits = true }
+                        onLaunchPostCredits = { showPostCredits = true },
+                        onLaunchSeason2PostCredits = { showSeason2PostCredits = true }
                     )
                     2 -> ShowcaseLive3DTab(
                         onLaunchScene = { activeLive3D = it }
@@ -509,87 +524,29 @@ fun BookMediaTestShowcaseModal(
         )
     }
 
-    // Active Post-Credits Launcher
+    // Active Post-Credits Launchers (Season 1 & Season 2)
     if (showPostCredits) {
         TwinAidenPostCreditsDialog(
             onContinueToChoicesSummary = { showPostCredits = false }
         )
     }
+    if (showSeason2PostCredits) {
+        Season2ArchitectPostCreditsDialog(
+            onContinueToChoicesSummary = { showSeason2PostCredits = false }
+        )
+    }
 
-    // Active Live 3D Encounter Stage Preview Dialog
+    // Active Live 3D Encounter Stage — Opens Directly in True Edge-to-Edge Fullscreen!
     activeLive3D?.let { entry ->
-        Dialog(
-            onDismissRequest = { activeLive3D = null },
-            properties = DialogProperties(
-                usePlatformDefaultWidth = false,
-                decorFitsSystemWindows = false
-            )
-        ) {
-            ConfigureTrueFullscreenDialogWindow()
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xF5070312))
-                    .statusBarsPadding()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 14.dp, vertical = 12.dp)
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = entry.chapterBadge,
-                                fontFamily = InterFontFamily,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = entry.accent
-                            )
-                            Text(
-                                text = entry.title,
-                                fontFamily = DisplaySerifFontFamily,
-                                fontSize = 18.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        IconButton(
-                            onClick = { activeLive3D = null },
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(Color(0x33FFFFFF))
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Sahneyi Kapat",
-                                tint = Color.White
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(bottom = 24.dp)
-                    ) {
-                        item {
-                            LiveCharacterEncounterStage(
-                                characterKey = entry.characterKey,
-                                sceneId = entry.sceneId,
-                                title = entry.title,
-                                subtitle = entry.subtitle,
-                                chapterAccent = entry.accent
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        LiveCharacterEncounterStage(
+            characterKey = entry.characterKey,
+            sceneId = entry.sceneId,
+            title = entry.title,
+            subtitle = entry.subtitle,
+            chapterAccent = entry.accent,
+            startFullscreen = true,
+            onCloseFullscreen = { activeLive3D = null }
+        )
     }
 
     // Photo Fullscreen Lightbox
@@ -870,7 +827,8 @@ private fun ShowcaseGamesTab(
 
 @Composable
 private fun ShowcaseAnimationsTab(
-    onLaunchPostCredits: () -> Unit
+    onLaunchPostCredits: () -> Unit,
+    onLaunchSeason2PostCredits: () -> Unit
 ) {
     val context = LocalContext.current
     LazyColumn(
@@ -880,8 +838,8 @@ private fun ShowcaseAnimationsTab(
     ) {
         item {
             ShowcaseSectionTitle(
-                title = "Post-Credits Final Sekansı (4 Kesit · İnteraktif)",
-                subtitle = "1. Sezon finalindeki Marvel tarzı sesli ve dokunmatik yarık sekansı."
+                title = "Post-Credits Final Sekansları (2 · İnteraktif)",
+                subtitle = "1. ve 2. Sezon finalindeki Marvel tarzı sesli, dudak senkronlu yarık sekansları."
             )
             Spacer(modifier = Modifier.height(8.dp))
             Box(
@@ -917,7 +875,7 @@ private fun ShowcaseAnimationsTab(
                         .padding(14.dp)
                 ) {
                     Text(
-                        text = "POST-CREDITS · 2. SEZON AÇILIŞI",
+                        text = "1. SEZON POST-CREDITS · 2. SEZON AÇILIŞI",
                         fontFamily = InterFontFamily,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
@@ -946,11 +904,83 @@ private fun ShowcaseAnimationsTab(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = "POST-CREDITS OYNAT",
+                            text = "1. SEZON POST-CREDITS OYNAT",
                             fontFamily = InterFontFamily,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = Color(0xFF061020)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(158.dp)
+                    .clip(RoundedCornerShape(20.dp))
+                    .border(1.4.dp, Color(0xFFFDE047), RoundedCornerShape(20.dp))
+                    .clickable(onClick = onLaunchSeason2PostCredits)
+                    .testTag("test_launch_s2_post_credits_btn")
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(R.drawable.img_portrait_architect_hero_1795559252160)
+                        .allowRgb565(true)
+                        .build(),
+                    contentDescription = "2. Sezon Post-Credits: Asıl Mimar",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color(0x28050312), Color(0xEE090418))
+                            )
+                        )
+                )
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(14.dp)
+                ) {
+                    Text(
+                        text = "2. SEZON POST-CREDITS · 3. SEZON AÇILIŞI",
+                        fontFamily = InterFontFamily,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFDE047)
+                    )
+                    Text(
+                        text = "Sokovia Enkazı · Asıl Mimar & Anlaşmalar",
+                        fontFamily = DisplaySerifFontFamily,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color.White
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xFFFDE047))
+                            .padding(horizontal = 14.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color(0xFF140D02),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "2. SEZON POST-CREDITS OYNAT",
+                            fontFamily = InterFontFamily,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF140D02)
                         )
                     }
                 }

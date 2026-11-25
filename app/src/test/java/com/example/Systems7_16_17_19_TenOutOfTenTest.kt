@@ -493,7 +493,7 @@ class Systems7_16_17_19_TenOutOfTenTest {
     @Test
     fun test8_system19_noDestructiveMigrationGaplessV1ToV48ChainAndSchema48Valid() {
         val migrations = AppDatabase.ALL_MIGRATIONS
-        assertEquals("Unbroken v1->v48 chain must have 47 contiguous migrations", 47, migrations.size)
+        assertEquals("Unbroken v1->v50 chain must have 49 contiguous migrations", 49, migrations.size)
         for (i in migrations.indices) {
             val expectedFrom = i + 1
             val expectedTo = i + 2
@@ -501,11 +501,11 @@ class Systems7_16_17_19_TenOutOfTenTest {
             assertEquals("Gap detected at index $i", expectedTo, migrations[i].endVersion)
         }
 
-        // Verify 48.json schema file exists and is valid Room v48 JSON
-        val schemaFile = resolveProjectFile("app/schemas/com.example.data.local.AppDatabase/48.json")
-        assertTrue("Schema 48.json must exist at ${schemaFile.absolutePath}", schemaFile.exists())
+        // Verify 50.json schema file exists and is valid Room v50 JSON
+        val schemaFile = resolveProjectFile("app/schemas/com.example.data.local.AppDatabase/50.json")
+        assertTrue("Schema 50.json must exist at ${schemaFile.absolutePath}", schemaFile.exists())
         val schemaJson = JSONObject(schemaFile.readText())
-        assertEquals(48, schemaJson.getJSONObject("database").getInt("version"))
+        assertEquals(50, schemaJson.getJSONObject("database").getInt("version"))
 
         // Verify AppDatabase.kt source has ZERO fallbackToDestructiveMigration calls
         val appDbSource = resolveProjectFile("app/src/main/java/com/example/data/local/AppDatabase.kt").readText()

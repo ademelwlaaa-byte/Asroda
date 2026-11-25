@@ -6,7 +6,10 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +66,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.ui.components.morCamCosmicGlow
+import com.example.ui.screens.CharacterPortraitKey
+import com.example.ui.screens.CinematicCharacterAvatar
 import com.example.ui.screens.ConfigureTrueFullscreenDialogWindow
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
@@ -363,6 +368,7 @@ fun StoryMiniGameFullscreenDialog(
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
+                    .padding(top = 12.dp, bottom = 22.dp)
             ) {
                 // Top Bar
                 Row(
@@ -587,7 +593,22 @@ fun StoryMiniGameFullscreenDialog(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MINI-GAME 1: BEYAZ GÖZ · ZİHİN REZONANSI (RHYTHM & FOCUS RING TIMING)
+// SHARED 3D PARTICLE & SHOCKWAVE HELPERS FOR 3D PERSPECTIVE MINI-GAME ARENAS
+// ═══════════════════════════════════════════════════════════════════════════════
+private class Mini3DBurstParticle(
+    var x: Float,
+    var y: Float,
+    var z: Float,
+    val vx: Float,
+    val vy: Float,
+    val vz: Float,
+    val color: Color,
+    var age: Float = 0f,
+    val life: Float = 0.65f
+)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MINI-GAME 1: BEYAZ GÖZ · 3D NÖRAL REZONANS TÜNELİ (3D PERSPECTIVE RHYTHM LOCK)
 // ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun WhiteEyeResonanceStage(
@@ -596,33 +617,94 @@ private fun WhiteEyeResonanceStage(
 ) {
     val haptic = LocalHapticFeedback.current
     val targets = remember { listOf("TONY STARK", "STEVE ROGERS", "BRUCE BANNER", "NATASHA ROMANOFF", "WANDA MAXIMOFF") }
+    val targetPortraits = remember {
+        listOf(
+            CharacterPortraitKey.TONY,
+            CharacterPortraitKey.STEVE,
+            CharacterPortraitKey.BRUCE,
+            CharacterPortraitKey.NATASHA,
+            CharacterPortraitKey.WANDA
+        )
+    }
     var stageIdx by remember { mutableIntStateOf(0) }
-    var ringRadiusFrac by remember { mutableFloatStateOf(1.0f) } // shrinks 1.0 -> 0.10; sweet spot ~0.36..0.48
+    var ringRadiusFrac by remember { mutableFloatStateOf(1.0f) } // shrinks 1.0 -> 0.14; golden lock zone ~0.42
     var score by remember { mutableIntStateOf(0) }
-    var feedbackText by remember { mutableStateOf("Altın halkaya girince dokun!") }
+    var combo by remember { mutableIntStateOf(0) }
+    var feedbackText by remember { mutableStateOf("Altın 3D jiroskop halkasına girince dokun!") }
     var feedbackColor by remember { mutableStateOf(Color(0xFFE0F2FE)) }
     var flashAlpha by remember { mutableFloatStateOf(0f) }
+    var shake by remember { mutableFloatStateOf(0f) }
+    var tunnelTime by remember { mutableFloatStateOf(0f) }
+    var transitionPause by remember { mutableFloatStateOf(0f) }
+    var pendingFinish by remember { mutableStateOf(false) }
+    val bursts = remember { mutableStateListOf<Mini3DBurstParticle>() }
 
-    fun advanceOrFinish() {
-        if (stageIdx + 1 >= targets.size) {
-            onFinish(score, targets.size * 200)
-        } else {
-            stageIdx++
-            ringRadiusFrac = 1.0f
+    fun spawn3DBurst(col: Color, count: Int) {
+        repeat(count) {
+            val ang = Random.nextFloat() * 6.283f
+            val spd = 0.55f + Random.nextFloat() * 1.15f
+            bursts.add(
+                Mini3DBurstParticle(
+                    x = 0f, y = 0f, z = 1.0f,
+                    vx = cos(ang) * spd,
+                    vy = sin(ang) * spd,
+                    vz = -0.6f - Random.nextFloat() * 0.9f,
+                    color = col
+                )
+            )
         }
     }
 
-    LaunchedEffect(stageIdx) {
+    fun advanceOrFinish() {
+        if (stageIdx + 1 >= targets.size) {
+            pendingFinish = true
+            transitionPause = 0.38f
+        } else {
+            transitionPause = 0.28f
+        }
+    }
+
+    // Single continuous 60fps loop so taps are NEVER dropped between stages & final burst plays cleanly!
+    LaunchedEffect(Unit) {
         var lastNs = 0L
-        val speed = 0.56f + stageIdx * 0.09f
         while (true) {
+            var shouldExit = false
             withFrameNanos { now ->
                 if (lastNs == 0L) { lastNs = now; return@withFrameNanos }
                 val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
                 lastNs = now
-                if (flashAlpha > 0f) flashAlpha = (flashAlpha - dt * 2.6f).coerceAtLeast(0f)
+                tunnelTime += dt
+                if (flashAlpha > 0f) flashAlpha = (flashAlpha - dt * 2.5f).coerceAtLeast(0f)
+                if (shake > 0f) shake = (shake - dt * 4.2f).coerceAtLeast(0f)
+
+                val dead = ArrayList<Mini3DBurstParticle>()
+                for (p in bursts) {
+                    p.age += dt
+                    p.x += p.vx * dt
+                    p.y += p.vy * dt
+                    p.z = (p.z + p.vz * dt).coerceAtLeast(0.18f)
+                    if (p.age >= p.life) dead.add(p)
+                }
+                if (dead.isNotEmpty()) bursts.removeAll(dead.toSet())
+
+                if (transitionPause > 0f) {
+                    transitionPause = (transitionPause - dt).coerceAtLeast(0f)
+                    if (transitionPause <= 0f) {
+                        if (pendingFinish) {
+                            shouldExit = true
+                        } else {
+                            stageIdx = (stageIdx + 1).coerceAtMost(targets.lastIndex)
+                            ringRadiusFrac = 1.0f
+                        }
+                    }
+                    return@withFrameNanos
+                }
+
+                val speed = 0.54f + stageIdx * 0.085f
                 ringRadiusFrac -= dt * speed
                 if (ringRadiusFrac <= 0.14f) {
+                    combo = 0
+                    shake = 0.75f
                     feedbackText = "KAÇIRILDI · Zihin kıpırdadı!"
                     feedbackColor = Color(0xFFFCA5A5)
                     score += 45
@@ -630,59 +712,73 @@ private fun WhiteEyeResonanceStage(
                     advanceOrFinish()
                 }
             }
+            if (shouldExit) break
         }
+        onFinish(score, targets.size * 200)
     }
+
+    val shakeX = if (shake > 0.02f) (Random.nextFloat() - 0.5f) * shake * 18f else 0f
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .pointerInput(stageIdx) {
+            .graphicsLayer { translationX = shakeX }
+            .pointerInput(Unit) {
                 detectTapGestures {
+                    if (transitionPause > 0f || pendingFinish) return@detectTapGestures
                     val dist = abs(ringRadiusFrac - 0.42f)
                     when {
-                        dist <= 0.085f -> {
+                        dist <= 0.09f -> {
+                            combo++
                             score += 200
-                            feedbackText = "✦ MÜKEMMEL ODAK! +200"
+                            feedbackText = "✦ MÜKEMMEL 3D MÜHÜR! +200 (x$combo)"
                             feedbackColor = Color(0xFFFDE047)
                             flashAlpha = 1f
+                            spawn3DBurst(Color(0xFFFDE047), 22)
                             soundEngine.play(CosmicSfx.SPARK_COLLECT, volume = 0.9f, affectedByTimeSlow = false)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
-                        dist <= 0.17f -> {
-                            score += 130
-                            feedbackText = "✓ ZİHİN SABİTLENDİ +130"
+                        dist <= 0.175f -> {
+                            combo++
+                            score += 135
+                            feedbackText = "✓ ZİHİN SABİTLENDİ +135"
                             feedbackColor = Color(0xFF7DD3FC)
                             flashAlpha = 0.65f
+                            spawn3DBurst(Color(0xFF38BDF8), 14)
                             soundEngine.play(CosmicSfx.COSMIC_BEAM, volume = 0.7f, affectedByTimeSlow = false)
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         }
                         else -> {
+                            combo = 0
+                            shake = 0.65f
                             score += 55
                             feedbackText = "ERKEN / GEÇ · +55"
                             feedbackColor = Color(0xFFFCA5A5)
+                            spawn3DBurst(Color(0xFFF43F5E), 10)
                             soundEngine.play(CosmicSfx.LASER_WARNING, volume = 0.55f, affectedByTimeSlow = false)
                         }
                     }
                     advanceOrFinish()
                 }
             }
-            .padding(20.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = "ZİHİN ${stageIdx + 1} / ${targets.size} · ${targets[stageIdx]}",
                 fontFamily = DisplaySerifFontFamily,
                 color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
             )
             Text(
-                text = "SKOR: $score",
+                text = if (combo > 1) "SKOR: $score · SERİ x$combo 🔥" else "SKOR: $score",
                 fontFamily = InterFontFamily,
                 color = Color(0xFF7DD3FC),
-                fontSize = 12.5.sp,
+                fontSize = 11.5.sp,
                 fontWeight = FontWeight.ExtraBold
             )
         }
@@ -694,25 +790,65 @@ private fun WhiteEyeResonanceStage(
             contentAlignment = Alignment.Center
         ) {
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val cx = size.width / 2f
-                val cy = size.height / 2f
-                val maxR = minOf(size.width, size.height) * 0.43f
+                val w = size.width
+                val h = size.height
+                val cx = w / 2f
+                val cy = h / 2f
+                val maxR = minOf(w, h) * 0.44f
 
-                // Radiant White Eye iris center
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        listOf(Color.White.copy(alpha = 0.92f), Color(0xFF7DD3FC).copy(alpha = 0.35f), Color.Transparent),
-                        center = Offset(cx, cy),
-                        radius = maxR * 0.30f
-                    ),
-                    radius = maxR * 0.30f,
-                    center = Offset(cx, cy)
+                // 1. 3D PERSPECTIVE NEURAL TUNNEL (Z-projected octagonal depth rings rushing forward)
+                val ringCount = 9
+                for (rIdx in 0 until ringCount) {
+                    val z = 3.2f - ((tunnelTime * 1.4f + rIdx * (3.2f / ringCount)) % 3.0f)
+                    val projR = (maxR * 1.25f / z.coerceAtLeast(0.32f)).coerceAtMost(maxOf(w, h) * 0.88f)
+                    val alpha = ((3.2f - z) / 3.0f).coerceIn(0.05f, 0.55f)
+                    val rot = tunnelTime * 0.45f + rIdx * 0.25f
+                    val poly = Path()
+                    for (v in 0 until 8) {
+                        val a = rot + v * (PI.toFloat() * 2f / 8f)
+                        val vx = cx + cos(a) * projR
+                        val vy = cy + sin(a) * projR * 0.86f
+                        if (v == 0) poly.moveTo(vx, vy) else poly.lineTo(vx, vy)
+                    }
+                    poly.close()
+                    drawPath(poly, Color(0xFF38BDF8).copy(alpha = alpha * 0.55f), style = Stroke(width = 1.6f))
+                }
+
+                // 2. 3D PERSPECTIVE RADIAL TUNNEL RAILS (converging to vanishing point)
+                for (s in 0 until 8) {
+                    val a = tunnelTime * 0.25f + s * (PI.toFloat() * 2f / 8f)
+                    drawLine(
+                        brush = Brush.linearGradient(
+                            listOf(Color.Transparent, Color(0x447DD3FC)),
+                            start = Offset(cx, cy),
+                            end = Offset(cx + cos(a) * maxR * 1.35f, cy + sin(a) * maxR * 1.35f)
+                        ),
+                        start = Offset(cx + cos(a) * maxR * 0.14f, cy + sin(a) * maxR * 0.14f),
+                        end = Offset(cx + cos(a) * maxR * 1.35f, cy + sin(a) * maxR * 1.35f),
+                        strokeWidth = 1.2f
+                    )
+                }
+
+                // 3. 3D GYROSCOPIC GOLDEN LOCK ORBITS (tilted 3D elliptical planes rotating around target mind!)
+                val targetR = maxR * 0.42f
+                val tilt1 = abs(cos(tunnelTime * 1.6f)).coerceAtLeast(0.28f)
+                val tilt2 = abs(sin(tunnelTime * 1.25f)).coerceAtLeast(0.28f)
+                drawOval(
+                    color = Color(0x66FDE047),
+                    topLeft = Offset(cx - targetR * 1.14f, cy - targetR * 1.14f * tilt1),
+                    size = Size(targetR * 2.28f, targetR * 2.28f * tilt1),
+                    style = Stroke(width = 2.4f)
+                )
+                drawOval(
+                    color = Color(0x55BAE6FD),
+                    topLeft = Offset(cx - targetR * 1.14f * tilt2, cy - targetR * 1.14f),
+                    size = Size(targetR * 2.28f * tilt2, targetR * 2.28f),
+                    style = Stroke(width = 2.2f)
                 )
 
                 // Golden sweet-spot ring band (0.36..0.48)
-                val targetR = maxR * 0.42f
                 drawCircle(
-                    color = Color(0x44FDE047),
+                    color = Color(0x3AFDE047),
                     radius = targetR,
                     center = Offset(cx, cy),
                     style = Stroke(width = maxR * 0.14f)
@@ -724,40 +860,84 @@ private fun WhiteEyeResonanceStage(
                     style = Stroke(width = 3.2f)
                 )
 
-                // Shrinking dynamic resonance ring
-                val activeR = (maxR * ringRadiusFrac).coerceAtLeast(16f)
-                val inSweetSpot = abs(ringRadiusFrac - 0.42f) <= 0.085f
+                // Radiant 3D White Eye Core Sphere
                 drawCircle(
-                    color = if (inSweetSpot) Color.White else Color(0xFF38BDF8),
+                    brush = Brush.radialGradient(
+                        listOf(Color.White, Color(0xFF7DD3FC).copy(alpha = 0.55f), Color.Transparent),
+                        center = Offset(cx - maxR * 0.04f, cy - maxR * 0.04f),
+                        radius = maxR * 0.30f
+                    ),
+                    radius = maxR * 0.30f,
+                    center = Offset(cx, cy)
+                )
+
+                // 4. CONTRACTING 3D CRYSTAL RESONANCE RING + ORBITING NODES
+                val activeR = (maxR * ringRadiusFrac).coerceAtLeast(16f)
+                val inSweetSpot = abs(ringRadiusFrac - 0.42f) <= 0.09f
+                val ringCol = if (inSweetSpot) Color.White else Color(0xFF38BDF8)
+                drawCircle(
+                    color = ringCol.copy(alpha = 0.28f),
                     radius = activeR,
                     center = Offset(cx, cy),
-                    style = Stroke(width = if (inSweetSpot) 9f else 5.5f)
+                    style = Stroke(width = if (inSweetSpot) 18f else 11f)
                 )
+                drawCircle(
+                    color = ringCol,
+                    radius = activeR,
+                    center = Offset(cx, cy),
+                    style = Stroke(width = if (inSweetSpot) 7.5f else 4.5f)
+                )
+                for (n in 0 until 6) {
+                    val na = -tunnelTime * 2.8f + n * (PI.toFloat() * 2f / 6f)
+                    drawCircle(
+                        color = if (inSweetSpot) Color(0xFFFDE047) else Color(0xFFBAE6FD),
+                        radius = if (inSweetSpot) 6.5f else 4.5f,
+                        center = Offset(cx + cos(na) * activeR, cy + sin(na) * activeR)
+                    )
+                }
+
+                // 5. 3D EXPLODING BURST PARTICLES
+                bursts.forEach { p ->
+                    val a = (1f - p.age / p.life).coerceIn(0f, 1f)
+                    val sx = cx + (p.x / p.z) * maxR
+                    val sy = cy + (p.y / p.z) * maxR
+                    drawCircle(p.color.copy(alpha = a), radius = (4.5f / p.z).coerceIn(2f, 11f), center = Offset(sx, sy))
+                }
 
                 if (flashAlpha > 0.02f) {
                     drawCircle(
-                        color = Color.White.copy(alpha = flashAlpha * 0.35f),
-                        radius = maxR * (1.05f - flashAlpha * 0.2f),
+                        color = Color.White.copy(alpha = flashAlpha * 0.34f),
+                        radius = maxR * (1.12f - flashAlpha * 0.2f),
                         center = Offset(cx, cy)
                     )
                 }
             }
+
+            // Active Avenger Target Portrait locked inside the 3D White Eye Neural Core
+            CinematicCharacterAvatar(
+                key = targetPortraits[stageIdx.coerceIn(0, targetPortraits.lastIndex)],
+                size = 54.dp,
+                borderWidth = 2.dp,
+                borderColor = if (abs(ringRadiusFrac - 0.42f) <= 0.09f) Color(0xFFFDE047) else Color(0xFFBAE6FD),
+                modifier = Modifier.align(Alignment.Center)
+            )
         }
 
         Text(
             text = feedbackText,
             fontFamily = InterFontFamily,
             color = feedbackColor,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.ExtraBold,
             textAlign = TextAlign.Center,
-            modifier = Modifier.padding(bottom = 16.dp)
+            maxLines = 1,
+            modifier = Modifier.padding(bottom = 6.dp)
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MINI-GAME 2: BOĞAZ REZONANS ÇEKİRDEĞİ (HOLD-TO-BALANCE ENERGY PHYSICS)
+// MINI-GAME 2: BOĞAZ REZONANS ÇEKİRDEĞİ (3D CONTAINMENT REACTOR PHYSICS)
 // ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun BosphorusCoreBalanceStage(
@@ -772,6 +952,7 @@ private fun BosphorusCoreBalanceStage(
     var elapsed by remember { mutableFloatStateOf(0f) }
     var inZoneSeconds by remember { mutableFloatStateOf(0f) }
     var swirlAngle by remember { mutableFloatStateOf(0f) }
+    var warningShake by remember { mutableFloatStateOf(0f) }
     val totalDuration = 9.0f
 
     LaunchedEffect(Unit) {
@@ -782,12 +963,10 @@ private fun BosphorusCoreBalanceStage(
                 val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
                 lastNs = now
                 elapsed += dt
-                swirlAngle += dt * 3.8f
+                swirlAngle += dt * 3.6f
 
-                // Smoothly moving harmonic target band
                 targetCenter = (0.50f + sin(elapsed * 1.45f) * 0.20f + cos(elapsed * 0.7f) * 0.08f).coerceIn(0.24f, 0.76f)
 
-                // Mira crimson pull vs Aiden blue hold thrust
                 val accel = if (isHolding) 1.55f else -1.35f
                 velocity = (velocity + accel * dt).coerceIn(-0.95f, 0.95f)
                 energyPos = (energyPos + velocity * dt).coerceIn(0.04f, 0.96f)
@@ -796,6 +975,9 @@ private fun BosphorusCoreBalanceStage(
                 val inSafe = abs(energyPos - targetCenter) <= 0.145f
                 if (inSafe) {
                     inZoneSeconds += dt
+                    warningShake = (warningShake - dt * 4f).coerceAtLeast(0f)
+                } else {
+                    warningShake = (warningShake + dt * 2.2f).coerceAtMost(0.55f)
                 }
             }
         }
@@ -805,38 +987,43 @@ private fun BosphorusCoreBalanceStage(
 
     val progressAnim by animateFloatAsState((elapsed / totalDuration).coerceIn(0f, 1f), tween(80), label = "coreProg")
     val inSafeNow = abs(energyPos - targetCenter) <= 0.145f
+    val shakeX = if (warningShake > 0.08f) (Random.nextFloat() - 0.5f) * warningShake * 10f else 0f
 
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .graphicsLayer { translationX = shakeX }
             .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        isHolding = true
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        soundEngine.play(CosmicSfx.COSMIC_BEAM, volume = 0.35f, affectedByTimeSlow = false)
-                        tryAwaitRelease()
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    isHolding = true
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                    soundEngine.play(CosmicSfx.COSMIC_BEAM, volume = 0.35f, affectedByTimeSlow = false)
+                    try {
+                        waitForUpOrCancellation()
+                    } finally {
                         isHolding = false
                     }
-                )
+                }
             }
-            .padding(20.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = if (inSafeNow) "✦ ÇEKİRDEK DENGEDE!" else "⚠ BASILI TUT / BIRAK — DENGEYE DÖN!",
+                text = if (inSafeNow) "✦ 3D REAKTÖR ÇEKİRDEĞİ DENGEDE!" else "⚠ BASILI TUT / BIRAK — DENGEYE DÖN!",
                 fontFamily = DisplaySerifFontFamily,
                 color = if (inSafeNow) Color(0xFF6EE7B7) else Color(0xFFFCA5A5),
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
             )
             Text(
-                text = "KALAN SÜRE: ${"%.1f".format((totalDuration - elapsed).coerceAtLeast(0f))} sn · UYUM: %${((inZoneSeconds / totalDuration) * 100f).toInt().coerceIn(0, 100)}",
+                text = "KALAN: ${"%.1f".format((totalDuration - elapsed).coerceAtLeast(0f))} sn · UYUM: %${((inZoneSeconds / totalDuration) * 100f).toInt().coerceIn(0, 100)}",
                 fontFamily = InterFontFamily,
                 color = Color(0xFFBAE6FD),
-                fontSize = 11.5.sp,
+                fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
             )
         }
@@ -850,71 +1037,182 @@ private fun BosphorusCoreBalanceStage(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val w = size.width
                 val h = size.height
-                val barW = 54.dp.toPx()
-                val barH = h * 0.78f
-                val barLeft = (w - barW) / 2f
-                val barTop = (h - barH) / 2f
-
-                // Ambient swirling Bosphorus twin vortex behind gauge
                 val cx = w / 2f
-                val cy = h / 2f
-                for (i in 0 until 14) {
-                    val a = swirlAngle + i * (PI.toFloat() * 2f / 14f)
-                    val rad = 70.dp.toPx() + (i % 3) * 26.dp.toPx()
-                    val px = cx + cos(a) * rad
-                    val py = cy + sin(a) * rad * 0.65f
-                    val col = if (i % 2 == 0) Color(0xFF38BDF8) else Color(0xFFF43F5E)
-                    drawCircle(col.copy(alpha = 0.55f), radius = 4.5f, center = Offset(px, py))
+                val chamberH = (h * 0.80f).coerceAtLeast(160f)
+                val chamberTop = (h - chamberH) / 2f
+                val chamberBot = chamberTop + chamberH
+                val cylRadiusX = minOf(w * 0.28f, 110.dp.toPx())
+                val ellipseTilt = 0.28f
+
+                // 1. 3D PERSPECTIVE CONTAINMENT REACTOR BACKGROUND RIBS (Back half of rings)
+                for (r in 0..6) {
+                    val ry = chamberTop + (r / 6f) * chamberH
+                    val ringCol = if (r < 3) Color(0x4438BDF8) else Color(0x44F43F5E)
+                    drawOval(
+                        color = ringCol,
+                        topLeft = Offset(cx - cylRadiusX * 1.25f, ry - cylRadiusX * ellipseTilt),
+                        size = Size(cylRadiusX * 2.5f, cylRadiusX * ellipseTilt * 2f),
+                        style = Stroke(width = 1.6f)
+                    )
                 }
 
-                // Vertical energy column background (crimson bottom -> blue top)
+                // 2. Z-SORTED 3D DOUBLE-HELIX ORBITING PARTICLES (BACK LAYER: sin(a) < 0)
+                for (i in 0 until 26) {
+                    val t = i / 26f
+                    val a = swirlAngle * 1.4f + t * 11f
+                    val zDepth = sin(a)
+                    if (zDepth < 0f) {
+                        val py = chamberTop + t * chamberH
+                        val px = cx + cos(a) * cylRadiusX * 1.15f
+                        val scale = 0.65f + (zDepth + 1f) * 0.25f
+                        val col = if (i % 2 == 0) Color(0xFF38BDF8) else Color(0xFFF43F5E)
+                        drawCircle(col.copy(alpha = 0.42f * scale), radius = 4.2f * scale, center = Offset(px, py))
+                    }
+                }
+
+                // 3. 3D TRANSLUCENT GLASS REACTOR CYLINDER CORE
+                val tubeW = (cylRadiusX * 0.92f).coerceIn(50.dp.toPx(), 74.dp.toPx())
                 drawRoundRect(
-                    brush = Brush.verticalGradient(listOf(Color(0x881D4ED8), Color(0xAA0F0A24), Color(0x88BE123C))),
-                    topLeft = Offset(barLeft, barTop),
-                    size = Size(barW, barH),
-                    cornerRadius = CornerRadius(barW / 2f, barW / 2f)
+                    brush = Brush.verticalGradient(
+                        listOf(Color(0x991D4ED8), Color(0xBB0C0724), Color(0x99BE123C))
+                    ),
+                    topLeft = Offset(cx - tubeW / 2f, chamberTop),
+                    size = Size(tubeW, chamberH),
+                    cornerRadius = CornerRadius(tubeW / 2f, tubeW / 2f)
+                )
+                // Specular glass highlight stripe along left edge of 3D cylinder
+                drawLine(
+                    brush = Brush.verticalGradient(listOf(Color.Transparent, Color(0x66E0F2FE), Color.Transparent)),
+                    start = Offset(cx - tubeW * 0.30f, chamberTop + 16f),
+                    end = Offset(cx - tubeW * 0.30f, chamberBot - 16f),
+                    strokeWidth = 3.2f,
+                    cap = StrokeCap.Round
                 )
 
-                // Moving safe zone band
-                val safeHalf = barH * 0.145f
-                val safeCenterY = barTop + (1f - targetCenter) * barH
+                // 4. 3D MOVING SAFE CONTAINMENT BAND (Glowing 3D perspective collar)
+                val safeHalf = chamberH * 0.145f
+                val safeCenterY = chamberTop + (1f - targetCenter) * chamberH
+                val safeTop = (safeCenterY - safeHalf).coerceAtLeast(chamberTop)
+                val safeBot = (safeCenterY + safeHalf).coerceAtMost(chamberBot)
                 drawRoundRect(
-                    color = if (inSafeNow) Color(0x7734D399) else Color(0x4438BDF8),
-                    topLeft = Offset(barLeft - 6f, (safeCenterY - safeHalf).coerceAtLeast(barTop)),
-                    size = Size(barW + 12f, safeHalf * 2f),
-                    cornerRadius = CornerRadius(14f, 14f)
+                    color = if (inSafeNow) Color(0x6634D399) else Color(0x3D38BDF8),
+                    topLeft = Offset(cx - tubeW * 0.62f, safeTop),
+                    size = Size(tubeW * 1.24f, (safeBot - safeTop).coerceAtLeast(24f)),
+                    cornerRadius = CornerRadius(18f, 18f)
                 )
-                drawRoundRect(
-                    color = if (inSafeNow) Color(0xFF6EE7B7) else Color(0xFFBAE6FD),
-                    topLeft = Offset(barLeft - 6f, (safeCenterY - safeHalf).coerceAtLeast(barTop)),
-                    size = Size(barW + 12f, safeHalf * 2f),
-                    cornerRadius = CornerRadius(14f, 14f),
+                // Top & bottom 3D perspective ellipses framing the safe zone
+                val ringAccent = if (inSafeNow) Color(0xFF6EE7B7) else Color(0xFFBAE6FD)
+                drawOval(
+                    color = ringAccent,
+                    topLeft = Offset(cx - tubeW * 0.68f, safeTop - 10f),
+                    size = Size(tubeW * 1.36f, 20f),
+                    style = Stroke(width = 2.6f)
+                )
+                drawOval(
+                    color = ringAccent,
+                    topLeft = Offset(cx - tubeW * 0.68f, safeBot - 10f),
+                    size = Size(tubeW * 1.36f, 20f),
                     style = Stroke(width = 2.6f)
                 )
 
-                // Player-controlled core orb
-                val orbY = barTop + (1f - energyPos) * barH
+                // 5. 3D PLASMA CORE ORB + ELECTRIC TETHER ARCS TO SAFE BAND
+                val orbY = chamberTop + (1f - energyPos) * chamberH
+                val orbCol = if (isHolding) Color(0xFF38BDF8) else Color(0xFFF43F5E)
+                // Energy arc connecting orb toward safe zone center
+                val arcPath = Path().apply {
+                    moveTo(cx, orbY)
+                    val midY = (orbY + safeCenterY) / 2f
+                    lineTo(cx + sin(swirlAngle * 5f) * 16f, midY)
+                    lineTo(cx, safeCenterY)
+                }
+                drawPath(arcPath, (if (inSafeNow) Color(0xFF6EE7B7) else orbCol).copy(alpha = 0.75f), style = Stroke(width = 2.5f))
+
+                // 3D lit sphere core
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(Color.White, if (isHolding) Color(0xFF38BDF8) else Color(0xFFF43F5E), Color.Transparent),
+                        listOf(Color.White, orbCol, Color.Transparent),
                         center = Offset(cx, orbY),
-                        radius = 30.dp.toPx()
+                        radius = 34.dp.toPx()
                     ),
-                    radius = 30.dp.toPx(),
+                    radius = 34.dp.toPx(),
                     center = Offset(cx, orbY)
                 )
                 drawCircle(
-                    color = Color.White,
-                    radius = 12.dp.toPx(),
+                    brush = Brush.radialGradient(
+                        listOf(Color.White, orbCol),
+                        center = Offset(cx - 5f, orbY - 5f),
+                        radius = 15.dp.toPx()
+                    ),
+                    radius = 14.dp.toPx(),
                     center = Offset(cx, orbY)
+                )
+
+                // 6. Z-SORTED 3D DOUBLE-HELIX ORBITING PARTICLES (FRONT LAYER: sin(a) >= 0)
+                for (i in 0 until 26) {
+                    val t = i / 26f
+                    val a = swirlAngle * 1.4f + t * 11f
+                    val zDepth = sin(a)
+                    if (zDepth >= 0f) {
+                        val py = chamberTop + t * chamberH
+                        val px = cx + cos(a) * cylRadiusX * 1.15f
+                        val scale = 0.9f + zDepth * 0.55f
+                        val col = if (i % 2 == 0) Color(0xFF7DD3FC) else Color(0xFFFDA4AF)
+                        drawCircle(col.copy(alpha = 0.85f), radius = 4.6f * scale, center = Offset(px, py))
+                    }
+                }
+            }
+
+            // Aiden (Top-Left · Blue Cosmic Thrust) flanking the 3D containment core
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(start = 6.dp, top = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                CinematicCharacterAvatar(
+                    key = CharacterPortraitKey.AIDEN,
+                    size = 46.dp,
+                    borderWidth = if (isHolding) 2.4.dp else 1.2.dp,
+                    borderColor = if (isHolding) Color(0xFF38BDF8) else Color(0x6638BDF8)
+                )
+                Text(
+                    text = "AİDEN · İTKİ",
+                    fontFamily = InterFontFamily,
+                    color = if (isHolding) Color(0xFF7DD3FC) else Color(0x99BAE6FD),
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+
+            // Mira (Bottom-Right · Crimson Gravity Pull) flanking the 3D containment core
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 6.dp, bottom = 8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                CinematicCharacterAvatar(
+                    key = CharacterPortraitKey.MIRA,
+                    size = 46.dp,
+                    borderWidth = if (!isHolding) 2.4.dp else 1.2.dp,
+                    borderColor = if (!isHolding) Color(0xFFF43F5E) else Color(0x66F43F5E)
+                )
+                Text(
+                    text = "MİRA · ÇEKİM",
+                    fontFamily = InterFontFamily,
+                    color = if (!isHolding) Color(0xFFFDA4AF) else Color(0x99FDA4AF),
+                    fontSize = 8.5.sp,
+                    fontWeight = FontWeight.ExtraBold
                 )
             }
         }
 
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(0.75f)
+                    .fillMaxWidth(0.78f)
                     .height(7.dp)
                     .clip(RoundedCornerShape(50))
                     .background(Color(0x55FFFFFF))
@@ -931,20 +1229,21 @@ private fun BosphorusCoreBalanceStage(
                 text = if (isHolding) "⚡ MAVİ İTKİ AKTİF (YUKARI)" else "🔥 KIZIL ÇEKİM AKTİF (AŞAĞI)",
                 fontFamily = InterFontFamily,
                 color = if (isHolding) Color(0xFF7DD3FC) else Color(0xFFFCA5A5),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.ExtraBold
+                fontSize = 11.5.sp,
+                fontWeight = FontWeight.ExtraBold,
+                modifier = Modifier.padding(bottom = 4.dp)
             )
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MINI-GAME 3: KIRMIZI GÖZ · İRADE MÜCADELESİ (REFLEX SEAL CONTROL)
+// MINI-GAME 3: KIRMIZI GÖZ · 3D İRADE MÜHRÜ UÇURUMU (3D DEPTH SHATTER REFLEX)
 // ═══════════════════════════════════════════════════════════════════════════════
 private class WillpowerSealNode(
     val id: Int,
-    val xFrac: Float,
-    val yFrac: Float,
+    val xFrac: Float, // normalized world offset -0.58..0.58
+    val yFrac: Float, // normalized world offset -0.52..0.52
     var age: Float = 0f,
     val lifetime: Float = 1.65f
 )
@@ -960,10 +1259,23 @@ private fun RedEyeWillpowerStage(
     var sealedCount by remember { mutableIntStateOf(0) }
     var missedCount by remember { mutableIntStateOf(0) }
     var score by remember { mutableIntStateOf(0) }
+    var combo by remember { mutableIntStateOf(0) }
     var rageLevel by remember { mutableFloatStateOf(0.25f) }
     var shake by remember { mutableFloatStateOf(0f) }
+    var abyssTime by remember { mutableFloatStateOf(0f) }
     val nodes = remember { mutableStateListOf<WillpowerSealNode>() }
+    val bursts = remember { mutableStateListOf<Mini3DBurstParticle>() }
     var nextId by remember { mutableIntStateOf(1) }
+
+    fun projectNodeScreen(n: WillpowerSealNode, w: Float, h: Float): Triple<Float, Float, Float> {
+        val progress = (n.age / n.lifetime).coerceIn(0f, 1f)
+        // Rush from Z = 2.15 toward Z = 0.72 so runes physically fly toward the camera in 3D!
+        val z = 2.15f - progress * 1.43f
+        val scale = (1.05f / z).coerceIn(0.45f, 1.55f)
+        val sx = (w * 0.5f + n.xFrac * w * 0.62f * scale).coerceIn(w * 0.14f, w * 0.86f)
+        val sy = (h * 0.5f + n.yFrac * h * 0.56f * scale).coerceIn(h * 0.16f, h * 0.84f)
+        return Triple(sx, sy, scale)
+    }
 
     LaunchedEffect(Unit) {
         var lastNs = 0L
@@ -973,7 +1285,18 @@ private fun RedEyeWillpowerStage(
                 if (lastNs == 0L) { lastNs = now; return@withFrameNanos }
                 val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
                 lastNs = now
+                abyssTime += dt
                 if (shake > 0f) shake = (shake - dt * 3.5f).coerceAtLeast(0f)
+
+                val deadP = ArrayList<Mini3DBurstParticle>()
+                for (p in bursts) {
+                    p.age += dt
+                    p.x += p.vx * dt
+                    p.y += p.vy * dt
+                    p.z = (p.z + p.vz * dt).coerceAtLeast(0.2f)
+                    if (p.age >= p.life) deadP.add(p)
+                }
+                if (deadP.isNotEmpty()) bursts.removeAll(deadP.toSet())
 
                 spawnTimer -= dt
                 if (spawnTimer <= 0f && spawnedCount < totalSeals && nodes.size < 2) {
@@ -983,9 +1306,9 @@ private fun RedEyeWillpowerStage(
                     nodes.add(
                         WillpowerSealNode(
                             id = nextId,
-                            xFrac = 0.18f + Random.nextFloat() * 0.64f,
-                            yFrac = 0.20f + Random.nextFloat() * 0.60f,
-                            lifetime = (1.75f - spawnedCount * 0.06f).coerceAtLeast(1.15f)
+                            xFrac = (Random.nextFloat() - 0.5f) * 1.04f,
+                            yFrac = (Random.nextFloat() - 0.5f) * 0.96f,
+                            lifetime = (1.75f - spawnedCount * 0.06f).coerceAtLeast(1.18f)
                         )
                     )
                     soundEngine.play(CosmicSfx.LASER_WARNING, volume = 0.45f, affectedByTimeSlow = false)
@@ -997,12 +1320,32 @@ private fun RedEyeWillpowerStage(
                     if (n.age >= n.lifetime) {
                         expired.add(n)
                         missedCount++
+                        combo = 0
                         rageLevel = (rageLevel + 0.16f).coerceAtMost(1f)
-                        shake = 0.7f
+                        shake = 0.75f
                         soundEngine.play(CosmicSfx.PLAYER_SHIELD_HIT, volume = 0.65f, affectedByTimeSlow = false)
                     }
                 }
                 nodes.removeAll(expired.toSet())
+            }
+        }
+        // Let the final 3D crystal shatter burst play cleanly for 0.36s before showing results!
+        var settle = 0.36f
+        while (settle > 0f) {
+            withFrameNanos { now ->
+                val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
+                lastNs = now
+                settle -= dt
+                abyssTime += dt
+                val deadP = ArrayList<Mini3DBurstParticle>()
+                for (p in bursts) {
+                    p.age += dt
+                    p.x += p.vx * dt
+                    p.y += p.vy * dt
+                    p.z = (p.z + p.vz * dt).coerceAtLeast(0.2f)
+                    if (p.age >= p.life) deadP.add(p)
+                }
+                if (deadP.isNotEmpty()) bursts.removeAll(deadP.toSet())
             }
         }
         onFinish(score, totalSeals * 150)
@@ -1014,23 +1357,25 @@ private fun RedEyeWillpowerStage(
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer { translationX = shakeX }
-            .padding(16.dp),
+            .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.SpaceBetween
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = "MÜHÜRLENEN: $sealedCount / $totalSeals · SKOR: $score",
                 fontFamily = DisplaySerifFontFamily,
                 color = Color.White,
-                fontSize = 16.5.sp,
-                fontWeight = FontWeight.Bold
+                fontSize = 15.5.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
             )
             Text(
-                text = "Kırmızı Göz çatlaklarını büyümeden dokunarak kapat!",
+                text = if (combo > 1) "⚡ İRADE SERİSİ x$combo · Derinlikten fırlayan mühürlere dokun!" else "Derinlikten fırlayan kızıl çatlak mühürlerini kapat!",
                 fontFamily = InterFontFamily,
                 color = Color(0xFFFCA5A5),
-                fontSize = 11.5.sp
+                fontSize = 11.sp,
+                maxLines = 1
             )
         }
 
@@ -1043,16 +1388,31 @@ private fun RedEyeWillpowerStage(
                         val w = size.width.toFloat().coerceAtLeast(1f)
                         val h = size.height.toFloat().coerceAtLeast(1f)
                         val hit = nodes.firstOrNull { n ->
-                            val dx = tapOffset.x - n.xFrac * w
-                            val dy = tapOffset.y - n.yFrac * h
-                            hypot(dx, dy) <= 64.dp.toPx()
+                            val (sx, sy, sc) = projectNodeScreen(n, w, h)
+                            hypot(tapOffset.x - sx, tapOffset.y - sy) <= (58.dp.toPx() * sc.coerceAtLeast(0.85f))
                         }
                         if (hit != null) {
+                            val (hx, hy, _) = projectNodeScreen(hit, w, h)
                             nodes.remove(hit)
                             sealedCount++
+                            combo++
                             val speedBonus = ((1f - (hit.age / hit.lifetime)) * 50f).toInt().coerceIn(0, 50)
                             score += 100 + speedBonus
                             rageLevel = (rageLevel - 0.08f).coerceAtLeast(0.08f)
+                            // 3D Crystal Shatter Sparks bursting outward from tapped rune
+                            val normX = (hx - w * 0.5f) / (w * 0.5f)
+                            val normY = (hy - h * 0.5f) / (h * 0.5f)
+                            repeat(16) {
+                                val ang = Random.nextFloat() * 6.283f
+                                val spd = 0.65f + Random.nextFloat() * 1.1f
+                                bursts.add(
+                                    Mini3DBurstParticle(
+                                        x = normX, y = normY, z = 1.0f,
+                                        vx = cos(ang) * spd, vy = sin(ang) * spd, vz = -0.5f,
+                                        color = if (it % 2 == 0) Color(0xFF38BDF8) else Color(0xFFFDE047)
+                                    )
+                                )
+                            }
                             soundEngine.play(CosmicSfx.CRYSTAL_SHATTER, volume = 0.78f, affectedByTimeSlow = false)
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         }
@@ -1062,63 +1422,107 @@ private fun RedEyeWillpowerStage(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val w = size.width
                 val h = size.height
+                val cx = w / 2f
+                val cy = h / 2f
 
-                // Crimson Red-Eye vignette pulsing with rageLevel
+                // 1. 3D PERSPECTIVE CRIMSON ABYSS TUNNEL
                 drawRect(
                     brush = Brush.radialGradient(
-                        listOf(Color.Transparent, Color(0xFFDC2626).copy(alpha = 0.14f + rageLevel * 0.42f)),
-                        center = Offset(w / 2f, h / 2f),
-                        radius = maxOf(w, h) * 0.68f
+                        listOf(Color(0x28F43F5E), Color(0xFFDC2626).copy(alpha = 0.14f + rageLevel * 0.40f)),
+                        center = Offset(cx, cy),
+                        radius = maxOf(w, h) * 0.70f
                     )
                 )
 
-                // Fracture lines radiating from edges when rage is high
-                val crackCount = (rageLevel * 8).toInt().coerceAtLeast(2)
+                // Depth-rushing 3D jagged crimson fracture rings
+                for (r in 0 until 7) {
+                    val z = 3.0f - ((abyssTime * 1.6f + r * (3.0f / 7f)) % 2.8f)
+                    val radius = (minOf(w, h) * 0.58f / z.coerceAtLeast(0.35f)).coerceAtMost(maxOf(w, h) * 0.85f)
+                    val alpha = ((3.0f - z) / 2.8f).coerceIn(0.06f, 0.55f)
+                    val poly = Path()
+                    for (v in 0 until 6) {
+                        val a = -abyssTime * 0.65f + v * (PI.toFloat() * 2f / 6f) + r * 0.3f
+                        val vx = cx + cos(a) * radius
+                        val vy = cy + sin(a) * radius
+                        if (v == 0) poly.moveTo(vx, vy) else poly.lineTo(vx, vy)
+                    }
+                    poly.close()
+                    drawPath(poly, Color(0xFFF43F5E).copy(alpha = alpha * (0.45f + rageLevel * 0.4f)), style = Stroke(width = 2.0f))
+                }
+
+                // 2. 3D SHATTERED MIRROR CRACKS RADIATING FROM DEPTH
+                val crackCount = (rageLevel * 9).toInt().coerceAtLeast(4)
                 for (c in 0 until crackCount) {
-                    val angle = c * (PI.toFloat() * 2f / crackCount)
-                    val sx = w / 2f + cos(angle) * w * 0.52f
-                    val sy = h / 2f + sin(angle) * h * 0.52f
-                    val mx = w / 2f + cos(angle + 0.12f) * w * (0.42f - rageLevel * 0.14f)
-                    val my = h / 2f + sin(angle + 0.12f) * h * (0.42f - rageLevel * 0.14f)
+                    val angle = c * (PI.toFloat() * 2f / crackCount) + sin(abyssTime * 0.6f) * 0.04f
+                    val sx = cx + cos(angle) * w * 0.56f
+                    val sy = cy + sin(angle) * h * 0.56f
+                    val mx = cx + cos(angle + 0.12f) * w * (0.34f - rageLevel * 0.12f)
+                    val my = cy + sin(angle + 0.12f) * h * (0.34f - rageLevel * 0.12f)
                     val p = Path().apply {
                         moveTo(sx, sy)
                         lineTo(mx, my)
                     }
-                    drawPath(p, Color(0xFFF43F5E).copy(alpha = 0.45f), style = Stroke(width = 2.5f, cap = StrokeCap.Round))
+                    drawPath(p, Color(0xFFF43F5E).copy(alpha = 0.55f), style = Stroke(width = 2.6f, cap = StrokeCap.Round))
                 }
 
-                // Active seal nodes
+                // 3. 3D PERSPECTIVE-RUSHING WILLPOWER SEAL RUNES (Z: 2.15 -> 0.72)
                 nodes.forEach { node ->
-                    val cx = node.xFrac * w
-                    val cy = node.yFrac * h
+                    val (nx, ny, sc) = projectNodeScreen(node, w, h)
                     val remain = (1f - node.age / node.lifetime).coerceIn(0f, 1f)
-                    val baseR = 34.dp.toPx()
+                    val baseR = (28.dp.toPx() * sc).coerceIn(22.dp.toPx(), 46.dp.toPx())
 
-                    // Shrinking deadline halo
-                    drawCircle(
-                        color = Color(0xFFF43F5E).copy(alpha = 0.85f),
-                        radius = baseR * (1.0f + remain * 0.9f),
-                        center = Offset(cx, cy),
-                        style = Stroke(width = 3.5f)
+                    // 3D Perspective trail back toward vanishing center
+                    drawLine(
+                        brush = Brush.linearGradient(
+                            listOf(Color.Transparent, Color(0x88F43F5E)),
+                            start = Offset(cx, cy),
+                            end = Offset(nx, ny)
+                        ),
+                        start = Offset(cx + (nx - cx) * 0.45f, cy + (ny - cy) * 0.45f),
+                        end = Offset(nx, ny),
+                        strokeWidth = 2.2f
                     )
-                    // Glowing cyan-white seal core
+
+                    // Rotating 3D outer hexagon deadline lock
+                    val hexPath = Path()
+                    val rot = abyssTime * 3.2f + node.id
+                    val outerR = baseR * (1.05f + remain * 0.78f)
+                    for (v in 0 until 6) {
+                        val a = rot + v * (PI.toFloat() * 2f / 6f)
+                        val vx = nx + cos(a) * outerR
+                        val vy = ny + sin(a) * outerR
+                        if (v == 0) hexPath.moveTo(vx, vy) else hexPath.lineTo(vx, vy)
+                    }
+                    hexPath.close()
+                    drawPath(hexPath, Color(0xFFF43F5E).copy(alpha = 0.90f), style = Stroke(width = 3.2f))
+
+                    // Glowing 3D cyan-white willpower seal core
                     drawCircle(
                         brush = Brush.radialGradient(
                             listOf(Color.White, Color(0xFF38BDF8), Color(0x88F43F5E)),
-                            center = Offset(cx, cy),
+                            center = Offset(nx - baseR * 0.14f, ny - baseR * 0.14f),
                             radius = baseR
                         ),
                         radius = baseR,
-                        center = Offset(cx, cy)
+                        center = Offset(nx, ny)
                     )
                     drawCircle(
                         color = Color.White,
-                        radius = baseR * 0.45f,
-                        center = Offset(cx, cy),
+                        radius = baseR * 0.46f,
+                        center = Offset(nx, ny),
                         style = Stroke(width = 2.5f)
                     )
+                }
+
+                // 4. 3D SHATTER SPARKS
+                bursts.forEach { p ->
+                    val a = (1f - p.age / p.life).coerceIn(0f, 1f)
+                    val sx = cx + (p.x / p.z) * (w * 0.5f)
+                    val sy = cy + (p.y / p.z) * (h * 0.5f)
+                    drawCircle(p.color.copy(alpha = a), radius = (5.0f / p.z).coerceIn(2f, 10f), center = Offset(sx, sy))
                 }
             }
         }
     }
 }
+

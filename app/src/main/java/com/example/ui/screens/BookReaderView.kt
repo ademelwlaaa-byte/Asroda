@@ -991,14 +991,6 @@ fun BookReaderView(
 
                         if (useDeterministicEngine) {
                             ReaderMorCamIconOrb(
-                                icon = Icons.Default.SportsEsports,
-                                contentDescription = "Test Vitrini: Oyunlar, Animasyonlar & Fotolar",
-                                testTag = "book_reader_media_test_showcase_btn",
-                                isActive = true,
-                                activeColor = Color(0xFF38BDF8),
-                                onClick = { showMediaTestShowcase = true }
-                            )
-                            ReaderMorCamIconOrb(
                                 icon = Icons.Default.Hub,
                                 contentDescription = "Görsel Kader Ağacı & Madalyalar",
                                 testTag = "book_fate_tree_button",
@@ -1024,13 +1016,13 @@ fun BookReaderView(
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(7.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-                    // Hairline luminous progress thread + Typography & Focus controls
+                    // Hairline luminous progress thread + remaining time badge
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -1080,6 +1072,56 @@ fun BookReaderView(
                                 maxLines = 1
                             )
                         }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // Quick-Action Controls Row: Always-Visible Test Vitrini + Audio + Typography + Focus
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        // Always-Visible Labeled Showcase Pill (Games, 3D Animations, Live 3D & Photos)
+                        Row(
+                            modifier = Modifier
+                                .height(34.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(Color(0xC01C1244), Color(0xD4331868), Color(0xC016274E))
+                                    )
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    brush = Brush.horizontalGradient(
+                                        listOf(Color(0xCC38BDF8), Color(0xCCFDE047), Color(0xCCC084FC))
+                                    ),
+                                    shape = RoundedCornerShape(50)
+                                )
+                                .clickable { showMediaTestShowcase = true }
+                                .testTag("book_reader_media_test_showcase_btn")
+                                .padding(horizontal = 11.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SportsEsports,
+                                contentDescription = "Test Vitrini: Oyunlar, Animasyonlar & Fotolar",
+                                tint = Color(0xFFFDE047),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Test Vitrini",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFFAF5FF),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
 
                         // Compact Book Soundtrack Volume Cycle Pill (♪ 85% -> 50% -> 25% -> 100%)
                         var musicVolume by remember {
@@ -1549,50 +1591,84 @@ fun BookReaderView(
                         .align(Alignment.BottomEnd)
                         .padding(bottom = 18.dp, end = 14.dp)
                 ) {
-                    val exitInteraction = remember { MutableInteractionSource() }
                     Row(
-                        modifier = Modifier
-                            .cosmicTapSpring(exitInteraction, pressedScale = 0.92f)
-                            .clip(RoundedCornerShape(50))
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(Color(0xD91E0D40), Color(0xE6110626))
-                                )
-                            )
-                            .border(1.dp, MorCamTokens.RimGradient, RoundedCornerShape(50))
-                            .clickable(interactionSource = exitInteraction, indication = null) {
-                                isFullscreenMode = false
-                            }
-                            .testTag("book_exit_fullscreen")
-                            .padding(horizontal = 13.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "%${(sceneProgressFraction * 100f).toInt().coerceIn(1, 100)}",
-                            fontFamily = InterFontFamily,
-                            color = accentColor,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Box(
+                        Row(
                             modifier = Modifier
-                                .size(width = 1.dp, height = 12.dp)
-                                .background(Color(0x55D8B4FE))
-                        )
-                        Icon(
-                            imageVector = Icons.Default.FullscreenExit,
-                            contentDescription = "Tam Ekrandan Çık",
-                            tint = MorCamTokens.SilverLavenderBright,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "Çık",
-                            fontFamily = InterFontFamily,
-                            color = MorCamTokens.SilverLavenderBright,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(Color(0xD91D1044), Color(0xE62E165C))
+                                    )
+                                )
+                                .border(1.dp, Color(0xBBFDE047), RoundedCornerShape(50))
+                                .clickable { showMediaTestShowcase = true }
+                                .testTag("book_fullscreen_showcase_btn")
+                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SportsEsports,
+                                contentDescription = "Test Vitrini",
+                                tint = Color(0xFFFDE047),
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Text(
+                                text = "Vitrin",
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFFAF5FF),
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        val exitInteraction = remember { MutableInteractionSource() }
+                        Row(
+                            modifier = Modifier
+                                .cosmicTapSpring(exitInteraction, pressedScale = 0.92f)
+                                .clip(RoundedCornerShape(50))
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(Color(0xD91E0D40), Color(0xE6110626))
+                                    )
+                                )
+                                .border(1.dp, MorCamTokens.RimGradient, RoundedCornerShape(50))
+                                .clickable(interactionSource = exitInteraction, indication = null) {
+                                    isFullscreenMode = false
+                                }
+                                .testTag("book_exit_fullscreen")
+                                .padding(horizontal = 13.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            Text(
+                                text = "%${(sceneProgressFraction * 100f).toInt().coerceIn(1, 100)}",
+                                fontFamily = InterFontFamily,
+                                color = accentColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 1.dp, height = 12.dp)
+                                    .background(Color(0x55D8B4FE))
+                            )
+                            Icon(
+                                imageVector = Icons.Default.FullscreenExit,
+                                contentDescription = "Tam Ekrandan Çık",
+                                tint = MorCamTokens.SilverLavenderBright,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Çık",
+                                fontFamily = InterFontFamily,
+                                color = MorCamTokens.SilverLavenderBright,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
                 }
             }

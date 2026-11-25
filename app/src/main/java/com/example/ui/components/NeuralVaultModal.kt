@@ -91,16 +91,25 @@ fun NeuralVaultModal(
         .collectAsStateWithLifecycle(initialValue = emptyList())
     val lastRagRouteMode by (viewModel?.lastRagRouteMode ?: kotlinx.coroutines.flow.flowOf(com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST))
         .collectAsStateWithLifecycle(initialValue = com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST)
+    val hiddenRagCount by (viewModel?.hiddenRagCount ?: kotlinx.coroutines.flow.flowOf(0))
+        .collectAsStateWithLifecycle(initialValue = 0)
 
     LaunchedEffect(bot.id, activeFacts.size, activeEvents.size) {
         viewModel?.loadArchivedMemories(bot.id)
         viewModel?.loadEntityRelations(bot.id)
+        viewModel?.loadHiddenRagCount(bot.id)
     }
 
     var editingFact by remember { mutableStateOf<com.example.data.local.MemoryFactEntity?>(null) }
     var editingEvent by remember { mutableStateOf<com.example.data.local.MemoryEventEntity?>(null) }
 
-    val memoriesList = remember(pinnedMemoryText, memoryNotesText, storyNotesText) {
+    // Visible Neural Vault shows ONLY user-pinned entries + truly important CORE/ARC facts;
+    // transient/ephemeral/summary notes stay cleanly separated inside Hidden Background RAG!
+    val visibleVaultFacts = remember(activeFacts) {
+        activeFacts.filter { com.example.data.repository.MemoryEngine.isVisibleInNeuralVault(it) }
+    }
+
+    val memoriesList = remember(pinnedMemoryText) {
         val list = mutableListOf<Triple<String, String, String>>()
 
         if (pinnedMemoryText.isNotBlank()) {
@@ -112,24 +121,6 @@ fun NeuralVaultModal(
                     list.add(Triple("BELLEK", "KALICI", parts[1].trim()))
                 } else {
                     list.add(Triple("KALICI", "BİLGİ", line.trim()))
-                }
-            }
-        }
-
-        if (memoryNotesText.isNotBlank()) {
-            memoryNotesText.lines().filter { it.isNotBlank() }.forEach { line ->
-                val clean = line.removePrefix("-").removePrefix("*").trim()
-                if (clean.isNotBlank()) {
-                    list.add(Triple("ÖZET", "HAFIZA", clean))
-                }
-            }
-        }
-
-        if (storyNotesText.isNotBlank()) {
-            storyNotesText.lines().filter { it.isNotBlank() }.forEach { line ->
-                val clean = line.removePrefix("-").removePrefix("*").trim()
-                if (clean.isNotBlank()) {
-                    list.add(Triple("HİKAYE", "DURUM", clean))
                 }
             }
         }
@@ -149,7 +140,7 @@ fun NeuralVaultModal(
         matchesCategory && matchesSearch
     }
 
-    val filteredFacts = activeFacts.filter { fact ->
+    val filteredFacts = visibleVaultFacts.filter { fact ->
         val matchesCategory = categoryFilter == "Tümü" ||
             categoryFilter == "Otomatik Bilgiler" ||
             categoryFilter.contains("Bilgi", ignoreCase = true)
@@ -187,12 +178,12 @@ fun NeuralVaultModal(
         matchesCategory && matchesSearch
     }
 
-    val totalSaved = memoriesList.size + activeFacts.size + activeEvents.size + entityRelations.size
+    val totalSaved = memoriesList.size + visibleVaultFacts.size + activeEvents.size + entityRelations.size
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Neural Vault • Bellek Mahzeni",
-        subtitle = "$totalSaved aktif • ${entityRelations.size} ilişki ağı • ${archivedMemories.size} arşiv",
+        subtitle = "$totalSaved çekirdek kayıt • $hiddenRagCount gizli RAG • ${archivedMemories.size} arşiv",
         icon = Icons.Default.Memory,
         maxWidthFraction = 0.94f
     ) {
@@ -203,14 +194,20 @@ fun NeuralVaultModal(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Stats Badges Row + Live RAG Mode Badge
+            // Stats Badges Row + Live RAG Mode Badge + Hidden RAG Indicator
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                MorCamChipPill(label = "$totalSaved Kayıt", selected = true, onClick = {})
+                MorCamChipPill(label = "$totalSaved Çekirdek", selected = true, onClick = {})
+                MorCamChipPill(
+                    label = "Gizli RAG • $hiddenRagCount",
+                    selected = false,
+                    onClick = {},
+                    modifier = Modifier.testTag("hidden_rag_count_badge")
+                )
                 MorCamChipPill(
                     label = lastRagRouteMode.badgeLabel,
                     selected = lastRagRouteMode != com.example.data.repository.MemoryEngine.RagRouteMode.HYBRID_FAST,

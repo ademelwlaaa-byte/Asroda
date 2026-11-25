@@ -59,6 +59,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -225,7 +226,7 @@ private fun resolveBossProfile(bossId: CosmicDuelBossId): BossDuelProfile = when
         fullName = "VİBRANYUM ULTRON PRİME",
         shortTag = "ULTRON",
         portraitKey = CharacterPortraitKey.ULTRON,
-        cardDrawableRes = null,
+        cardDrawableRes = R.drawable.img_portrait_ultron_prime_1795557413989,
         arenaBgRes = R.drawable.img_postcredits_ruined_nyc,
         primaryColor = Color(0xFFEF4444),
         phase1Header = "FAZ I · SOKOVİA MEYDANI · DEMİR FIRTINA",
@@ -1427,46 +1428,54 @@ fun CosmicRooftopBossDuelDialog(
                 )
             }
 
-            // === STRICT 3-ZONE RESPONSIVE COLUMN (ZERO OVERLAP / ZERO CLIP ON EVERY SCREEN SIZE!) ===
-            Column(
+            // === STRICT 3-ZONE RESPONSIVE LAYOUT (GUARANTEED 100% SCREEN FIT ON EVERY DEVICE!) ===
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
                     .statusBarsPadding()
                     .navigationBarsPadding()
+                    .padding(top = 12.dp, bottom = 22.dp)
             ) {
-                // ZONE 1: COMPACT TOP BOSS & PLAYER HUD
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xD8060516))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                val isCompactHeight = maxHeight < 710.dp
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // ZONE 1: COMPACT TOP BOSS & PLAYER HUD
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xD8060516))
+                            .padding(horizontal = 10.dp, vertical = if (isCompactHeight) 4.dp else 7.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 3.dp else 5.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = when {
-                                    bossHp > 65 -> profile.phase1Header
-                                    bossHp > 30 -> profile.phase2Header
-                                    else -> profile.phase3Header
-                                },
-                                fontFamily = InterFontFamily,
-                                color = if (bossHp <= 30) Color(0xFFFCA5A5) else Color(0xFF7DD3FC),
-                                fontSize = 9.5.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "Zemine dokun: Işınlan · Mavi Top: Emilim · Dronlara tıkla!",
-                                fontFamily = InterFontFamily,
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 9.5.sp,
-                                maxLines = 1
-                            )
-                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = when {
+                                        bossHp > 65 -> profile.phase1Header
+                                        bossHp > 30 -> profile.phase2Header
+                                        else -> profile.phase3Header
+                                    },
+                                    fontFamily = InterFontFamily,
+                                    color = if (bossHp <= 30) Color(0xFFFCA5A5) else Color(0xFF7DD3FC),
+                                    fontSize = if (isCompactHeight) 8.8.sp else 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (!isCompactHeight) {
+                                    Text(
+                                        text = "Zemine dokun: Işınlan · Mavi Top: Emilim · Dronlara tıkla!",
+                                        fontFamily = InterFontFamily,
+                                        color = Color(0xFFCBD5E1),
+                                        fontSize = 9.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                             DuelHudBtn(if (voiceEnabled && !isMuted) "🎙" else "🔇") {
                                 voiceEnabled = !voiceEnabled
@@ -1641,10 +1650,10 @@ fun CosmicRooftopBossDuelDialog(
                     val density = LocalDensity.current
                     val arenaWpx = with(density) { maxWidth.toPx() }
                     val arenaHpx = with(density) { maxHeight.toPx() }
-                    val bossCardW = minOf(maxWidth * 0.22f, maxHeight * 0.22f).coerceIn(68.dp, 108.dp)
-                    val bossCardH = (bossCardW * 1.24f).coerceIn(84.dp, 134.dp)
-                    val aidenCardW = minOf(maxWidth * 0.20f, maxHeight * 0.20f).coerceIn(64.dp, 100.dp)
-                    val aidenCardH = (aidenCardW * 1.24f).coerceIn(78.dp, 124.dp)
+                    val bossCardW = minOf(maxWidth * 0.21f, maxHeight * 0.19f).coerceIn(54.dp, 94.dp)
+                    val bossCardH = (bossCardW * 1.22f).coerceIn(66.dp, 114.dp)
+                    val aidenCardW = minOf(maxWidth * 0.19f, maxHeight * 0.18f).coerceIn(52.dp, 88.dp)
+                    val aidenCardH = (aidenCardW * 1.22f).coerceIn(64.dp, 108.dp)
 
                     // 60FPS Live Battlefield Canvas (Rain, Floor Tiles, Shadows, Sweeps, Drones, Beams, Shockwaves)
                     Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1774,21 +1783,51 @@ fun CosmicRooftopBossDuelDialog(
                             )
                         }
 
-                        // Avengers Support Visual FX
+                        // Avengers Support Visual FX (Bespoke FX per Avenger!)
                         if (supportFxTimer > 0f) {
                             val a = (supportFxTimer / 1.35f).coerceIn(0f, 1f)
                             val col = when (supportFxHero) {
                                 "STEVE" -> Color(0xFF60A5FA)
                                 "NATASHA" -> Color(0xFFF472B6)
                                 "TONY" -> Color(0xFFFBBF24)
+                                "PIETRO" -> Color(0xFF7DD3FC)
+                                "VISION" -> Color(0xFFFDE047)
+                                "THOR" -> Color(0xFF38BDF8)
                                 else -> Color(0xFFC084FC)
                             }
-                            if (supportFxHero == "TONY") {
-                                drawLine(col.copy(alpha = a), Offset(bossX - 20f, 0f), Offset(bossX - 8f, bossY + 18f), strokeWidth = 16f)
-                                drawLine(Color.White.copy(alpha = a), Offset(bossX - 20f, 0f), Offset(bossX - 8f, bossY + 18f), strokeWidth = 5f)
-                                drawLine(col.copy(alpha = a), Offset(bossX + 20f, 0f), Offset(bossX + 8f, bossY + 18f), strokeWidth = 16f)
-                            } else {
-                                drawCircle(col.copy(alpha = a * 0.85f), 70f + (1f - a) * 130f, Offset(bossX, bossY), style = Stroke(width = 6f))
+                            when (supportFxHero) {
+                                "TONY" -> {
+                                    drawLine(col.copy(alpha = a), Offset(bossX - 20f, 0f), Offset(bossX - 8f, bossY + 18f), strokeWidth = 16f)
+                                    drawLine(Color.White.copy(alpha = a), Offset(bossX - 20f, 0f), Offset(bossX - 8f, bossY + 18f), strokeWidth = 5f)
+                                    drawLine(col.copy(alpha = a), Offset(bossX + 20f, 0f), Offset(bossX + 8f, bossY + 18f), strokeWidth = 16f)
+                                }
+                                "VISION" -> {
+                                    // Mind-Stone golden beam descending from sky onto Ultron/Boss
+                                    drawLine(Color(0xFFFDE047).copy(alpha = a * 0.92f), Offset(bossX, 0f), Offset(bossX, bossY + 24f), strokeWidth = 22f)
+                                    drawLine(Color.White.copy(alpha = a), Offset(bossX, 0f), Offset(bossX, bossY + 24f), strokeWidth = 7f)
+                                    drawCircle(Color(0xFFFDE047).copy(alpha = a * 0.8f), 42f + (1f - a) * 65f, Offset(bossX, bossY), style = Stroke(width = 5f))
+                                }
+                                "THOR" -> {
+                                    // Branching Asgardian Mjolnir sky-to-boss lightning strike!
+                                    val bolt = Path().apply {
+                                        moveTo(bossX + 18f, 0f)
+                                        lineTo(bossX - 26f, bossY * 0.34f)
+                                        lineTo(bossX + 22f, bossY * 0.66f)
+                                        lineTo(bossX, bossY + 16f)
+                                    }
+                                    drawPath(bolt, Color(0xFF38BDF8).copy(alpha = a * 0.9f), style = Stroke(width = 16f, cap = StrokeCap.Round))
+                                    drawPath(bolt, Color.White.copy(alpha = a), style = Stroke(width = 5.5f, cap = StrokeCap.Round))
+                                    drawCircle(Color(0xFF7DD3FC).copy(alpha = a * 0.8f), 55f + (1f - a) * 100f, Offset(bossX, bossY), style = Stroke(width = 5f))
+                                }
+                                "PIETRO" -> {
+                                    // High-speed Quicksilver silver-cyan sonic slash trails across boss!
+                                    drawLine(Color(0xFF38BDF8).copy(alpha = a * 0.9f), Offset(0f, bossY - 45f), Offset(w, bossY + 35f), strokeWidth = 11f, cap = StrokeCap.Round)
+                                    drawLine(Color(0xFFE0F2FE).copy(alpha = a), Offset(w, bossY - 25f), Offset(0f, bossY + 48f), strokeWidth = 8f, cap = StrokeCap.Round)
+                                    drawCircle(Color(0xFF7DD3FC).copy(alpha = a * 0.75f), 48f + (1f - a) * 90f, Offset(bossX, bossY), style = Stroke(width = 4.5f))
+                                }
+                                else -> {
+                                    drawCircle(col.copy(alpha = a * 0.85f), 70f + (1f - a) * 130f, Offset(bossX, bossY), style = Stroke(width = 6f))
+                                }
                             }
                         }
 
@@ -1876,6 +1915,45 @@ fun CosmicRooftopBossDuelDialog(
                                     .align(Alignment.BottomCenter)
                                     .padding(bottom = 4.dp)
                             )
+                        }
+
+                        // MIRROR ZERO PHASE 2 HOLOGRAPHIC DECOY CLONE (Visibly rendered on mirrorDecoyLane!)
+                        val activeDecoyLane = mirrorDecoyLane
+                        if (bossId == CosmicDuelBossId.MIRROR_ZERO && activeDecoyLane != null && activeDecoyLane != bossLane) {
+                            val dXpx = (arenaWpx * LANE_X_FRACS[activeDecoyLane] - bWpx / 2f)
+                                .roundToInt()
+                                .coerceIn(6, (arenaWpx - bWpx - 6f).roundToInt().coerceAtLeast(6))
+                            Box(
+                                modifier = Modifier
+                                    .offset { IntOffset(dXpx, bYpx) }
+                                    .width(bossCardW)
+                                    .height(bossCardH)
+                                    .graphicsLayer { alpha = 0.62f + 0.16f * pulseAlpha }
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .border(1.6.dp, Color(0xFF38BDF8), RoundedCornerShape(18.dp))
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_postcredits_twin_aiden),
+                                    contentDescription = "Sıfır Ayna Klonu",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Brush.verticalGradient(listOf(Color(0x5538BDF8), Color(0xAA0C4A6E))))
+                                )
+                                Text(
+                                    text = "✦ AYNA KLONU",
+                                    fontFamily = InterFontFamily,
+                                    color = Color(0xFFE0F2FE),
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .padding(bottom = 4.dp)
+                                )
+                            }
                         }
                     }
 
@@ -2037,7 +2115,7 @@ fun CosmicRooftopBossDuelDialog(
                     }
                 }
 
-                // ZONE 3: COMPACT BOTTOM CANON POWER DECK (GUARANTEED TO FIT ON EVERY SCREEN!)
+                // ZONE 3: COMPACT BOTTOM CANON POWER DECK (GUARANTEED 100% FIT ON EVERY SCREEN!)
                 if (duelPhase == RooftopDuelPhase.PLAYING && !isPaused) {
                     val supportReady = supportCharge >= 100
                     val whiteReady = whiteEyeCharge >= 100
@@ -2048,55 +2126,63 @@ fun CosmicRooftopBossDuelDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(Color(0xEC060516))
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                            .padding(horizontal = 8.dp, vertical = if (isCompactHeight) 5.dp else 7.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (isCompactHeight) 4.dp else 6.dp)
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (supportReady) nextSupportKey.accentColor.copy(alpha = 0.34f * pulseAlpha) else Color(0xCC110B28))
-                                .border(if (supportReady) 1.4.dp else 0.85.dp, if (supportReady) nextSupportKey.accentColor else Color(0x5594A3B8), RoundedCornerShape(12.dp))
-                                .clickable(enabled = supportReady) { triggerAvengersTeamUp() }
-                                .padding(horizontal = 9.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            CinematicCharacterAvatar(key = nextSupportKey, size = 26.dp, borderWidth = 1.dp, borderColor = nextSupportKey.accentColor)
-                            Text(
-                                text = if (supportReady) {
-                                    "📡 AVENGERS HAZIR · ${nextSupportKey.displayName.uppercase()} ÇAĞIR!"
-                                } else {
-                                    "📡 AVENGERS DESTEĞİ (${nextSupportKey.displayName}) · %$supportCharge"
-                                },
-                                fontFamily = InterFontFamily,
-                                color = if (supportReady) Color.White else Color(0xFFCBD5E1),
-                                fontSize = 9.8.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
-
-                        if (resonanceCharge >= 100) {
-                            Box(
+                            Row(
                                 modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Brush.horizontalGradient(listOf(Color(0xEE2563EB), Color(0xEED97706), Color(0xEEDC2626))))
-                                    .border(1.4.dp, Color(0xFFFDE047), RoundedCornerShape(12.dp))
-                                    .clickable { triggerCosmicResonanceUltimate() }
-                                    .padding(vertical = 7.dp),
-                                contentAlignment = Alignment.Center
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(11.dp))
+                                    .background(if (supportReady) nextSupportKey.accentColor.copy(alpha = 0.34f * pulseAlpha) else Color(0xCC110B28))
+                                    .border(if (supportReady) 1.3.dp else 0.85.dp, if (supportReady) nextSupportKey.accentColor else Color(0x5594A3B8), RoundedCornerShape(11.dp))
+                                    .clickable(enabled = supportReady) { triggerAvengersTeamUp() }
+                                    .padding(horizontal = 8.dp, vertical = if (isCompactHeight) 4.dp else 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
+                                CinematicCharacterAvatar(key = nextSupportKey, size = if (isCompactHeight) 22.dp else 25.dp, borderWidth = 1.dp, borderColor = nextSupportKey.accentColor)
                                 Text(
-                                    text = "✦ KOZMİK REZONANS HAZIR · SÜPER BİTİRİCİ ATEŞLE! ✦",
+                                    text = if (supportReady) {
+                                        "📡 ${nextSupportKey.displayName.uppercase()} ÇAĞIR!"
+                                    } else {
+                                        "📡 ${nextSupportKey.displayName} · %$supportCharge"
+                                    },
                                     fontFamily = InterFontFamily,
-                                    color = Color.White,
-                                    fontSize = 10.5.sp,
+                                    color = if (supportReady) Color.White else Color(0xFFCBD5E1),
+                                    fontSize = 9.2.sp,
                                     fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 0.5.sp
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
                                 )
+                            }
+
+                            if (resonanceCharge >= 100) {
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(11.dp))
+                                        .background(Brush.horizontalGradient(listOf(Color(0xEE2563EB), Color(0xEED97706), Color(0xEEDC2626))))
+                                        .border(1.3.dp, Color(0xFFFDE047), RoundedCornerShape(11.dp))
+                                        .clickable { triggerCosmicResonanceUltimate() }
+                                        .padding(horizontal = 8.dp, vertical = if (isCompactHeight) 5.dp else 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "✦ SÜPER REZONANS! ✦",
+                                        fontFamily = InterFontFamily,
+                                        color = Color.White,
+                                        fontSize = 9.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
 
@@ -2107,6 +2193,7 @@ fun CosmicRooftopBossDuelDialog(
                                 enabled = true,
                                 bg = Color(0xDD1D4ED8),
                                 border = Color(0xFF7DD3FC),
+                                compact = isCompactHeight,
                                 modifier = Modifier.weight(1f)
                             ) { triggerCosmicStrike() }
 
@@ -2126,6 +2213,7 @@ fun CosmicRooftopBossDuelDialog(
                                     else -> Color(0xCC1E1B3A)
                                 },
                                 border = if (parrySweetSpot && parryReady) Color(0xFFFDE047) else if (parryReady) Color(0xFF38BDF8) else Color(0x5594A3B8),
+                                compact = isCompactHeight,
                                 modifier = Modifier.weight(1f)
                             ) { triggerAbsorbParry() }
 
@@ -2135,6 +2223,7 @@ fun CosmicRooftopBossDuelDialog(
                                 enabled = whiteReady,
                                 bg = if (whiteReady) Color(0xE0E2E8F0).copy(alpha = pulseAlpha * 0.45f) else Color(0xCC1E1B3A),
                                 border = if (whiteReady) Color.White else Color(0x55E2E8F0),
+                                compact = isCompactHeight,
                                 modifier = Modifier.weight(1f)
                             ) { triggerWhiteEyeStun() }
 
@@ -2144,10 +2233,12 @@ fun CosmicRooftopBossDuelDialog(
                                 enabled = redReady,
                                 bg = if (redReady) Color(0xE8DC2626).copy(alpha = pulseAlpha) else Color(0xCC2A0B18),
                                 border = if (redReady) Color(0xFFFCA5A5) else Color(0x66F43F5E),
+                                compact = isCompactHeight,
                                 modifier = Modifier.weight(1f)
                             ) { triggerRedEyeFinisher() }
                         }
                     }
+                }
                 }
             }
 
@@ -2265,7 +2356,7 @@ fun CosmicRooftopBossDuelDialog(
                         .background(Color(0xBD050414))
                         .statusBarsPadding()
                         .navigationBarsPadding()
-                        .padding(horizontal = 18.dp, vertical = 16.dp),
+                        .padding(start = 18.dp, end = 18.dp, top = 22.dp, bottom = 32.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(
@@ -2465,16 +2556,17 @@ private fun DuelPowerBtn(
     enabled: Boolean,
     bg: Color,
     border: Color,
+    compact: Boolean = false,
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(11.dp))
             .background(bg)
-            .border(1.1.dp, border, RoundedCornerShape(12.dp))
+            .border(1.1.dp, border, RoundedCornerShape(11.dp))
             .clickable(enabled = enabled) { onClick() }
-            .padding(vertical = 8.dp, horizontal = 2.dp),
+            .padding(vertical = if (compact) 6.dp else 8.dp, horizontal = 2.dp),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2482,7 +2574,7 @@ private fun DuelPowerBtn(
                 text = title,
                 fontFamily = InterFontFamily,
                 color = Color.White,
-                fontSize = 9.sp,
+                fontSize = if (compact) 8.5.sp else 9.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 1,
                 softWrap = false,
@@ -2492,7 +2584,7 @@ private fun DuelPowerBtn(
                 text = sub,
                 fontFamily = InterFontFamily,
                 color = if (enabled) Color(0xFFE0F2FE) else Color(0xFF94A3B8),
-                fontSize = 7.8.sp,
+                fontSize = if (compact) 7.4.sp else 7.8.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 1,
                 softWrap = false,

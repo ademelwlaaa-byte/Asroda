@@ -397,6 +397,10 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
             onSelectChapter = { chapterIndex, _ ->
                 showChapterModal = false
                 requestLaunchCosmicBook(chapterIndex)
+            },
+            onOpenMediaTestShowcase = {
+                showChapterModal = false
+                showMediaTestShowcase = true
             }
         )
     }
@@ -672,34 +676,139 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                     )
                 }
 
-                // Pill 3: Radiant Amber Star + "Yeni"
+                // Pill 3: Glowing Cyan-Gold Showcase Pill ("Vitrin") — 1-tap access to Games, 3D & Photos
                 CosmicGlassStatPill(
-                    modifier = Modifier.weight(0.92f),
+                    modifier = Modifier.weight(0.98f),
                     resolvedBackdrop = resolvedBackdrop,
                     scrollSync = scrollSync,
                     glowAlpha = featuredGlow,
-                    testTag = "books_stat_new_pill",
-                    onClick = { showChapterModal = true }
+                    testTag = "books_stat_showcase_pill",
+                    onClick = { showMediaTestShowcase = true }
                 ) {
-                    Canvas(modifier = Modifier.size(17.dp)) {
-                        drawFourPointStar(
-                            center = Offset(size.width * 0.5f, size.height * 0.5f),
-                            outerRadius = size.minDimension * 0.48f,
-                            innerRadius = size.minDimension * 0.22f,
-                            coreColor = Color(0xFFFEF08A),
-                            edgeColor = Color(0xFFF97316),
-                            glowColor = Color(0xFFFBBF24),
-                            glowAlpha = 0.65f * starTwinkle
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.SportsEsports,
+                        contentDescription = null,
+                        tint = Color(0xFFFDE047),
+                        modifier = Modifier.size(17.dp)
+                    )
                     Text(
-                        text = if (isEnglish) "New" else "Yeni",
+                        text = if (isEnglish) "Showcase" else "Vitrin",
                         fontFamily = InterFontFamily,
-                        color = Color(0xFFF6F0FF),
+                        color = Color(0xFFFEF08A),
                         fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+
+        // ── 2B. ABOVE-THE-FOLD BOOK MEDIA TEST SHOWCASE LAUNCHER ──────────────
+        item(key = "books_media_showcase_banner") {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 58.dp)
+                    .booksCosmicOuterGlow(
+                        cornerRadius = 20.dp,
+                        glowColor = Color(0xFF38BDF8),
+                        alpha = 0.38f * featuredGlow,
+                        blurDp = 12.dp
+                    )
+                    .clip(RoundedCornerShape(20.dp))
+                    .templatesBackdropBlur(
+                        blurredBitmap = resolvedBackdrop,
+                        alpha = 0.78f,
+                        scrollSync = scrollSync
+                    )
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(
+                                Color(0xC81A0E3D),
+                                Color(0xD62E145C),
+                                Color(0xC814224A)
+                            )
+                        )
+                    )
+                    .border(
+                        width = 1.25.dp,
+                        brush = Brush.horizontalGradient(
+                            listOf(
+                                Color(0xCC38BDF8),
+                                Color(0xDDFDE047),
+                                Color(0xCCC084FC)
+                            )
+                        ),
+                        shape = RoundedCornerShape(20.dp)
+                    )
+                    .clickable { showMediaTestShowcase = true }
+                    .testTag("books_top_media_test_showcase_btn")
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(
+                            Brush.radialGradient(
+                                listOf(Color(0x5538BDF8), Color(0x33FDE047))
+                            )
+                        )
+                        .border(1.1.dp, Color(0xCCFDE047), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SportsEsports,
+                        contentDescription = null,
+                        tint = Color(0xFFFEF08A),
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isEnglish) "Book Media Showcase" else "Kitap Test Menüsü · Vitrin",
+                        fontFamily = DisplaySerifFontFamily,
+                        color = Color(0xFFFAF5FF),
+                        fontSize = 15.5.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = if (isEnglish) {
+                            "6 Games · 7 Animations · 10 Live 3D · ${BookMediaTestCatalog.photos.size} Photos"
+                        } else {
+                            "6 Oyun · 7 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Foto"
+                        },
+                        fontFamily = InterFontFamily,
+                        color = Color(0xFFD8E9FF),
+                        fontSize = 11.5.sp,
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(Color(0xFF38BDF8), Color(0xFFFDE047))
+                            )
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (isEnglish) "OPEN" else "AÇ",
+                        fontFamily = InterFontFamily,
+                        color = Color(0xFF0A0518),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 0.6.sp
                     )
                 }
             }
@@ -2164,7 +2273,8 @@ fun ChapterSelectionModal(
     bookTitle: String,
     userSettings: UserSettingsEntity?,
     onDismiss: () -> Unit,
-    onSelectChapter: (chapterIndex: Int, chapterStartMsg: String?) -> Unit
+    onSelectChapter: (chapterIndex: Int, chapterStartMsg: String?) -> Unit,
+    onOpenMediaTestShowcase: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val isEnglish = userSettings?.appLanguage == "en"
@@ -2390,6 +2500,65 @@ fun ChapterSelectionModal(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
+                    }
+                }
+
+                if (onOpenMediaTestShowcase != null) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(
+                                Brush.horizontalGradient(
+                                    listOf(Color(0x701B1040), Color(0x88351969), Color(0x7013254B))
+                                )
+                            )
+                            .border(
+                                width = 1.1.dp,
+                                brush = Brush.horizontalGradient(
+                                    listOf(Color(0xAA38BDF8), Color(0xCCFDE047), Color(0xAAC084FC))
+                                ),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .clickable(onClick = onOpenMediaTestShowcase)
+                            .testTag("chapter_modal_open_media_showcase_btn")
+                            .padding(horizontal = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SportsEsports,
+                                contentDescription = null,
+                                tint = Color(0xFFFDE047),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = if (isEnglish) {
+                                    "Test Showcase: Games, 3D & Photos"
+                                } else {
+                                    "Kitap Vitrini: Oyunlar, 3D & Fotolar"
+                                },
+                                fontFamily = InterFontFamily,
+                                color = Color(0xFFFAF5FF),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = if (isEnglish) "Open Test Showcase" else "Vitrini Aç",
+                            tint = Color(0xFFFDE047),
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                 }
 

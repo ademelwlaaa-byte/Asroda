@@ -2181,10 +2181,10 @@ private fun MorCamTemplateCard(
         "preset_aria" -> R.drawable.img_template_aria_left
         "preset_eldoria" -> R.drawable.img_template_eldoria_left
         "preset_tokyo" -> R.drawable.aiden_dispatch
-        "preset_crimson_clocktower" -> R.drawable.img_book_bg_top_castle
-        "preset_neon_kowloon_noir" -> R.drawable.img_book_bg_bottom_nebula
+        "preset_crimson_clocktower" -> R.drawable.img_tpl_clocktower_1795553971128
+        "preset_neon_kowloon_noir" -> R.drawable.img_tpl_neon_noir_1795553970903
         "preset_stormbreak_corsairs" -> R.drawable.img_aetheria_universe
-        "preset_aurora_lodge" -> R.drawable.img_ch5_voss_blizzard
+        "preset_aurora_lodge" -> R.drawable.img_tpl_aurora_lodge_1795553969948
         else -> R.drawable.img_template_aiden_left
     }
 
