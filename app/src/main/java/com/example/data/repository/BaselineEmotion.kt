@@ -86,7 +86,7 @@ object BaselineEmotionEngine {
         else                  -> RelationshipAxes(affectionScore = 50, respectScore = 50, comfortScore = 50, resentmentScore = 0)
     }
 
-    private val CONFLICT_KEYWORDS = Regex("""\b(kavga|küs|küstü|tartışma|soğukluk|çatışma|kırgın|öfkeli|gergin)\b""")
+    private val CONFLICT_KEYWORDS = Regex("""(?<![\p{L}\p{N}])(kavga|küs|küstü|tartışma|soğukluk|çatışma|kırgın|öfkeli|gergin)(?![\p{L}\p{N}])""")
 
     fun applyRelConsistency(relType: String, axes: RelationshipAxes, hasConflict: Boolean): RelationshipAxes {
         val bounds = REL_BOUNDS[relType] ?: return axes
@@ -131,7 +131,8 @@ object BaselineEmotionEngine {
     private val NEGATIVE_DOM = setOf("öfkeli", "sinirli", "kızgın", "hüzünlü", "korkmuş", "tiksinmiş")
 
     fun reconcileDominantEmotion(dominant: String, emotions: PrimaryEmotions): String {
-        val dom = dominant.lowercase(Locale.forLanguageTag("tr-TR"))
+        val canonicalTurkish = EmotionEngine.normalizeTurkishEmotionLabel(dominant)
+        val dom = canonicalTurkish.lowercase(Locale.forLanguageTag("tr-TR"))
         if (dom in POSITIVE_DOM) {
             val negPeak = maxOf(emotions.anger, emotions.sadness, emotions.disgust, emotions.fear)
             val posPeak = maxOf(emotions.joy, emotions.trust, emotions.anticipation)
@@ -147,7 +148,7 @@ object BaselineEmotionEngine {
         if (dom in NEGATIVE_DOM && emotions.joy >= 80 && emotions.joy > emotions.anger + 20) {
             return "neşeli"
         }
-        return dominant
+        return canonicalTurkish
     }
 
     // ── Input sanitization ────────────────────────────────────────────────────

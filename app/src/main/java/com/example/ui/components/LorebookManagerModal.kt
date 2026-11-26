@@ -43,7 +43,10 @@ import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 import com.example.ui.viewmodel.EmochiViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 
 /**
@@ -66,8 +69,16 @@ fun LorebookManagerModal(
     val linkedSet = remember(linkedIds) { linkedIds.toSet() }
 
     var selectedLorebookId by remember { mutableStateOf<String?>(null) }
-    val selectedLorebook = remember(allLorebooks, selectedLorebookId) {
+    var pendingCreatedLorebook by remember { mutableStateOf<LorebookEntity?>(null) }
+    val selectedLorebook = remember(allLorebooks, selectedLorebookId, pendingCreatedLorebook) {
         allLorebooks.firstOrNull { it.id == selectedLorebookId }
+            ?: pendingCreatedLorebook?.takeIf { it.id == selectedLorebookId }
+    }
+    LaunchedEffect(allLorebooks, pendingCreatedLorebook) {
+        val pending = pendingCreatedLorebook
+        if (pending != null && allLorebooks.any { it.id == pending.id }) {
+            pendingCreatedLorebook = null
+        }
     }
 
     var showCreateDialog by remember { mutableStateOf(false) }
@@ -270,8 +281,14 @@ fun LorebookManagerModal(
                 viewModel.getLorebookEntriesFlow(selectedLorebook.id)
             }
             val entries by entriesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
-            var budgetSlider by remember(selectedLorebook.id, selectedLorebook.tokenBudget) {
+            var isDraggingBudget by remember(selectedLorebook.id) { mutableStateOf(false) }
+            var budgetSlider by remember(selectedLorebook.id) {
                 mutableFloatStateOf(selectedLorebook.tokenBudget.toFloat())
+            }
+            LaunchedEffect(selectedLorebook.tokenBudget, isDraggingBudget) {
+                if (!isDraggingBudget) {
+                    budgetSlider = selectedLorebook.tokenBudget.toFloat()
+                }
             }
             val isLinked = selectedLorebook.id in linkedSet
 
@@ -360,8 +377,12 @@ fun LorebookManagerModal(
                     }
                     Slider(
                         value = budgetSlider,
-                        onValueChange = { budgetSlider = it },
+                        onValueChange = {
+                            isDraggingBudget = true
+                            budgetSlider = it
+                        },
                         onValueChangeFinished = {
+                            isDraggingBudget = false
                             viewModel.upsertLorebook(selectedLorebook.copy(tokenBudget = budgetSlider.toInt()))
                         },
                         valueRange = 200f..1500f,
@@ -407,12 +428,17 @@ fun LorebookManagerModal(
                     )
                 }
 
-                // Live Trigger Simulator
+                // Live Trigger Simulator (debounced so rapid typing never runs regex scans every keystroke)
                 AnimatedVisibility(visible = showSimulator) {
-                    val simResult = remember(entries, testQuery, selectedLorebook.tokenBudget) {
+                    var debouncedTestQuery by remember { mutableStateOf(testQuery) }
+                    LaunchedEffect(testQuery) {
+                        delay(120L)
+                        debouncedTestQuery = testQuery
+                    }
+                    val simResult = remember(entries, debouncedTestQuery, selectedLorebook.tokenBudget) {
                         LorebookManager.selectEntriesForContext(
                             entries = entries,
-                            recentMessageTexts = if (testQuery.isBlank()) emptyList() else listOf(testQuery),
+                            recentMessageTexts = if (debouncedTestQuery.isBlank()) emptyList() else listOf(debouncedTestQuery),
                             tokenBudget = selectedLorebook.tokenBudget,
                             allowChainedTriggering = true
                         )
@@ -573,10 +599,17 @@ fun LorebookManagerModal(
                                 description = newLbDesc.trim(),
                                 tokenBudget = 750
                             )
-                            viewModel.upsertLorebook(newLb)
-                            viewModel.setLorebookLinkedToBot(botId, newLb.id, true)
+                            pendingCreatedLorebook = newLb
                             selectedLorebookId = newLb.id
                             showCreateDialog = false
+                            // Sequence upsert -> Room commit observation -> link inside one coroutine so link never races
+                            scope.launch {
+                                viewModel.upsertLorebook(newLb)
+                                withTimeoutOrNull(2_000L) {
+                                    viewModel.allLorebooks.first { list -> list.any { it.id == newLb.id } }
+                                }
+                                viewModel.setLorebookLinkedToBot(botId, newLb.id, true)
+                            }
                         }
                     },
                     variant = MorCamButtonVariant.Primary,

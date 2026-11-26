@@ -24,10 +24,14 @@ class EmotionEngineManager(
         messageIndex: Int,
         state: EmotionState
     ) = withContext(Dispatchers.IO) {
+        val normalizedDominant = EmotionEngine.normalizeTurkishEmotionLabel(state.dominantEmotion)
+        val normalizedSuppressed = state.suppressedEmotion
+            ?.takeIf { it.isNotBlank() }
+            ?.let { EmotionEngine.normalizeTurkishEmotionLabel(it) }
         val vectorJson = try {
             JSONObject().apply {
-                put("dominantEmotion", state.dominantEmotion)
-                put("suppressedEmotion", state.suppressedEmotion)
+                put("dominantEmotion", normalizedDominant)
+                put("suppressedEmotion", normalizedSuppressed)
                 put("affection", state.relationshipAxes.affectionScore)
                 put("trust", state.primaryEmotions.trust)
                 put("respect", state.relationshipAxes.respectScore)
@@ -44,7 +48,7 @@ class EmotionEngineManager(
             EmotionHistoryEntity(
                 botId = botId,
                 timestamp = System.currentTimeMillis(),
-                messageIndex = messageIndex,
+                messageIndex = messageIndex.coerceAtLeast(0),
                 affectionScore = state.relationshipAxes.affectionScore,
                 respectScore = state.relationshipAxes.respectScore,
                 comfortScore = state.relationshipAxes.comfortScore,
@@ -52,9 +56,49 @@ class EmotionEngineManager(
                 trustScore = state.primaryEmotions.trust,
                 physicalComfortScore = state.physicalComfortScore,
                 obsessionScore = state.obsessionScore,
-                dominantEmotion = state.dominantEmotion,
+                dominantEmotion = normalizedDominant,
                 fullVectorJson = vectorJson,
                 characterName = null
+            )
+        )
+    }
+
+    suspend fun recordCharacterEmotionSnapshot(
+        botId: String,
+        characterName: String,
+        messageIndex: Int,
+        state: EmotionState
+    ) = withContext(Dispatchers.IO) {
+        val cleanName = characterName.trim()
+        if (cleanName.isBlank()) return@withContext
+        val normalizedDominant = EmotionEngine.normalizeTurkishEmotionLabel(state.dominantEmotion)
+        val vectorJson = try {
+            JSONObject().apply {
+                put("dominantEmotion", normalizedDominant)
+                put("affection", state.relationshipAxes.affectionScore)
+                put("trust", state.primaryEmotions.trust)
+                put("respect", state.relationshipAxes.respectScore)
+                put("comfort", state.relationshipAxes.comfortScore)
+                put("resentment", state.relationshipAxes.resentmentScore)
+            }.toString()
+        } catch (_: Exception) {
+            "{}"
+        }
+        emotionHistoryDao.insertHistory(
+            EmotionHistoryEntity(
+                botId = botId,
+                timestamp = System.currentTimeMillis(),
+                messageIndex = messageIndex.coerceAtLeast(0),
+                affectionScore = state.relationshipAxes.affectionScore,
+                respectScore = state.relationshipAxes.respectScore,
+                comfortScore = state.relationshipAxes.comfortScore,
+                resentmentScore = state.relationshipAxes.resentmentScore,
+                trustScore = state.primaryEmotions.trust,
+                physicalComfortScore = state.physicalComfortScore,
+                obsessionScore = state.obsessionScore,
+                dominantEmotion = normalizedDominant,
+                fullVectorJson = vectorJson,
+                characterName = cleanName
             )
         )
     }

@@ -29,7 +29,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -110,7 +112,8 @@ internal fun ChatBottomInputDock(
             ChatPlusToolkitDrawer(
                 visible = showPlusToolkit,
                 isSending = isSending,
-                inputText = inputText,
+                // Pass empty string when closed so typing in BasicTextField skips recomposing the drawer!
+                inputText = if (showPlusToolkit) inputText else "",
                 rootSize = rootSize,
                 blurredBgBitmap = blurredBgBitmap,
                 onDismiss = onDismissPlusToolkit,
@@ -129,63 +132,13 @@ internal fun ChatBottomInputDock(
                 onJumpToStart = onJumpToStart
             )
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(841f / 138f)
-            ) {
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    if (refGlassBitmaps.quickCards.width > 1) {
-                        drawImage(
-                            image = refGlassBitmaps.quickCards,
-                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
-                            dstSize = IntSize(
-                                kotlin.math.round(size.width).toInt().coerceAtLeast(1),
-                                kotlin.math.round(size.height).toInt().coerceAtLeast(1)
-                            ),
-                            filterQuality = FilterQuality.High
-                        )
-                    }
-                }
-
-                Row(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .weight(0.36f)
-                            .clickable(
-                                enabled = !isSending,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                onSendMessage("Mevcut sahneyi kesmeden ortam atmosferini, karakterin iç sesini ve duygusal gerilimi edebi olarak derinleştir.")
-                            }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .weight(0.33f)
-                            .clickable(
-                                enabled = !isSending,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null
-                            ) {
-                                onSendMessage("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
-                            }
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .weight(0.31f)
-                            .clickable(
-                                enabled = canEditLastMessage,
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                                onClick = onEditLastMessage
-                            )
-                    )
-                }
-            }
+            ChatQuickCardsGlassPlate(
+                isSending = isSending,
+                canEditLastMessage = canEditLastMessage,
+                refGlassBitmaps = refGlassBitmaps,
+                onSendMessage = onSendMessage,
+                onEditLastMessage = onEditLastMessage
+            )
 
             BoxWithConstraints(
                 modifier = Modifier
@@ -367,83 +320,30 @@ internal fun ChatPlusToolkitDrawer(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            val tools = listOf(
-                Triple("⭐ Yıldızlananlar", "plus_toolkit_starred_button") {
-                    onDismiss()
-                    onOpenStarredSheet()
-                },
-                Triple("⏩ Devam Et", "plus_toolkit_continue") {
-                    onDismiss()
-                    if (!isSending) onContinueScene()
-                },
-                Triple("✨ Sahneyi Derinleştir", "plus_toolkit_deepen") {
-                    onDismiss()
-                    if (!isSending) {
-                        onSendPrompt("Mevcut sahneyi kesmeden ortam atmosferini, karakterin iç sesini ve duygusal gerilimi edebi olarak derinleştir.")
-                    }
-                },
-                Triple("💡 Ne Yapmalıyım?", "plus_toolkit_suggest") {
-                    onDismiss()
-                    if (!isSending) {
-                        onSendPrompt("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
-                    }
-                },
-                Triple("✨ *Eylem Ekle*", "plus_toolkit_action") {
-                    val t = inputText.trim()
-                    val next = if (t.isBlank()) "*...*" else if (t.startsWith("*") && t.endsWith("*")) t.trim('*') else "*$t*"
-                    onUpdateInputText(next)
-                    onDismiss()
-                },
-                Triple("🎲 Kader Zarı", "plus_toolkit_dice") {
-                    onDismiss()
-                    if (!isSending) onSendPrompt("*Beklenmedik bir gelişme yaşanır ve sahnenin dengesi aniden değişir.*")
-                },
-                Triple("⏳ Zaman Atla", "plus_toolkit_timeskip") {
-                    onDismiss()
-                    if (!isSending) onSendPrompt("*Aradan biraz zaman geçer; sahne bir sonraki kritik ana ilerler.*")
-                },
-                Triple("🌌 Ortamı Betimle", "plus_toolkit_describe") {
-                    onDismiss()
-                    if (!isSending) onSendPrompt("Lütfen şu an bulunduğumuz ortamı, ışığı, sesleri ve atmosferi tüm duyularla hissettirecek şekilde betimle.")
-                },
-                Triple("🧠 İç Ses", "plus_toolkit_inner") {
-                    onDismiss()
-                    if (!isSending) onSendPrompt("Karakterin şu an dışarıya belli etmediği gerçek iç düşüncelerini ve duygularını hissettirerek devam et.")
-                },
-                Triple("📋 Hikayeyi Kopyala", "plus_toolkit_copy_transcript") {
-                    onDismiss()
-                    onCopyTranscript?.invoke()
-                },
-                Triple("📤 Hikayeyi Paylaş", "plus_toolkit_share_transcript") {
-                    onDismiss()
-                    onShareTranscript?.invoke()
-                },
-                Triple("📊 Hikaye İstatistikleri", "plus_toolkit_story_stats") {
-                    onDismiss()
-                    onOpenStoryStats?.invoke()
-                },
-                Triple("🔖 Yer İmleri", "plus_toolkit_bookmarks") {
-                    onDismiss()
-                    onOpenBookmarks?.invoke()
-                },
-                Triple(if (autoTtsEnabled) "🔊 Oto-Ses: Açık" else "🔇 Oto-Ses: Kapalı", "plus_toolkit_auto_tts") {
-                    onDismiss()
-                    onToggleAutoTts?.invoke()
-                },
-                Triple("🎭 Yönetmen", "plus_toolkit_director") {
-                    onDismiss()
-                    onOpenDirector?.invoke()
-                },
-                Triple("📝 Not Defteri", "plus_toolkit_scratchpad") {
-                    onDismiss()
-                    onOpenScratchpad?.invoke()
-                },
-                Triple("⏮ Başa Dön", "plus_toolkit_jump_start") {
-                    onDismiss()
-                    onJumpToStart?.invoke()
-                }
-            )
-            tools.forEach { (label, tag, action) ->
+            val latestInputText by rememberUpdatedState(inputText)
+            val latestIsSending by rememberUpdatedState(isSending)
+            val toolSpecs = remember(autoTtsEnabled) {
+                listOf(
+                    Triple("⭐ Yıldızlananlar", "plus_toolkit_starred_button", "starred"),
+                    Triple("⏩ Devam Et", "plus_toolkit_continue", "continue"),
+                    Triple("✨ Sahneyi Derinleştir", "plus_toolkit_deepen", "deepen"),
+                    Triple("💡 Ne Yapmalıyım?", "plus_toolkit_suggest", "suggest"),
+                    Triple("✨ *Eylem Ekle*", "plus_toolkit_action", "action"),
+                    Triple("🎲 Kader Zarı", "plus_toolkit_dice", "dice"),
+                    Triple("⏳ Zaman Atla", "plus_toolkit_timeskip", "timeskip"),
+                    Triple("🌌 Ortamı Betimle", "plus_toolkit_describe", "describe"),
+                    Triple("🧠 İç Ses", "plus_toolkit_inner", "inner"),
+                    Triple("📋 Hikayeyi Kopyala", "plus_toolkit_copy_transcript", "copy"),
+                    Triple("📤 Hikayeyi Paylaş", "plus_toolkit_share_transcript", "share"),
+                    Triple("📊 Hikaye İstatistikleri", "plus_toolkit_story_stats", "stats"),
+                    Triple("🔖 Yer İmleri", "plus_toolkit_bookmarks", "bookmarks"),
+                    Triple(if (autoTtsEnabled) "🔊 Oto-Ses: Açık" else "🔇 Oto-Ses: Kapalı", "plus_toolkit_auto_tts", "auto_tts"),
+                    Triple("🎭 Yönetmen", "plus_toolkit_director", "director"),
+                    Triple("📝 Not Defteri", "plus_toolkit_scratchpad", "scratchpad"),
+                    Triple("⏮ Başa Dön", "plus_toolkit_jump_start", "jump_start")
+                )
+            }
+            toolSpecs.forEach { (label, tag, key) ->
                 Box(
                     modifier = Modifier
                         .height(36.dp)
@@ -462,7 +362,84 @@ internal fun ChatPlusToolkitDrawer(
                             RoundedCornerShape(50)
                         )
                         .morCamTopAndBottomSpecular(cornerRadius = 18.dp, topSheenAlpha = 0.24f, bottomFlareAlpha = 0.60f)
-                        .clickable { action() }
+                        .clickable {
+                            when (key) {
+                                "starred" -> {
+                                    onDismiss()
+                                    onOpenStarredSheet()
+                                }
+                                "continue" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) onContinueScene()
+                                }
+                                "deepen" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) {
+                                        onSendPrompt("Mevcut sahneyi kesmeden ortam atmosferini, karakterin iç sesini ve duygusal gerilimi edebi olarak derinleştir.")
+                                    }
+                                }
+                                "suggest" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) {
+                                        onSendPrompt("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
+                                    }
+                                }
+                                "action" -> {
+                                    val t = latestInputText.trim()
+                                    val next = if (t.isBlank()) "*...*" else if (t.startsWith("*") && t.endsWith("*")) t.trim('*') else "*$t*"
+                                    onUpdateInputText(next)
+                                    onDismiss()
+                                }
+                                "dice" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) onSendPrompt("*Beklenmedik bir gelişme yaşanır ve sahnenin dengesi aniden değişir.*")
+                                }
+                                "timeskip" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) onSendPrompt("*Aradan biraz zaman geçer; sahne bir sonraki kritik ana ilerler.*")
+                                }
+                                "describe" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) onSendPrompt("Lütfen şu an bulunduğumuz ortamı, ışığı, sesleri ve atmosferi tüm duyularla hissettirecek şekilde betimle.")
+                                }
+                                "inner" -> {
+                                    onDismiss()
+                                    if (!latestIsSending) onSendPrompt("Karakterin şu an dışarıya belli etmediği gerçek iç düşüncelerini ve duygularını hissettirerek devam et.")
+                                }
+                                "copy" -> {
+                                    onDismiss()
+                                    onCopyTranscript?.invoke()
+                                }
+                                "share" -> {
+                                    onDismiss()
+                                    onShareTranscript?.invoke()
+                                }
+                                "stats" -> {
+                                    onDismiss()
+                                    onOpenStoryStats?.invoke()
+                                }
+                                "bookmarks" -> {
+                                    onDismiss()
+                                    onOpenBookmarks?.invoke()
+                                }
+                                "auto_tts" -> {
+                                    onDismiss()
+                                    onToggleAutoTts?.invoke()
+                                }
+                                "director" -> {
+                                    onDismiss()
+                                    onOpenDirector?.invoke()
+                                }
+                                "scratchpad" -> {
+                                    onDismiss()
+                                    onOpenScratchpad?.invoke()
+                                }
+                                "jump_start" -> {
+                                    onDismiss()
+                                    onJumpToStart?.invoke()
+                                }
+                            }
+                        }
                         .testTag(tag)
                         .padding(horizontal = 14.dp),
                     contentAlignment = Alignment.Center
@@ -475,6 +452,77 @@ internal fun ChatPlusToolkitDrawer(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Isolated quick-suggestion glass plate that takes no `inputText` parameter, so typing
+ * keystrokes inside BasicTextField never recomposes or redraws this Canvas plate.
+ */
+@Composable
+private fun ChatQuickCardsGlassPlate(
+    isSending: Boolean,
+    canEditLastMessage: Boolean,
+    refGlassBitmaps: AetheriaRefGlassBitmaps,
+    onSendMessage: (String) -> Unit,
+    onEditLastMessage: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(841f / 138f)
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            if (refGlassBitmaps.quickCards.width > 1) {
+                drawImage(
+                    image = refGlassBitmaps.quickCards,
+                    dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                    dstSize = IntSize(
+                        kotlin.math.round(size.width).toInt().coerceAtLeast(1),
+                        kotlin.math.round(size.height).toInt().coerceAtLeast(1)
+                    ),
+                    filterQuality = FilterQuality.High
+                )
+            }
+        }
+
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .weight(0.36f)
+                    .clickable(
+                        enabled = !isSending,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        onSendMessage("Mevcut sahneyi kesmeden ortam atmosferini, karakterin iç sesini ve duygusal gerilimi edebi olarak derinleştir.")
+                    }
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .weight(0.33f)
+                    .clickable(
+                        enabled = !isSending,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        onSendMessage("Şu anki roman kurgusunda yapabileceğim 3 farklı dramatik hamle (1. Karanlık/Riskli hamle, 2. Tutkulu/Duygusal hamle, 3. Stratejik hamle) öner ve sahneyi sürdür.")
+                    }
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .weight(0.31f)
+                    .clickable(
+                        enabled = canEditLastMessage,
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = onEditLastMessage
+                    )
+            )
         }
     }
 }

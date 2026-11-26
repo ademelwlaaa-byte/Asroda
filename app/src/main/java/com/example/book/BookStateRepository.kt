@@ -297,7 +297,8 @@ object BookStateRepository {
      */
     fun unlockedCharacters(state: BookReadState): List<BookCharacterId> {
         val maxChapterReached = maxOf(state.activeChapter, state.highestCompletedChapter)
-        val currentSceneOrder = CosmicDriftBookRegistry.node(state.currentNodeId)?.sceneOrder
+        val catalog = BookRegistryHub.resolve(state.bookId)
+        val currentSceneOrder = catalog.node(state.currentNodeId)?.sceneOrder
             ?: (state.transcript.lastOrNull { it is BookTranscriptItem.SceneBlock } as? BookTranscriptItem.SceneBlock)?.sceneOrder
             ?: 1
         return BookCharacterId.entries.filter { char ->
@@ -787,9 +788,17 @@ object BookStateRepository {
         val startNode = catalog.node(startNodeId)
             ?: return current
 
+        // Only grant the between-chapter rest (-1 fatigue) when advancing forward from a completed chapter;
+        // prevents repeatedly jumping back and forth between chapters to farm fatigue down to 0.
+        val restAdjustedFatigue = if (clamped > current.activeChapter && current.isChapterCompleted) {
+            (current.fatigue - 1).coerceAtLeast(0)
+        } else {
+            current.fatigue
+        }
+
         val snapshot = ChapterSnapshot(
             bonds = current.bonds,
-            fatigue = (current.fatigue - 1).coerceAtLeast(0),
+            fatigue = restAdjustedFatigue,
             mystery = current.mystery,
             redEyeInstability = current.redEyeInstability,
             avengersTrust = current.avengersTrust,
@@ -933,6 +942,7 @@ object BookStateRepository {
         val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val editor = prefs.edit()
             .remove("state_$bookId")
+            .remove("state_bak_$bookId")
             .remove("scroll_idx_$bookId")
             .remove("scroll_off_$bookId")
         prefs.all.keys
@@ -1241,24 +1251,88 @@ object BookStateRepository {
                     })
                 }
             }
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val prevStateJson = prefs.getString("state_$bookId", null)
+            val editor = prefs.edit()
                 .putString("state_$bookId", root.toString())
                 .putInt("scroll_idx_$bookId", state.savedScrollIndex)
                 .putInt("scroll_off_$bookId", state.savedScrollOffset)
-                .apply()
+            if (!prevStateJson.isNullOrBlank()) {
+                // Keep last-known-good snapshot as crash/corruption safety net
+                editor.putString("state_bak_$bookId", prevStateJson)
+            }
+            editor.apply()
         } catch (e: Exception) {
             android.util.Log.e("BookStateRepository", "Failed saving book state", e)
         }
     }
 
+    /**
+     * Deterministic graph-integrity validator for any [BookCatalogProvider]:
+     * checks that every chapter's startNodeId and every choice's nextNodeId resolves cleanly
+     * and that every chapter contains at least one chapter-end node.
+     */
+    fun validateBookGraphIntegrity(catalog: BookCatalogProvider): List<String> {
+        val issues = mutableListOf<String>()
+        if (catalog.chapters.isEmpty()) {
+            issues.add("Book ${catalog.bookId} has no chapters.")
+            return issues
+        }
+        val nodes = catalog.allNodes
+        for (meta in catalog.chapters) {
+            if (nodes[meta.startNodeId] == null) {
+                issues.add("Chapter ${meta.number} missing startNodeId='${meta.startNodeId}'")
+            }
+            val chNodes = nodes.values.filter { it.chapterNumber == meta.number }
+            if (chNodes.none { it.isChapterEnd }) {
+                issues.add("Chapter ${meta.number} has no isChapterEnd node")
+            }
+        }
+        for ((nodeId, node) in nodes) {
+            for (choice in node.choices) {
+                if (nodes[choice.nextNodeId] == null) {
+                    issues.add("Node '$nodeId' choice '${choice.id}' points to missing nextNodeId='${choice.nextNodeId}'")
+                }
+            }
+        }
+        return issues
+    }
+
     private fun loadFromPrefs(context: Context, bookId: String): BookReadState? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val primaryRaw = prefs.getString("state_$bookId", null)
+        if (!primaryRaw.isNullOrBlank()) {
+            parsePersistedState(prefs, bookId, primaryRaw)?.let { return it }
+        }
+        val backupRaw = prefs.getString("state_bak_$bookId", null)
+        if (!backupRaw.isNullOrBlank()) {
+            parsePersistedState(prefs, bookId, backupRaw)?.let { recovered ->
+                android.util.Log.w("BookStateRepository", "Recovered $bookId from backup snapshot after primary corruption")
+                return recovered
+            }
+        }
+        return null
+    }
+
+    private fun parsePersistedState(
+        prefs: android.content.SharedPreferences,
+        bookId: String,
+        raw: String
+    ): BookReadState? {
         return try {
             val catalog = BookRegistryHub.resolve(bookId)
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val raw = prefs.getString("state_$bookId", null) ?: return null
             val root = JSONObject(raw)
-            val currentNodeId = root.optString("currentNodeId", catalog.chapterMeta(1).startNodeId)
+            val savedActiveChapter = root.optInt("activeChapter", 1).coerceIn(1, catalog.totalPlayableChapters)
+            val loadedFlags = decodeStringMap(root.optJSONObject("flags"))
+            val rawNodeId = root.optString("currentNodeId", "")
+            val nodeMissing = rawNodeId.isBlank() || catalog.node(rawNodeId) == null
+            val currentNodeId = if (nodeMissing) {
+                // Graceful recovery: if an update renamed an old scene node, resume cleanly at the start of the
+                // player's saved chapter while keeping 100% of their bonds, flags, secrets & completed chapters!
+                catalog.resolveChapterStartNodeId(savedActiveChapter, loadedFlags)
+            } else {
+                rawNodeId
+            }
             if (catalog.node(currentNodeId) == null) return null
 
             val completed = mutableSetOf<Int>()
@@ -1310,7 +1384,31 @@ object BookStateRepository {
                     }
                 }
             }
-            if (transcript.isEmpty()) return null
+            if (transcript.isEmpty() || nodeMissing) {
+                val fallbackNode = catalog.node(currentNodeId) ?: return null
+                val recoveredResolved = catalog.resolveSceneContent(
+                    node = fallbackNode,
+                    flags = loadedFlags,
+                    fatigue = root.optInt("fatigue", 0).coerceIn(0, 5),
+                    redEyeInstability = root.optInt("redEyeInstability", 0).coerceIn(0, 5),
+                    avengersTrust = root.optInt("avengersTrust", 35).coerceIn(0, 100),
+                    bonds = decodeBonds(root.optJSONObject("bonds")),
+                    secrets = secrets
+                )
+                transcript.clear()
+                transcript.add(
+                    BookTranscriptItem.SceneBlock(
+                        nodeId = fallbackNode.id,
+                        sceneOrder = fallbackNode.sceneOrder,
+                        sceneTitle = fallbackNode.sceneTitle,
+                        locationTag = fallbackNode.locationTag,
+                        paragraphs = recoveredResolved.paragraphs,
+                        memoryEchoes = recoveredResolved.memoryEchoes,
+                        isChapterEnd = fallbackNode.isChapterEnd,
+                        chapterEndQuote = fallbackNode.chapterEndQuote
+                    )
+                )
+            }
 
             val chapterDecisions = mutableMapOf<Int, List<RecordedDecision>>()
             root.optJSONObject("chapterDecisions")?.let { cdObj ->
@@ -1362,7 +1460,6 @@ object BookStateRepository {
                 root.optInt("savedScrollOffset", 0).coerceAtLeast(0)
             }
 
-            val loadedFlags = decodeStringMap(root.optJSONObject("flags"))
             val loadedNumericFlags = decodeIntMap(root.optJSONObject("numericFlags")).toMutableMap()
             // Backward-compatible flag backfill for newly added characters (Voss, Mira, Fury, Zero)
             // if the user already played those chapters on an earlier version!

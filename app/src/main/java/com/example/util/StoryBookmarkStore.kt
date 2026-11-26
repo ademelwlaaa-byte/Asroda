@@ -71,11 +71,15 @@ object StoryBookmarkStore {
         val existing = loadBookmarks(context, cleanBot)
             .filterNot { it.messageId == cleanMsg }
             .toMutableList()
+        val cleanSnippet = com.example.data.repository.EmochiRepository.cleanEmotionTags(snippet)
+            .trim()
+            .replace(Regex("\\s+"), " ")
+            .take(120)
         val created = Bookmark(
-            id = "${System.currentTimeMillis()}_${cleanMsg.hashCode()}",
+            id = "${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(8)}",
             messageId = cleanMsg,
             title = cleanTitle,
-            snippet = snippet.trim().replace(Regex("\\s+"), " ").take(120),
+            snippet = cleanSnippet,
             createdAtMs = System.currentTimeMillis()
         )
         existing.add(0, created)

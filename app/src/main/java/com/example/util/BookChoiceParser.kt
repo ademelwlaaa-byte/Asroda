@@ -33,14 +33,20 @@ object BookChoiceParser {
         val indexNumber: Int = 0
     )
 
-    private val numberWords = mapOf(
-        "bir" to 1, "birinci" to 1, "birincisini" to 1, "birinci seçenek" to 1,
-        "iki" to 2, "ikinci" to 2, "ikincisini" to 2, "ikinci seçenek" to 2,
-        "üç" to 3, "üçüncü" to 3, "üçüncüsünü" to 3, "üçüncü seçenek" to 3,
-        "dört" to 4, "dördüncü" to 4, "dördüncüsünü" to 4,
-        "one" to 1, "first" to 1, "two" to 2, "second" to 2,
-        "three" to 3, "third" to 3, "four" to 4, "fourth" to 4
+    private val TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
+
+    private val numberWords = listOf(
+        "birinci seçenek" to 1, "ikinci seçenek" to 2, "üçüncü seçenek" to 3, "dördüncü seçenek" to 4,
+        "birincisini" to 1, "ikincisini" to 2, "üçüncüsünü" to 3, "dördüncüsünü" to 4,
+        "birinci" to 1, "ikinci" to 2, "üçüncü" to 3, "dördüncü" to 4,
+        "first" to 1, "second" to 2, "third" to 3, "fourth" to 4,
+        "bir" to 1, "iki" to 2, "üç" to 3, "dört" to 4,
+        "one" to 1, "two" to 2, "three" to 3, "four" to 4
     )
+
+    private val numberWordPatterns: List<Pair<Regex, Int>> = numberWords.map { (word, idx) ->
+        Regex("""(?<![\p{L}\p{N}])${Regex.escape(word)}(?![\p{L}\p{N}])""") to idx
+    }
 
     private val emojiNumbers = mapOf(
         "1️⃣" to 1, "2️⃣" to 2, "3️⃣" to 3, "4️⃣" to 4,
@@ -152,7 +158,7 @@ object BookChoiceParser {
 
         val cleanHint = toneHint.trim()
         if (cleanHint.isNotBlank()) {
-            val hintLower = cleanHint.lowercase()
+            val hintLower = cleanHint.lowercase(TR_LOCALE)
             val kind = when {
                 isBranching -> ChoiceBadgeKind.BRANCH
                 isRelationship -> ChoiceBadgeKind.RELATIONSHIP
@@ -242,7 +248,7 @@ object BookChoiceParser {
      */
     fun parseChoice(userInput: String, choices: List<String>): Int? {
         if (userInput.isBlank() || choices.isEmpty()) return null
-        val normalized = userInput.trim().lowercase()
+        val normalized = userInput.trim().lowercase(TR_LOCALE)
 
         // 1. Emoji number match
         for ((emoji, idx) in emojiNumbers) {
@@ -263,38 +269,57 @@ object BookChoiceParser {
             if (n != null && n <= choices.size) return n
         }
 
-        // 4. Word-based number ("birinci", "ikinci" …)
-        for ((word, idx) in numberWords) {
-            if (normalized.contains(word) && idx <= choices.size) return idx
+        // 4. Word-based number ("birinci", "ikinci" …) strictly on Unicode word boundaries
+        //    so words like "birlikte", "biraz", "fikir", "güçlü" never false-match "bir"/"iki"/"üç"!
+        for ((pattern, idx) in numberWordPatterns) {
+            if (idx <= choices.size && pattern.containsMatchIn(normalized)) return idx
         }
 
-        // 5. Keyword / longest-common-substring match against choice texts
+        // 5. Keyword / longest-common-substring match against choice texts (with tie-ambiguity guard)
         var bestIdx: Int? = null
         var bestScore = 0
+        var tiedCount = 0
         choices.forEachIndexed { i, choice ->
-            val score = longestCommonSubstringLength(normalized, choice.lowercase())
-            if (score > bestScore && score >= 4) {
-                bestScore = score
-                bestIdx = i + 1
+            val score = longestCommonSubstringLength(normalized, choice.lowercase(TR_LOCALE))
+            if (score >= 4) {
+                when {
+                    score > bestScore -> {
+                        bestScore = score
+                        bestIdx = i + 1
+                        tiedCount = 1
+                    }
+                    score == bestScore -> {
+                        tiedCount++
+                    }
+                }
             }
         }
-        if (bestIdx != null) return bestIdx
+        if (bestIdx != null && tiedCount == 1) return bestIdx
 
-        // 6. No match → caller should ask "Hangi seçeneği kastediyorsun?"
+        // 6. No match or ambiguous tie → caller should ask "Hangi seçeneği kastediyorsun?"
         return null
     }
 
     private fun longestCommonSubstringLength(a: String, b: String): Int {
         if (a.isEmpty() || b.isEmpty()) return 0
+        val (shortStr, longStr) = if (a.length <= b.length) a to b else b to a
+        var prev = IntArray(shortStr.length + 1)
+        var curr = IntArray(shortStr.length + 1)
         var max = 0
-        val dp = Array(a.length + 1) { IntArray(b.length + 1) }
-        for (i in 1..a.length) {
-            for (j in 1..b.length) {
-                if (a[i - 1] == b[j - 1]) {
-                    dp[i][j] = dp[i - 1][j - 1] + 1
-                    if (dp[i][j] > max) max = dp[i][j]
+        for (i in 1..longStr.length) {
+            val lc = longStr[i - 1]
+            for (j in 1..shortStr.length) {
+                if (lc == shortStr[j - 1]) {
+                    val v = prev[j - 1] + 1
+                    curr[j] = v
+                    if (v > max) max = v
+                } else {
+                    curr[j] = 0
                 }
             }
+            val tmp = prev
+            prev = curr
+            curr = tmp
         }
         return max
     }

@@ -7,6 +7,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -17,6 +19,9 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.zip.ZipInputStream
 
 enum class BookPackKind(val key: String, val badgeTr: String, val accentHex: Long) {
@@ -72,11 +77,144 @@ object BookContentPackManager {
     const val STUDIO_VOICE_PACK_URL =
         "https://github.com/ademelwlaaa-byte/Asroda-Releases/releases/latest/download/asroda-studio-voices-v1.zip"
 
+    internal const val MAX_ZIP_ENTRIES = 2_000
+    internal const val MAX_ZIP_TOTAL_BYTES = 150L * 1024L * 1024L
+    internal const val MAX_ZIP_SINGLE_ENTRY_BYTES = 30L * 1024L * 1024L
+
+    private val VOICE_EXTS = listOf("ogg", "mp3", "m4a", "wav")
+    private val MEDIA_EXTS = listOf("webp", "jpg", "png", "ogg", "m4a", "mp3")
+
+    private data class PackFileIndex(
+        val rootPath: String,
+        val voiceByBaseName: Map<String, File>,
+        val mediaByBaseName: Map<String, File>,
+        val fileCountByPackId: Map<String, Int>
+    )
+
+    private val packMutexes = ConcurrentHashMap<String, Mutex>()
+    private val indexLock = Any()
+    private val swapLock = Any()
+    @Volatile private var cachedFileIndex: PackFileIndex? = null
+    private val indexBuildCounter = AtomicInteger(0)
+
+    internal fun mutexForPack(packId: String): Mutex =
+        packMutexes.computeIfAbsent(sanitizePackId(packId)) { Mutex() }
+
+    internal fun invalidateFileIndex() {
+        synchronized(indexLock) {
+            cachedFileIndex = null
+        }
+    }
+
+    internal fun indexBuildCountForTest(): Int = indexBuildCounter.get()
+
+    internal fun resetForTesting() {
+        synchronized(this) {
+            initialized = false
+            _installedPacks.value = emptyList()
+            _activeDownload.value = null
+            cancelRequested = false
+        }
+        invalidateFileIndex()
+        indexBuildCounter.set(0)
+        packMutexes.clear()
+    }
+
+    private fun getOrBuildFileIndex(context: Context): PackFileIndex {
+        val root = packsRootDir(context)
+        val rootPath = root.absolutePath
+        cachedFileIndex?.let { existing ->
+            if (existing.rootPath == rootPath) return existing
+        }
+        synchronized(indexLock) {
+            cachedFileIndex?.let { existing ->
+                if (existing.rootPath == rootPath) return existing
+            }
+            val voiceMap = HashMap<String, File>(256)
+            val voiceExtRank = HashMap<String, Int>(256)
+            val mediaMap = HashMap<String, File>(128)
+            val mediaExtRank = HashMap<String, Int>(128)
+            val countByPack = HashMap<String, Int>()
+
+            fun registerVoiceCandidate(file: File, priorityBoost: Int) {
+                if (!file.isFile || file.length() <= 512L) return
+                val ext = file.extension.lowercase(Locale.ROOT)
+                val extIdx = VOICE_EXTS.indexOf(ext)
+                if (extIdx < 0) return
+                val key = file.nameWithoutExtension.lowercase(Locale.ROOT)
+                val rank = priorityBoost * 10 + extIdx
+                val prevRank = voiceExtRank[key]
+                if (prevRank == null || rank < prevRank) {
+                    voiceMap[key] = file
+                    voiceExtRank[key] = rank
+                }
+            }
+
+            fun registerMediaCandidate(file: File) {
+                if (!file.isFile || file.length() <= 256L) return
+                val ext = file.extension.lowercase(Locale.ROOT)
+                val extIdx = MEDIA_EXTS.indexOf(ext)
+                if (extIdx < 0) return
+                val key = file.nameWithoutExtension.lowercase(Locale.ROOT)
+                val prevRank = mediaExtRank[key]
+                if (prevRank == null || extIdx < prevRank) {
+                    mediaMap[key] = file
+                    mediaExtRank[key] = extIdx
+                }
+            }
+
+            // 1. Direct `book_packs/voices/` takes top priority for voice lookups
+            val directVoicesDir = File(root, "voices")
+            if (directVoicesDir.isDirectory) {
+                directVoicesDir.listFiles()?.forEach { f -> registerVoiceCandidate(f, priorityBoost = 0) }
+            }
+
+            // 2. Scan installed pack subdirectories (skip transient staging/backup directories)
+            root.listFiles()?.forEach { packDir ->
+                if (!packDir.isDirectory) return@forEach
+                val dirName = packDir.name
+                if (dirName.contains("_staging_") || dirName.contains("_backup_")) return@forEach
+
+                var packFileCount = 0
+                packDir.walkTopDown().forEach { f ->
+                    if (f.isFile) packFileCount++
+                }
+                countByPack[dirName] = packFileCount
+
+                // Top-level files in packDir
+                packDir.listFiles()?.forEach { f ->
+                    if (f.isFile) {
+                        registerVoiceCandidate(f, priorityBoost = 1)
+                        registerMediaCandidate(f)
+                    }
+                }
+                // `packDir/voices`
+                val subVoices = File(packDir, "voices")
+                if (subVoices.isDirectory) {
+                    subVoices.listFiles()?.forEach { f -> registerVoiceCandidate(f, priorityBoost = 2) }
+                }
+                // `packDir/media`
+                val subMedia = File(packDir, "media")
+                if (subMedia.isDirectory) {
+                    subMedia.listFiles()?.forEach { f -> registerMediaCandidate(f) }
+                }
+            }
+
+            indexBuildCounter.incrementAndGet()
+            return PackFileIndex(
+                rootPath = rootPath,
+                voiceByBaseName = voiceMap,
+                mediaByBaseName = mediaMap,
+                fileCountByPackId = countByPack
+            ).also { cachedFileIndex = it }
+        }
+    }
+
     fun isStudioVoicePackInstalled(context: Context): Boolean {
         ensureLoaded(context)
-        val dir = File(packsRootDir(context), STUDIO_VOICE_PACK_ID)
-        return _installedPacks.value.any { it.id == STUDIO_VOICE_PACK_ID } &&
-            dir.exists() && countFiles(dir) >= 100
+        if (_installedPacks.value.none { it.id == STUDIO_VOICE_PACK_ID }) return false
+        val index = getOrBuildFileIndex(context)
+        return (index.fileCountByPackId[STUDIO_VOICE_PACK_ID] ?: 0) >= 100
     }
 
     suspend fun downloadStudioVoicePack(context: Context): Result<InstalledContentPack> {
@@ -177,6 +315,7 @@ object BookContentPackManager {
         }
         if (dir.exists()) {
             try { dir.deleteRecursively() } catch (_: Throwable) {}
+            invalidateFileIndex()
         }
         val cleaned = _installedPacks.value.filterNot { it.id == packId || it.id == safeId }
         if (cleaned.size != _installedPacks.value.size) {
@@ -232,7 +371,7 @@ object BookContentPackManager {
                     val loc = c.getHeaderField("Location")
                     c.disconnect()
                     if (loc.isNullOrBlank()) return@withContext null
-                    currentUrl = loc
+                    currentUrl = URL(URL(currentUrl), loc).toString()
                     redirects++
                 } else if (code in 200..299) {
                     conn = c
@@ -339,52 +478,35 @@ object BookContentPackManager {
 
     /**
      * Checks whether any downloaded/imported voice dub pack supplies a custom studio audio file
-     * for [lineId] (e.g. `voice_twin_aiden_1.ogg` / `.mp3` / `.wav`).
+     * for [lineId] (e.g. `voice_twin_aiden_1.ogg` / `.mp3` / `.wav`) using the O(1) cached index.
      */
     fun findDownloadedVoiceFile(context: Context, lineId: String?): File? {
         if (lineId.isNullOrBlank()) return null
         val safe = lineId.trim().lowercase(Locale.ROOT)
-        val exts = listOf("ogg", "mp3", "m4a", "wav")
-        val voicesDir = voicesRootDir(context)
-        for (ext in exts) {
-            val direct = File(voicesDir, "$safe.$ext")
-            if (direct.exists() && direct.length() > 512L) return direct
-        }
-        val root = packsRootDir(context)
-        val subDirs = root.listFiles()?.filter { it.isDirectory } ?: return null
-        for (packDir in subDirs) {
-            for (ext in exts) {
-                val f1 = File(packDir, "$safe.$ext")
-                if (f1.exists() && f1.length() > 512L) return f1
-                val f2 = File(File(packDir, "voices"), "$safe.$ext")
-                if (f2.exists() && f2.length() > 512L) return f2
-            }
-        }
-        return null
+        val hit = getOrBuildFileIndex(context).voiceByBaseName[safe] ?: return null
+        if (hit.exists() && hit.length() > 512L) return hit
+        invalidateFileIndex()
+        val refreshed = getOrBuildFileIndex(context).voiceByBaseName[safe] ?: return null
+        return refreshed.takeIf { it.exists() && it.length() > 512L }
     }
 
     /**
-     * Resolves an optional downloaded HD media file (image or music) by basename if present.
+     * Resolves an optional downloaded HD media file (image or music) by basename in O(1) time.
      */
     fun findDownloadedMediaFile(context: Context, baseName: String): File? {
         if (baseName.isBlank()) return null
-        val root = packsRootDir(context)
-        val subDirs = root.listFiles()?.filter { it.isDirectory } ?: return null
-        val exts = listOf("webp", "jpg", "png", "ogg", "m4a", "mp3")
-        for (packDir in subDirs) {
-            for (ext in exts) {
-                val f1 = File(packDir, "$baseName.$ext")
-                if (f1.exists() && f1.length() > 256L) return f1
-                val f2 = File(File(packDir, "media"), "$baseName.$ext")
-                if (f2.exists() && f2.length() > 256L) return f2
-            }
-        }
-        return null
+        val safe = baseName.trim().lowercase(Locale.ROOT)
+        val hit = getOrBuildFileIndex(context).mediaByBaseName[safe] ?: return null
+        if (hit.exists() && hit.length() > 256L) return hit
+        invalidateFileIndex()
+        val refreshed = getOrBuildFileIndex(context).mediaByBaseName[safe] ?: return null
+        return refreshed.takeIf { it.exists() && it.length() > 256L }
     }
 
     /**
      * Downloads a `.zip` content pack over HTTPS/HTTP (supports GitHub Releases & CDN redirects),
-     * verifies integrity, safely extracts into internal storage, and registers it offline.
+     * serializes concurrent operations per pack via [Mutex], verifies integrity, atomically extracts
+     * via a staging directory, and registers it offline.
      */
     suspend fun downloadPackFromUrl(
         context: Context,
@@ -403,79 +525,84 @@ object BookContentPackManager {
             return@withContext Result.failure(IllegalArgumentException("Geçerli bir https:// paket adresi girin."))
         }
 
-        cancelRequested = false
         val safeId = sanitizePackId(packId)
-        val tmpZip = File(appCtx.cacheDir, "dl_$safeId.zip")
-        var conn: HttpURLConnection? = null
+        mutexForPack(safeId).withLock {
+            cancelRequested = false
+            val tmpZip = File(appCtx.cacheDir, "dl_${safeId}_${UUID.randomUUID()}.zip")
+            var conn: HttpURLConnection? = null
 
-        try {
-            _activeDownload.value = PackDownloadProgress(safeId, title, 0L, -1L, "Sunucuya bağlanılıyor...")
+            try {
+                _activeDownload.value = PackDownloadProgress(safeId, title, 0L, -1L, "Sunucuya bağlanılıyor...")
 
-            var currentUrl = cleanUrl
-            var redirects = 0
-            while (redirects < 6) {
-                val c = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 15_000
-                    readTimeout = 30_000
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "Asroda-BookPackManager/2.2")
+                var currentUrl = cleanUrl
+                var redirects = 0
+                while (redirects < 6) {
+                    val c = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 15_000
+                        readTimeout = 30_000
+                        instanceFollowRedirects = true
+                        setRequestProperty("User-Agent", "Asroda-BookPackManager/2.2")
+                    }
+                    val code = c.responseCode
+                    if (code in 300..399) {
+                        val loc = c.getHeaderField("Location")
+                        c.disconnect()
+                        if (loc.isNullOrBlank()) throw IllegalStateException("Yönlendirme adresi boş.")
+                        currentUrl = URL(URL(currentUrl), loc).toString()
+                        redirects++
+                    } else if (code in 200..299) {
+                        conn = c
+                        break
+                    } else {
+                        c.disconnect()
+                        throw IllegalStateException("Sunucu hatası (HTTP $code)")
+                    }
                 }
-                val code = c.responseCode
-                if (code in 300..399) {
-                    val loc = c.getHeaderField("Location")
-                    c.disconnect()
-                    if (loc.isNullOrBlank()) throw IllegalStateException("Yönlendirme adresi boş.")
-                    currentUrl = loc
-                    redirects++
-                } else if (code in 200..299) {
-                    conn = c
-                    break
-                } else {
-                    c.disconnect()
-                    throw IllegalStateException("Sunucu hatası (HTTP $code)")
-                }
-            }
-            val activeConn = conn ?: throw IllegalStateException("Bağlantı kurulamadı.")
-            val totalBytes = activeConn.contentLengthLong
+                val activeConn = conn ?: throw IllegalStateException("Bağlantı kurulamadı.")
+                val totalBytes = activeConn.contentLengthLong
 
-            activeConn.inputStream.use { rawIn ->
-                FileOutputStream(tmpZip).use { out ->
-                    val buf = ByteArray(16 * 1024)
-                    var downloaded = 0L
-                    var lastReport = 0L
-                    while (true) {
-                        if (cancelRequested) throw CancellationException("İndirme kullanıcı tarafından iptal edildi.")
-                        val read = rawIn.read(buf)
-                        if (read <= 0) break
-                        out.write(buf, 0, read)
-                        downloaded += read
-                        val now = System.currentTimeMillis()
-                        if (now - lastReport > 120L) {
-                            lastReport = now
-                            _activeDownload.value = PackDownloadProgress(
-                                packId = safeId,
-                                title = title,
-                                downloadedBytes = downloaded,
-                                totalBytes = totalBytes,
-                                phaseLabel = "İndiriliyor..."
-                            )
+                activeConn.inputStream.use { rawIn ->
+                    FileOutputStream(tmpZip).use { out ->
+                        val buf = ByteArray(16 * 1024)
+                        var downloaded = 0L
+                        var lastReport = 0L
+                        while (true) {
+                            if (cancelRequested) throw CancellationException("İndirme kullanıcı tarafından iptal edildi.")
+                            val read = rawIn.read(buf)
+                            if (read <= 0) break
+                            out.write(buf, 0, read)
+                            downloaded += read
+                            if (downloaded > MAX_ZIP_TOTAL_BYTES) {
+                                throw SecurityException("İndirilen paket izin verilen maksimum boyutu aşıyor.")
+                            }
+                            val now = System.currentTimeMillis()
+                            if (now - lastReport > 120L) {
+                                lastReport = now
+                                _activeDownload.value = PackDownloadProgress(
+                                    packId = safeId,
+                                    title = title,
+                                    downloadedBytes = downloaded,
+                                    totalBytes = totalBytes,
+                                    phaseLabel = "İndiriliyor..."
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            _activeDownload.value = PackDownloadProgress(safeId, title, tmpZip.length(), tmpZip.length(), "Paket açılıyor...")
-            val installed = tmpZip.inputStream().use { zipIn ->
-                extractZipIntoPack(appCtx, safeId, title, subtitle, kind, cleanUrl, zipIn)
+                _activeDownload.value = PackDownloadProgress(safeId, title, tmpZip.length(), tmpZip.length(), "Paket açılıyor...")
+                val installed = tmpZip.inputStream().use { zipIn ->
+                    extractZipIntoPack(appCtx, safeId, title, subtitle, kind, cleanUrl, zipIn)
+                }
+                Result.success(installed)
+            } catch (t: Throwable) {
+                Result.failure(t)
+            } finally {
+                try { conn?.disconnect() } catch (_: Throwable) {}
+                try { if (tmpZip.exists()) tmpZip.delete() } catch (_: Throwable) {}
+                _activeDownload.value = null
+                cancelRequested = false
             }
-            Result.success(installed)
-        } catch (t: Throwable) {
-            Result.failure(t)
-        } finally {
-            try { conn?.disconnect() } catch (_: Throwable) {}
-            try { if (tmpZip.exists()) tmpZip.delete() } catch (_: Throwable) {}
-            _activeDownload.value = null
-            cancelRequested = false
         }
     }
 
@@ -492,26 +619,28 @@ object BookContentPackManager {
         val appCtx = context.applicationContext
         val baseTitle = displayName.removeSuffix(".zip").removeSuffix(".asrodapack").ifBlank { "Özel İçerik Paketi" }
         val safeId = sanitizePackId("local_${baseTitle}_${System.currentTimeMillis() % 10000}")
-        try {
-            _activeDownload.value = PackDownloadProgress(safeId, baseTitle, 0L, -1L, "Cihazdan paket içe aktarılıyor...")
-            val stream = appCtx.contentResolver.openInputStream(uri)
-                ?: return@withContext Result.failure(IllegalStateException("Seçilen dosya açılamadı."))
-            val installed = stream.use { input ->
-                extractZipIntoPack(
-                    context = appCtx,
-                    packId = safeId,
-                    fallbackTitle = baseTitle,
-                    fallbackSubtitle = "Cihazdan İçe Aktarıldı · Çevrimdışı Hazır",
-                    kind = kind,
-                    sourceUrl = null,
-                    rawZipStream = input
-                )
+        mutexForPack(safeId).withLock {
+            try {
+                _activeDownload.value = PackDownloadProgress(safeId, baseTitle, 0L, -1L, "Cihazdan paket içe aktarılıyor...")
+                val stream = appCtx.contentResolver.openInputStream(uri)
+                    ?: return@withContext Result.failure(IllegalStateException("Seçilen dosya açılamadı."))
+                val installed = stream.use { input ->
+                    extractZipIntoPack(
+                        context = appCtx,
+                        packId = safeId,
+                        fallbackTitle = baseTitle,
+                        fallbackSubtitle = "Cihazdan İçe Aktarıldı · Çevrimdışı Hazır",
+                        kind = kind,
+                        sourceUrl = null,
+                        rawZipStream = input
+                    )
+                }
+                Result.success(installed)
+            } catch (t: Throwable) {
+                Result.failure(t)
+            } finally {
+                _activeDownload.value = null
             }
-            Result.success(installed)
-        } catch (t: Throwable) {
-            Result.failure(t)
-        } finally {
-            _activeDownload.value = null
         }
     }
 
@@ -521,12 +650,16 @@ object BookContentPackManager {
     suspend fun deletePack(context: Context, packId: String): Boolean = withContext(Dispatchers.IO) {
         ensureLoaded(context)
         val appCtx = context.applicationContext
-        val dir = File(packsRootDir(appCtx), sanitizePackId(packId))
-        val deleted = if (dir.exists()) dir.deleteRecursively() else true
-        val updated = _installedPacks.value.filterNot { it.id == packId }
-        _installedPacks.value = updated
-        persistInstalled(appCtx, updated)
-        deleted
+        val safeId = sanitizePackId(packId)
+        mutexForPack(safeId).withLock {
+            val dir = File(packsRootDir(appCtx), safeId)
+            val deleted = if (dir.exists()) dir.deleteRecursively() else true
+            val updated = _installedPacks.value.filterNot { it.id == packId || it.id == safeId }
+            _installedPacks.value = updated
+            persistInstalled(appCtx, updated)
+            invalidateFileIndex()
+            deleted
+        }
     }
 
     private fun extractZipIntoPack(
@@ -537,13 +670,38 @@ object BookContentPackManager {
         kind: BookPackKind,
         sourceUrl: String?,
         rawZipStream: InputStream
-    ): InstalledContentPack {
-        val targetDir = File(packsRootDir(context), packId)
-        if (targetDir.exists()) targetDir.deleteRecursively()
-        targetDir.mkdirs()
+    ): InstalledContentPack = extractZipIntoPackInternal(
+        context = context,
+        packId = packId,
+        fallbackTitle = fallbackTitle,
+        fallbackSubtitle = fallbackSubtitle,
+        kind = kind,
+        sourceUrl = sourceUrl,
+        rawZipStream = rawZipStream
+    )
 
-        val canonicalRoot = targetDir.canonicalPath + File.separator
+    internal fun extractZipIntoPackInternal(
+        context: Context,
+        packId: String,
+        fallbackTitle: String,
+        fallbackSubtitle: String,
+        kind: BookPackKind,
+        sourceUrl: String?,
+        rawZipStream: InputStream,
+        maxEntries: Int = MAX_ZIP_ENTRIES,
+        maxTotalBytes: Long = MAX_ZIP_TOTAL_BYTES,
+        maxSingleEntryBytes: Long = MAX_ZIP_SINGLE_ENTRY_BYTES
+    ): InstalledContentPack {
+        val rootDir = packsRootDir(context)
+        val safeId = sanitizePackId(packId)
+        val targetDir = File(rootDir, safeId)
+        val stagingDir = File(rootDir, "${safeId}_staging_${UUID.randomUUID()}")
+        stagingDir.mkdirs()
+
+        val canonicalStagingRoot = stagingDir.canonicalPath + File.separator
         var extractedFiles = 0
+        var totalEntries = 0
+        var totalExtractedBytes = 0L
 
         try {
             ZipInputStream(BufferedInputStream(rawZipStream)).use { zis ->
@@ -551,24 +709,39 @@ object BookContentPackManager {
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (cancelRequested) throw CancellationException("İptal edildi.")
+                    totalEntries++
+                    if (totalEntries > maxEntries) {
+                        throw SecurityException("ZIP paketi güvenlik dosya sayısı sınırını aşıyor (>$maxEntries).")
+                    }
                     val cleanName = entry.name.replace('\\', '/').trimStart('/')
                     if (cleanName.isBlank()) {
                         zis.closeEntry()
                         entry = zis.nextEntry
                         continue
                     }
-                    val outFile = File(targetDir, cleanName)
-                    if (!outFile.canonicalPath.startsWith(canonicalRoot)) {
+                    val hasDotDotSegment = cleanName.split('/').any { it == ".." }
+                    val outFile = File(stagingDir, cleanName)
+                    if (hasDotDotSegment || !outFile.canonicalPath.startsWith(canonicalStagingRoot)) {
                         throw SecurityException("Güvensiz ZIP yolu engellendi: $cleanName")
                     }
                     if (entry.isDirectory || cleanName.endsWith("/")) {
                         outFile.mkdirs()
                     } else {
                         outFile.parentFile?.mkdirs()
+                        var entryBytes = 0L
                         FileOutputStream(outFile).use { fos ->
                             while (true) {
+                                if (cancelRequested) throw CancellationException("İptal edildi.")
                                 val r = zis.read(buf)
                                 if (r <= 0) break
+                                entryBytes += r
+                                totalExtractedBytes += r
+                                if (entryBytes > maxSingleEntryBytes) {
+                                    throw SecurityException("ZIP içindeki dosya tekil boyut sınırını aşıyor: $cleanName")
+                                }
+                                if (totalExtractedBytes > maxTotalBytes) {
+                                    throw SecurityException("ZIP paketi toplam boyut sınırını aşıyor.")
+                                }
                                 fos.write(buf, 0, r)
                             }
                         }
@@ -579,24 +752,24 @@ object BookContentPackManager {
                 }
             }
         } catch (t: Throwable) {
-            try { targetDir.deleteRecursively() } catch (_: Throwable) {}
+            try { stagingDir.deleteRecursively() } catch (_: Throwable) {}
             if (t is CancellationException || t is SecurityException) throw t
             throw IllegalArgumentException(
-                "İçerik paketi bozuk veya eksik görünüyor; yerleşik hikâye paketi korunarak işlem iptal edildi.",
+                "İçerik paketi bozuk veya eksik görünüyor; mevcut paket korunarak işlem iptal edildi.",
                 t
             )
         }
 
         if (extractedFiles == 0) {
-            targetDir.deleteRecursively()
-            throw IllegalArgumentException("ZIP paketinin içinde geçerli dosya bulunamadı; yerleşik paket kullanılmaya devam edilecek.")
+            try { stagingDir.deleteRecursively() } catch (_: Throwable) {}
+            throw IllegalArgumentException("ZIP paketinin içinde geçerli dosya bulunamadı; mevcut paket korunmaya devam edecek.")
         }
 
-        // Read optional manifest.json inside the pack for rich metadata
+        // Read optional manifest.json from staging BEFORE atomic swap
         var finalTitle = fallbackTitle
         var finalSubtitle = fallbackSubtitle
         var finalKind = kind
-        val manifestFile = File(targetDir, "manifest.json")
+        val manifestFile = File(stagingDir, "manifest.json")
         if (manifestFile.exists()) {
             try {
                 val obj = JSONObject(manifestFile.readText())
@@ -607,8 +780,46 @@ object BookContentPackManager {
             }
         }
 
+        // Atomic swap with rollback backup so existing working packs are NEVER lost on failure
+        synchronized(swapLock) {
+            val backupDir = File(rootDir, "${safeId}_backup_${UUID.randomUUID()}")
+            val hadExisting = targetDir.exists()
+            var movedExistingToBackup = false
+            try {
+                if (hadExisting) {
+                    movedExistingToBackup = targetDir.renameTo(backupDir)
+                    if (!movedExistingToBackup) {
+                        targetDir.copyRecursively(backupDir, overwrite = true)
+                        targetDir.deleteRecursively()
+                        movedExistingToBackup = true
+                    }
+                }
+                if (!stagingDir.renameTo(targetDir)) {
+                    stagingDir.copyRecursively(targetDir, overwrite = true)
+                    stagingDir.deleteRecursively()
+                }
+                if (movedExistingToBackup) {
+                    try { backupDir.deleteRecursively() } catch (_: Throwable) {}
+                }
+            } catch (t: Throwable) {
+                try { stagingDir.deleteRecursively() } catch (_: Throwable) {}
+                if (movedExistingToBackup && backupDir.exists()) {
+                    try {
+                        if (targetDir.exists()) targetDir.deleteRecursively()
+                        if (!backupDir.renameTo(targetDir)) {
+                            backupDir.copyRecursively(targetDir, overwrite = true)
+                            backupDir.deleteRecursively()
+                        }
+                    } catch (_: Throwable) {}
+                }
+                throw t
+            }
+        }
+
+        invalidateFileIndex()
+
         val pack = InstalledContentPack(
-            id = packId,
+            id = safeId,
             title = finalTitle,
             subtitle = finalSubtitle,
             kind = finalKind,
@@ -618,7 +829,7 @@ object BookContentPackManager {
             installedAtMs = System.currentTimeMillis()
         )
 
-        val updated = _installedPacks.value.filterNot { it.id == packId } + pack
+        val updated = _installedPacks.value.filterNot { it.id == safeId } + pack
         _installedPacks.value = updated
         persistInstalled(context, updated)
         return pack

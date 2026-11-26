@@ -12,7 +12,9 @@ object RoleplayMacroStore {
 
     private const val PREFS_NAME = "asroda_rp_macros_v1"
     private const val KEY_MACROS = "macros_json"
+    private const val KEY_INITIALIZED = "macros_initialized"
     internal const val MAX_MACROS = 25
+    private val TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
 
     data class Macro(
         val id: String,
@@ -28,10 +30,10 @@ object RoleplayMacroStore {
 
     fun loadMacros(context: Context): List<Macro> {
         return try {
-            val raw = context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_MACROS, null)
-            if (raw.isNullOrBlank()) return defaultMacros
+            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val initialized = prefs.getBoolean(KEY_INITIALIZED, false)
+            val raw = prefs.getString(KEY_MACROS, null)
+            if (raw.isNullOrBlank()) return if (initialized) emptyList() else defaultMacros
             val arr = JSONArray(raw)
             val list = mutableListOf<Macro>()
             for (i in 0 until arr.length()) {
@@ -43,7 +45,7 @@ object RoleplayMacroStore {
                     list.add(Macro(id, label, text))
                 }
             }
-            if (list.isEmpty()) defaultMacros else list
+            if (list.isEmpty() && !initialized) defaultMacros else list
         } catch (_: Exception) {
             defaultMacros
         }
@@ -53,8 +55,9 @@ object RoleplayMacroStore {
         val cleanLabel = label.trim().take(40)
         val cleanText = text.trim().take(600)
         if (cleanLabel.isBlank() || cleanText.isBlank()) return loadMacros(context)
-        val updated = (listOf(Macro("m_${System.currentTimeMillis()}", cleanLabel, cleanText)) + loadMacros(context))
-            .distinctBy { it.label.lowercase() }
+        val uniqueId = "m_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(8)}"
+        val updated = (listOf(Macro(uniqueId, cleanLabel, cleanText)) + loadMacros(context))
+            .distinctBy { it.label.lowercase(TR_LOCALE) }
             .take(MAX_MACROS)
         persist(context, updated)
         return updated
@@ -79,6 +82,7 @@ object RoleplayMacroStore {
             context.applicationContext
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
+                .putBoolean(KEY_INITIALIZED, true)
                 .putString(KEY_MACROS, arr.toString())
                 .apply()
         } catch (_: Exception) {}

@@ -59,7 +59,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -82,6 +81,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.flow.collectLatest
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
@@ -209,7 +209,7 @@ fun BookReaderView(
     val engineStateFlow = remember(bot.id) {
         BookStateRepository.stateFlow(context, CosmicDriftBookRegistry.BOOK_ID)
     }
-    val engineState by engineStateFlow.collectAsState()
+    val engineState by engineStateFlow.collectAsStateWithLifecycle()
 
     // Nonce incremented on chapter restart/switch so LazyListState cleanly resets to (0, 0)
     var chapterResetNonce by remember { mutableIntStateOf(0) }
@@ -221,7 +221,13 @@ fun BookReaderView(
     var fontSizeSp by remember {
         mutableFloatStateOf(readerPrefs.getFloat("font_size_sp", 16.8f).coerceIn(14f, 22.5f))
     }
+    val isBookAudioPlaying by BookAudioController.isPlayingFlow.collectAsStateWithLifecycle()
     var ambientMusicEnabled by remember { mutableStateOf(false) }
+    LaunchedEffect(isBookAudioPlaying) {
+        if (!isBookAudioPlaying && ambientMusicEnabled) {
+            ambientMusicEnabled = false
+        }
+    }
     var activeVoiceCardKey by remember { mutableStateOf<String?>(null) }
     val readerVoiceEngine = remember(context) {
         com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine(context) { speaking ->
@@ -454,11 +460,7 @@ fun BookReaderView(
     val listState = remember(engineState.activeChapter, chapterResetNonce) {
         val maxIdx = (manuscriptRows.size - 1).coerceAtLeast(0)
         val restoredIdx = engineState.savedScrollIndex.coerceIn(0, maxIdx)
-        val restoredOff = if (restoredIdx == 0 && engineState.savedScrollIndex == 0) {
-            engineState.savedScrollOffset.coerceAtLeast(0)
-        } else {
-            engineState.savedScrollOffset.coerceAtLeast(0)
-        }
+        val restoredOff = engineState.savedScrollOffset.coerceAtLeast(0)
         LazyListState(
             firstVisibleItemIndex = restoredIdx,
             firstVisibleItemScrollOffset = restoredOff
@@ -636,28 +638,6 @@ fun BookReaderView(
         animationSpec = CosmicMotionSpecs.velvetGlass(),
         label = "bookSceneProgress"
     )
-
-    // Ambient subtle shimmer & drifting stardust phase (respects Reduced Motion)
-    val glowPulse: Float
-    val stardustPhase: Float
-    if (motionConfig.enableAmbientLoops) {
-        val inf = rememberInfiniteTransition(label = "bookReaderAmbient")
-        glowPulse = inf.animateFloat(
-            initialValue = 0.68f,
-            targetValue = 1.0f,
-            animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Reverse),
-            label = "bookGlow"
-        ).value
-        stardustPhase = inf.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(18000, easing = LinearEasing)),
-            label = "bookStardust"
-        ).value
-    } else {
-        glowPulse = 0.85f
-        stardustPhase = 0f
-    }
 
     val accentColor = Color(activeChapterMeta.accentHex)
 
@@ -847,24 +827,9 @@ fun BookReaderView(
                 )
         )
 
-        // Subtle ambient stardust motes floating behind the manuscript
+        // Subtle ambient stardust motes isolated in a draw-only leaf so BookReaderView NEVER recomposes per frame
         if (motionConfig.enableAmbientLoops) {
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val moteCount = 16
-                for (i in 0 until moteCount) {
-                    val fx = ((i * 73 + 19) % 100) / 100f
-                    val fyBase = ((i * 41 + 11) % 100) / 100f
-                    val fy = (fyBase - stardustPhase * (0.35f + (i % 3) * 0.12f) + 1f) % 1f
-                    val sway = sin((stardustPhase * 6.283f) + i) * 14f
-                    val alpha = (0.12f + (i % 4) * 0.05f) * glowPulse
-                    val radius = (1.1f + (i % 3) * 0.65f).dp.toPx()
-                    drawCircle(
-                        color = if (i % 3 == 0) accentColor.copy(alpha = alpha) else Color(0xFFE9D5FF).copy(alpha = alpha),
-                        radius = radius,
-                        center = Offset(size.width * fx + sway, size.height * fy)
-                    )
-                }
-            }
+            BookStardustAmbientOverlay(accentColor = accentColor)
         }
 
         Column(
@@ -1214,11 +1179,12 @@ fun BookReaderView(
                                 .clickable {
                                     ambientMusicEnabled = !ambientMusicEnabled
                                     if (ambientMusicEnabled) {
+                                        val ambientVol = (musicVolume * 0.42f).coerceIn(0.15f, 0.45f)
                                         BookAudioController.play(
                                             context = context,
                                             rawResId = R.raw.kozmiksuruklenismuzik,
                                             loop = true,
-                                            volume = 0.28f,
+                                            volume = ambientVol,
                                             fadeInMs = 1200L,
                                             autoUnmute = true
                                         )
@@ -1294,10 +1260,12 @@ fun BookReaderView(
                         ) { _, row ->
                             when (row) {
                                 is ManuscriptRow.Cover -> {
-                                    CollectorChapterCoverCard(
-                                        chapterMeta = row.meta,
-                                        glowPulse = glowPulse
-                                    )
+                                    IsolatedBookGlowPulse(enabled = motionConfig.enableAmbientLoops) { pulse ->
+                                        CollectorChapterCoverCard(
+                                            chapterMeta = row.meta,
+                                            glowPulse = pulse
+                                        )
+                                    }
                                 }
 
                                 is ManuscriptRow.SceneHeader -> {
@@ -1464,13 +1432,14 @@ fun BookReaderView(
                                             }
                                         }
                                     } else {
-                                        AutoRevealMorCamChoiceSanctuary(
-                                            nodeId = row.nodeId,
-                                            isRevealed = row.nodeId in revealedChoiceNodes,
-                                            prompt = row.prompt,
-                                            choices = row.choices,
-                                            accentColor = accentColor,
-                                            glowPulse = glowPulse,
+                                        IsolatedBookGlowPulse(enabled = motionConfig.enableAmbientLoops) { pulse ->
+                                            AutoRevealMorCamChoiceSanctuary(
+                                                nodeId = row.nodeId,
+                                                isRevealed = row.nodeId in revealedChoiceNodes,
+                                                prompt = row.prompt,
+                                                choices = row.choices,
+                                                accentColor = accentColor,
+                                                glowPulse = pulse,
                                             onForceReveal = {
                                                 revealedChoiceNodes = revealedChoiceNodes + row.nodeId
                                             },
@@ -1503,15 +1472,17 @@ fun BookReaderView(
                                                 }
                                             }
                                         )
+                                        }
                                     }
                                 }
 
                                 is ManuscriptRow.ChapterComplete -> {
-                                    MorCamChapterCompleteCard(
-                                        state = engineState,
-                                        chapterMeta = activeChapterMeta,
-                                        accentColor = accentColor,
-                                        glowPulse = glowPulse,
+                                    IsolatedBookGlowPulse(enabled = motionConfig.enableAmbientLoops) { pulse ->
+                                        MorCamChapterCompleteCard(
+                                            state = engineState,
+                                            chapterMeta = activeChapterMeta,
+                                            accentColor = accentColor,
+                                            glowPulse = pulse,
                                         onOpenSummaryModal = {
                                             BookAudioController.play(
                                                 context = context,
@@ -1544,6 +1515,7 @@ fun BookReaderView(
                                             chapterResetNonce += 1
                                         }
                                     )
+                                    }
                                 }
                             }
                         }
@@ -1555,7 +1527,7 @@ fun BookReaderView(
                         isSending = isSending,
                         errorMessage = errorMessage,
                         fontSizeSp = fontSizeSp,
-                        glowPulse = glowPulse,
+                        enableAmbientLoops = motionConfig.enableAmbientLoops,
                         onSelectChoice = { option -> onSendMessage(option.rawLine) },
                         onSendCustomText = onSendMessage,
                         onClearError = onClearError
@@ -1747,7 +1719,7 @@ private fun CustomAiBookCanvas(
     isSending: Boolean,
     errorMessage: String?,
     fontSizeSp: Float,
-    glowPulse: Float,
+    enableAmbientLoops: Boolean,
     onSelectChoice: (BookChoiceParser.ParsedBookChoice) -> Unit,
     onSendCustomText: (String) -> Unit,
     onClearError: () -> Unit
@@ -1833,6 +1805,7 @@ private fun CustomAiBookCanvas(
 
             if (!isSending && choices.isNotEmpty()) {
                 item(key = "custom_ai_choices_${messages.size}") {
+                    IsolatedBookGlowPulse(enabled = enableAmbientLoops) { glowPulse ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1933,6 +1906,7 @@ private fun CustomAiBookCanvas(
                             }
                         }
                     }
+                    }
                 }
             }
 
@@ -2014,6 +1988,68 @@ private fun CustomAiBookCanvas(
             }
         }
     }
+}
+
+/**
+ * Draw-phase-only stardust ambient overlay: reads infinite animation State<Float> handles
+ * strictly inside [Canvas] DrawScope so neither BookReaderView nor this leaf recomposes per frame.
+ */
+@Composable
+private fun BookStardustAmbientOverlay(accentColor: Color) {
+    val inf = rememberInfiniteTransition(label = "bookReaderStardust")
+    val glowPulseState = inf.animateFloat(
+        initialValue = 0.68f,
+        targetValue = 1.0f,
+        animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Reverse),
+        label = "bookStardustGlow"
+    )
+    val stardustPhaseState = inf.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(18000, easing = LinearEasing)),
+        label = "bookStardustPhase"
+    )
+    Canvas(modifier = Modifier.fillMaxSize()) {
+        val stardustPhase = stardustPhaseState.value
+        val glowPulse = glowPulseState.value
+        val moteCount = 16
+        for (i in 0 until moteCount) {
+            val fx = ((i * 73 + 19) % 100) / 100f
+            val fyBase = ((i * 41 + 11) % 100) / 100f
+            val fy = (fyBase - stardustPhase * (0.35f + (i % 3) * 0.12f) + 1f) % 1f
+            val sway = sin((stardustPhase * 6.283f) + i) * 14f
+            val alpha = (0.12f + (i % 4) * 0.05f) * glowPulse
+            val radius = (1.1f + (i % 3) * 0.65f).dp.toPx()
+            drawCircle(
+                color = if (i % 3 == 0) accentColor.copy(alpha = alpha) else Color(0xFFE9D5FF).copy(alpha = alpha),
+                radius = radius,
+                center = Offset(size.width * fx + sway, size.height * fy)
+            )
+        }
+    }
+}
+
+/**
+ * Scopes the gentle pulsing glow animation strictly to a single cover/choice/complete card
+ * so scrolling manuscript paragraphs never recompose during idle animation frames.
+ */
+@Composable
+private fun IsolatedBookGlowPulse(
+    enabled: Boolean,
+    content: @Composable (Float) -> Unit
+) {
+    val pulse = if (enabled) {
+        val inf = rememberInfiniteTransition(label = "bookCardGlow")
+        inf.animateFloat(
+            initialValue = 0.68f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(tween(2800, easing = LinearEasing), RepeatMode.Reverse),
+            label = "bookCardGlowVal"
+        ).value
+    } else {
+        0.85f
+    }
+    content(pulse)
 }
 
 private fun stripChoiceBlockFromAiProse(raw: String): String {

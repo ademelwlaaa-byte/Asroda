@@ -97,7 +97,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -191,9 +190,19 @@ fun BotSettingsModal(
         viewModel.loadEmotionalDefenseState(bot.id)
     }
 
-    // ── Shared Wisteria Frosted Glass Backdrop & Reference Glass Plates ──
+    // ── Shared Wisteria Frosted Glass Backdrop (async off main thread) & Reference Glass Plates ──
     val rootSize = LocalAetheriaRootSize.current.value
-    val blurredBgBitmap = remember(context) { createSettingsDeepFrostedWisteriaBitmap(context) }
+    val blurredBgState = com.example.util.rememberFrostedBackdrop(
+        key = "wisteria_settings_deep_bg",
+        drawableResId = R.drawable.img_chat_bg_aiden_wisteria,
+        targetWidth = 320,
+        maxHeight = 960,
+        blurRadius = 12,
+        blurPasses = 3,
+        violetShiftWarmPixels = false,
+        outputRgb565 = true
+    )
+    val blurredBgBitmap = blurredBgState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
     val refGlassBitmaps = com.example.ui.screens.rememberAetheriaRefGlassBitmaps()
 
     // ── 1. Core Identity & Story State (100% Preserved) ──
@@ -280,8 +289,8 @@ fun BotSettingsModal(
         com.example.data.repository.EmochiRepository.isBotPublishable(bot)
     }
 
-    val lastSystemPrompt by viewModel.lastSystemPrompt.collectAsState()
-    val activeMessages by viewModel.activeMessages.collectAsState()
+    val lastSystemPrompt by viewModel.lastSystemPrompt.collectAsStateWithLifecycle()
+    val activeMessages by viewModel.activeMessages.collectAsStateWithLifecycle()
     var filterCount by remember { mutableIntStateOf(0) }
 
     val activeFactsFlow = remember(bot.id) { viewModel.getActiveFactsFlow(bot.id) }
@@ -338,6 +347,11 @@ fun BotSettingsModal(
     fun buildUpdatedBotEntity(): BotEntity {
         val emotionJson = localEmotionState.toJson()
         val worldJson = localWorldState.toJson()
+        val resolvedPreviousEmotion = resolvePreviousEmotionStateOnSettingsSave(
+            originalEmotionJson = bot.emotionState,
+            originalPreviousEmotionJson = bot.previousEmotionState,
+            updatedEmotionJson = emotionJson
+        )
         return bot.copy(
             aiName = aiName.trim().ifBlank { bot.aiName },
             universeName = universeName.trim().ifBlank { bot.universeName },
@@ -359,7 +373,7 @@ fun BotSettingsModal(
             storyNotes = storyNotes.trim(),
             memoryNotes = memoryNotes.trim(),
             emotionState = emotionJson,
-            previousEmotionState = emotionJson,
+            previousEmotionState = resolvedPreviousEmotion,
             worldAtmosphere = worldJson,
             updatedAt = System.currentTimeMillis()
         )
@@ -2522,21 +2536,20 @@ fun BotSettingsModal(
 // ══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Deeply frosted wisteria bitmap (3-pass radius-12 separable blur) so glass panels
- * completely melt sharp cathedral edges behind them while preserving rich purple light refraction.
+ * Preserves [originalPreviousEmotionJson] when the user saves unrelated bot settings
+ * (name, scenario, avatar, notes, etc.) and records [originalEmotionJson] as the previous
+ * emotion snapshot ONLY when the user actually changed the bot's emotion state.
  */
-private fun createSettingsDeepFrostedWisteriaBitmap(context: android.content.Context): ImageBitmap {
-    return com.example.util.FrostedBackdropCache.getOrGenerateSync(
-        context = context,
-        key = "wisteria_settings_deep_bg",
-        drawableResId = R.drawable.img_chat_bg_aiden_wisteria,
-        targetWidth = 320,
-        maxHeight = 960,
-        blurRadius = 12,
-        blurPasses = 3,
-        violetShiftWarmPixels = false,
-        outputRgb565 = true
-    )
+internal fun resolvePreviousEmotionStateOnSettingsSave(
+    originalEmotionJson: String,
+    originalPreviousEmotionJson: String,
+    updatedEmotionJson: String
+): String {
+    return if (updatedEmotionJson != originalEmotionJson) {
+        originalEmotionJson
+    } else {
+        originalPreviousEmotionJson
+    }
 }
 
 /**

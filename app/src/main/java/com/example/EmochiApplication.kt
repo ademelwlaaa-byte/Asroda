@@ -70,11 +70,24 @@ class EmochiApplication : Application(), ImageLoaderFactory {
             }
         }
 
+        private fun isOpenAiReasoningModelName(model: String): Boolean {
+            val bare = model.trim().lowercase(java.util.Locale.ROOT).substringAfterLast('/')
+            return bare == "o1" ||
+                bare.startsWith("o1-") ||
+                bare == "o3" ||
+                bare.startsWith("o3-") ||
+                bare == "o4" ||
+                bare.startsWith("o4-") ||
+                bare == "gpt-5" ||
+                bare.startsWith("gpt-5-")
+        }
+
         /**
          * Reads and strips the internal X-Emochi-Call-Type header, injects required OpenRouter
          * attribution headers when targeting openrouter.ai, and applies provider-appropriate
          * sampling parameters (utility: temp=0.15, top_p=0.80, bounded max_tokens; narrative:
-         * temp=0.90, top_p=0.95). Guarantees X-Emochi-Call-Type NEVER leaks onto the wire.
+         * temp=0.90, top_p=0.95). Respects OpenAI reasoning models (o1/o3/o4/gpt-5) and
+         * Anthropic custom proxies. Guarantees X-Emochi-Call-Type NEVER leaks onto the wire.
          */
         fun applyTemperaturePolicy(originalReq: Request): Request {
             val callType = originalReq.header(HEADER_CALL_TYPE)
@@ -85,6 +98,9 @@ class EmochiApplication : Application(), ImageLoaderFactory {
             val cleanBuilder = originalReq.newBuilder().removeHeader(HEADER_CALL_TYPE)
             val body = originalReq.body
             val urlStr = originalReq.url.toString()
+            val isAnthropicReq = !originalReq.header("anthropic-version").isNullOrBlank() ||
+                urlStr.contains("anthropic.com", ignoreCase = true) ||
+                urlStr.substringBefore('?').endsWith("/messages", ignoreCase = true)
 
             if (urlStr.contains("openrouter.ai", ignoreCase = true)) {
                 if (originalReq.header("HTTP-Referer").isNullOrBlank()) {
@@ -97,7 +113,7 @@ class EmochiApplication : Application(), ImageLoaderFactory {
 
             if (originalReq.method == "POST" && body != null &&
                 (body.contentLength() <= MAX_POLICY_BODY_BYTES) &&
-                (urlStr.contains("generateContent") || urlStr.contains("/chat/completions") || urlStr.contains("/messages"))
+                (urlStr.contains("generateContent") || urlStr.contains("/chat/completions") || isAnthropicReq)
             ) {
                 try {
                     val buffer = Buffer()
@@ -123,14 +139,30 @@ class EmochiApplication : Application(), ImageLoaderFactory {
                             }
                             jsonObj.put("generationConfig", genCfg)
                         } else {
-                            jsonObj.put("temperature", temp)
-                            if (!urlStr.contains("anthropic.com")) {
-                                jsonObj.put("top_p", topP)
-                            }
-                            if (isUtility) {
-                                val existingMax = jsonObj.optInt("max_tokens", 0)
-                                if (existingMax <= 0 || existingMax > 700) {
-                                    jsonObj.put("max_tokens", UTILITY_DEFAULT_MAX_TOKENS)
+                            val modelName = jsonObj.optString("model", "")
+                            val isReasoning = !isAnthropicReq && isOpenAiReasoningModelName(modelName)
+                            if (isReasoning) {
+                                jsonObj.remove("temperature")
+                                jsonObj.remove("top_p")
+                                if (isUtility) {
+                                    jsonObj.remove("max_tokens")
+                                    val existingMax = jsonObj.optInt("max_completion_tokens", 0)
+                                    if (existingMax <= 0 || existingMax > 700) {
+                                        jsonObj.put("max_completion_tokens", UTILITY_DEFAULT_MAX_TOKENS)
+                                    }
+                                }
+                            } else {
+                                jsonObj.put("temperature", temp)
+                                if (!isAnthropicReq) {
+                                    jsonObj.put("top_p", topP)
+                                } else {
+                                    jsonObj.remove("top_p")
+                                }
+                                if (isUtility) {
+                                    val existingMax = jsonObj.optInt("max_tokens", 0)
+                                    if (existingMax <= 0 || existingMax > 700) {
+                                        jsonObj.put("max_tokens", UTILITY_DEFAULT_MAX_TOKENS)
+                                    }
                                 }
                             }
                         }

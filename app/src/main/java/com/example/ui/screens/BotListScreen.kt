@@ -262,12 +262,6 @@ fun BotListScreen(
         animationSpec = tween(durationMillis = 600, easing = bgSeamlessEasing),
         label = "bottomBarTemplatesBgProgress"
     )
-    val activeScrollSync = when (activeTab) {
-        "templates" -> templatesListState.firstVisibleItemIndex * 100000 + templatesListState.firstVisibleItemScrollOffset
-        "discover"  -> discoverListState.firstVisibleItemIndex * 100000 + discoverListState.firstVisibleItemScrollOffset
-        "books"     -> booksListState.firstVisibleItemIndex * 100000 + booksListState.firstVisibleItemScrollOffset
-        else        -> chatsListState.firstVisibleItemIndex * 100000 + chatsListState.firstVisibleItemScrollOffset
-    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         AppBackground(activeTab = activeTab)
@@ -276,32 +270,6 @@ fun BotListScreen(
             contentWindowInsets = androidx.compose.foundation.layout.WindowInsets(0, 0, 0, 0),
         bottomBar = {
             val motionConfig = LocalCosmicMotionConfig.current
-            // Infinite transitions for live neon glow, center orb pulse, and specular shimmer (gated by MotionIntensityMode)
-            val centerPulseScale: Float
-            val centerPulseAlpha: Float
-            val orbRingRot: Float
-            if (motionConfig.enableAmbientLoops) {
-                val navInfinite = rememberInfiniteTransition(label = "navInfinite")
-                centerPulseScale = navInfinite.animateFloat(
-                    initialValue = 0.96f, targetValue = 1.08f,
-                    animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                    label = "centerPulse"
-                ).value
-                centerPulseAlpha = navInfinite.animateFloat(
-                    initialValue = 0.55f, targetValue = 0.95f,
-                    animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-                    label = "centerPulseAlpha"
-                ).value
-                orbRingRot = navInfinite.animateFloat(
-                    initialValue = 0f, targetValue = 360f,
-                    animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
-                    label = "orbRingRot"
-                ).value
-            } else {
-                centerPulseScale = 1f
-                centerPulseAlpha = 0.80f
-                orbRingRot = 0f
-            }
 
             data class NavTab(val key: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String)
             val tabs = listOf(
@@ -338,26 +306,29 @@ fun BotListScreen(
                                 }
                             }
                         )
-                        .drawBehind {
-                            drawIntoCanvas { canvas ->
-                                val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                    style = android.graphics.Paint.Style.STROKE
-                                    strokeWidth = 1.8.dp.toPx()
-                                    color = Color(0x489333EA).toArgb()
-                                    maskFilter = android.graphics.BlurMaskFilter(
-                                        7.dp.toPx(),
-                                        android.graphics.BlurMaskFilter.Blur.NORMAL
+                        .drawWithCache {
+                            val cr = 36.dp.toPx()
+                            val outerGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                style = android.graphics.Paint.Style.STROKE
+                                strokeWidth = 1.8.dp.toPx()
+                                color = Color(0x489333EA).toArgb()
+                                maskFilter = android.graphics.BlurMaskFilter(
+                                    7.dp.toPx(),
+                                    android.graphics.BlurMaskFilter.Blur.NORMAL
+                                )
+                            }
+                            onDrawBehind {
+                                drawIntoCanvas { canvas ->
+                                    canvas.nativeCanvas.drawRoundRect(
+                                        0f,
+                                        0f,
+                                        size.width,
+                                        size.height,
+                                        cr,
+                                        cr,
+                                        outerGlowPaint
                                     )
                                 }
-                                canvas.nativeCanvas.drawRoundRect(
-                                    0f,
-                                    0f,
-                                    size.width,
-                                    size.height,
-                                    36.dp.toPx(),
-                                    36.dp.toPx(),
-                                    paint
-                                )
                             }
                         }
                         .clip(dockShape)
@@ -366,7 +337,7 @@ fun BotListScreen(
                             secondaryBitmap = frostedManorBitmap,
                             secondaryProgress = templatesBgProgress,
                             alpha = 0.78f,
-                            scrollSync = activeScrollSync
+                            scrollSync = 0
                         )
                         .background(
                             Brush.verticalGradient(
@@ -377,41 +348,45 @@ fun BotListScreen(
                                 )
                             )
                         )
-                        .drawBehind {
+                        .drawWithCache {
                             val cr = 36.dp.toPx()
-                            // 1. Subtle top & bottom inner frosted glass shelf refraction
-                            drawRect(
-                                brush = Brush.verticalGradient(
-                                    0.00f to Color(0x2AE9D5FF),
-                                    0.22f to Color.Transparent,
-                                    0.80f to Color.Transparent,
-                                    1.00f to Color(0x247C3AED)
-                                )
+                            val shelfBrush = Brush.verticalGradient(
+                                0.00f to Color(0x2AE9D5FF),
+                                0.22f to Color.Transparent,
+                                0.80f to Color.Transparent,
+                                1.00f to Color(0x247C3AED)
                             )
-                            // 2. Calm inner frosted perimeter bevel
-                            drawIntoCanvas { canvas ->
-                                val edgeFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                    style = android.graphics.Paint.Style.STROKE
-                                    strokeWidth = 4.5.dp.toPx()
-                                    color = android.graphics.Color.argb(34, 232, 214, 255)
-                                    maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-                                }
-                                canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, edgeFrost)
+                            val edgeFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                style = android.graphics.Paint.Style.STROKE
+                                strokeWidth = 4.5.dp.toPx()
+                                color = android.graphics.Color.argb(34, 232, 214, 255)
+                                maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
                             }
-                            // 3. Center ambient amethyst glass refraction behind + Oluştur
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color(0x369333EA),
-                                        Color(0x166D28D9),
-                                        Color.Transparent
-                                    ),
-                                    center = Offset(size.width * 0.50f, size.height * 0.50f),
-                                    radius = size.width * 0.28f
+                            val centerOffset = Offset(size.width * 0.50f, size.height * 0.50f)
+                            val centerRadius = size.width * 0.28f
+                            val centerBrush = Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0x369333EA),
+                                    Color(0x166D28D9),
+                                    Color.Transparent
                                 ),
-                                center = Offset(size.width * 0.50f, size.height * 0.50f),
-                                radius = size.width * 0.28f
+                                center = centerOffset,
+                                radius = centerRadius
                             )
+                            onDrawBehind {
+                                // 1. Subtle top & bottom inner frosted glass shelf refraction
+                                drawRect(brush = shelfBrush)
+                                // 2. Calm inner frosted perimeter bevel (cached Paint + BlurMaskFilter)
+                                drawIntoCanvas { canvas ->
+                                    canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, edgeFrost)
+                                }
+                                // 3. Center ambient amethyst glass refraction behind + Oluştur
+                                drawCircle(
+                                    brush = centerBrush,
+                                    center = centerOffset,
+                                    radius = centerRadius
+                                )
+                            }
                         }
                         .border(
                             BorderStroke(
@@ -762,61 +737,20 @@ fun BotListScreen(
                         .offset(y = (-3).dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Swirling gossamer lavender-amethyst orbital filaments wrapping the center orb
-                    Canvas(
-                        modifier = Modifier
-                            .size(106.dp)
-                            .graphicsLayer { rotationZ = orbRingRot * 0.42f }
-                    ) {
-                        val c = Offset(size.width * 0.5f, size.height * 0.5f)
-                        val rx = size.width * 0.48f
-                        val ry = size.height * 0.37f
-                        listOf(-30f, 18f, 68f, 122f).forEachIndexed { idx, deg ->
-                            rotate(degrees = deg, pivot = c) {
-                                drawOval(
-                                    brush = Brush.sweepGradient(
-                                        listOf(
-                                            Color.Transparent,
-                                            Color(0x90E9D5FF),
-                                            Color(0x4CA855F7),
-                                            Color.Transparent,
-                                            Color(0x70D8B4FE),
-                                            Color.Transparent
-                                        )
-                                    ),
-                                    topLeft = Offset(c.x - rx, c.y - ry),
-                                    size = Size(rx * 2f, ry * 2f),
-                                    style = Stroke(width = if (idx % 2 == 0) 1.1.dp.toPx() else 0.75.dp.toPx())
-                                )
-                            }
-                        }
-                    }
+                    // Swirling gossamer lavender-amethyst orbital filaments + pulsing halo isolated in draw/graphicsLayer leaf
+                    CenterOrbAmbientAura(enableAmbientLoops = motionConfig.enableAmbientLoops)
 
                     // Outer see-through frosted Mor Cam halo ring (#1)
                     Box(
                         modifier = Modifier
                             .size(86.dp)
-                            .drawBehind {
-                                drawIntoCanvas { canvas ->
-                                    val halo = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                        style = android.graphics.Paint.Style.STROKE
-                                        strokeWidth = 2.4.dp.toPx()
-                                        color = Color(0xFF9333EA).copy(alpha = 0.45f * centerPulseAlpha).toArgb()
-                                        maskFilter = android.graphics.BlurMaskFilter(
-                                            9.dp.toPx(),
-                                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                                        )
-                                    }
-                                    canvas.nativeCanvas.drawCircle(size.width * 0.5f, size.height * 0.5f, size.minDimension * 0.48f, halo)
-                                }
-                            }
                             .clip(CircleShape)
                             .templatesBackdropBlur(
                                 blurredBitmap = frostedCosmicBitmap,
                                 secondaryBitmap = frostedManorBitmap,
                                 secondaryProgress = templatesBgProgress,
                                 alpha = 0.75f,
-                                scrollSync = activeScrollSync
+                                scrollSync = 0
                             )
                             .background(
                                 Brush.radialGradient(
@@ -1043,7 +977,7 @@ fun BotListScreen(
                             favoriteBotIds = sharedFavoriteBotIds,
                             onToggleFavorite = toggleSharedFavorite,
                             frostedBackdrop = frostedCosmicBitmap,
-                            scrollSync = activeScrollSync
+                            scrollSync = 0
                         )
                     }
                     "books" -> {
@@ -1056,7 +990,7 @@ fun BotListScreen(
                             onOpenSettings = { showGlobalSettings = true },
                             lazyListState = booksListState,
                             frostedBackdrop = frostedCosmicBitmap,
-                            scrollSync = activeScrollSync
+                            scrollSync = 0
                         )
                     }
                     else -> {
@@ -1081,7 +1015,7 @@ fun BotListScreen(
                             favoriteBotIds = sharedFavoriteBotIds,
                             onToggleFavorite = toggleSharedFavorite,
                             frostedBackdrop = frostedCosmicBitmap,
-                            scrollSync = activeScrollSync
+                            scrollSync = 0
                         )
                     }
                 }
@@ -2816,4 +2750,91 @@ Clara Lindqvist ahşap resepsiyonun ardından elinde dumanı tüten iki kupa tar
             pinnedMemory = if (isEnglish) "AURORA LODGE (TROMSØ, NORWAY) ::: Snowed in for 5 days beneath the Northern Lights ::: Cozy slow-burn romance & secrets with Clara, Matteo, Astrid & Noah" else "KUZEY IŞIKLARI OTELİ (TROMSØ, NORVEÇ) ::: Kutup ışıkları altında 5 gün kar fırtınasında mahsur kalındı ::: Clara, Matteo, Astrid ve Noah ile sıcak romantik kış dramı"
         )
     )
+}
+
+/**
+ * Draw/graphicsLayer-only ambient orbital filaments + pulsing halo ring for the center "+ Oluştur" orb.
+ * Reads infinite transition State<Float> handles strictly in graphicsLayer / drawWithCache so neither
+ * BotListScreen nor Scaffold.bottomBar ever recomposes during idle animation frames!
+ */
+@Composable
+private fun CenterOrbAmbientAura(enableAmbientLoops: Boolean) {
+    val orbRingRotState: androidx.compose.runtime.State<Float>?
+    val centerPulseAlphaState: androidx.compose.runtime.State<Float>?
+    if (enableAmbientLoops) {
+        val navInfinite = rememberInfiniteTransition(label = "navCenterOrbAmbient")
+        orbRingRotState = navInfinite.animateFloat(
+            initialValue = 0f,
+            targetValue = 360f,
+            animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Restart),
+            label = "orbRingRot"
+        )
+        centerPulseAlphaState = navInfinite.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 0.95f,
+            animationSpec = infiniteRepeatable(tween(1600, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "centerPulseAlpha"
+        )
+    } else {
+        orbRingRotState = null
+        centerPulseAlphaState = null
+    }
+
+    Box(contentAlignment = Alignment.Center) {
+        Canvas(
+            modifier = Modifier
+                .size(106.dp)
+                .graphicsLayer {
+                    rotationZ = (orbRingRotState?.value ?: 0f) * 0.42f
+                }
+        ) {
+            val c = Offset(size.width * 0.5f, size.height * 0.5f)
+            val rx = size.width * 0.48f
+            val ry = size.height * 0.37f
+            val filamentBrush = Brush.sweepGradient(
+                listOf(
+                    Color.Transparent,
+                    Color(0x90E9D5FF),
+                    Color(0x4CA855F7),
+                    Color.Transparent,
+                    Color(0x70D8B4FE),
+                    Color.Transparent
+                )
+            )
+            listOf(-30f, 18f, 68f, 122f).forEachIndexed { idx, deg ->
+                rotate(degrees = deg, pivot = c) {
+                    drawOval(
+                        brush = filamentBrush,
+                        topLeft = Offset(c.x - rx, c.y - ry),
+                        size = Size(rx * 2f, ry * 2f),
+                        style = Stroke(width = if (idx % 2 == 0) 1.1.dp.toPx() else 0.75.dp.toPx())
+                    )
+                }
+            }
+        }
+        Box(
+            modifier = Modifier
+                .size(86.dp)
+                .drawWithCache {
+                    val haloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 2.4.dp.toPx()
+                        maskFilter = android.graphics.BlurMaskFilter(
+                            9.dp.toPx(),
+                            android.graphics.BlurMaskFilter.Blur.NORMAL
+                        )
+                    }
+                    val cx = size.width * 0.5f
+                    val cy = size.height * 0.5f
+                    val radius = size.minDimension * 0.48f
+                    onDrawBehind {
+                        val pulseAlpha = centerPulseAlphaState?.value ?: 0.80f
+                        haloPaint.color = Color(0xFF9333EA).copy(alpha = 0.45f * pulseAlpha).toArgb()
+                        drawIntoCanvas { canvas ->
+                            canvas.nativeCanvas.drawCircle(cx, cy, radius, haloPaint)
+                        }
+                    }
+                }
+        )
+    }
 }

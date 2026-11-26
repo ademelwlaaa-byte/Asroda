@@ -92,7 +92,6 @@ import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Icon
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -121,6 +120,27 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+
+private val NEVER_THINKING_FLOW: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false)
+
+private val BUBBLE_CLOCK_FORMATTER: ThreadLocal<java.text.SimpleDateFormat> =
+    object : ThreadLocal<java.text.SimpleDateFormat>() {
+        override fun initialValue(): java.text.SimpleDateFormat =
+            java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    }
+
+internal fun formatBubbleClockTime(timestampMs: Long): String {
+    if (timestampMs <= 0L) return ""
+    val fmt = BUBBLE_CLOCK_FORMATTER.get()
+        ?: java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+    return fmt.format(java.util.Date(timestampMs))
+}
+
+internal fun computeLastAssistantReplyIndex(messages: List<MessageEntity>): Int =
+    messages.indexOfLast { it.role == "assistant" && it.text.isNotBlank() }
+
+internal fun isMessageAutoCollapsible(isOldMessage: Boolean, cleanText: String): Boolean =
+    isOldMessage && (cleanText.length > 180 || cleanText.count { it == '\n' } >= 4)
 
 /**
  * Formats narrative text using [formatNarrativeText] and overlays Mor Cam translucent
@@ -168,7 +188,7 @@ internal fun IsolatedStreamingBotBubbleText(
     persistedText: String,
     streamingMsgIdFlow: StateFlow<String?>,
     streamingTextFlow: StateFlow<String?>,
-    isStreamingThinkingFlow: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false),
+    isStreamingThinkingFlow: StateFlow<Boolean> = NEVER_THINKING_FLOW,
     isCollapsed: Boolean,
     highlightQuery: String
 ) {
@@ -679,7 +699,7 @@ internal fun ChatInlineEditMessageCard(
 internal fun ChatUserMessageItem(
     msg: MessageEntity,
     timeFormatted: String,
-    orderFromBottom: Int,
+    isOldMessage: Boolean,
     hasBotStartedReplying: Boolean,
     isFreshMsg: Boolean,
     isHighlighted: Boolean,
@@ -781,8 +801,9 @@ internal fun ChatUserMessageItem(
     ) {
         val uW = maxWidth
         val cleanUserText = remember(msg.text) { cleanCopyText(msg.text) }
-        val isUserMsgAutoCollapsible = orderFromBottom > 5 &&
-            (cleanUserText.length > 180 || cleanUserText.count { it == '\n' } >= 4)
+        val isUserMsgAutoCollapsible = remember(isOldMessage, cleanUserText) {
+            isMessageAutoCollapsible(isOldMessage, cleanUserText)
+        }
         val isUserMsgCollapsed = isUserMsgAutoCollapsible && !isExpandedOld
         Column(
             modifier = Modifier
@@ -1100,7 +1121,7 @@ internal fun ChatBotMessageItem(
     headerTitle: String,
     avatarInitial: String,
     timeFormatted: String,
-    orderFromBottom: Int,
+    isOldMessage: Boolean,
     isLastMessage: Boolean,
     isFreshMsg: Boolean,
     isHighlighted: Boolean,
@@ -1118,7 +1139,7 @@ internal fun ChatBotMessageItem(
     refGlassBitmaps: AetheriaRefGlassBitmaps,
     streamingMsgIdFlow: StateFlow<String?>,
     streamingTextFlow: StateFlow<String?>,
-    isStreamingThinkingFlow: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false),
+    isStreamingThinkingFlow: StateFlow<Boolean> = NEVER_THINKING_FLOW,
     speakingMessageIdFlow: StateFlow<String?>,
     onToggleMenu: () -> Unit,
     onCloseMenu: () -> Unit,
@@ -1280,8 +1301,9 @@ internal fun ChatBotMessageItem(
             }
 
             val cleanBotText = remember(msg.text) { cleanCopyText(msg.text) }
-            val isBotMsgAutoCollapsible = orderFromBottom > 5 &&
-                (cleanBotText.length > 180 || cleanBotText.count { it == '\n' } >= 4)
+            val isBotMsgAutoCollapsible = remember(isOldMessage, cleanBotText) {
+                isMessageAutoCollapsible(isOldMessage, cleanBotText)
+            }
             val isBotMsgCollapsed = isBotMsgAutoCollapsible && !isExpandedOld
 
             Column(
@@ -1565,7 +1587,7 @@ internal fun ChatBotMessageItem(
                                 showSecondaryAiActions = false
                                 onRegenerate()
                             }
-                            val activeSpeakingIdForPill by speakingMessageIdFlow.collectAsState()
+                            val activeSpeakingIdForPill by speakingMessageIdFlow.collectAsStateWithLifecycle()
                             val isThisPillSpeaking = activeSpeakingIdForPill == msg.id
                             BotGlassActionPill(
                                 label = if (isThisPillSpeaking) "⏹️ Durdur" else "🎙️ Sesli Oku",
@@ -1661,7 +1683,7 @@ internal fun ChatMessageTimelineList(
     refGlassBitmaps: AetheriaRefGlassBitmaps,
     streamingMsgIdFlow: StateFlow<String?>,
     streamingTextFlow: StateFlow<String?>,
-    isStreamingThinkingFlow: StateFlow<Boolean> = kotlinx.coroutines.flow.MutableStateFlow(false),
+    isStreamingThinkingFlow: StateFlow<Boolean> = NEVER_THINKING_FLOW,
     speakingMessageIdFlow: StateFlow<String?>,
     onLoadOlder: (nextBatchCount: Int) -> Unit,
     onEditingTextChange: (String) -> Unit,
@@ -1685,6 +1707,11 @@ internal fun ChatMessageTimelineList(
     onDeleteMessage: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // Precompute once in O(N) outside LazyColumn so user bubbles check reply status in O(1) instead of O(N^2)
+    val lastNonBlankAssistantIndex = remember(validMessages) {
+        computeLastAssistantReplyIndex(validMessages)
+    }
+
     LazyColumn(
         state = listState,
         contentPadding = PaddingValues(
@@ -1736,13 +1763,9 @@ internal fun ChatMessageTimelineList(
         }
 
         itemsIndexed(validMessages, key = { _, msg -> msg.id }) { index, msg ->
-            val orderFromBottom = validMessages.size - index
-            val timeFormatted = remember(msg.timestamp) {
-                if (msg.timestamp > 0L) {
-                    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
-                        .format(java.util.Date(msg.timestamp))
-                } else ""
-            }
+            // Stable boolean (only flips once when message ages past the 5 most recent) so older bubbles skip recomposition
+            val isOldMessage = (validMessages.size - index) > 5
+            val timeFormatted = remember(msg.timestamp) { formatBubbleClockTime(msg.timestamp) }
 
             if (editingMessageId == msg.id) {
                 ChatInlineEditMessageCard(
@@ -1754,13 +1777,11 @@ internal fun ChatMessageTimelineList(
                     onSave = { onSaveEdit(msg.id, editingText) }
                 )
             } else if (msg.role == "user") {
-                val hasBotStartedReplying = remember(validMessages, index) {
-                    validMessages.drop(index + 1).any { it.role == "assistant" && it.text.isNotBlank() }
-                }
+                val hasBotStartedReplying = index < lastNonBlankAssistantIndex
                 ChatUserMessageItem(
                     msg = msg,
                     timeFormatted = timeFormatted,
-                    orderFromBottom = orderFromBottom,
+                    isOldMessage = isOldMessage,
                     hasBotStartedReplying = hasBotStartedReplying,
                     isFreshMsg = msg.id !in initialMessageIds,
                     isHighlighted = highlightedMessageId == msg.id,
@@ -1794,7 +1815,7 @@ internal fun ChatMessageTimelineList(
                     headerTitle = displayName,
                     avatarInitial = avatarInitial,
                     timeFormatted = timeFormatted,
-                    orderFromBottom = orderFromBottom,
+                    isOldMessage = isOldMessage,
                     isLastMessage = index == validMessages.lastIndex,
                     isFreshMsg = msg.id !in initialMessageIds,
                     isHighlighted = highlightedMessageId == msg.id,

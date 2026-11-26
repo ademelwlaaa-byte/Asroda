@@ -84,7 +84,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -136,6 +135,7 @@ fun ConfigureTrueFullscreenDialogWindow(hideSystemBars: Boolean = true) {
         @Suppress("DEPRECATION")
         window.navigationBarColor = android.graphics.Color.TRANSPARENT
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            @Suppress("DEPRECATION")
             window.isStatusBarContrastEnforced = false
             window.isNavigationBarContrastEnforced = false
         }
@@ -442,8 +442,9 @@ private fun rememberGyroscopeTilt(enabled: Boolean): Pair<Float, Float> {
                 }
                 smoothX += (targetX - smoothX) * 0.14f
                 smoothY += (targetY - smoothY) * 0.14f
-                yaw = smoothX
-                pitch = smoothY
+                // Deadzone filter prevents idle accelerometer jitter from triggering 50Hz recompositions
+                if (abs(smoothX - yaw) >= 0.08f) yaw = smoothX
+                if (abs(smoothY - pitch) >= 0.08f) pitch = smoothY
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

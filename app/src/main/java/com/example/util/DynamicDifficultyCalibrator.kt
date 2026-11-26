@@ -198,17 +198,23 @@ object DynamicDifficultyCalibrator {
      * Next-turn fallback calibration using optional [[STATE_JSON]] "u_tone" emitted by main model.
      */
     fun calibrateFromStateJsonUserTone(bot: BotEntity, uToneRaw: String): CalibrationResult {
-        val tone = uToneRaw.trim().lowercase(Locale.US)
+        val tone = uToneRaw.trim().lowercase(TR_LOCALE)
         val valence = when (tone) {
-            "warm", "affectionate", "playful" -> 0.45f
-            "hurt", "sad" -> -0.35f
-            "tense", "sarcastic", "hostile", "angry" -> -0.55f
-            "distant" -> -0.25f
+            "warm", "affectionate", "playful",
+            "sıcak", "şefkatli", "sevecen", "samimi", "oyuncu", "neşeli", "romantik" -> 0.45f
+            "hurt", "sad",
+            "kırgın", "üzgün", "hüzünlü", "yaralı", "incinmiş" -> -0.35f
+            "tense", "sarcastic", "hostile", "angry",
+            "gergin", "alaycı", "iğneleyici", "düşmanca", "öfkeli", "sinirli", "sert" -> -0.55f
+            "distant",
+            "mesafeli", "soğuk", "temkinli", "çekingen" -> -0.25f
             else -> 0f
         }
         val resDelta = when (tone) {
-            "tense", "sarcastic", "hostile", "angry" -> 0.08f
-            "warm", "affectionate" -> -0.06f
+            "tense", "sarcastic", "hostile", "angry",
+            "gergin", "alaycı", "iğneleyici", "düşmanca", "öfkeli", "sinirli", "sert" -> 0.08f
+            "warm", "affectionate",
+            "sıcak", "şefkatli", "sevecen", "samimi", "romantik" -> -0.06f
             else -> 0f
         }
         return calibrateTurn(
