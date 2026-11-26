@@ -413,12 +413,20 @@ class CosmicCharacterVoiceEngine(
             if (released) return@execute
             for ((speaker, text, lineId) in lines) {
                 if (released || text.isBlank()) break
-                // Skip if Tier 0 DLC voice pack (hash key or lineId) or Tier 1 bundled ElevenLabs studio / res/raw exists
+                // Tier 0 DLC voice pack: pre-master ElevenLabs MP3 through Character Cinema DSP + 20Hz lip-sync WAV cache!
                 val studioHashKey = studioVoiceAssetFileName(speaker, text).removeSuffix(".mp3")
-                if (com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, studioHashKey) != null) continue
+                val dlcStudio = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, studioHashKey)
+                if (dlcStudio != null) {
+                    masterStudioDlcClipIfNeeded(dlcStudio, speaker)
+                    continue
+                }
                 if (bundledStudioVoices.contains("$studioHashKey.mp3")) continue
                 if (!lineId.isNullOrBlank()) {
-                    if (com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId) != null) continue
+                    val dlcById = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId)
+                    if (dlcById != null) {
+                        masterStudioDlcClipIfNeeded(dlcById, speaker)
+                        continue
+                    }
                     val resId = appContext.resources.getIdentifier(lineId, "raw", appContext.packageName)
                     if (resId != 0) continue
                 }
@@ -473,12 +481,12 @@ class CosmicCharacterVoiceEngine(
 
         val myGen = speakGeneration.incrementAndGet()
 
-        // Tier 0A: Downloaded/Imported Optional ElevenLabs Studio Voice Pack (matched by deterministic speaker+text hash)
+        // Tier 0A: Downloaded/Imported Optional ElevenLabs Studio Voice Pack + Real-Time Character Cinema DSP & 20Hz Lip-Sync!
         val studioAssetName = studioVoiceAssetFileName(speakerKey, text)
         val studioHashKey = studioAssetName.removeSuffix(".mp3")
         val dlcStudioAudio = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, studioHashKey)
         if (dlcStudioAudio != null) {
-            playFileClip(dlcStudioAudio, myGen)
+            playMasteredStudioDlcClip(dlcStudioAudio, speakerKey, myGen)
             return
         }
 
@@ -486,7 +494,7 @@ class CosmicCharacterVoiceEngine(
         if (!lineId.isNullOrBlank()) {
             val dlcAudio = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, lineId)
             if (dlcAudio != null) {
-                playFileClip(dlcAudio, myGen)
+                playMasteredStudioDlcClip(dlcAudio, speakerKey, myGen)
                 return
             }
         }
@@ -1430,32 +1438,44 @@ class CosmicCharacterVoiceEngine(
             }
 
             DspStyle.ULTRON_METAL_RESONANCE -> {
-                // Ultron Prime: Refined crisp Vibranium sheen (intelligible, metallic, never muddy)
-                val d1 = (sr * 0.009f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.017f).toInt().coerceAtLeast(1)
+                // Ultron Prime: Iconic cinematic Vibranium AI resonance — cold metallic comb resonator +
+                // subtle 52Hz ring-mod robotic edge + deep -1.4 semitone sub-harmonic metallic shadow!
+                val subMetal = resamplePitchPreservingLength(working, 2.0.pow(-1.4 / 12.0).toFloat())
+                highPassInPlace(working, sr, 150f)
+                val d1 = (sr * 0.0065f).toInt().coerceAtLeast(1)
+                val d2 = (sr * 0.0125f).toInt().coerceAtLeast(1)
+                val d3 = (sr * 0.0210f).toInt().coerceAtLeast(1)
+                val ringStep = (2.0 * PI * 52.0) / sr.toDouble()
                 for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] * 0.94f else 0f
-                    val m1 = if (i in d1 until working.size + d1) working[i - d1] * 0.16f else 0f
-                    val m2 = if (i in d2 until working.size + d2) -working[i - d2] * 0.12f else 0f
-                    left[i] = dry + m1
-                    right[i] = dry + m2
+                    val dry = if (i < working.size) working[i] else 0f
+                    val ring = dry * (0.86f + 0.14f * sin(i * ringStep).toFloat())
+                    val sub = if (i < subMetal.size) subMetal[i] * 0.30f else 0f
+                    val m1 = if (i in d1 until working.size + d1) working[i - d1] * 0.28f else 0f
+                    val m2 = if (i in d2 until working.size + d2) -working[i - d2] * 0.22f else 0f
+                    val m3 = if (i in d3 until working.size + d3) working[i - d3] * 0.14f else 0f
+                    left[i] = ring * 0.82f + sub + m1 + m3
+                    right[i] = ring * 0.82f + sub + m2 - m3
                 }
             }
 
             DspStyle.COSMIC_WARLORD_DUAL -> {
-                // Vaelor / Architect: Deep authoritative cinema baritone with clean subtle sub-presence & hall air
+                // Vaelor / Architect: Massive dual-layer cosmic cinema voice (-2.2 semitone sub-shadow + cathedral hall)
+                val subShadow = resamplePitchPreservingLength(working, 2.0.pow(-2.2 / 12.0).toFloat())
                 val chest = working.copyOf()
                 lowPassInPlace(chest, sr, 240f)
                 val wet = working.copyOf()
                 lowPassInPlace(wet, sr, 2800f)
-                val d1 = (sr * 0.044f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.076f).toInt().coerceAtLeast(1)
+                val d1 = (sr * 0.046f).toInt().coerceAtLeast(1)
+                val d2 = (sr * 0.084f).toInt().coerceAtLeast(1)
+                val d3 = (sr * 0.138f).toInt().coerceAtLeast(1)
                 for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] * 0.92f + chest[i] * 0.28f else 0f
-                    val e1 = if (i in d1 until working.size + d1) wet[i - d1] * 0.14f else 0f
-                    val e2 = if (i in d2 until working.size + d2) wet[i - d2] * 0.11f else 0f
-                    left[i] = dry + e1
-                    right[i] = dry + e2
+                    val dry = if (i < working.size) working[i] * 0.86f + chest[i] * 0.26f else 0f
+                    val sub = if (i < subShadow.size) subShadow[i] * 0.26f else 0f
+                    val e1 = if (i in d1 until working.size + d1) wet[i - d1] * 0.18f else 0f
+                    val e2 = if (i in d2 until working.size + d2) wet[i - d2] * 0.15f else 0f
+                    val e3 = if (i in d3 until working.size + d3) wet[i - d3] * 0.09f else 0f
+                    left[i] = dry + sub + e1 + e3
+                    right[i] = dry + sub + e2 + e3
                 }
             }
 
@@ -1694,6 +1714,46 @@ class CosmicCharacterVoiceEngine(
     }
 
     // ── MEDIA PLAYER PLAYBACK WITH VOICE DUCKING ────────────────────────────────
+
+    private fun masteredDlcWavFileFor(dlcFile: File, speakerKey: String): File {
+        val styleTag = profileFor(speakerKey).dspStyle.name.lowercase(Locale.ROOT)
+        return File(cacheDir, "dlc_m3_${dlcFile.nameWithoutExtension}_${dlcFile.length()}_$styleTag.wav")
+    }
+
+    private fun masterStudioDlcClipIfNeeded(dlcFile: File, speakerKey: String): File {
+        val masteredWav = masteredDlcWavFileFor(dlcFile, speakerKey)
+        if (masteredWav.exists() && masteredWav.length() > 1024L) return masteredWav
+        return try {
+            val decoded = decodeCompressedAudioToMonoFloat(dlcFile)
+            if (decoded != null && decoded.samples.size > decoded.sampleRate / 12) {
+                val profile = profileFor(speakerKey)
+                val (left, right) = applyCharacterCinemaDsp(decoded.samples, decoded.sampleRate, profile.dspStyle, 0f)
+                writeStereoWav16(masteredWav, decoded.sampleRate, left, right)
+                envelopeByPath[masteredWav.absolutePath] = computeSpeechRmsEnvelope(left, right, decoded.sampleRate)
+                pruneBookVoiceCacheIfNeeded()
+                masteredWav
+            } else {
+                dlcFile
+            }
+        } catch (_: Throwable) {
+            dlcFile
+        }
+    }
+
+    private fun playMasteredStudioDlcClip(dlcFile: File, speakerKey: String, expectedGen: Int) {
+        if (muted || released || expectedGen != speakGeneration.get()) return
+        val cachedMaster = masteredDlcWavFileFor(dlcFile, speakerKey)
+        if (cachedMaster.exists() && cachedMaster.length() > 1024L) {
+            playFileClip(cachedMaster, expectedGen)
+            return
+        }
+        synthExecutor.execute {
+            if (muted || released || expectedGen != speakGeneration.get()) return@execute
+            val readyFile = masterStudioDlcClipIfNeeded(dlcFile, speakerKey)
+            if (muted || released || expectedGen != speakGeneration.get()) return@execute
+            playFileClip(readyFile, expectedGen)
+        }
+    }
 
     @Synchronized
     private fun playBundledStudioAsset(assetPath: String, expectedGen: Int) {

@@ -95,7 +95,8 @@ object BookContentPackManager {
      * Example JSON: { "version": 3, "sizeLabel": "6,4 MB", "notes": "3. Sezon paketi", "packUrl": "https://.../pack-v3.zip" }
      * Leave blank to stay 100% offline-ready; paste your GitHub Releases / CDN manifest URL whenever you publish updates!
      */
-    const val REMOTE_MANIFEST_URL = ""
+    const val REMOTE_MANIFEST_URL =
+        "https://raw.githubusercontent.com/ademelwlaaa-byte/Asroda/main/public/packs/story_manifest.json"
 
     data class RemoteStoryUpdateInfo(
         val version: Int,
@@ -259,11 +260,11 @@ object BookContentPackManager {
         if (remoteUpdate != null) {
             val res = downloadPackFromUrl(
                 context = appCtx,
-                packId = "story_update_v${remoteUpdate.version}",
+                packId = STUDIO_VOICE_PACK_ID,
                 title = "Kozmik Sürükleniş · Güncelleme v${remoteUpdate.version}",
                 subtitle = remoteUpdate.notes,
                 urlString = remoteUpdate.packUrl,
-                kind = BookPackKind.STORY_SEASON
+                kind = BookPackKind.VOICE_DUB_PACK
             )
             return@withContext res.map {
                 markStoryVersionInstalled(appCtx, bookId, remoteUpdate.version)
