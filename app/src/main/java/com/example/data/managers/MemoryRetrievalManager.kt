@@ -562,9 +562,18 @@ class MemoryRetrievalManager(
                 cosineSimilarity(queryRemoteVec, item.remoteVector).coerceAtLeast(0f)
             } else null
             val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, avgDocLen)
-            val entityHit = if (mentionedEntities.any { ent ->
-                item.normalizedSubject.contains(ent) || (item.normalizedSubject.length >= 3 && ent.contains(item.normalizedSubject))
-            }) 1.0f else 0f
+            val matchedEntCount = mentionedEntities.count { ent ->
+                ent.length >= 3 && (item.normalizedText.contains(ent) || item.normalizedSubject.contains(ent))
+            }
+            val entityHit = when {
+                matchedEntCount >= 2 -> 1.35f
+                mentionedEntities.any { ent ->
+                    item.normalizedSubject.contains(ent) || (item.normalizedSubject.length >= 3 && ent.contains(item.normalizedSubject))
+                } -> 1.0f
+                matchedEntCount == 1 -> 0.70f
+                else -> 0f
+            }
+            val coOccurrenceBoost = if (matchedEntCount >= 2) MemoryEngine.RRF_UNIT * 0.55f else 0f
             val keyHit = if (item.normalizedKey.length >= 3 && (normQuery.contains(item.normalizedKey) ||
                 TurkishTextAnalyzer.extractStems(item.normalizedKey).any { queryStems.contains(it) })
             ) 0.45f else 0f
@@ -580,8 +589,13 @@ class MemoryRetrievalManager(
 
             val entityChannel = entityHit + keyHit + (if (fact.userCorrected) 0.55f else 0f) +
                 (if (matchesTemporalWindow) 1.25f else 0f) - (if (isDisputed) 0.90f else 0f)
+            val englishPenalty = if (!fact.userCorrected && fact.isBotSaved &&
+                com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(fact.value)
+            ) -0.020f else 0f
             val extraBoost = (if (fact.userCorrected) 0.0045f else 0f) +
                 temporalBoost +
+                coOccurrenceBoost +
+                englishPenalty +
                 (when (baseConfidence) {
                     "certain", "high" -> 0.0020f
                     "disputed" -> -0.025f
@@ -617,17 +631,34 @@ class MemoryRetrievalManager(
                 cosineSimilarity(queryRemoteVec, item.remoteVector).coerceAtLeast(0f)
             } else null
             val lex = computeBm25Score(queryStems, item.stemCounts, item.docLen, idfMap, avgDocLen)
-            val entityHit = if (
+            val matchedEventEntCount = mentionedEntities.count { ent ->
+                ent.length >= 3 && (item.normalizedText.contains(ent) || item.normalizedPov.contains(ent))
+            }
+            val entityHit = when {
+                matchedEventEntCount >= 2 -> 1.30f
                 (item.normalizedPov.length >= 3 && mentionedEntities.any { item.normalizedPov.contains(it) || it.contains(item.normalizedPov) }) ||
-                mentionedEntities.any { ent -> ent.length >= 3 && item.normalizedText.contains(ent) }
-            ) 0.95f else 0f
+                    matchedEventEntCount == 1 -> 0.95f
+                else -> 0f
+            }
+            val titleEmoHit = if (item.parsed.isStructured && queryStems.isNotEmpty()) {
+                val titleEmoStems = TurkishTextAnalyzer.extractStems("${item.parsed.title} ${item.parsed.emotionTag}").toSet()
+                if (titleEmoStems.any { it in queryStems }) 0.35f else 0f
+            } else 0f
             val matchesEventTemporal = temporalTarget != null && ev.storyDayIndex > 0L &&
                 ev.storyDayIndex in temporalTarget.targetStoryDayMin..temporalTarget.targetStoryDayMax
             val importanceNorm = ev.importanceScore.coerceIn(10, 100) / 100f
-            val entityChannel = entityHit + importanceNorm * 0.65f +
+            val entityChannel = entityHit + titleEmoHit + importanceNorm * 0.65f +
                 (if (item.parsed.isStructured) 0.20f else 0f) +
                 (if (matchesEventTemporal) 0.90f else 0f)
+            val coOccurEventBoost = if (matchedEventEntCount >= 2) MemoryEngine.RRF_UNIT * 0.55f else 0f
+            val englishEventPenalty = if (ev.isBotSaved &&
+                !com.example.data.repository.TurkishLanguageGuard.isLivingMemoryTurkishValid(
+                    item.parsed.title, item.parsed.narrative, item.parsed.innerThought
+                )
+            ) -0.025f else 0f
             val extraBoost = importanceNorm * 0.0035f +
+                coOccurEventBoost +
+                englishEventPenalty +
                 (if (matchesEventTemporal) MemoryEngine.TEMPORAL_BOOST * 0.85f else 0f) +
                 recencyBoost(ev.timestamp, now, 120.0) * 0.0015f
 

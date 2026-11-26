@@ -314,7 +314,7 @@ class EmochiViewModel @JvmOverloads constructor(
     ) {
         viewModelScope.launch {
             val cleanKey = com.example.util.ApiKeyFormatValidator.sanitizeKey(apiKey)
-            val encryptedKey = com.example.util.KeystoreEncryptionManager.encrypt(cleanKey)
+            val encryptedKey = com.example.util.SecureApiKeyVault.encrypt(cleanKey)
             val cleanUtil = utilityModel.trim()
             val utilSource = when {
                 cleanUtil.isNotBlank() -> "manual"
@@ -373,7 +373,7 @@ class EmochiViewModel @JvmOverloads constructor(
             val existing = repository.getCustomProviderById(id) ?: return@launch
             val finalEncryptedKey = if (!apiKey.isNullOrBlank()) {
                 val cleanKey = com.example.util.ApiKeyFormatValidator.sanitizeKey(apiKey)
-                com.example.util.KeystoreEncryptionManager.encrypt(cleanKey)
+                com.example.util.SecureApiKeyVault.encrypt(cleanKey)
             } else {
                 existing.apiKeyEncrypted
             }
@@ -1079,6 +1079,43 @@ class EmochiViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * One-tap smart maintenance for a bot:
+     * - Archives any legacy English auto-saved memories & normalizes English emotion/key labels to Turkish
+     * - Merges near-duplicate Living Memories
+     * - Audits auto-added cast cards (removes places/extras, merges alias duplicates, translates English roles)
+     */
+    fun runSmartMemoryAndCastCleanup(botId: String, onDone: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val summary = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val memReport = try {
+                    repository.consolidateAndCleanBotMemories(botId)
+                } catch (_: Exception) {
+                    EmochiRepository.MemoryConsolidationReport()
+                }
+                val castReport = try {
+                    repository.managers.castMemberManager.auditAndCleanCastForBot(botId)
+                } catch (_: Exception) {
+                    com.example.data.managers.CastMemberManager.CastCleanupReport()
+                }
+                if (_activeBotId.value == botId) {
+                    try {
+                        _archivedMemories.value = repository.getArchivedMemories(botId)
+                        _hiddenRagCount.value = repository.getHiddenRagFragmentCount(botId)
+                    } catch (_: Exception) {}
+                }
+                val parts = mutableListOf<String>()
+                val memCleaned = memReport.removedEnglishSpamCount + memReport.mergedDuplicateEventsCount
+                if (memCleaned > 0) parts.add("$memCleaned tekrar/İngilizce anı temizlendi")
+                if (memReport.normalizedLabelsCount > 0) parts.add("${memReport.normalizedLabelsCount} etiket Türkçeleştirildi")
+                val castCleaned = castReport.removedFalsePositives + castReport.mergedDuplicates + castReport.normalizedTurkishRoles
+                if (castCleaned > 0) parts.add("$castCleaned karakter kartı düzenlendi")
+                if (parts.isEmpty()) "Bellek ve karakter kadrosu zaten tertemiz!" else parts.joinToString(" • ")
+            }
+            onDone(summary)
+        }
+    }
+
     fun dismissMemoryCommitNotice() {
         _memoryCommitNotice.value = null
     }
@@ -1213,15 +1250,16 @@ class EmochiViewModel @JvmOverloads constructor(
                         emitMemoryCommitNotice(replyResult.memoryCommitSummary, freshBot.aiName)
                         loadArchivedMemories(botId)
                     }
-                    schedulePostTurnMemoryExtraction(currentBot, finalMsgs, sanitizedText, replyText, sourceMessageId = aiMsg.id)
+                    // Always pass freshBot (with this turn's updated storyDay, emotionState & worldAtmosphere!)
+                    schedulePostTurnMemoryExtraction(freshBot, finalMsgs, sanitizedText, replyText, sourceMessageId = aiMsg.id)
                     if (shouldRunSummarization(botId, finalMsgs.size)) {
-                        repository.updateMemorySummaries(currentBot, finalMsgs)
+                        repository.updateMemorySummaries(freshBot, finalMsgs)
                         markSummarizationDone(botId, finalMsgs.size)
                     }
 
                     // Y5 — Dinamik Zorluk Kalibrasyonu (her 20 mesajda bir)
                     if (DynamicDifficultyCalibrator.shouldRun(finalMsgs.size)) {
-                        val calib = DynamicDifficultyCalibrator.calibrate(currentBot, finalMsgs)
+                        val calib = DynamicDifficultyCalibrator.calibrate(freshBot, finalMsgs)
                         if (kotlin.math.abs(calib.delta) > 0.001f) {
                             val updatedBot = repository.getBot(botId)
                             if (updatedBot != null) {
@@ -1229,7 +1267,7 @@ class EmochiViewModel @JvmOverloads constructor(
                                     baseAffectionDifficulty = calib.newDifficulty.toDouble()
                                 ))
                                 android.util.Log.i("DynDiff",
-                                    "[Y5] bot=${currentBot.aiName} " +
+                                    "[Y5] bot=${freshBot.aiName} " +
                                     "old=${calib.oldDifficulty} new=${calib.newDifficulty} " +
                                     "reason=${calib.reason}")
                             }
@@ -1354,7 +1392,7 @@ class EmochiViewModel @JvmOverloads constructor(
                 } catch (_: kotlinx.coroutines.CancellationException) {
                     // Kullanıcı durdurdu
                 } catch (e: Exception) {
-                    _errorMessage.value = e.message ?: "Yeniden oluşturulamadı."
+                    _errorMessage.value = extractUserFriendlyErrorMessage(e)
                 }
             }
         }
@@ -1430,7 +1468,7 @@ class EmochiViewModel @JvmOverloads constructor(
                 } catch (_: kotlinx.coroutines.CancellationException) {
                     // Kullanıcı durdurdu
                 } catch (e: Exception) {
-                    _errorMessage.value = e.message ?: "Mesaj düzenlenemedi."
+                    _errorMessage.value = extractUserFriendlyErrorMessage(e)
                 }
             }
         }
@@ -1467,6 +1505,8 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun resetChat(botId: String, fullReset: Boolean = false) {
         viewModelScope.launch {
+            cancelPostTurnExtraction(botId)
+            lastSummarizationMsgCountMap.remove(botId)
             val currentBot = repository.getBot(botId) ?: return@launch
             repository.resetMessagesForBot(botId)
             if (fullReset) {

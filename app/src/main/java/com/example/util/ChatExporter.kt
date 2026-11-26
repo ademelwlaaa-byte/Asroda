@@ -60,6 +60,48 @@ object ChatExporter {
         return sdf.format(Date(timestampMs))
     }
 
+    /**
+     * Sanitizes any user- or caller-supplied filename against path traversal (`../`, slashes, NUL)
+     * and normalizes it to a safe single-segment filename inside `cacheDir/exports/`.
+     */
+    fun sanitizeExportFileName(rawFileName: String, requiredExtension: String = "json", fallbackBase: String = "emochi_yedek"): String {
+        val ext = requiredExtension.trimStart('.').lowercase(Locale.US)
+        val leaf = rawFileName
+            .replace('\\', '/')
+            .substringAfterLast('/')
+            .replace("\u0000", "")
+            .trim()
+        val withoutExt = if (ext.isNotEmpty() && leaf.lowercase(Locale.US).endsWith(".$ext")) {
+            leaf.dropLast(ext.length + 1)
+        } else {
+            leaf
+        }
+        val cleanedBase = withoutExt
+            .replace(Regex("""\.\.+"""), "_")
+            .replace(Regex("""[^a-zA-Z0-9çğıöşüÇĞİÖŞÜ._-]+"""), "_")
+            .trim('.', '_', '-', ' ')
+            .take(64)
+            .ifBlank { "${fallbackBase}_${formatFileStamp()}" }
+        return if (ext.isNotEmpty()) "$cleanedBase.$ext" else cleanedBase
+    }
+
+    private fun resolveUniqueExportFile(cacheDir: File, desiredName: String): File {
+        val canonicalDir = cacheDir.canonicalFile
+        var candidate = File(canonicalDir, desiredName)
+        if (!candidate.canonicalPath.startsWith(canonicalDir.canonicalPath + File.separator)) {
+            candidate = File(canonicalDir, sanitizeExportFileName(desiredName))
+        }
+        if (!candidate.exists()) return candidate
+        val dotIdx = candidate.name.lastIndexOf('.')
+        val stem = if (dotIdx > 0) candidate.name.substring(0, dotIdx) else candidate.name
+        val ext = if (dotIdx > 0) candidate.name.substring(dotIdx) else ""
+        for (suffix in 1..999) {
+            val alt = File(canonicalDir, "${stem}_$suffix$ext")
+            if (!alt.exists()) return alt
+        }
+        return File(canonicalDir, "${stem}_${System.nanoTime()}$ext")
+    }
+
     fun filterByRange(
         messages: List<MessageEntity>,
         range: DateRange,
@@ -135,9 +177,13 @@ object ChatExporter {
         nowMs: Long = System.currentTimeMillis()
     ): File {
         cleanupOldExports(context, nowMs = nowMs)
-        val fileName = suggestedFileName(bot, format, nowMs)
+        val fileName = sanitizeExportFileName(
+            suggestedFileName(bot, format, nowMs),
+            requiredExtension = format.extension,
+            fallbackBase = "emochi_sohbet"
+        )
         val cacheDir = File(context.cacheDir, EXPORTS_DIR_NAME).also { it.mkdirs() }
-        val file = File(cacheDir, fileName)
+        val file = resolveUniqueExportFile(cacheDir, fileName)
         BufferedWriter(OutputStreamWriter(FileOutputStream(file), Charsets.UTF_8), BUFFER_SIZE_BYTES).use { writer ->
             writeExportToWriter(writer, bot, messages, format, dateRange, nowMs)
         }
@@ -214,6 +260,26 @@ object ChatExporter {
     }
 
     /**
+     * Writes a JSON payload safely into `cacheDir/exports/` with path-traversal protection
+     * and collision-safe unique file naming.
+     */
+    fun writeJsonToExportFile(
+        context: Context,
+        fileName: String,
+        jsonContent: String
+    ): File {
+        cleanupOldExports(context)
+        val cacheDir = File(context.cacheDir, EXPORTS_DIR_NAME).also { it.mkdirs() }
+        val safeFileName = sanitizeExportFileName(fileName, requiredExtension = "json", fallbackBase = "emochi_yedek")
+        val file = resolveUniqueExportFile(cacheDir, safeFileName)
+        BufferedWriter(OutputStreamWriter(FileOutputStream(file), Charsets.UTF_8), BUFFER_SIZE_BYTES).use { writer ->
+            writer.write(jsonContent)
+            writer.flush()
+        }
+        return file
+    }
+
+    /**
      * Shares a backup JSON string safely as a `.json` file via `FileProvider` (`Intent.EXTRA_STREAM`)
      * instead of `Intent.EXTRA_TEXT`.
      */
@@ -224,14 +290,7 @@ object ChatExporter {
         subject: String = "Emochi Yedeği",
         chooserTitle: String = "Yedeği Paylaş"
     ): File {
-        cleanupOldExports(context)
-        val cacheDir = File(context.cacheDir, EXPORTS_DIR_NAME).also { it.mkdirs() }
-        val safeFileName = if (fileName.endsWith(".json")) fileName else "$fileName.json"
-        val file = File(cacheDir, safeFileName)
-        BufferedWriter(OutputStreamWriter(FileOutputStream(file), Charsets.UTF_8), BUFFER_SIZE_BYTES).use { writer ->
-            writer.write(jsonContent)
-            writer.flush()
-        }
+        val file = writeJsonToExportFile(context, fileName, jsonContent)
 
         val uri: Uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         val shareIntent = Intent(Intent.ACTION_SEND).apply {

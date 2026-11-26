@@ -3,20 +3,25 @@ package com.example.data.managers
 import android.content.Context
 import android.util.Log
 import androidx.room.withTransaction
+import com.example.data.local.AffectionEventEntity
 import com.example.data.local.AppDatabase
 import com.example.data.local.ArchivedMemoryEntity
 import com.example.data.local.CastMemberEntity
 import com.example.data.local.CharacterEmotionEntity
 import com.example.data.local.CustomProviderEntity
+import com.example.data.local.EmotionHistoryEntity
+import com.example.data.local.EntityRegistryEntity
 import com.example.data.local.EntityRelationEntity
 import com.example.data.local.MemoryCheckpointEntity
 import com.example.data.local.MemoryEventEntity
 import com.example.data.local.MemoryFactEntity
+import com.example.data.local.MemoryFragmentEntity
 import com.example.data.local.MessageEntity
 import com.example.data.local.MilestoneEntity
 import com.example.data.local.PendingReappraisalEntity
 import com.example.data.local.RoutineEntity
 import com.example.data.local.SensitiveTriggerEntity
+import com.example.data.local.StoryProgressEntity
 import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.BackupImportSummary
 import com.example.data.repository.BackupSnapshot
@@ -131,6 +136,12 @@ class BackupSnapshotManager(
         val pendingReappraisalDao = db.pendingReappraisalDao()
         val archivedMemoryDao = db.archivedMemoryDao()
         val lorebookDao = db.lorebookDao()
+        val entityRegistryDao = db.entityRegistryDao()
+        val storyProgressDao = db.storyProgressDao()
+        val emotionHistoryDao = db.emotionHistoryDao()
+        val affectionEventDao = db.affectionEventDao()
+        val memoryFragmentDao = db.memoryFragmentDao()
+        val sceneTemplateDao = db.sceneTemplateDao()
 
         val bots = botDao.getAllBotsList()
         val allMessages = mutableListOf<MessageEntity>()
@@ -145,30 +156,41 @@ class BackupSnapshotManager(
         val allMilestones = mutableListOf<MilestoneEntity>()
         val allPendingReappraisals = mutableListOf<PendingReappraisalEntity>()
         val allArchivedMemories = mutableListOf<ArchivedMemoryEntity>()
+        val allEntityRegistry = mutableListOf<EntityRegistryEntity>()
+        val allStoryProgress = mutableListOf<StoryProgressEntity>()
+        val allEmotionHistory = mutableListOf<EmotionHistoryEntity>()
+        val allAffectionEvents = mutableListOf<AffectionEventEntity>()
+        val allMemoryFragments = mutableListOf<MemoryFragmentEntity>()
 
         for (b in bots) {
             allMessages.addAll(messageDao.getMessagesForBotList(b.id))
-            try { allFacts.addAll(memoryFactDao.getActiveFacts(b.id)) } catch (_: Exception) {}
-            try { allEvents.addAll(memoryEventDao.getActiveEvents(b.id)) } catch (_: Exception) {}
-            try { allCheckpoints.addAll(memoryCheckpointDao.getCheckpointsForBot(b.id)) } catch (_: Exception) {}
-            try { allCast.addAll(castMemberDao.getCastMembersForBot(b.id)) } catch (_: Exception) {}
-            try { allEmotions.addAll(emotionDao.getEmotionsForBot(b.id)) } catch (_: Exception) {}
-            try { allTriggers.addAll(sensitiveTriggerDao.getTriggersForBot(b.id)) } catch (_: Exception) {}
-            try { allRoutines.addAll(routineDao.getRoutinesForBot(b.id)) } catch (_: Exception) {}
-            try { allRelations.addAll(entityRelationDao.getRelationsForBot(b.id)) } catch (_: Exception) {}
-            try { allMilestones.addAll(milestoneDao.getMilestonesForBot(b.id)) } catch (_: Exception) {}
-            try { allPendingReappraisals.addAll(pendingReappraisalDao.getAllForBot(b.id)) } catch (_: Exception) {}
-            try { allArchivedMemories.addAll(archivedMemoryDao.getArchivesForBot(b.id)) } catch (_: Exception) {}
+            try { allFacts.addAll(memoryFactDao.getActiveFacts(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for facts(${b.id}): ${e.message}") }
+            try { allEvents.addAll(memoryEventDao.getActiveEvents(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for events(${b.id}): ${e.message}") }
+            try { allCheckpoints.addAll(memoryCheckpointDao.getCheckpointsForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for checkpoints(${b.id}): ${e.message}") }
+            try { allCast.addAll(castMemberDao.getCastMembersForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for cast(${b.id}): ${e.message}") }
+            try { allEmotions.addAll(emotionDao.getEmotionsForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for emotions(${b.id}): ${e.message}") }
+            try { allTriggers.addAll(sensitiveTriggerDao.getTriggersForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for triggers(${b.id}): ${e.message}") }
+            try { allRoutines.addAll(routineDao.getRoutinesForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for routines(${b.id}): ${e.message}") }
+            try { allRelations.addAll(entityRelationDao.getRelationsForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for relations(${b.id}): ${e.message}") }
+            try { allMilestones.addAll(milestoneDao.getMilestonesForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for milestones(${b.id}): ${e.message}") }
+            try { allPendingReappraisals.addAll(pendingReappraisalDao.getAllForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for reappraisals(${b.id}): ${e.message}") }
+            try { allArchivedMemories.addAll(archivedMemoryDao.getArchivesForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for archives(${b.id}): ${e.message}") }
+            try { allEntityRegistry.addAll(entityRegistryDao.getEntitiesForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for entityRegistry(${b.id}): ${e.message}") }
+            try { storyProgressDao.getProgressForBot(b.id)?.let { allStoryProgress.add(it) } } catch (e: Exception) { Log.w(TAG, "Backup export failed for storyProgress(${b.id}): ${e.message}") }
+            try { allEmotionHistory.addAll(emotionHistoryDao.getAllHistoryForBot(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for emotionHistory(${b.id}): ${e.message}") }
+            try { allAffectionEvents.addAll(affectionEventDao.getEventsForBotList(b.id)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for affectionEvents(${b.id}): ${e.message}") }
+            try { allMemoryFragments.addAll(memoryFragmentDao.getRecentFragments(b.id, 5000)) } catch (e: Exception) { Log.w(TAG, "Backup export failed for memoryFragments(${b.id}): ${e.message}") }
         }
 
         val rawCustomProviders = try {
             customProviderDao.getAllProviders()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "Backup export failed for customProviders: ${e.message}")
             emptyList()
         }
         val exportedCustomProviders = rawCustomProviders.map { provider ->
             if (includeApiKeys) {
-                provider.copy(apiKeyEncrypted = SecureApiKeyVault.decrypt(provider.apiKeyEncrypted))
+                provider.copy(apiKeyEncrypted = SecureApiKeyVault.decryptFlexible(provider.apiKeyEncrypted))
             } else {
                 provider.copy(apiKeyEncrypted = "")
             }
@@ -181,9 +203,10 @@ class BackupSnapshotManager(
             rawSettings.sanitizedForBackup()
         }
 
-        val allLorebooks = try { lorebookDao.getAllLorebooks() } catch (_: Exception) { emptyList() }
-        val allLorebookEntries = try { lorebookDao.getAllEntries() } catch (_: Exception) { emptyList() }
-        val allBotLorebookLinks = try { lorebookDao.getAllLinks() } catch (_: Exception) { emptyList() }
+        val allLorebooks = try { lorebookDao.getAllLorebooks() } catch (e: Exception) { Log.w(TAG, "Backup export failed for lorebooks: ${e.message}"); emptyList() }
+        val allLorebookEntries = try { lorebookDao.getAllEntries() } catch (e: Exception) { Log.w(TAG, "Backup export failed for lorebookEntries: ${e.message}"); emptyList() }
+        val allBotLorebookLinks = try { lorebookDao.getAllLinks() } catch (e: Exception) { Log.w(TAG, "Backup export failed for botLorebookLinks: ${e.message}"); emptyList() }
+        val allSceneTemplates = try { sceneTemplateDao.getAllTemplates() } catch (e: Exception) { Log.w(TAG, "Backup export failed for sceneTemplates: ${e.message}"); emptyList() }
 
         return BackupSnapshot(
             version = CURRENT_BACKUP_VERSION,
@@ -205,19 +228,25 @@ class BackupSnapshotManager(
             archivedMemories = allArchivedMemories,
             lorebooks = allLorebooks,
             lorebookEntries = allLorebookEntries,
-            botLorebookLinks = allBotLorebookLinks
+            botLorebookLinks = allBotLorebookLinks,
+            entityRegistry = allEntityRegistry,
+            storyProgress = allStoryProgress,
+            emotionHistory = allEmotionHistory,
+            affectionEvents = allAffectionEvents,
+            memoryFragments = allMemoryFragments,
+            sceneTemplates = allSceneTemplates
         )
     }
 
     suspend fun doActualBackup() = withContext(Dispatchers.IO) {
         val ctx = context ?: return@withContext
+        val tmpFile = File(ctx.filesDir, BACKUP_TMP_FILE_NAME)
         try {
             // Auto-backup ALWAYS strips API keys and writes atomically to internal filesDir only
             val snapshot = buildBackupSnapshot(includeApiKeys = false)
             val json = backupAdapter.toJson(snapshot)
 
             val targetFile = File(ctx.filesDir, BACKUP_FILE_NAME)
-            val tmpFile = File(ctx.filesDir, BACKUP_TMP_FILE_NAME)
             FileOutputStream(tmpFile).use { out ->
                 out.write(json.toByteArray(Charsets.UTF_8))
                 out.flush()
@@ -231,6 +260,7 @@ class BackupSnapshotManager(
             // Security cleanup: delete any legacy plaintext backup file in external storage
             cleanupLegacyExternalBackups(ctx)
         } catch (e: Exception) {
+            try { if (tmpFile.exists()) tmpFile.delete() } catch (_: Exception) {}
             Log.w(TAG, "Auto-backup write failed: ${e.message}")
         }
     }
@@ -291,6 +321,12 @@ class BackupSnapshotManager(
         val pendingReappraisalDao = db.pendingReappraisalDao()
         val archivedMemoryDao = db.archivedMemoryDao()
         val lorebookDao = db.lorebookDao()
+        val entityRegistryDao = db.entityRegistryDao()
+        val storyProgressDao = db.storyProgressDao()
+        val emotionHistoryDao = db.emotionHistoryDao()
+        val affectionEventDao = db.affectionEventDao()
+        val sceneTemplateDao = db.sceneTemplateDao()
+        val turnRollbackSnapshotDao = db.turnRollbackSnapshotDao()
 
         val existingSettings = try { settingsDao.getUserSettings() } catch (_: Exception) { null }
         val existingCustomProviders = try { customProviderDao.getAllProviders() } catch (_: Exception) { emptyList() }
@@ -314,12 +350,26 @@ class BackupSnapshotManager(
                     pendingReappraisalDao.deleteForBot(bid)
                     castMemberDao.getCastMembersForBot(bid).forEach { castMemberDao.deleteCastMember(it.id) }
                     entityRelationDao.getRelationsForBot(bid).forEach { entityRelationDao.deleteRelation(it.id) }
+                    entityRegistryDao.getEntitiesForBot(bid).forEach { entityRegistryDao.deleteEntity(it.id) }
+                    storyProgressDao.deleteForBot(bid)
+                    emotionHistoryDao.deleteHistoryForBot(bid)
+                    affectionEventDao.deleteEventsForBot(bid)
                     fragmentDao.deleteFragmentsForBot(bid)
+                    turnRollbackSnapshotDao.deleteForBot(bid)
                 }
                 botDao.deleteAllBots()
                 lorebookDao.deleteAllLinks()
                 lorebookDao.deleteAllEntries()
                 lorebookDao.deleteAllLorebooks()
+                if (snapshot.sceneTemplates.isNotEmpty()) {
+                    sceneTemplateDao.deleteAll()
+                }
+                // Clear tables whose DAOs have no deleteAll method (e.g., archived_memories) & orphan rollback rows
+                db.openHelper.writableDatabase.execSQL("DELETE FROM archived_memories")
+                db.openHelper.writableDatabase.execSQL("DELETE FROM turn_rollback_snapshots")
+                if (snapshot.customProviders.isNotEmpty()) {
+                    existingCustomProviders.forEach { customProviderDao.deleteProvider(it.id) }
+                }
             }
 
             for (b in snapshot.bots) botDao.insertOrUpdate(b)
@@ -353,7 +403,7 @@ class BackupSnapshotManager(
             if (snapshot.characterEmotions.isNotEmpty()) {
                 val botsWithEmotions = snapshot.characterEmotions.map { it.botId }.toSet()
                 if (!overwriteExisting) botsWithEmotions.forEach { emotionDao.deleteEmotionsForBot(it) }
-                for (em in snapshot.characterEmotions) emotionDao.insertOrUpdate(em)
+                for (em in snapshot.characterEmotions) emotionDao.insertOrUpdate(em.copy(id = 0L))
             }
             if (snapshot.sensitiveTriggers.isNotEmpty()) {
                 val botsWithTriggers = snapshot.sensitiveTriggers.map { it.botId }.toSet()
@@ -400,6 +450,41 @@ class BackupSnapshotManager(
                     }
                 }
             }
+            if (snapshot.entityRegistry.isNotEmpty()) {
+                val botsWithEntities = snapshot.entityRegistry.map { it.botId }.toSet()
+                if (!overwriteExisting) {
+                    botsWithEntities.forEach { bid ->
+                        entityRegistryDao.getEntitiesForBot(bid).forEach { entityRegistryDao.deleteEntity(it.id) }
+                    }
+                }
+                for (ent in snapshot.entityRegistry) entityRegistryDao.insertOrUpdateEntity(ent.copy(id = 0L))
+            }
+            if (snapshot.storyProgress.isNotEmpty()) {
+                val validBotIds = snapshot.bots.map { it.id }.toSet()
+                for (sp in snapshot.storyProgress) {
+                    if (sp.botId in validBotIds || botDao.getBotById(sp.botId) != null) {
+                        storyProgressDao.insertOrUpdate(sp)
+                    }
+                }
+            }
+            if (snapshot.emotionHistory.isNotEmpty()) {
+                val botsWithHist = snapshot.emotionHistory.map { it.botId }.toSet()
+                if (!overwriteExisting) botsWithHist.forEach { emotionHistoryDao.deleteHistoryForBot(it) }
+                for (eh in snapshot.emotionHistory) emotionHistoryDao.insertHistory(eh.copy(id = 0L))
+            }
+            if (snapshot.affectionEvents.isNotEmpty()) {
+                val botsWithAff = snapshot.affectionEvents.map { it.botId }.toSet()
+                if (!overwriteExisting) botsWithAff.forEach { affectionEventDao.deleteEventsForBot(it) }
+                for (ae in snapshot.affectionEvents) affectionEventDao.insertEvent(ae.copy(id = 0L))
+            }
+            if (snapshot.memoryFragments.isNotEmpty()) {
+                val botsWithFrags = snapshot.memoryFragments.map { it.botId }.toSet()
+                if (!overwriteExisting) botsWithFrags.forEach { fragmentDao.deleteFragmentsForBot(it) }
+                fragmentDao.insertFragments(snapshot.memoryFragments.map { it.copy(id = 0L) })
+            }
+            if (snapshot.sceneTemplates.isNotEmpty()) {
+                sceneTemplateDao.insertTemplates(snapshot.sceneTemplates)
+            }
             if (snapshot.customProviders.isNotEmpty()) {
                 val existingBySignature = existingCustomProviders.associateBy {
                     "${it.baseUrl.trim().lowercase()}|${it.label.trim().lowercase()}"
@@ -408,11 +493,18 @@ class BackupSnapshotManager(
                     val sig = "${incoming.baseUrl.trim().lowercase()}|${incoming.label.trim().lowercase()}"
                     val existing = existingBySignature[sig]
                     val resolvedEncryptedKey = when {
-                        incoming.apiKeyEncrypted.isNotBlank() -> SecureApiKeyVault.encrypt(incoming.apiKeyEncrypted)
-                        existing != null && existing.apiKeyEncrypted.isNotBlank() -> existing.apiKeyEncrypted
+                        incoming.apiKeyEncrypted.isNotBlank() -> {
+                            val plainOrDecoded = SecureApiKeyVault.decryptFlexible(incoming.apiKeyEncrypted)
+                            if (plainOrDecoded.isNotBlank()) SecureApiKeyVault.encrypt(plainOrDecoded) else ""
+                        }
+                        existing != null && existing.apiKeyEncrypted.isNotBlank() -> {
+                            // Upgrade legacy KeystoreEncryptionManager ciphertexts seamlessly to ENC_V2 on restore
+                            val existingPlain = SecureApiKeyVault.decryptFlexible(existing.apiKeyEncrypted)
+                            if (existingPlain.isNotBlank()) SecureApiKeyVault.encrypt(existingPlain) else existing.apiKeyEncrypted
+                        }
                         else -> ""
                     }
-                    if (existing != null) {
+                    if (!overwriteExisting && existing != null) {
                         customProviderDao.updateProvider(
                             incoming.copy(
                                 id = existing.id,

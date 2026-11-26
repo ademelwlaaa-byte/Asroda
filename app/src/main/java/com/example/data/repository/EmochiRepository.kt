@@ -125,7 +125,13 @@ data class BackupSnapshot(
     val archivedMemories: List<com.example.data.local.ArchivedMemoryEntity> = emptyList(),
     val lorebooks: List<com.example.data.local.LorebookEntity> = emptyList(),
     val lorebookEntries: List<com.example.data.local.LorebookEntryEntity> = emptyList(),
-    val botLorebookLinks: List<com.example.data.local.BotLorebookLinkEntity> = emptyList()
+    val botLorebookLinks: List<com.example.data.local.BotLorebookLinkEntity> = emptyList(),
+    val entityRegistry: List<com.example.data.local.EntityRegistryEntity> = emptyList(),
+    val storyProgress: List<com.example.data.local.StoryProgressEntity> = emptyList(),
+    val emotionHistory: List<com.example.data.local.EmotionHistoryEntity> = emptyList(),
+    val affectionEvents: List<com.example.data.local.AffectionEventEntity> = emptyList(),
+    val memoryFragments: List<com.example.data.local.MemoryFragmentEntity> = emptyList(),
+    val sceneTemplates: List<com.example.data.local.SceneTemplateEntity> = emptyList()
 )
 
 data class BackupImportSummary(
@@ -1934,6 +1940,8 @@ class EmochiRepository(
         }
         invalidateMemoryCache(botId)
         lastUnlockedMilestoneMap.remove(botId)
+        lastLivingMemoryMsgCountMap.remove(botId)
+        lastNarrativeMilestoneMsgCountMap.remove(botId)
         result
     }
 
@@ -2184,6 +2192,10 @@ class EmochiRepository(
                 }
             }
             lastTriggerMessageIndexMap.keys.removeAll { it.startsWith("$botId:") }
+            lastLivingMemoryMsgCountMap.remove(botId)
+            lastNarrativeMilestoneMsgCountMap.remove(botId)
+            lastSummarizedMessageCount.remove(botId)
+            activeInSceneCastMap.remove(botId)
             try {
                 db.openHelper.writableDatabase.execSQL(
                     "DELETE FROM archived_memories WHERE botId = ? AND timestamp > ?",

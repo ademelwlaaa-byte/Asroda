@@ -38,12 +38,17 @@ object TurkishTextAnalyzer {
         "lerimizden", "larımızdan", "lerinizden", "larınızdan",
         "lerimizde", "larımızda", "lerinizde", "larınızda",
         "lerimize", "larımıza", "lerinize", "larınıza",
+        "maktadır", "mektedir", "maktadırlar", "mektedirler",
         "lerimiz", "larımız", "leriniz", "larınız",
         "lerden", "lardan", "lerin", "ların", "lerde", "larda", "lere", "lara", "leri", "ları",
+        "sından", "sinden", "sundan", "sünden",
         "indeki", "ındaki", "undeki", "ündeki", "ndeki", "ndaki",
         "inden", "ından", "undan", "ünden", "nden", "ndan",
+        "sında", "sinde", "sunda", "sünde",
         "inde", "ında", "unda", "ünde", "nde", "nda",
+        "makta", "mekte",
         "inin", "ının", "unun", "ünün", "nın", "nin", "nun", "nün",
+        "sına", "sine", "suna", "süne",
         "iyle", "ıyla", "uyla", "üyle", "yla", "yle",
         "iyor", "ıyor", "uyor", "üyor", "yor",
         "ecek", "acak", "miş", "mış", "muş", "müş",
@@ -54,7 +59,28 @@ object TurkishTextAnalyzer {
         "miz", "mız", "muz", "müz", "niz", "nız", "nuz", "nüz",
         "sin", "sın", "sun", "sün",
         "im", "ım", "um", "üm", "in", "ın", "un", "ün",
-        "da", "de", "ta", "te", "ya", "ye", "la", "le"
+        "da", "de", "ta", "te", "ya", "ye", "yı", "yi", "yu", "yü", "la", "le"
+    )
+
+    // Suffixes that sit at the outer inflectional edge of a Turkish word (accusative with buffer -y-,
+    // formal progressive -maktadır/-mekte, 3rd-person possessive+case -sında/-sından/-sına, progressive -iyor).
+    // Once peeled on pass 1, pass 2 must NOT strip 2-letter case suffixes like -ta/-da/-ya/-la from the exposed root
+    // (e.g. "çantayı" -> "çanta", NOT "çan"; "dosyayı" -> "dosya", NOT "dos"; "saklamaktadır" -> "sakla", NOT "sak").
+    private val TERMINAL_SUFFIXES: Set<String> = setOf(
+        "maktadır", "mektedir", "maktadırlar", "mektedirler",
+        "makta", "mekte",
+        "sından", "sinden", "sundan", "sünden",
+        "sında", "sinde", "sunda", "sünde",
+        "sına", "sine", "suna", "süne",
+        "iyor", "ıyor", "uyor", "üyor", "yor",
+        "yı", "yi", "yu", "yü"
+    )
+
+    // Only plural & 1st/2nd-person possessive suffixes are safe to peel on pass 2 after a terminal suffix
+    private val PASS2_PLURAL_POSSESSIVE: List<String> = listOf(
+        "lerimiz", "larımız", "leriniz", "larınız",
+        "miz", "mız", "muz", "müz", "niz", "nız", "nuz", "nüz",
+        "lar", "ler"
     )
 
     fun lowerTr(text: String): String = text.lowercase(TR_LOCALE)
@@ -80,17 +106,29 @@ object TurkishTextAnalyzer {
         if (clean.length <= 3) return clean
 
         var stem = clean
-        // Up to 2 conservative suffix peels (e.g. "kardeş-ler-im" -> "kardeş")
-        repeat(2) {
-            var stripped = false
-            for (suffix in SUFFIXES) {
-                if (stem.length - suffix.length >= 3 && stem.endsWith(suffix)) {
-                    stem = stem.dropLast(suffix.length)
-                    stripped = true
-                    break
-                }
+        var firstPassSuffix: String? = null
+        // Pass 1: longest-first suffix peel
+        for (suffix in SUFFIXES) {
+            if (stem.length - suffix.length >= 3 && stem.endsWith(suffix)) {
+                stem = stem.dropLast(suffix.length)
+                firstPassSuffix = suffix
+                break
             }
-            if (!stripped) return stem
+        }
+        if (firstPassSuffix == null) return stem
+
+        // Pass 2: if pass 1 peeled a terminal suffix, only allow plural/possessive peeling
+        // so root endings like "çan-ta", "dos-ya", "sak-la" are never over-stripped.
+        val pass2Candidates = if (firstPassSuffix in TERMINAL_SUFFIXES) {
+            PASS2_PLURAL_POSSESSIVE
+        } else {
+            SUFFIXES
+        }
+        for (suffix in pass2Candidates) {
+            if (stem.length - suffix.length >= 3 && stem.endsWith(suffix)) {
+                stem = stem.dropLast(suffix.length)
+                break
+            }
         }
         return stem
     }

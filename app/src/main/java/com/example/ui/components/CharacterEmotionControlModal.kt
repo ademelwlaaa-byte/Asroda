@@ -93,12 +93,34 @@ fun collectEmotionStudioCharacters(
     fun tryAdd(rawName: String, desc: String = "", allowUserName: Boolean = false, bypassExtraFilter: Boolean = false) {
         val clean = rawName.trim()
         if (clean.isBlank()) return
-        if (!bypassExtraFilter && com.example.data.repository.CastDetectorEngine.isGenericBackgroundExtra(clean, desc)) {
+        if (!bypassExtraFilter && (
+            com.example.data.repository.CastDetectorEngine.isGenericBackgroundExtra(clean, desc) ||
+                com.example.data.repository.CastDetectorEngine.isNonPersonPlaceOrOrganization(clean)
+            )
+        ) {
             return
         }
         val key = clean.lowercase(EMOTION_STUDIO_TR_LOCALE)
         if (key == mainLower) return
         if (!allowUserName && userLower.isNotBlank() && key == userLower) return
+
+        // Deduplicate alias pairs (e.g., "Natasha" & "Natasha Romanoff"), keeping the fuller canonical name!
+        val aliasIdx = result.indexOfFirst { (existingName, _) ->
+            existingName.equals(clean, ignoreCase = true) ||
+                com.example.data.repository.CastDetectorEngine.isLikelyAlias(clean, existingName)
+        }
+        if (aliasIdx >= 0) {
+            val (existingName, existingDesc) = result[aliasIdx]
+            val preferNew = clean.split(Regex("""\s+""")).size > existingName.split(Regex("""\s+""")).size
+            if (preferNew) {
+                result[aliasIdx] = clean to desc.trim().ifBlank { existingDesc }
+                seenLower.add(key)
+            } else if (existingDesc.isBlank() && desc.isNotBlank()) {
+                result[aliasIdx] = existingName to desc.trim()
+            }
+            return
+        }
+
         if (seenLower.add(key)) {
             result.add(clean to desc.trim())
         }

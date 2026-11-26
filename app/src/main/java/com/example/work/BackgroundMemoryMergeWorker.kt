@@ -188,6 +188,25 @@ class BackgroundMemoryMergeWorker(
                 }
             }
 
+            // 3. Self-healing Turkish purity cleanup, structured Living Memory dedup & Auto-Cast audit
+            if (bot != null) {
+                try {
+                    val memReport = repository.consolidateAndCleanBotMemories(botId)
+                    val castReport = repository.managers.castMemberManager.auditAndCleanCastForBot(botId)
+                    if (memReport.removedEnglishSpamCount > 0 ||
+                        memReport.mergedDuplicateEventsCount > 0 ||
+                        memReport.normalizedLabelsCount > 0 ||
+                        castReport.removedFalsePositives > 0 ||
+                        castReport.mergedDuplicates > 0 ||
+                        castReport.normalizedTurkishRoles > 0
+                    ) {
+                        mutated = true
+                    }
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (_: Exception) {}
+            }
+
             if (mutated) {
                 repository.invalidateMemoryCaches(botId)
             }
@@ -202,20 +221,24 @@ class BackgroundMemoryMergeWorker(
             return try {
                 val numbered = group.mapIndexed { i, ev -> "${i + 1}. ${ev.description}" }.joinToString("\n")
                 val userMessage = "Aşağıdaki hafıza kayıtları aynı konuyu farklı biçimlerde anlatıyor olabilir.\n" +
-                    "Eğer bunlar aynı bilgiyi veya olayı anlatıyorsa, tek bir kısa ve olgusal cümle olarak birleştir.\n" +
+                    "Eğer bunlar aynı bilgiyi veya olayı anlatıyorsa, tek bir kısa ve olgusal %100 DOĞAL TÜRKÇE cümle olarak birleştir (İngilizce kelime/cümle ASLA yazma).\n" +
                     "Eğer farklı olaylarsa sadece 'FARKLI' yaz.\n\n$numbered"
 
                 val text = repository.callUtilityLlm(
                     settings = settings,
-                    systemPrompt = "Sen kısa hafıza birleştirici bir asistansın. Yalnızca birleşik cümle veya FARKLI yaz.",
+                    systemPrompt = "Sen Asroda'nın Türkçe hafıza birleştirici motorusun. Yalnızca tek bir %100 TÜRKÇE birleşik cümle veya FARKLI yaz.",
                     userMessage = userMessage,
                     botId = group.first().botId,
                     maxTokens = 180,
                     timeoutMs = 5000L
                 ).trim()
 
-                if (text.equals("FARKLI", ignoreCase = true) || text.isBlank()) null
-                else text.lines().first().trim().take(300)
+                val firstLine = text.lines().firstOrNull()?.trim().orEmpty().take(300)
+                if (firstLine.equals("FARKLI", ignoreCase = true) ||
+                    firstLine.length < 10 ||
+                    com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(firstLine)
+                ) null
+                else firstLine
             } catch (ce: CancellationException) {
                 throw ce
             } catch (_: Exception) { null }

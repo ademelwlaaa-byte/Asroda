@@ -37,6 +37,8 @@ object BookAudioController {
     private var isActivelyStarting: Boolean = false
     private var activeResId: Int? = null
     private var appContext: Context? = null
+    private val audioFocusLock = Any()
+    @Volatile
     private var audioFocusRequest: AudioFocusRequest? = null
 
     private val _isPlayingFlow = MutableStateFlow(false)
@@ -55,9 +57,131 @@ object BookAudioController {
     @Volatile
     private var isVoiceDucked: Boolean = false
 
+    @Volatile
+    private var isSystemDucked: Boolean = false
+
+    @Volatile
+    private var pausedByAudioFocus: Boolean = false
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { focusChange ->
+        handleAudioFocusChange(focusChange)
+    }
+
+    private fun effectiveActiveVolume(): Float {
+        val base = resumeTargetVolume.coerceIn(0.15f, 1.0f)
+        return when {
+            isSystemDucked -> (base * 0.25f).coerceIn(0.06f, 0.25f)
+            isVoiceDucked -> (base * 0.26f).coerceIn(0.08f, 0.30f)
+            else -> base
+        }
+    }
+
+    /**
+     * Handles Android system AudioFocus transitions cleanly:
+     * - `AUDIOFOCUS_LOSS`: pauses playback cleanly & abandons focus (another media app took over).
+     * - `AUDIOFOCUS_LOSS_TRANSIENT`: pauses temporarily (phone call / assistant) without muting user pref.
+     * - `AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK`: smoothly lowers volume without altering [resumeTargetVolume].
+     * - `AUDIOFOCUS_GAIN`: restores volume from duck or resumes transient focus pause cleanly.
+     */
+    internal fun handleAudioFocusChange(focusChange: Int) {
+        scope.launch {
+            when (focusChange) {
+                AudioManager.AUDIOFOCUS_LOSS -> {
+                    pausedByAudioFocus = false
+                    isSystemDucked = false
+                    if (simulatedActiveForTest) {
+                        _isPlayingFlow.value = false
+                    } else {
+                        val p = player
+                        if (p != null && !isFadingOut) {
+                            fadeJob?.cancel()
+                            try {
+                                if (p.isPlaying) p.pause()
+                            } catch (_: Exception) {}
+                            _isPlayingFlow.value = false
+                        }
+                    }
+                    abandonAudioFocus()
+                }
+
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                    if (isFadingOut) return@launch
+                    val currentlyPlaying = if (simulatedActiveForTest) {
+                        _isPlayingFlow.value
+                    } else {
+                        val p = player
+                        p != null && (p.isPlaying || _isPlayingFlow.value)
+                    }
+                    if (currentlyPlaying) {
+                        pausedByAudioFocus = true
+                        _isPlayingFlow.value = false
+                        if (!simulatedActiveForTest) {
+                            fadeJob?.cancel()
+                            try {
+                                player?.let { if (it.isPlaying) it.pause() }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                    if (isFadingOut || _isMutedFlow.value) return@launch
+                    val active = if (simulatedActiveForTest) {
+                        _isPlayingFlow.value
+                    } else {
+                        player != null && _isPlayingFlow.value
+                    }
+                    if (!active || isSystemDucked) return@launch
+                    isSystemDucked = true
+                    transitionVolume(
+                        targetVolume = effectiveActiveVolume(),
+                        durationMs = 200L,
+                        updateResumeTarget = false
+                    )
+                }
+
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    if (isFadingOut || _isMutedFlow.value) {
+                        pausedByAudioFocus = false
+                        isSystemDucked = false
+                        return@launch
+                    }
+                    if (isSystemDucked) {
+                        isSystemDucked = false
+                        transitionVolume(
+                            targetVolume = effectiveActiveVolume(),
+                            durationMs = 300L,
+                            updateResumeTarget = false
+                        )
+                    }
+                    if (pausedByAudioFocus) {
+                        pausedByAudioFocus = false
+                        if (simulatedActiveForTest) {
+                            _isPlayingFlow.value = true
+                            currentVolume = effectiveActiveVolume()
+                        } else {
+                            val p = player ?: return@launch
+                            try {
+                                fadeJob?.cancel()
+                                if (!p.isPlaying) p.start()
+                                _isPlayingFlow.value = true
+                                transitionVolume(
+                                    targetVolume = effectiveActiveVolume(),
+                                    durationMs = 280L,
+                                    updateResumeTarget = false
+                                )
+                            } catch (_: Exception) {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /**
      * Smoothly lowers ambient chapter music volume while a Book Mode character voice card speaks,
-     * then restores it cleanly once the character finishes. Safe to call from any thread.
+     * then restores it cleanly once the character finishes without corrupting [resumeTargetVolume].
+     * Safe to call from any thread.
      */
     fun setVoiceDucking(ducked: Boolean) {
         scope.launch {
@@ -67,12 +191,11 @@ object BookAudioController {
             }
             if (ducked == isVoiceDucked) return@launch
             isVoiceDucked = ducked
-            val target = if (ducked) {
-                (resumeTargetVolume * 0.26f).coerceIn(0.08f, 0.30f)
-            } else {
-                resumeTargetVolume.coerceIn(0.15f, 1.0f)
-            }
-            transitionVolume(targetVolume = target, durationMs = if (ducked) 240L else 420L)
+            transitionVolume(
+                targetVolume = effectiveActiveVolume(),
+                durationMs = if (ducked) 240L else 420L,
+                updateResumeTarget = false
+            )
         }
     }
 
@@ -82,8 +205,11 @@ object BookAudioController {
             val clamped = volume.coerceIn(0.15f, 1.0f)
             resumeTargetVolume = clamped
             if (!isFadingOut && !_isMutedFlow.value && _isPlayingFlow.value) {
-                val effective = if (isVoiceDucked) (clamped * 0.26f).coerceIn(0.08f, 0.30f) else clamped
-                transitionVolume(targetVolume = effective, durationMs = 220L)
+                transitionVolume(
+                    targetVolume = effectiveActiveVolume(),
+                    durationMs = 220L,
+                    updateResumeTarget = false
+                )
             }
         }
     }
@@ -233,45 +359,53 @@ object BookAudioController {
     }
 
     private fun requestAudioFocus(context: Context) {
-        try {
-            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                    .setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .build()
+        synchronized(audioFocusLock) {
+            try {
+                val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+                    val req = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                        .setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_MEDIA)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                                .build()
+                        )
+                        .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                        .setAcceptsDelayedFocusGain(true)
+                        .setWillPauseWhenDucked(false)
+                        .build()
+                    audioFocusRequest = req
+                    audioManager.requestAudioFocus(req)
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.abandonAudioFocus(audioFocusChangeListener)
+                    @Suppress("DEPRECATION")
+                    audioManager.requestAudioFocus(
+                        audioFocusChangeListener,
+                        AudioManager.STREAM_MUSIC,
+                        AudioManager.AUDIOFOCUS_GAIN
                     )
-                    .setAcceptsDelayedFocusGain(true)
-                    .setWillPauseWhenDucked(false)
-                    .build()
-                audioFocusRequest = req
-                audioManager.requestAudioFocus(req)
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager.requestAudioFocus(
-                    null,
-                    AudioManager.STREAM_MUSIC,
-                    AudioManager.AUDIOFOCUS_GAIN
-                )
+                }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
     }
 
     private fun abandonAudioFocus() {
-        try {
-            val ctx = appContext ?: return
-            val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
-                audioFocusRequest = null
-            } else {
-                @Suppress("DEPRECATION")
-                audioManager.abandonAudioFocus(null)
+        synchronized(audioFocusLock) {
+            try {
+                val ctx = appContext ?: return
+                val audioManager = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+                    audioFocusRequest = null
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.abandonAudioFocus(audioFocusChangeListener)
+                }
+            } catch (_: Exception) {
             }
-        } catch (_: Exception) {
         }
     }
 
@@ -290,6 +424,8 @@ object BookAudioController {
             _isMutedFlow.value = true
             _isPlayingFlow.value = false
             pausedByBackground = false
+            pausedByAudioFocus = false
+            isSystemDucked = false
             fadeJob?.cancel()
             val startVol = currentVolume.coerceIn(0f, 1f)
             fadeJob = scope.launch {
@@ -366,12 +502,18 @@ object BookAudioController {
         val p = player ?: run {
             _isPlayingFlow.value = false
             pausedByBackground = false
+            pausedByAudioFocus = false
+            isSystemDucked = false
+            isVoiceDucked = false
             return
         }
         fadeJob?.cancel()
         isFadingOut = true
         isActivelyStarting = false
         pausedByBackground = false
+        pausedByAudioFocus = false
+        isSystemDucked = false
+        isVoiceDucked = false
         _isPlayingFlow.value = false
         val startVol = currentVolume.coerceIn(0f, 1f)
 
@@ -444,9 +586,15 @@ object BookAudioController {
      * Smoothly ramps the active track's volume to [targetVolume] over [durationMs] without
      * restarting playback (e.g. ambient reading volume 0.28f -> Chapter End Screen 1.0f).
      */
-    fun transitionVolume(targetVolume: Float, durationMs: Long = 1200L) {
+    fun transitionVolume(
+        targetVolume: Float,
+        durationMs: Long = 1200L,
+        updateResumeTarget: Boolean = true
+    ) {
         val target = targetVolume.coerceIn(0f, 1f)
-        resumeTargetVolume = target
+        if (updateResumeTarget) {
+            resumeTargetVolume = target
+        }
         if (simulatedActiveForTest) {
             currentVolume = target
             return
@@ -621,6 +769,9 @@ object BookAudioController {
         currentVolume = if (playing && !muted) clamped else 0f
         isFadingOut = false
         pausedByBackground = false
+        pausedByAudioFocus = false
+        isSystemDucked = false
+        isVoiceDucked = false
         _isMutedFlow.value = muted
         _isPlayingFlow.value = playing && !muted
         if (playing && !muted) {
@@ -649,6 +800,9 @@ object BookAudioController {
         isFadingOut = false
         isActivelyStarting = false
         pausedByBackground = false
+        pausedByAudioFocus = false
+        isSystemDucked = false
+        isVoiceDucked = false
         simulatedActiveForTest = false
         releasePlayerInternal()
         abandonAudioFocus()

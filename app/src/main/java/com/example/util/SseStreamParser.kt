@@ -35,7 +35,8 @@ object SseStreamParser {
     enum class SseFormat {
         AUTO,
         OPENAI,
-        GEMINI
+        GEMINI,
+        CLAUDE
     }
 
     data class StreamChunk(
@@ -43,7 +44,10 @@ object SseStreamParser {
         val isDone: Boolean = false,
         val reasoningToken: String = "",
         val promptTokens: Long = 0L,
-        val candidateTokens: Long = 0L
+        val candidateTokens: Long = 0L,
+        val finishReason: String = "",
+        val errorMessage: String = "",
+        val errorCode: Int = 0
     )
 
     class SseHttpException(
@@ -75,6 +79,9 @@ object SseStreamParser {
             return null
         }
 
+        // Inline HTTP-200 SSE error payload (OpenRouter, Groq, Anthropic, Gemini proxies)
+        parseInlineSseError(json)?.let { return it }
+
         // OpenAI-compatible SSE chunk
         if (format == SseFormat.OPENAI || (format == SseFormat.AUTO && json.has("choices"))) {
             val usage = json.optJSONObject("usage")
@@ -89,18 +96,20 @@ object SseStreamParser {
             }
 
             val firstChoice = choices.optJSONObject(0) ?: return null
+            val finishReason = extractSafeJsonString(firstChoice, "finish_reason")
             val delta = firstChoice.optJSONObject("delta") ?: firstChoice.optJSONObject("message")
             val content = extractSafeJsonString(delta, "content")
             val reasoning = extractSafeJsonString(delta, "reasoning_content")
                 .ifEmpty { extractSafeJsonString(delta, "reasoning") }
 
-            if (content.isNotEmpty() || reasoning.isNotEmpty() || pTok > 0L || cTok > 0L) {
+            if (content.isNotEmpty() || reasoning.isNotEmpty() || pTok > 0L || cTok > 0L || finishReason.isNotEmpty()) {
                 return StreamChunk(
                     token = content,
                     isDone = false,
                     reasoningToken = reasoning,
                     promptTokens = pTok,
-                    candidateTokens = cTok
+                    candidateTokens = cTok,
+                    finishReason = finishReason
                 )
             }
             return null
@@ -115,6 +124,7 @@ object SseStreamParser {
             val candidates = json.optJSONArray("candidates") ?: return null
             if (candidates.length() == 0) return null
             val firstCandidate = candidates.optJSONObject(0) ?: return null
+            val finishReason = extractSafeJsonString(firstCandidate, "finishReason")
             val parts = firstCandidate.optJSONObject("content")?.optJSONArray("parts")
             val tokenBuilder = StringBuilder()
             val reasoningBuilder = StringBuilder()
@@ -132,19 +142,93 @@ object SseStreamParser {
                 }
             }
 
-            if (tokenBuilder.isNotEmpty() || reasoningBuilder.isNotEmpty() || pTok > 0L || cTok > 0L) {
+            if (tokenBuilder.isNotEmpty() || reasoningBuilder.isNotEmpty() || pTok > 0L || cTok > 0L || finishReason.isNotEmpty()) {
                 return StreamChunk(
                     token = tokenBuilder.toString(),
                     isDone = false,
                     reasoningToken = reasoningBuilder.toString(),
                     promptTokens = pTok,
-                    candidateTokens = cTok
+                    candidateTokens = cTok,
+                    finishReason = finishReason
                 )
             }
             return null
         }
 
+        // Anthropic / Claude SSE chunk (`message_start`, `content_block_delta`, `message_delta`, `message_stop`)
+        if (format == SseFormat.CLAUDE || (format == SseFormat.AUTO && json.has("type"))) {
+            return when (json.optString("type")) {
+                "message_start" -> {
+                    val inTok = json.optJSONObject("message")
+                        ?.optJSONObject("usage")
+                        ?.optLong("input_tokens", 0L) ?: 0L
+                    if (inTok > 0L) StreamChunk(token = "", promptTokens = inTok) else null
+                }
+                "content_block_delta" -> {
+                    val delta = json.optJSONObject("delta") ?: return null
+                    val deltaType = delta.optString("type")
+                    when (deltaType) {
+                        "thinking_delta" -> {
+                            val think = extractSafeJsonString(delta, "thinking")
+                            if (think.isNotEmpty()) StreamChunk(token = "", reasoningToken = think) else null
+                        }
+                        else -> {
+                            val text = extractSafeJsonString(delta, "text")
+                            if (text.isNotEmpty()) StreamChunk(token = text) else null
+                        }
+                    }
+                }
+                "message_delta" -> {
+                    val delta = json.optJSONObject("delta")
+                    val stopReason = extractSafeJsonString(delta, "stop_reason")
+                    val usage = json.optJSONObject("usage")
+                    val outTok = usage?.optLong("output_tokens", 0L) ?: 0L
+                    if (stopReason.isNotEmpty() || outTok > 0L) {
+                        StreamChunk(token = "", candidateTokens = outTok, finishReason = stopReason)
+                    } else null
+                }
+                "message_stop" -> StreamChunk(token = "", isDone = true)
+                else -> null
+            }
+        }
+
         return null
+    }
+
+    private fun parseInlineSseError(json: JSONObject): StreamChunk? {
+        val isExplicitErrorType = json.optString("type").equals("error", ignoreCase = true)
+        if (!isExplicitErrorType && (!json.has("error") || json.isNull("error"))) return null
+
+        val errObj = json.optJSONObject("error")
+        val rawErrStr = if (errObj == null) extractSafeJsonString(json, "error") else ""
+        val message = errObj?.let {
+            extractSafeJsonString(it, "message")
+                .ifBlank { extractSafeJsonString(it, "type") }
+                .ifBlank { it.toString() }
+        }?.ifBlank { rawErrStr }
+            ?: rawErrStr.ifBlank { extractSafeJsonString(json, "message") }
+
+        if (message.isBlank()) return null
+
+        val numericCode = errObj?.optInt("code", 0) ?: json.optInt("code", 0)
+        val errType = errObj?.optString("type", "").orEmpty().lowercase()
+        val statusStr = errObj?.optString("status", "").orEmpty().uppercase()
+        val resolvedCode = when {
+            numericCode in 400..599 -> numericCode
+            errType.contains("overloaded") || statusStr == "UNAVAILABLE" -> 529
+            errType.contains("rate_limit") || statusStr == "RESOURCE_EXHAUSTED" -> 429
+            errType.contains("authentication") || statusStr == "UNAUTHENTICATED" -> 401
+            errType.contains("permission") || statusStr == "PERMISSION_DENIED" -> 403
+            errType.contains("not_found") || statusStr == "NOT_FOUND" -> 404
+            errType.contains("invalid_request") || statusStr == "INVALID_ARGUMENT" -> 400
+            else -> 500
+        }
+        return StreamChunk(
+            token = "",
+            isDone = true,
+            errorMessage = message,
+            errorCode = resolvedCode
+        )
     }
 
     /**
@@ -156,11 +240,32 @@ object SseStreamParser {
         onChunk: suspend (StreamChunk) -> Unit
     ) {
         var line: String?
+        var sawDataPrefix = false
+        val nonSseJsonPreview = StringBuilder()
         while (reader.readLine().also { line = it } != null) {
             currentCoroutineContext().ensureActive()
+            val trimmed = line!!.trim()
+            if (trimmed.startsWith("data:")) {
+                sawDataPrefix = true
+            } else if (!sawDataPrefix && trimmed.isNotEmpty() && !trimmed.startsWith(":") && !trimmed.startsWith("event:")) {
+                if (nonSseJsonPreview.length < 2048) {
+                    nonSseJsonPreview.append(trimmed)
+                }
+            }
             val chunk = parseSseLine(line!!, format) ?: continue
             onChunk(chunk)
-            if (chunk.isDone) break
+            if (chunk.isDone) return
+        }
+        // Some OpenAI/Gemini proxies reply HTTP 200 with plain JSON {"error":{...}} instead of SSE
+        if (!sawDataPrefix && nonSseJsonPreview.isNotEmpty()) {
+            val preview = nonSseJsonPreview.toString().trim()
+            if (preview.startsWith("{")) {
+                try {
+                    parseInlineSseError(JSONObject(preview))?.let { errChunk ->
+                        onChunk(errChunk)
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -202,6 +307,10 @@ object SseStreamParser {
                 var sawDone = false
                 try {
                     parseSseReader(reader, format) { chunk ->
+                        if (chunk.errorMessage.isNotEmpty()) {
+                            val code = if (chunk.errorCode in 400..599) chunk.errorCode else 500
+                            throw SseHttpException(code, chunk.errorMessage)
+                        }
                         if (chunk.isDone) sawDone = true
                         emit(chunk)
                     }

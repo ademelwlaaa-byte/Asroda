@@ -319,14 +319,18 @@ object EmotionalTtsProsodyEngine {
     }
 
     /**
-     * Groups prosody segments into bounded SSML request batches.
-     * Batch #0 uses a tighter [firstBatchMaxChars] cap (~220 chars) so the very first spoken
-     * sentence starts in <0.6s while batches 1..N prefetch seamlessly in the background.
+     * Groups prosody segments into bounded, prosody-coherent SSML request batches.
+     * - Batch #0 uses a tighter [firstBatchMaxChars] cap (~220 chars) so the very first spoken
+     *   sentence starts in <0.6s while batches 1..N prefetch seamlessly in the background.
+     * - Splits batches when switching between NARRATION and DIALOGUE or on meaningful rate/pitch
+     *   shifts so Microsoft Edge ReadAloud's single-`<prosody>` envelope preserves real dramatic
+     *   contrast (whispers vs shouts, narration vs dialogue) instead of flattening everything!
      */
     fun batchSegmentsForNeural(
         segments: List<ProsodySegment>,
         maxCharsPerBatch: Int = 650,
-        firstBatchMaxChars: Int = 220
+        firstBatchMaxChars: Int = 220,
+        splitOnProsodyShift: Boolean = true
     ): List<List<ProsodySegment>> {
         if (segments.isEmpty()) return emptyList()
         val batches = mutableListOf<List<ProsodySegment>>()
@@ -339,7 +343,14 @@ object EmotionalTtsProsodyEngine {
             } else {
                 maxCharsPerBatch
             }
-            if (current.isNotEmpty() && currentChars + seg.text.length > activeLimit) {
+            val exceedsCharLimit = current.isNotEmpty() && currentChars + seg.text.length > activeLimit
+            val hasProsodyShift = splitOnProsodyShift && current.isNotEmpty() && run {
+                val anchor = current.first()
+                seg.kind != anchor.kind ||
+                    kotlin.math.abs(seg.ratePercent - anchor.ratePercent) >= 6 ||
+                    kotlin.math.abs(seg.pitchHz - anchor.pitchHz) >= 4
+            }
+            if (exceedsCharLimit || hasProsodyShift) {
                 batches.add(current)
                 current = mutableListOf()
                 currentChars = 0

@@ -125,16 +125,17 @@ object TimePerceptionEngine {
 
         // --- 1. Kesinlikle ATLAma olmayan söz/plan ifadeler ---
         // "yarın" tek başına (söz), "haftaya", "gelecek ay/hafta" → ATLA
-        val futurePromisePattern = Regex("""\b(yarın|yarin|haftaya|hafta\s*ya|gelecek\s+(?:ay|hafta|yıl|yil))\b""")
+        // Explicit Unicode boundaries (WB_L / WB_R) so Turkish letters (ı, ğ, ş, ü, ö, ç) never silently fail!
+        val futurePromisePattern = Regex("""${WB_L}(yarın|yarin|haftaya|hafta\s*ya|gelecek\s+(?:ay|hafta|yıl|yil))$WB_R""")
         if (futurePromisePattern.containsMatchIn(lower) &&
-            !Regex("""\b(?:sonra|geçti|gecti|ardından|aradan)\b""").containsMatchIn(lower)) {
+            !Regex("""${WB_L}(?:sonra|geçti|gecti|ardından|aradan)$WB_R""").containsMatchIn(lower)) {
             return StoryTimeJumpResult()
         }
 
         // --- 2. Sadece saat bağlamı (gün artmaz, sceneTime güncellenir) ---
         // "birkaç saat/dakika sonra"
         val hourMinRegex = Regex(
-            """\b(?:birkaç|birkac|bir|iki|üç|uc|yarım|yarim|\d+)\s+(?:saat|dakika|dk)\s*(?:sonra|geçti|gecti|ardından)\b"""
+            """${WB_L}(?:birkaç|birkac|bir|iki|üç|uc|yarım|yarim|\d+)\s+(?:saat|dakika|dk)\s*(?:sonra|geçti|gecti|ardından)$WB_R"""
         )
         if (hourMinRegex.containsMatchIn(lower)) {
             // Scene time tahmini
@@ -144,26 +145,32 @@ object TimePerceptionEngine {
 
         // Sahne geçişi ifadeleri (gün artmaz)
         val sceneShiftRegex = Regex(
-            """\b(öğle(?:\s+vakti|den)?|oglen|akşamüstü|akşama\s+doğru|akşam\s+oldu|aksam\s+oldu|gece\s+oldu|gece\s+yarısı|sabah\s+oldu)\b"""
+            """${WB_L}(öğle(?:\s+vakti|den)?|oglen|akşamüstü|akşama\s+doğru|akşam\s+oldu|aksam\s+oldu|gece\s+oldu|gece\s+yarısı|gece\s+yarısında|sabah\s+oldu|sabaha\s+karşı|gün\s+ağarırken)$WB_R"""
         )
         val sceneShiftMatch = sceneShiftRegex.find(lower)
         if (sceneShiftMatch != null &&
-            !Regex("""\b(?:\d+|bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on)\s+(?:gün|hafta|ay|yıl)\b""").containsMatchIn(lower)) {
+            !Regex("""${WB_L}(?:\d+|bir|iki|üç|dört|beş|altı|yedi|sekiz|dokuz|on)\s+(?:gün|hafta|ay|yıl)$WB_R""").containsMatchIn(lower)) {
             val sceneWord = sceneShiftMatch.value
             val scene = when {
                 sceneWord.contains("öğle") || sceneWord.contains("oglen") -> "öğle"
                 sceneWord.contains("gece") -> "gece"
-                sceneWord.contains("sabah") -> "sabah"
+                sceneWord.contains("sabah") || sceneWord.contains("ağarırken") -> "sabah"
                 else -> "akşam"
             }
             return StoryTimeJumpResult(daysToAdvance = 0, newSceneTime = scene)
         }
 
-        // --- 3. "ertesi sabah" / "ertesi gün" / "bir sonraki sabah" → 1 gün ---
-        if (Regex("""\bertesi\s+sabah\b""").containsMatchIn(lower)) {
+        // --- 3. "ertesi sabah" / "ertesi akşam" / "ertesi gece" / "ertesi gün" / "bir sonraki sabah" → 1 gün ---
+        if (Regex("""${WB_L}(?:ertesi\s+sabah|bir\s+sonraki\s+sabah)$WB_R""").containsMatchIn(lower)) {
             return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = "sabah")
         }
-        if (Regex("""\b(?:ertesi\s+gün|ertesi\s+gun|sonraki\s+gün|sonraki\s+gun|bir\s+sonraki\s+sabah)\b""").containsMatchIn(lower)) {
+        if (Regex("""${WB_L}ertesi\s+akşam$WB_R""").containsMatchIn(lower)) {
+            return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = "akşam")
+        }
+        if (Regex("""${WB_L}ertesi\s+gece$WB_R""").containsMatchIn(lower)) {
+            return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = "gece")
+        }
+        if (Regex("""${WB_L}(?:ertesi\s+gün|ertesi\s+gun|sonraki\s+gün|sonraki\s+gun)$WB_R""").containsMatchIn(lower)) {
             return StoryTimeJumpResult(daysToAdvance = 1, newSceneTime = null)
         }
 

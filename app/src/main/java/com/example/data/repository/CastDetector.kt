@@ -1102,8 +1102,15 @@ JSON ŞEMASI:
         return out.toString()
     }
 
+    private val UNAPOSTROPHIZED_NAME_SUFFIXES = setOf(
+        "a", "e", "ı", "i", "u", "ü", "ya", "ye", "yı", "yi", "yu", "yü",
+        "da", "de", "ta", "te", "dan", "den", "tan", "ten",
+        "la", "le", "yla", "yle", "ın", "in", "un", "ün", "nın", "nin", "nun", "nün"
+    )
+
     /**
-     * Unicode word-boundary aware name mention check, with Turkish apostrophe suffix tolerance.
+     * Unicode word-boundary aware name mention check, with both apostrophe (`Natasha'nın`)
+     * and casual unapostrophized (`Natashayla`, `Kadire`) Turkish case-suffix tolerance.
      */
     fun isNameMentionedInText(name: String, text: String): Boolean {
         if (name.isBlank() || text.isBlank()) return false
@@ -1119,6 +1126,13 @@ JSON ŞEMASI:
             val esc = Regex.escape(c)
             if (Regex("""${WB_L}$esc$WB_R""").containsMatchIn(lowerText)) return true
             if (Regex("""${WB_L}$esc['‘’`][\p{L}]+$WB_R""").containsMatchIn(lowerText)) return true
+            // Casual Turkish typing without apostrophe for names >= 4 chars (e.g., "Natashayla", "Kadirle", "Elifi")
+            if (c.length >= 4 && !c.contains(' ')) {
+                val m = Regex("""${WB_L}$esc([\p{L}]{1,3})$WB_R""").find(lowerText)
+                if (m != null && m.groupValues[1] in UNAPOSTROPHIZED_NAME_SUFFIXES) {
+                    return true
+                }
+            }
         }
         return false
     }

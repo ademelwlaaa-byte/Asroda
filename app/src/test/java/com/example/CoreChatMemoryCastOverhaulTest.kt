@@ -548,4 +548,181 @@ class CoreChatMemoryCastOverhaulTest {
         )
         assertTrue(turkishSubtextBlended.subtext.contains("kırgınlığını"))
     }
+
+    // ── 7. Wave 3: SSE Claude/finishReason, Unicode TimePerception, Unapostrophized Cast, RAG Co-Occurrence & Refusal ──
+
+    @Test
+    fun test7_sseClaudeAndFinishReasonUnicodeTimePerceptionAndCastSuffixMatching() {
+        // 1. SseStreamParser: OpenAI finish_reason, Gemini finishReason & Claude SSE chunks
+        val openaiSafety = com.example.util.SseStreamParser.parseSseLine(
+            """data: {"choices":[{"delta":{"content":""},"finish_reason":"content_filter"}]}""",
+            com.example.util.SseStreamParser.SseFormat.OPENAI
+        )
+        assertNotNull(openaiSafety)
+        assertEquals("content_filter", openaiSafety?.finishReason)
+
+        val geminiSafety = com.example.util.SseStreamParser.parseSseLine(
+            """data: {"candidates":[{"content":{"parts":[{"text":"..."}]},"finishReason":"SAFETY"}]}""",
+            com.example.util.SseStreamParser.SseFormat.GEMINI
+        )
+        assertNotNull(geminiSafety)
+        assertEquals("SAFETY", geminiSafety?.finishReason)
+
+        val claudeChunks = com.example.util.SseStreamParser.parseSseLines(
+            listOf(
+                """data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"iç analiz"}}""",
+                """data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Merhaba Aiden."}}""",
+                """data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}""",
+                """data: {"type":"message_stop"}"""
+            ),
+            com.example.util.SseStreamParser.SseFormat.CLAUDE
+        )
+        assertEquals(4, claudeChunks.size)
+        assertEquals("iç analiz", claudeChunks[0].reasoningToken)
+        assertEquals("Merhaba Aiden.", claudeChunks[1].token)
+        assertEquals("end_turn", claudeChunks[2].finishReason)
+        assertEquals(42L, claudeChunks[2].candidateTokens)
+        assertTrue(claudeChunks[3].isDone)
+
+        // 2. TimePerceptionEngine: Unicode Turkish boundaries (no ASCII \b silent failures!)
+        assertEquals("öğle", com.example.data.repository.TimePerceptionEngine.parseStoryTimeJump("Öğle vakti güneş yükseldi.").newSceneTime)
+        assertEquals("akşam", com.example.data.repository.TimePerceptionEngine.parseStoryTimeJump("Akşamüstü rüzgar sertleşti.").newSceneTime)
+        assertEquals("sabah", com.example.data.repository.TimePerceptionEngine.parseStoryTimeJump("Sabaha karşı yağmur dindi.").newSceneTime)
+        val nextEve = com.example.data.repository.TimePerceptionEngine.parseStoryTimeJump("Ertesi akşam yeniden buluştular.")
+        assertEquals(1, nextEve.daysToAdvance)
+        assertEquals("akşam", nextEve.newSceneTime)
+        val futurePromise = com.example.data.repository.TimePerceptionEngine.parseStoryTimeJump("Yarın sabah görüşürüz.")
+        assertEquals(0, futurePromise.daysToAdvance)
+
+        // 3. CastDetectorEngine: casual unapostrophized Turkish suffix mention vs false prefix protection
+        assertTrue(CastDetectorEngine.isNameMentionedInText("Natasha", "Dün gece Natashayla uzun uzun konuştuk."))
+        assertTrue(CastDetectorEngine.isNameMentionedInText("Kadir", "Kadire gizli dosyayı teslim ettim."))
+        assertFalse("'Ali' must NOT match inside 'Alışveriş'", CastDetectorEngine.isNameMentionedInText("Ali", "Bugün alışverişe çıktık."))
+
+        // 4. RefusalDetector & MemoryFactDeduplicator semantic duplicate check
+        assertTrue(com.example.data.managers.RefusalDetector.detectOocRefusal("Üzgünüm ama bu konuda devam edemem, etik sınırlarım gereği.").isRefusal)
+        assertTrue(com.example.data.managers.RefusalDetector.detectOocRefusal("I'm sorry, but I can't assist with this scenario.").isRefusal)
+        assertTrue(
+            com.example.util.MemoryFactDeduplicator.isSemanticNearDuplicate(
+                "Natasha gizli dosyayı şifreli kasada saklıyor.",
+                "Natasha gizli dosyaları şifreli kasasında saklamaktadır."
+            )
+        )
+    }
+
+    @Test
+    fun test8_ragEntityCoOccurrenceBoostAndTurkishOverLegacyEnglishPreference() = runBlocking {
+        val botId = "bot_rag_wave3"
+        val bot = makeBot(botId)
+        repo.saveBot(bot)
+
+        // Legacy English auto-saved event vs authentic Turkish multi-entity Living Memory
+        db.memoryEventDao().insertEvent(
+            MemoryEventEntity(
+                botId = botId,
+                timestamp = 2000L,
+                description = LivingMemoryCodec.encode(
+                    povCharacter = "Aiden",
+                    title = "Secret Promise",
+                    emotionTag = "Trust",
+                    salience = 9,
+                    narrative = "Aiden and Natasha made a secret rooftop promise about the encrypted file.",
+                    innerThought = "I trust her completely."
+                ),
+                importanceScore = 90,
+                isBotSaved = true,
+                storyDayIndex = 2L
+            )
+        )
+        db.memoryEventDao().insertEvent(
+            MemoryEventEntity(
+                botId = botId,
+                timestamp = 1900L,
+                description = LivingMemoryCodec.encode(
+                    povCharacter = "Aiden",
+                    title = "Natasha ile Çatıdaki Yemin",
+                    emotionTag = "Derin Güven",
+                    salience = 8,
+                    narrative = "Natasha ile çatıdaki yağmur altında şifreli dosya sırrını kimseye açmayacağımıza yemin ettik.",
+                    innerThought = "Artık aramızda sarsılmaz bir bağ var."
+                ),
+                importanceScore = 80,
+                isBotSaved = true,
+                storyDayIndex = 2L
+            )
+        )
+
+        val bundle = repo.managers.memoryRetrievalManager.retrieveCoPilotedContext(
+            bot = bot,
+            recentMessages = listOf(
+                com.example.data.local.MessageEntity("u1", botId, "user", "Natasha ile çatıdaki yemini ve şifreli dosyayı hatırlıyor musun?", 3000L)
+            ),
+            activeCastNames = listOf("Aiden", "Natasha"),
+            aiSelector = null
+        )
+        assertTrue("RAG must retrieve events", bundle.events.isNotEmpty())
+        assertTrue(
+            "Turkish multi-entity Living Memory must outrank legacy English event",
+            bundle.events.first().description.contains("Natasha ile Çatıdaki Yemin")
+        )
+    }
+
+    // ── 8. Wave 4: Background Maintenance Self-Healing, Emotion Studio Alias Dedup & Formal Turkish Stemming ──
+
+    @Test
+    fun test9_backgroundMaintenanceSelfHealsAndEmotionStudioDeduplicatesAliases() = runBlocking {
+        val botId = "bot_wave4_maint"
+        val bot = makeBot(botId)
+        repo.saveBot(bot)
+
+        // 1. Formal Turkish verb & possessive stemming
+        assertEquals("çalış", com.example.data.repository.TurkishTextAnalyzer.stemToken("çalışmaktadır"))
+        assertEquals("kasa", com.example.data.repository.TurkishTextAnalyzer.stemToken("kasasında"))
+        assertEquals("çanta", com.example.data.repository.TurkishTextAnalyzer.stemToken("çantayı"))
+
+        // 2. BackgroundMemoryMergeWorker.runMaintenanceForBot self-heals English memory spam + place cast entries
+        db.memoryEventDao().insertEvent(
+            MemoryEventEntity(
+                botId = botId,
+                timestamp = 1000L,
+                description = LivingMemoryCodec.encode(
+                    povCharacter = "Aiden",
+                    title = "Hidden Truth",
+                    emotionTag = "Shock",
+                    salience = 8,
+                    narrative = "He discovered the hidden secret inside the old vault and never forgot that night.",
+                    innerThought = "Everything has changed forever."
+                ),
+                importanceScore = 80,
+                isBotSaved = true
+            )
+        )
+        db.castMemberDao().insertCastMember(
+            CastMemberEntity(botId = botId, name = "Nevermore Akademisi", description = "", role = "Location", isAutoAdded = true)
+        )
+
+        val mutated = com.example.work.BackgroundMemoryMergeWorker.runMaintenanceForBot(
+            botId = botId,
+            repository = repo,
+            db = db
+        )
+        assertTrue("Background maintenance must report self-healing mutation", mutated)
+        assertEquals("English Living Memory must be archived", 0, db.memoryEventDao().getActiveEvents(botId).size)
+        assertEquals("Place false-positive cast member must be removed", 0, repo.managers.castMemberManager.getCastMembersForBot(botId).size)
+
+        // 3. Emotion Studio character collection deduplicates alias pairs & rejects places
+        val studioChars = com.example.ui.components.collectEmotionStudioCharacters(
+            bot = bot,
+            characterEmotions = listOf(
+                CharacterEmotionEntity(botId = botId, characterName = "Natasha", emotionState = EmotionState().toJson()),
+                CharacterEmotionEntity(botId = botId, characterName = "Stark Tower", emotionState = EmotionState().toJson())
+            ),
+            keyCharacters = emptyList(),
+            castMembers = listOf(
+                CastMemberEntity(botId = botId, name = "Natasha Romanoff", description = "Kıdemli ajan", role = "Ajan", isAutoAdded = false)
+            )
+        )
+        assertEquals("Alias pair Natasha + Natasha Romanoff must collapse to 1, Stark Tower rejected", 1, studioChars.size)
+        assertEquals("Natasha Romanoff", studioChars.first().first)
+    }
 }

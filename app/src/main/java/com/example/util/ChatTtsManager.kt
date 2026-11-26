@@ -64,7 +64,8 @@ class ChatTtsManager(context: Context) {
         val voiceName: String,
         val languageTag: String,
         val readActions: Boolean,
-        val emotionState: EmotionState?
+        val emotionState: EmotionState?,
+        val precomputedSegments: List<EmotionalTtsProsodyEngine.ProsodySegment>? = null
     )
 
     private val appContext: Context = context.applicationContext
@@ -73,7 +74,9 @@ class ChatTtsManager(context: Context) {
     private val ttsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private var tts: TextToSpeech? = null
+    @Volatile
     private var mediaPlayer: MediaPlayer? = null
+    private val mediaPlayerLock = Any()
     private var activeNeuralJob: Job? = null
 
     @Volatile
@@ -204,7 +207,8 @@ class ChatTtsManager(context: Context) {
             voiceName = req.voiceName,
             languageTag = req.languageTag,
             readActions = req.readActions,
-            emotionState = req.emotionState
+            emotionState = req.emotionState,
+            precomputedSegments = req.precomputedSegments
         )
     }
 
@@ -370,15 +374,46 @@ class ChatTtsManager(context: Context) {
         val batches = EmotionalTtsProsodyEngine.batchSegmentsForNeural(segments)
 
         activeNeuralJob = ttsScope.launch {
-            var anyPlayed = false
+            var currentBatchIdx = 0
             var prefetchedNext: Deferred<File?>? = null
+
+            fun handoffRemainingToDevice(startBatchIdx: Int) {
+                prefetchedNext?.cancel()
+                prefetchedNext = null
+                if (activeSessionId != sessionId) return
+                val remainingSegments = if (startBatchIdx <= 0) {
+                    segments
+                } else {
+                    batches.subList(startBatchIdx.coerceAtMost(batches.size), batches.size).flatten()
+                }
+                if (remainingSegments.isNotEmpty()) {
+                    speakWithDeviceEngine(
+                        messageId = messageId,
+                        rawText = rawText,
+                        speed = speed,
+                        pitch = pitch,
+                        voiceName = deviceVoiceName,
+                        languageTag = languageTag,
+                        readActions = readActions,
+                        emotionState = emotionState,
+                        precomputedSegments = remainingSegments
+                    )
+                } else {
+                    clearSpeakingState()
+                }
+            }
+
             try {
                 for (idx in batches.indices) {
-                    if (activeSessionId != sessionId) return@launch
+                    currentBatchIdx = idx
+                    if (activeSessionId != sessionId) {
+                        prefetchedNext?.cancel()
+                        return@launch
+                    }
                     val mp3File: File? = if (prefetchedNext != null) {
                         val deferred = prefetchedNext
                         prefetchedNext = null
-                        deferred.await()
+                        deferred?.await()
                     } else {
                         val ssml = EmotionalTtsProsodyEngine.buildSsml(
                             voiceName = preferredNeuralVoice,
@@ -391,26 +426,16 @@ class ChatTtsManager(context: Context) {
                             ssml = ssml
                         )
                     }
-                    if (activeSessionId != sessionId) return@launch
+                    if (activeSessionId != sessionId) {
+                        prefetchedNext?.cancel()
+                        return@launch
+                    }
 
                     if (mp3File == null) {
-                        if (!anyPlayed) {
-                            // Zero-interruption silent fallback to Layer 2 (Enhanced Device TTS + Prosody)
-                            speakWithDeviceEngine(
-                                messageId = messageId,
-                                rawText = rawText,
-                                speed = speed,
-                                pitch = pitch,
-                                voiceName = deviceVoiceName,
-                                languageTag = languageTag,
-                                readActions = readActions,
-                                emotionState = emotionState,
-                                precomputedSegments = segments
-                            )
-                            return@launch
-                        } else {
-                            break
-                        }
+                        // Zero-interruption silent fallback to Layer 2 (Enhanced Device TTS + Prosody):
+                        // finishes ALL segments if batch 0 failed, or remaining batches [idx..last] if mid-message!
+                        handoffRemainingToDevice(idx)
+                        return@launch
                     }
 
                     // Prefetch batch N+1 asynchronously while batch N plays so there is zero gap!
@@ -433,23 +458,13 @@ class ChatTtsManager(context: Context) {
                     lastActiveTier = "neural"
                     val playedOk = playMp3FileBlocking(mp3File, sessionId)
                     if (!playedOk) {
-                        if (!anyPlayed && activeSessionId == sessionId) {
-                            speakWithDeviceEngine(
-                                messageId = messageId,
-                                rawText = rawText,
-                                speed = speed,
-                                pitch = pitch,
-                                voiceName = deviceVoiceName,
-                                languageTag = languageTag,
-                                readActions = readActions,
-                                emotionState = emotionState,
-                                precomputedSegments = segments
-                            )
-                            return@launch
+                        if (activeSessionId == sessionId) {
+                            handoffRemainingToDevice(idx)
+                        } else {
+                            prefetchedNext?.cancel()
                         }
-                        break
+                        return@launch
                     }
-                    anyPlayed = true
                 }
                 if (activeSessionId == sessionId) {
                     clearSpeakingState()
@@ -458,21 +473,10 @@ class ChatTtsManager(context: Context) {
                 prefetchedNext?.cancel()
                 throw ce
             } catch (_: Exception) {
-                prefetchedNext?.cancel()
-                if (!anyPlayed && activeSessionId == sessionId) {
-                    speakWithDeviceEngine(
-                        messageId = messageId,
-                        rawText = rawText,
-                        speed = speed,
-                        pitch = pitch,
-                        voiceName = deviceVoiceName,
-                        languageTag = languageTag,
-                        readActions = readActions,
-                        emotionState = emotionState,
-                        precomputedSegments = segments
-                    )
-                } else if (activeSessionId == sessionId) {
-                    clearSpeakingState()
+                if (activeSessionId == sessionId) {
+                    handoffRemainingToDevice(currentBatchIdx)
+                } else {
+                    prefetchedNext?.cancel()
                 }
             }
         }
@@ -492,7 +496,19 @@ class ChatTtsManager(context: Context) {
             suspendCancellableCoroutine { cont ->
                 releaseMediaPlayer()
                 val player = MediaPlayer()
-                mediaPlayer = player
+                val installed = synchronized(mediaPlayerLock) {
+                    if (activeSessionId == sessionId && cont.isActive) {
+                        mediaPlayer = player
+                        true
+                    } else {
+                        false
+                    }
+                }
+                if (!installed) {
+                    safeReleasePlayer(player)
+                    if (cont.isActive) cont.resume(false)
+                    return@suspendCancellableCoroutine
+                }
                 try {
                     player.setAudioAttributes(
                         AudioAttributes.Builder()
@@ -502,28 +518,36 @@ class ChatTtsManager(context: Context) {
                     )
                     player.setDataSource(file.absolutePath)
                     player.setOnCompletionListener {
-                        releaseMediaPlayer()
+                        releaseMediaPlayer(expected = player)
                         if (cont.isActive) cont.resume(true)
                     }
                     player.setOnErrorListener { _, _, _ ->
-                        releaseMediaPlayer()
+                        releaseMediaPlayer(expected = player)
                         if (cont.isActive) cont.resume(false)
                         true
                     }
                     player.setOnPreparedListener { mp ->
-                        if (activeSessionId == sessionId && cont.isActive) {
-                            mp.start()
+                        val stillActive = synchronized(mediaPlayerLock) {
+                            mediaPlayer === player && activeSessionId == sessionId && cont.isActive
+                        }
+                        if (stillActive) {
+                            try {
+                                mp.start()
+                            } catch (_: Exception) {
+                                releaseMediaPlayer(expected = player)
+                                if (cont.isActive) cont.resume(false)
+                            }
                         } else {
-                            releaseMediaPlayer()
+                            releaseMediaPlayer(expected = player)
                             if (cont.isActive) cont.resume(false)
                         }
                     }
                     cont.invokeOnCancellation {
-                        releaseMediaPlayer()
+                        releaseMediaPlayer(expected = player)
                     }
                     player.prepareAsync()
                 } catch (_: Exception) {
-                    releaseMediaPlayer()
+                    releaseMediaPlayer(expected = player)
                     if (cont.isActive) cont.resume(false)
                 }
             }
@@ -565,7 +589,8 @@ class ChatTtsManager(context: Context) {
                 voiceName = voiceName,
                 languageTag = languageTag,
                 readActions = readActions,
-                emotionState = emotionState
+                emotionState = emotionState,
+                precomputedSegments = segments
             )
             _speakingMessageId.value = messageId
             _isSpeaking.value = true
@@ -681,9 +706,17 @@ class ChatTtsManager(context: Context) {
         }
     }
 
-    private fun releaseMediaPlayer() {
-        val mp = mediaPlayer ?: return
-        mediaPlayer = null
+    private fun releaseMediaPlayer(expected: MediaPlayer? = null) {
+        val mp: MediaPlayer = synchronized(mediaPlayerLock) {
+            val current = mediaPlayer ?: return
+            if (expected != null && current !== expected) return
+            mediaPlayer = null
+            current
+        }
+        safeReleasePlayer(mp)
+    }
+
+    private fun safeReleasePlayer(mp: MediaPlayer) {
         try {
             if (mp.isPlaying) mp.stop()
         } catch (_: Exception) {

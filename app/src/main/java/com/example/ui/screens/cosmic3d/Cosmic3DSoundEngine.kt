@@ -7,8 +7,8 @@ import android.media.AudioTrack
 import android.media.MediaPlayer
 import com.example.R
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReferenceArray
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -62,6 +62,7 @@ class Cosmic3DSoundEngine(
     companion object {
         private const val SAMPLE_RATE = 24000 // Warm, silky, ultra-fast synthesis & <0.3% CPU mixing
         private const val TWO_PI = (2.0 * PI).toFloat()
+        internal const val MAX_POLYPHONY = 16
 
         // Cache pre-rendered cinema SFX buffers statically so opening subsequent scenes/restarts is instant!
         @Volatile private var sfxBankReady = false
@@ -502,7 +503,7 @@ class Cosmic3DSoundEngine(
         }
     }
 
-    private val voices = CopyOnWriteArrayList<ActiveVoice>()
+    private val voiceSlots = AtomicReferenceArray<ActiveVoice?>(MAX_POLYPHONY)
     private val running = AtomicBoolean(false)
     @Volatile private var muted = false
     @Volatile private var voiceDucking = false
@@ -511,32 +512,56 @@ class Cosmic3DSoundEngine(
     @Volatile private var ambientGain = 0.55f
 
     private var mixerThread: Thread? = null
-    private var musicPlayer: MediaPlayer? = null
-    private var ambientMediaPlayer: MediaPlayer? = null
+    private val mediaPlayerLock = Any()
+    @Volatile private var musicPlayer: MediaPlayer? = null
+    @Volatile private var ambientMediaPlayer: MediaPlayer? = null
     @Volatile private var targetMusicVolume = 0.36f
     @Volatile private var targetAmbientMediaVolume = 0.24f
+
+    internal fun activeVoiceCountForTest(): Int {
+        var count = 0
+        for (i in 0 until MAX_POLYPHONY) {
+            if (voiceSlots.get(i) != null) count++
+        }
+        return count
+    }
+
+    internal fun enqueueVoiceSlotForTest(buffer: FloatArray): Boolean {
+        val voice = ActiveVoice(buffer, 0f, 1f, 0.5f, 0.5f, true)
+        for (i in 0 until MAX_POLYPHONY) {
+            if (voiceSlots.compareAndSet(i, null, voice)) return true
+        }
+        return false
+    }
 
     fun start(ambientSceneId: String? = null, ambientVolume: Float = 0.52f) {
         if (running.getAndSet(true)) return
         ambientGain = ambientVolume
         targetAmbientMediaVolume = (ambientVolume * 0.65f).coerceIn(0.10f, 0.42f)
 
-        val realAmbFile = if (ambientSceneId != null && context != null) {
-            val key = "amb_${ambientSceneId.trim().lowercase(java.util.Locale.ROOT)}"
-            com.example.book.BookContentPackManager.findDownloadedMediaFile(context.applicationContext, key)
-        } else null
-
-        if (realAmbFile != null) {
-            startRealAmbientBed(realAmbFile)
-        }
+        val appCtx = context?.applicationContext
 
         mixerThread = Thread({
             try {
                 ensureSfxBankBuilt()
-                if (ambientSceneId != null && realAmbFile == null) {
+                val realAmbFile = if (ambientSceneId != null && appCtx != null) {
+                    val key = "amb_${ambientSceneId.trim().lowercase(java.util.Locale.ROOT)}"
+                    com.example.book.BookContentPackManager.findDownloadedMediaFile(appCtx, key)
+                } else null
+
+                if (realAmbFile != null && running.get()) {
+                    startRealAmbientBed(realAmbFile)
+                } else if (ambientSceneId != null && running.get()) {
                     ambientBuffer = getOrBuildAmbient(ambientSceneId)
                 }
-                runMixerLoop()
+
+                if (enableOrchestralMusic && appCtx != null && running.get()) {
+                    startOrchestralBed(appCtx)
+                }
+
+                if (running.get()) {
+                    runMixerLoop()
+                }
             } catch (_: Throwable) {
                 // Swallow hardware audio teardown safely
             }
@@ -544,51 +569,110 @@ class Cosmic3DSoundEngine(
             priority = Thread.MAX_PRIORITY - 1
             start()
         }
+    }
 
-        if (enableOrchestralMusic && context != null) {
-            startOrchestralBed(context.applicationContext)
+    private fun safeReleaseMediaPlayer(mp: MediaPlayer?) {
+        if (mp == null) return
+        try {
+            if (mp.isPlaying) mp.stop()
+        } catch (_: Throwable) {
+        }
+        try {
+            mp.release()
+        } catch (_: Throwable) {
         }
     }
 
     private fun startRealAmbientBed(file: java.io.File) {
+        var mp: MediaPlayer? = null
         try {
-            val mp = MediaPlayer()
-            mp.setAudioAttributes(
+            val created = MediaPlayer()
+            mp = created
+            created.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_GAME)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
             )
-            mp.setDataSource(file.absolutePath)
-            mp.isLooping = true
-            mp.prepare()
-            val v = if (muted) 0f else targetAmbientMediaVolume
-            mp.setVolume(v, v)
-            mp.start()
-            ambientMediaPlayer = mp
+            created.setDataSource(file.absolutePath)
+            created.isLooping = true
+            created.setOnErrorListener { player, _, _ ->
+                val releasedHere = synchronized(mediaPlayerLock) {
+                    if (ambientMediaPlayer === player) {
+                        ambientMediaPlayer = null
+                        true
+                    } else false
+                }
+                if (releasedHere) safeReleaseMediaPlayer(player)
+                true
+            }
+            created.prepare()
+            val v = if (muted) 0f else (targetAmbientMediaVolume * if (voiceDucking) 0.38f else 1.0f)
+            created.setVolume(v, v)
+            val installed = synchronized(mediaPlayerLock) {
+                if (running.get()) {
+                    val prev = ambientMediaPlayer
+                    ambientMediaPlayer = created
+                    if (prev != null && prev !== created) safeReleaseMediaPlayer(prev)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (installed) {
+                created.start()
+            } else {
+                safeReleaseMediaPlayer(created)
+            }
         } catch (_: Throwable) {
-            ambientMediaPlayer = null
+            safeReleaseMediaPlayer(mp)
         }
     }
 
     private fun startOrchestralBed(appCtx: Context) {
+        var mp: MediaPlayer? = null
         try {
             val afd = appCtx.resources.openRawResourceFd(R.raw.kozmiksuruklenismuzik) ?: return
-            val mp = MediaPlayer()
-            mp.setAudioAttributes(
+            val created = MediaPlayer()
+            mp = created
+            created.setAudioAttributes(
                 AudioAttributes.Builder()
                     .setUsage(AudioAttributes.USAGE_GAME)
                     .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                     .build()
             )
-            afd.use { mp.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
-            mp.isLooping = true
-            mp.prepare()
-            val v = if (muted) 0f else targetMusicVolume
-            mp.setVolume(v, v)
-            mp.start()
-            musicPlayer = mp
+            afd.use { created.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+            created.isLooping = true
+            created.setOnErrorListener { player, _, _ ->
+                val releasedHere = synchronized(mediaPlayerLock) {
+                    if (musicPlayer === player) {
+                        musicPlayer = null
+                        true
+                    } else false
+                }
+                if (releasedHere) safeReleaseMediaPlayer(player)
+                true
+            }
+            created.prepare()
+            val v = if (muted) 0f else (targetMusicVolume * if (voiceDucking) 0.42f else 1.0f)
+            created.setVolume(v, v)
+            val installed = synchronized(mediaPlayerLock) {
+                if (running.get()) {
+                    val prev = musicPlayer
+                    musicPlayer = created
+                    if (prev != null && prev !== created) safeReleaseMediaPlayer(prev)
+                    true
+                } else {
+                    false
+                }
+            }
+            if (installed) {
+                created.start()
+            } else {
+                safeReleaseMediaPlayer(created)
+            }
         } catch (_: Throwable) {
+            safeReleaseMediaPlayer(mp)
             // Optional orchestral track — organic ambient bed still runs seamlessly
         }
     }
@@ -598,13 +682,15 @@ class Cosmic3DSoundEngine(
         val v = if (muted) 0f else (targetMusicVolume * duckMult)
         val ambDuckMult = if (voiceDucking) 0.38f else 1.0f
         val ambV = if (muted) 0f else (targetAmbientMediaVolume * ambDuckMult)
-        try {
-            musicPlayer?.setVolume(v, v)
-        } catch (_: Throwable) {
-        }
-        try {
-            ambientMediaPlayer?.setVolume(ambV, ambV)
-        } catch (_: Throwable) {
+        synchronized(mediaPlayerLock) {
+            try {
+                musicPlayer?.setVolume(v, v)
+            } catch (_: Throwable) {
+            }
+            try {
+                ambientMediaPlayer?.setVolume(ambV, ambV)
+            } catch (_: Throwable) {
+            }
         }
     }
 
@@ -627,29 +713,30 @@ class Cosmic3DSoundEngine(
     fun play(sfx: CosmicSfx, volume: Float = 0.85f, pan: Float = 0f, affectedByTimeSlow: Boolean = true) {
         if (muted || !running.get() || !sfxBankReady) return
         val buf = sfxBank[sfx] ?: return
-        if (voices.size > 16) return
         val p = pan.coerceIn(-0.85f, 0.85f)
         val gL = volume * ((1f - p) * 0.5f + 0.5f).coerceAtMost(1f)
         val gR = volume * ((1f + p) * 0.5f + 0.5f).coerceAtMost(1f)
         val rateJitter = 0.96f + Random.nextFloat() * 0.08f
-        voices.add(ActiveVoice(buf, 0f, rateJitter, gL, gR, affectedByTimeSlow))
+        val voice = ActiveVoice(buf, 0f, rateJitter, gL, gR, affectedByTimeSlow)
+        for (i in 0 until MAX_POLYPHONY) {
+            if (voiceSlots.compareAndSet(i, null, voice)) return
+        }
     }
 
     fun stopAndRelease() {
         running.set(false)
-        voices.clear()
-        try {
-            musicPlayer?.stop()
-            musicPlayer?.release()
-        } catch (_: Throwable) {
+        for (i in 0 until MAX_POLYPHONY) {
+            voiceSlots.set(i, null)
         }
-        musicPlayer = null
-        try {
-            ambientMediaPlayer?.stop()
-            ambientMediaPlayer?.release()
-        } catch (_: Throwable) {
+        val (oldMusic, oldAmbient) = synchronized(mediaPlayerLock) {
+            val m = musicPlayer
+            val a = ambientMediaPlayer
+            musicPlayer = null
+            ambientMediaPlayer = null
+            m to a
         }
-        ambientMediaPlayer = null
+        safeReleaseMediaPlayer(oldMusic)
+        safeReleaseMediaPlayer(oldAmbient)
         try {
             mixerThread?.join(350L)
         } catch (_: InterruptedException) {
@@ -723,19 +810,18 @@ class Cosmic3DSoundEngine(
                             if (ambPos >= amb.size) ambPos -= amb.size
                         }
 
-                        // Mix active cinema SFX voices
-                        val iter = voices.iterator()
-                        while (iter.hasNext()) {
-                            val v = iter.next()
+                        // Mix active cinema SFX voices (lock-free, zero-allocation fixed slot pool)
+                        for (s in 0 until MAX_POLYPHONY) {
+                            val v = voiceSlots.get(s) ?: continue
                             val p = v.pos.toInt()
                             if (p >= v.buffer.size - 1) {
-                                voices.remove(v)
+                                voiceSlots.compareAndSet(s, v, null)
                                 continue
                             }
                             val frac = v.pos - p
-                            val s = v.buffer[p] * (1f - frac) + v.buffer[p + 1] * frac
-                            sumL += s * v.gainL
-                            sumR += s * v.gainR
+                            val sVal = v.buffer[p] * (1f - frac) + v.buffer[p + 1] * frac
+                            sumL += sVal * v.gainL
+                            sumR += sVal * v.gainR
                             val step = v.baseRate * (if (v.affectedByTimeSlow) smoothRate else 1f)
                             v.pos += step
                         }

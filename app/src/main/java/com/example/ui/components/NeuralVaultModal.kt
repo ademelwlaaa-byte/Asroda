@@ -94,6 +94,11 @@ fun NeuralVaultModal(
     val hiddenRagCount by (viewModel?.hiddenRagCount ?: kotlinx.coroutines.flow.flowOf(0))
         .collectAsStateWithLifecycle(initialValue = 0)
 
+    LaunchedEffect(bot.id) {
+        // Silent, zero-clutter automatic self-healing (no extra UI buttons needed)
+        viewModel?.runSmartMemoryAndCastCleanup(bot.id)
+    }
+
     LaunchedEffect(bot.id, activeFacts.size, activeEvents.size) {
         viewModel?.loadArchivedMemories(bot.id)
         viewModel?.loadEntityRelations(bot.id)

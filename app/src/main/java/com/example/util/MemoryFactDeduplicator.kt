@@ -20,6 +20,24 @@ object MemoryFactDeduplicator {
         return a == b
     }
 
+    /**
+     * Turkish morphological stem-aware semantic near-duplicate check for long memory facts.
+     */
+    fun isSemanticNearDuplicate(first: String, second: String, threshold: Float = 0.78f): Boolean {
+        if (isNearDuplicate(first, second)) return true
+        val stemsA = com.example.data.repository.TurkishTextAnalyzer.extractStems(first).toSet()
+        val stemsB = com.example.data.repository.TurkishTextAnalyzer.extractStems(second).toSet()
+        if (stemsA.size < 2 || stemsB.size < 2) return false
+        val (small, large) = if (stemsA.size <= stemsB.size) stemsA to stemsB else stemsB to stemsA
+        var matched = 0
+        for (s in small) {
+            if (s in large || (s.length >= 4 && large.any { l -> l.length >= 4 && (l.startsWith(s) || s.startsWith(l)) })) {
+                matched++
+            }
+        }
+        return (matched.toFloat() / small.size.toFloat()) >= threshold
+    }
+
     fun deduplicate(facts: List<String>): List<String> {
         val seen = HashSet<String>()
         val result = mutableListOf<String>()

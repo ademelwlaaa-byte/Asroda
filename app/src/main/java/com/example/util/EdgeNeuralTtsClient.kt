@@ -46,6 +46,19 @@ object EdgeNeuralTtsClient {
     private const val MAX_CACHE_BYTES = 24L * 1024L * 1024L // 24 MB LRU cap
     private const val FIRST_AUDIO_READ_TIMEOUT_MS = 4_500L
     private const val TOTAL_STREAM_TIMEOUT_MS = 12_000L
+    internal const val CIRCUIT_BREAKER_FAILURE_THRESHOLD = 2
+    internal const val CIRCUIT_BREAKER_COOLDOWN_MS = 45_000L
+
+    private val PROSODY_BLOCK_REGEX = Regex(
+        """<prosody\b([^>]*)>(.*?)</prosody>""",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    private val BREAK_TAG_REGEX = Regex("""<break\b[^>]*/>""", RegexOption.IGNORE_CASE)
+    private val BREAK_MS_REGEX = Regex("""time=['"](\d+)ms['"]""", RegexOption.IGNORE_CASE)
+    private val RATE_ATTR_REGEX = Regex("""rate=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+    private val PITCH_ATTR_REGEX = Regex("""pitch=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+    private val VOL_ATTR_REGEX = Regex("""volume=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
+    private val LANG_ATTR_REGEX = Regex("""xml:lang=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE)
 
     data class NeuralVoiceSpec(
         val id: String,
@@ -151,16 +164,55 @@ object EdgeNeuralTtsClient {
     private var clockSkewSeconds: Long = 0L
 
     private val cacheWriteLock = Any()
+    private val circuitBreakerLock = Any()
+
+    @Volatile
+    private var consecutiveWsFailures: Int = 0
+
+    @Volatile
+    private var circuitOpenUntilMs: Long = 0L
+
+    /** Test-injectable monotonic wall clock for deterministic circuit-breaker tests. */
+    @Volatile
+    internal var clockMsProvider: () -> Long = { System.currentTimeMillis() }
 
     /** Optional test hook for deterministic offline/error/fallback verification in Robolectric tests. */
     @Volatile
     internal var synthesizerOverride: (suspend (voiceId: String, ssml: String) -> ByteArray?)? = null
 
+    /** Returns true while neural WS synthesis is in fast-fail cooldown after consecutive failures. */
+    fun isNeuralCircuitOpen(nowMs: Long = clockMsProvider()): Boolean =
+        nowMs < circuitOpenUntilMs
+
+    internal fun recordNeuralWsSuccess() {
+        synchronized(circuitBreakerLock) {
+            consecutiveWsFailures = 0
+            circuitOpenUntilMs = 0L
+        }
+    }
+
+    internal fun recordNeuralWsFailure(nowMs: Long = clockMsProvider()) {
+        synchronized(circuitBreakerLock) {
+            consecutiveWsFailures += 1
+            if (consecutiveWsFailures >= CIRCUIT_BREAKER_FAILURE_THRESHOLD) {
+                circuitOpenUntilMs = nowMs + CIRCUIT_BREAKER_COOLDOWN_MS
+            }
+        }
+    }
+
+    internal fun resetCircuitBreakerForTest() {
+        synchronized(circuitBreakerLock) {
+            consecutiveWsFailures = 0
+            circuitOpenUntilMs = 0L
+            clockMsProvider = { System.currentTimeMillis() }
+        }
+    }
+
     /**
-     * Synthesizes [ssml] into an MP3 [File] stored in the 20 MB LRU cache.
+     * Synthesizes [ssml] into an MP3 [File] stored in the 24 MB LRU cache.
      * Automatically normalizes SSML to the single-prosody format accepted by Microsoft Edge ReadAloud.
-     * Returns `null` silently on any network/timeout/protocol error so callers can seamlessly
-     * fall back to on-device TTS.
+     * Returns `null` silently on any network/timeout/protocol error (or fast-fails when the neural
+     * circuit breaker is open) so callers can seamlessly fall back to on-device TTS.
      */
     suspend fun synthesizeToCachedMp3(
         context: Context,
@@ -187,15 +239,24 @@ object EdgeNeuralTtsClient {
                 null
             }
         } else {
-            fetchWithClockSkewRetry(normalizedSsml, timeoutMs)
+            if (isNeuralCircuitOpen()) {
+                return@withContext null
+            }
+            val fetched = fetchWithClockSkewRetry(normalizedSsml, timeoutMs)
+            if (fetched != null && fetched.size >= 128) {
+                recordNeuralWsSuccess()
+            } else {
+                recordNeuralWsFailure()
+            }
+            fetched
         }
 
         if (audioBytes == null || audioBytes.size < 128) {
             return@withContext null
         }
 
+        val tmp = File(cacheDir, "$cacheKey.${UUID.randomUUID()}.tmp")
         try {
-            val tmp = File(cacheDir, "$cacheKey.${UUID.randomUUID()}.tmp")
             tmp.writeBytes(audioBytes)
             synchronized(cacheWriteLock) {
                 if (cachedFile.exists() && cachedFile.length() == audioBytes.size.toLong()) {
@@ -208,6 +269,7 @@ object EdgeNeuralTtsClient {
             }
             cachedFile
         } catch (e: Exception) {
+            try { tmp.delete() } catch (_: Exception) {}
             Log.w(TAG, "Failed to persist TTS cache file: ${e.message}")
             null
         }
@@ -216,7 +278,8 @@ object EdgeNeuralTtsClient {
     /**
      * Converts rich multi-segment SSML (which may include `<break/>` or multiple `<prosody>` tags)
      * into the strict single-`<prosody>` SSML accepted by the public Microsoft Edge ReadAloud
-     * WebSocket endpoint, preventing silent 0-byte connection drops while preserving pitch/rate/pauses.
+     * WebSocket endpoint, preventing silent 0-byte connection drops while preserving character-weighted
+     * prosody averages and clean breath punctuation without duplicate ellipses.
      */
     internal fun normalizeSsmlForEdgeReadAloud(voiceId: String, rawSsml: String): String {
         val trimmed = rawSsml.trim()
@@ -229,15 +292,7 @@ object EdgeNeuralTtsClient {
             return trimmed
         }
 
-        val rateMatch = Regex("""rate=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
-        val pitchMatch = Regex("""pitch=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
-        val volMatch = Regex("""volume=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
-        val langMatch = Regex("""xml:lang=['"]([^'"]+)['"]""", RegexOption.IGNORE_CASE).find(trimmed)
-
-        val rateVal = rateMatch?.groupValues?.getOrNull(1)?.ifBlank { "+0%" } ?: "+0%"
-        val pitchVal = pitchMatch?.groupValues?.getOrNull(1)?.ifBlank { "+0Hz" } ?: "+0Hz"
-        val volVal = volMatch?.groupValues?.getOrNull(1)?.ifBlank { "+0%" } ?: "+0%"
-        val langVal = langMatch?.groupValues?.getOrNull(1)?.ifBlank { "tr-TR" }
+        val langVal = LANG_ATTR_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.ifBlank { null }
             ?: when {
                 voiceId.startsWith("tr-", ignoreCase = true) -> "tr-TR"
                 voiceId.startsWith("de-", ignoreCase = true) -> "de-DE"
@@ -245,13 +300,52 @@ object EdgeNeuralTtsClient {
                 else -> "en-US"
             }
 
-        // Extract inner text while turning <break .../> into natural breath punctuation
+        // Compute character-length-weighted rate/pitch/volume across all <prosody> blocks
+        // so mixed-prosody batches never get flattened blindly to the very first tag.
+        val prosodyMatches = PROSODY_BLOCK_REGEX.findAll(trimmed).toList()
+        val rateVal: String
+        val pitchVal: String
+        val volVal: String
+        if (prosodyMatches.size >= 2) {
+            var totalWeight = 0
+            var rateSum = 0.0
+            var pitchSum = 0.0
+            var volSum = 0.0
+            for (m in prosodyMatches) {
+                val attrs = m.groupValues[1]
+                val innerPlain = m.groupValues[2]
+                    .replace(BREAK_TAG_REGEX, " ")
+                    .replace(Regex("""<[^>]+>"""), " ")
+                    .trim()
+                val weight = innerPlain.length.coerceAtLeast(1)
+                val r = parseSignedIntAttr(RATE_ATTR_REGEX.find(attrs)?.groupValues?.getOrNull(1))
+                val p = parseSignedIntAttr(PITCH_ATTR_REGEX.find(attrs)?.groupValues?.getOrNull(1))
+                val v = parseSignedIntAttr(VOL_ATTR_REGEX.find(attrs)?.groupValues?.getOrNull(1))
+                rateSum += r * weight
+                pitchSum += p * weight
+                volSum += v * weight
+                totalWeight += weight
+            }
+            val avgRate = kotlin.math.round(rateSum / totalWeight).toInt().coerceIn(-45, 65)
+            val avgPitch = kotlin.math.round(pitchSum / totalWeight).toInt().coerceIn(-25, 25)
+            val avgVol = kotlin.math.round(volSum / totalWeight).toInt().coerceIn(-25, 25)
+            rateVal = if (avgRate >= 0) "+$avgRate%" else "$avgRate%"
+            pitchVal = if (avgPitch >= 0) "+${avgPitch}Hz" else "${avgPitch}Hz"
+            volVal = if (avgVol >= 0) "+$avgVol%" else "$avgVol%"
+        } else {
+            rateVal = RATE_ATTR_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.ifBlank { "+0%" } ?: "+0%"
+            pitchVal = PITCH_ATTR_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.ifBlank { "+0Hz" } ?: "+0Hz"
+            volVal = VOL_ATTR_REGEX.find(trimmed)?.groupValues?.getOrNull(1)?.ifBlank { "+0%" } ?: "+0%"
+        }
+
+        // Extract inner text while converting <break .../> into natural breath punctuation
+        // without creating duplicate punctuation like "Dur... ... hazır ol!".
         val voiceInner = Regex("""<voice[^>]*>(.*)</voice>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
             .find(trimmed)?.groupValues?.getOrNull(1) ?: trimmed
-        val withPauses = voiceInner
-            .replace(Regex("""<break[^>]*/>""", RegexOption.IGNORE_CASE), "... ")
+        val strippedTags = voiceInner
             .replace(Regex("""</?prosody[^>]*>""", RegexOption.IGNORE_CASE), " ")
             .replace(Regex("""</?lang[^>]*>""", RegexOption.IGNORE_CASE), " ")
+        val withPauses = replaceBreakTagsNaturally(strippedTags)
             .replace(Regex("""\s+"""), " ")
             .trim()
 
@@ -261,6 +355,32 @@ object EdgeNeuralTtsClient {
             "<voice name='$fullVoiceName'>" +
             "<prosody pitch='$pitchVal' rate='$rateVal' volume='$volVal'>$withPauses</prosody>" +
             "</voice></speak>"
+    }
+
+    private fun parseSignedIntAttr(raw: String?): Int {
+        if (raw.isNullOrBlank()) return 0
+        val digits = Regex("""[+-]?\d+""").find(raw)?.value ?: return 0
+        return digits.toIntOrNull() ?: 0
+    }
+
+    private fun replaceBreakTagsNaturally(input: String): String {
+        if (!input.contains("<break", ignoreCase = true)) return input
+        val sb = StringBuilder(input.length + 16)
+        var cursor = 0
+        for (m in BREAK_TAG_REGEX.findAll(input)) {
+            sb.append(input, cursor, m.range.first)
+            val prevChar = sb.toString().trimEnd().lastOrNull()
+            val alreadyHasPausePunct = prevChar != null && prevChar in setOf('.', '…', '!', '?', '—', ';', ':', ',')
+            if (alreadyHasPausePunct) {
+                sb.append(' ')
+            } else {
+                val breakMs = BREAK_MS_REGEX.find(m.value)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 250
+                sb.append(if (breakMs >= 320) "... " else ", ")
+            }
+            cursor = m.range.last + 1
+        }
+        sb.append(input, cursor, input.length)
+        return sb.toString()
     }
 
     /**
@@ -352,13 +472,22 @@ object EdgeNeuralTtsClient {
             }
             val finalBytes = out.toByteArray()
             if (finalBytes.size < 256) return@withContext null
-            val tmp = File(cacheDir, "ghttp_$hash.tmp")
-            tmp.writeBytes(finalBytes)
-            if (!tmp.renameTo(targetFile)) {
-                tmp.copyTo(targetFile, overwrite = true)
-                tmp.delete()
+            val tmp = File(cacheDir, "ghttp_${hash}_${UUID.randomUUID()}.tmp")
+            try {
+                tmp.writeBytes(finalBytes)
+                synchronized(cacheWriteLock) {
+                    if (targetFile.exists() && targetFile.length() == finalBytes.size.toLong()) {
+                        tmp.delete()
+                    } else if (!tmp.renameTo(targetFile)) {
+                        tmp.copyTo(targetFile, overwrite = true)
+                        tmp.delete()
+                    }
+                    enforceCacheLruLimit(cacheDir)
+                }
+            } catch (t: Throwable) {
+                try { tmp.delete() } catch (_: Throwable) {}
+                throw t
             }
-            enforceCacheLruLimit(cacheDir)
             if (targetFile.exists() && targetFile.length() > 256L) targetFile else null
         } catch (t: Throwable) {
             Log.w(TAG, "Free HTTP neural TTS backup skipped: ${t.message}")
@@ -402,21 +531,34 @@ object EdgeNeuralTtsClient {
     }
 
     private suspend fun fetchWithClockSkewRetry(ssml: String, timeoutMs: Long): ByteArray? {
-        val first = runSingleWebSocketFetch(ssml, timeoutMs, PRIMARY_CHROMIUM_VERSION)
+        val totalBudgetMs = timeoutMs.coerceIn(FIRST_AUDIO_READ_TIMEOUT_MS, TOTAL_STREAM_TIMEOUT_MS)
+        val startedMs = System.currentTimeMillis()
+        val deadlineMs = startedMs + totalBudgetMs
+
+        val first = runSingleWebSocketFetch(ssml, totalBudgetMs, PRIMARY_CHROMIUM_VERSION)
+        val firstElapsedMs = System.currentTimeMillis() - startedMs
         return when (first) {
             is WsFetchOutcome.Success -> first.mp3Bytes
             is WsFetchOutcome.ClockSkew403 -> {
                 adjustClockSkewFromHeader(first.serverDateHeader)
-                when (val second = runSingleWebSocketFetch(ssml, timeoutMs, SECONDARY_CHROMIUM_VERSION)) {
+                val remAfterFirst = deadlineMs - System.currentTimeMillis()
+                if (remAfterFirst < 1_500L) return null
+                when (val second = runSingleWebSocketFetch(ssml, remAfterFirst, SECONDARY_CHROMIUM_VERSION)) {
                     is WsFetchOutcome.Success -> second.mp3Bytes
                     else -> {
-                        val third = runSingleWebSocketFetch(ssml, timeoutMs, FALLBACK_CHROMIUM_VERSION)
+                        val remAfterSecond = deadlineMs - System.currentTimeMillis()
+                        if (remAfterSecond < 1_500L) return null
+                        val third = runSingleWebSocketFetch(ssml, remAfterSecond, FALLBACK_CHROMIUM_VERSION)
                         (third as? WsFetchOutcome.Success)?.mp3Bytes
                     }
                 }
             }
             is WsFetchOutcome.Failed -> {
-                val second = runSingleWebSocketFetch(ssml, timeoutMs, SECONDARY_CHROMIUM_VERSION)
+                // Only retry secondary Chromium fingerprint if the first attempt failed quickly
+                // (handshake/header reject) and we still have budget — never double a full network timeout!
+                val remMs = deadlineMs - System.currentTimeMillis()
+                if (firstElapsedMs >= 2_500L || remMs < 2_000L) return null
+                val second = runSingleWebSocketFetch(ssml, remMs, SECONDARY_CHROMIUM_VERSION)
                 (second as? WsFetchOutcome.Success)?.mp3Bytes
             }
         }
@@ -427,7 +569,7 @@ object EdgeNeuralTtsClient {
         timeoutMs: Long,
         chromiumVersion: String = PRIMARY_CHROMIUM_VERSION
     ): WsFetchOutcome {
-        val totalTimeoutMs = timeoutMs.coerceAtLeast(FIRST_AUDIO_READ_TIMEOUT_MS)
+        val totalTimeoutMs = timeoutMs.coerceAtLeast(1_500L)
         val perFrameReadTimeoutMs = FIRST_AUDIO_READ_TIMEOUT_MS.coerceAtMost(totalTimeoutMs)
         return withTimeoutOrNull(totalTimeoutMs) {
             suspendCancellableCoroutine { cont ->

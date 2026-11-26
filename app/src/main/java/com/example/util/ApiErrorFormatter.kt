@@ -1,7 +1,10 @@
 package com.example.util
 
 import org.json.JSONObject
+import java.io.EOFException
 import java.net.ConnectException
+import java.net.ProtocolException
+import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.util.Locale
@@ -23,7 +26,8 @@ object ApiErrorFormatter {
             return formatHttpError(
                 httpCode = e.httpCode,
                 rawBody = e.errorBody,
-                providerLabel = providerLabel
+                providerLabel = providerLabel,
+                retryAfterSeconds = e.retryAfterSeconds
             )
         }
 
@@ -44,6 +48,12 @@ object ApiErrorFormatter {
             rawMsg.contains("zaman aşımı", ignoreCase = true)
         ) {
             return "${labelPrefix}AI sağlayıcısı zaman aşımına uğradı. Ağınızı kontrol edin veya Ayarlar'dan daha hızlı bir model seçin."
+        }
+        if (e is EOFException || e is SocketException || e is ProtocolException ||
+            rawMsg.contains("unexpected end of stream", ignoreCase = true) ||
+            rawMsg.contains("connection reset", ignoreCase = true)
+        ) {
+            return "${labelPrefix}Sunucu bağlantısı yanıt sırasında beklenmedik şekilde kesildi. Lütfen tekrar deneyin."
         }
 
         val extractedCode = HTTP_CODE_REGEX.find(rawMsg)?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -86,11 +96,22 @@ object ApiErrorFormatter {
     fun formatHttpError(
         httpCode: Int,
         rawBody: String,
-        providerLabel: String? = null
+        providerLabel: String? = null,
+        retryAfterSeconds: Long? = null
     ): String {
         val labelPrefix = providerLabel?.trim()?.takeIf { it.isNotBlank() }?.let { "[$it] " } ?: ""
         val detail = extractConciseErrorDetail(rawBody)
         val detailSuffix = if (detail.isNotBlank()) " ($detail)" else ""
+        val retryHint = retryAfterSeconds?.takeIf { it in 1L..3600L }?.let { " (~${it} sn sonra tekrar deneyin)" } ?: ""
+
+        if ((httpCode == 400 || httpCode == 422) && (
+                rawBody.contains("context_length_exceeded", ignoreCase = true) ||
+                rawBody.contains("maximum context length", ignoreCase = true) ||
+                rawBody.contains("prompt is too long", ignoreCase = true)
+            )
+        ) {
+            return "${labelPrefix}Sohbet geçmişi bu modelin bağlam penceresini aştı (HTTP $httpCode). Daha geniş bağlamlı bir model seçin veya sohbeti özetleyin.$detailSuffix"
+        }
 
         return when (httpCode) {
             400, 422 -> "${labelPrefix}Geçersiz istek veya desteklenmeyen model parametresi (HTTP $httpCode). Özel API model adını ve formatını kontrol edin.$detailSuffix"
@@ -99,7 +120,8 @@ object ApiErrorFormatter {
             403 -> "${labelPrefix}Erişim reddedildi (HTTP 403). API anahtarı yetkisini, model erişimini veya bölge kısıtlamasını kontrol edin.$detailSuffix"
             404 -> "${labelPrefix}Endpoint veya model bulunamadı (HTTP 404). Özel API Base URL (ör. .../v1) ve Model ID alanlarını kontrol edin.$detailSuffix"
             408 -> "${labelPrefix}Sunucu yanıt süresi doldu (HTTP 408). Lütfen tekrar deneyin.$detailSuffix"
-            429 -> "${labelPrefix}API kullanım kotası doldu (HTTP 429 Rate Limit). Biraz bekleyin veya farklı bir sağlayıcı/model seçin.$detailSuffix"
+            429 -> "${labelPrefix}API kullanım kotası doldu (HTTP 429 Rate Limit).$retryHint Biraz bekleyin veya farklı bir sağlayıcı/model seçin.$detailSuffix"
+            529 -> "${labelPrefix}AI sağlayıcı sunucusu şu anda aşırı yoğun (HTTP 529 Overloaded).$retryHint Kısa bir süre sonra tekrar deneyin veya yedek sağlayıcıya geçin.$detailSuffix"
             in 500..599 -> "${labelPrefix}AI sağlayıcı sunucusu geçici olarak yanıt veremiyor (HTTP $httpCode). Bir süre sonra tekrar deneyin.$detailSuffix"
             else -> "${labelPrefix}API isteği başarısız oldu (HTTP $httpCode).$detailSuffix"
         }

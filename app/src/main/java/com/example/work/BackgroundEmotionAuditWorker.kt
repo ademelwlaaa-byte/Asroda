@@ -162,9 +162,18 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
                 else -> return
             }
 
+            val consistentState = com.example.data.repository.EmotionEngine
+                .enforcePsychologicalConsistencyWithNote(correctedState).state
+            val finalState = consistentState.copy(
+                dominantEmotion = com.example.data.repository.EmotionEngine.normalizeTurkishEmotionLabel(
+                    consistentState.dominantEmotion,
+                    fallback = "nötr"
+                )
+            )
+
             val bot = db.botDao().getBotById(botId) ?: return
             db.botDao().insertOrUpdate(
-                bot.copy(emotionState = correctedState.toJson())
+                bot.copy(emotionState = finalState.toJson())
             )
 
             // Geçmişe kayıt: gerekçe dominantEmotion prefix'i ile loglanır
@@ -175,15 +184,15 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
                     botId = botId,
                     timestamp = System.currentTimeMillis(),
                     messageIndex = totalMsgCount,
-                    affectionScore = correctedState.affection,
-                    respectScore = correctedState.relationshipAxes.respectScore,
-                    comfortScore = correctedState.relationshipAxes.comfortScore,
-                    resentmentScore = correctedState.relationshipAxes.resentmentScore,
-                    trustScore = correctedState.primaryEmotions.trust,
-                    physicalComfortScore = correctedState.physicalComfortScore,
-                    obsessionScore = correctedState.obsessionScore,
-                    dominantEmotion = "[audit] ${correctedState.dominantEmotion}",
-                    fullVectorJson = correctedState.toJson()
+                    affectionScore = finalState.affection,
+                    respectScore = finalState.relationshipAxes.respectScore,
+                    comfortScore = finalState.relationshipAxes.comfortScore,
+                    resentmentScore = finalState.relationshipAxes.resentmentScore,
+                    trustScore = finalState.primaryEmotions.trust,
+                    physicalComfortScore = finalState.physicalComfortScore,
+                    obsessionScore = finalState.obsessionScore,
+                    dominantEmotion = "[audit] ${finalState.dominantEmotion}",
+                    fullVectorJson = finalState.toJson()
                 )
             )
         } catch (_: Exception) {}

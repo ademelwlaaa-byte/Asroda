@@ -135,7 +135,11 @@ class ProactiveMessageWorker(
             val now = System.currentTimeMillis()
 
             for (bot in allBots) {
-                if (!bot.proactiveEnabled || bot.id == EmochiRepository.activeBotId) continue
+                if (!bot.proactiveEnabled ||
+                    bot.id == EmochiRepository.activeBotId ||
+                    bot.id.startsWith("book_") ||
+                    bot.mode == "book"
+                ) continue
 
                 // Load only the latest 5 messages (never entire chat history)
                 val recentMessages = db.messageDao().getRecentMessagesForBot(bot.id, limit = 5)
@@ -158,8 +162,10 @@ class ProactiveMessageWorker(
                         bot.copy(aiPersonality = proactivePrompt + "\n\n" + bot.aiPersonality),
                         recentMessages
                     )
-                    val replyText = replyResult.replyText
-                    if (replyText.isBlank()) continue
+                    val replyText = replyResult.replyText.trim()
+                    if (replyText.isBlank() ||
+                        com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(replyText)
+                    ) continue
 
                     val msgTs = System.currentTimeMillis()
                     val aiMsg = MessageEntity(
@@ -199,8 +205,8 @@ class ProactiveMessageWorker(
         return """
 [PROAKTIF MESAJ - GİZLİ TALİMAT]
 Kullanıcı yaklaşık $hours saattir sessiz. Sen $name karakterisin.
-Karakterine uygun, kısa ve samimi bir mesaj yaz. Sanki kullanıcıya ilk sen başlatıyorsun.
-Yapay veya zorlama hissettirme. Günlük hayattan bir şeyden bahset veya merak ettiğini belirt.
+Karakterine uygun, kısa, samimi ve %100 DOĞAL TÜRKÇE bir mesaj yaz (asla İngilizce cümle yazma).
+Sanki kullanıcıya sohbeti ilk sen başlatıyorsun. Yapay veya zorlama hissettirme.
 Maksimum 2 cümle.
         """.trimIndent()
     }

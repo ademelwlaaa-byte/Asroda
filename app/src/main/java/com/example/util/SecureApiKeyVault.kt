@@ -29,36 +29,83 @@ object SecureApiKeyVault {
     private const val GCM_TAG_LENGTH_BITS = 128
     const val CIPHER_PREFIX = "ENC_V2:"
 
+    private val keyLock = Any()
+
+    @Volatile
+    private var cachedKeystoreKey: SecretKey? = null
+
     @Volatile
     private var ephemeralFallbackKey: SecretKey? = null
 
     private fun getOrCreateSecretKey(): SecretKey {
-        // 1. Primary path: hardware-backed AndroidKeyStore (all real Android devices API 24+)
-        try {
-            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
-            val existing = ks.getKey(KEY_ALIAS, null) as? SecretKey
-            if (existing != null) return existing
+        cachedKeystoreKey?.let { return it }
+        synchronized(keyLock) {
+            cachedKeystoreKey?.let { return it }
+            // 1. Primary path: hardware-backed AndroidKeyStore (all real Android devices API 24+)
+            try {
+                val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+                val existing = ks.getKey(KEY_ALIAS, null) as? SecretKey
+                if (existing != null) {
+                    cachedKeystoreKey = existing
+                    return existing
+                }
 
-            val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
-            val spec = KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .setRandomizedEncryptionRequired(true)
-                .build()
-            keyGenerator.init(spec)
-            return keyGenerator.generateKey()
-        } catch (_: Throwable) {
-            // 2. Unit-test / Robolectric JVM fallback where AndroidKeyStore provider is unavailable
-            return ephemeralFallbackKey ?: synchronized(this) {
-                ephemeralFallbackKey ?: KeyGenerator.getInstance("AES").apply { init(256) }
+                val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+                val spec = KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .setRandomizedEncryptionRequired(true)
+                    .build()
+                keyGenerator.init(spec)
+                return keyGenerator.generateKey().also { cachedKeystoreKey = it }
+            } catch (_: Throwable) {
+                // 2. Unit-test / Robolectric JVM fallback where AndroidKeyStore provider is unavailable
+                return ephemeralFallbackKey ?: KeyGenerator.getInstance("AES").apply { init(256) }
                     .generateKey()
                     .also { ephemeralFallbackKey = it }
             }
         }
+    }
+
+    private val KNOWN_PLAINTEXT_KEY_PREFIXES = listOf(
+        "sk-", "AIza", "gsk_", "nvapi-", "xai-", "hf_", "ghp_", "github_pat_", "pplx-", "fw_", "tgp_v1_"
+    )
+
+    private fun isPrintableApiKey(candidate: String): Boolean {
+        if (candidate.isBlank()) return false
+        return candidate.all { ch -> ch.code in 0x21..0x7E }
+    }
+
+    /**
+     * Universal decryptor for both `ENC_V2:` vault ciphertext, legacy [KeystoreEncryptionManager]
+     * unprefixed Base64 ciphertext, and legacy plaintext keys.
+     *
+     * Always handles `ENC_V2:` first so legacy [KeystoreEncryptionManager] never corrupts vault keys.
+     */
+    fun decryptFlexible(storedValue: String): String {
+        val trimmed = storedValue.trim()
+        if (trimmed.isEmpty()) return ""
+        if (isEncrypted(trimmed)) {
+            return decrypt(trimmed)
+        }
+        // Known plaintext API keys must never be fed to legacy Base64 decryptors
+        if (KNOWN_PLAINTEXT_KEY_PREFIXES.any { trimmed.startsWith(it, ignoreCase = false) }) {
+            return trimmed
+        }
+        // Attempt legacy KeystoreEncryptionManager decryption for old custom provider keys
+        val legacyAttempt = try {
+            KeystoreEncryptionManager.decrypt(trimmed).trim()
+        } catch (_: Throwable) {
+            ""
+        }
+        if (legacyAttempt.isNotBlank() && isPrintableApiKey(legacyAttempt)) {
+            return legacyAttempt
+        }
+        return trimmed
     }
 
     fun isEncrypted(value: String): Boolean = value.startsWith(CIPHER_PREFIX)
@@ -131,28 +178,29 @@ object SecureApiKeyVault {
     )
 
     private val SECRET_LOG_PATTERNS = listOf(
-        Regex("""\bAIza[0-9A-Za-z\-_]{20,}"""),
-        Regex("""\bsk-(?:ant-|or-|proj-)?[0-9A-Za-z\-_]{16,}"""),
-        Regex("""\bgsk_[0-9A-Za-z\-_]{16,}"""),
-        Regex("""\bnvapi-[0-9A-Za-z\-_]{16,}"""),
-        Regex("""\bxai-[0-9A-Za-z\-_]{16,}"""),
-        Regex("""(?i)([?&](?:api_)?key=)[^&\s]+"""),
-        Regex("""(?i)(Bearer\s+)[0-9A-Za-z\-_.]{8,}"""),
-        Regex("""(?i)((?:Authorization|x-api-key|api-key|x-goog-api-key)\s*[:=]\s*)[^\r\n,;]+""")
+        Regex("""\bAIza[0-9A-Za-z\-_]{20,}""") to "[REDACTED_GEMINI_KEY]",
+        Regex("""\bsk-(?:ant-|or-|proj-)?[0-9A-Za-z\-_]{16,}""") to "[REDACTED_API_KEY]",
+        Regex("""\bgsk_[0-9A-Za-z\-_]{16,}""") to "[REDACTED_GROQ_KEY]",
+        Regex("""\bnvapi-[0-9A-Za-z\-_]{16,}""") to "[REDACTED_NVIDIA_KEY]",
+        Regex("""\bxai-[0-9A-Za-z\-_]{16,}""") to "[REDACTED_XAI_KEY]",
+        Regex("""\bhf_[0-9A-Za-z]{16,}""") to "[REDACTED_HF_TOKEN]",
+        Regex("""\b(?:ghp_|github_pat_)[0-9A-Za-z_]{16,}""") to "[REDACTED_GITHUB_TOKEN]",
+        Regex("""\bpplx-[0-9A-Za-z\-_]{16,}""") to "[REDACTED_PERPLEXITY_KEY]",
+        Regex("""\bfw_[0-9A-Za-z\-_]{16,}""") to "[REDACTED_FIREWORKS_KEY]",
+        Regex("""\btgp_v1_[0-9A-Za-z\-_]{16,}""") to "[REDACTED_TOGETHER_KEY]",
+        Regex("""(?i)([?&](?:api_)?key=)[^&\s]+""") to "$1[REDACTED]",
+        Regex("""(?i)(Bearer\s+)[0-9A-Za-z\-_.]{8,}""") to "$1[REDACTED]",
+        Regex("""(?i)((?:Authorization|x-api-key|api-key|x-goog-api-key)\s*[:=]\s*)[^\r\n,;]+""") to "$1[REDACTED]",
+        Regex("""(?i)("(?:apiKey|api_key|apiKeyEncrypted|access_token|secret_key|token)"\s*:\s*")[^"]+(")""") to "$1[REDACTED]$2"
     )
 
-    /** Scrubs API keys, sensitive auth headers, and bearer tokens before any log write. */
+    /** Scrubs API keys, sensitive auth headers, JSON token fields, and bearer tokens before any log write. */
     fun redactSecrets(raw: String): String {
         if (raw.isBlank()) return raw
         var out = raw
-        out = SECRET_LOG_PATTERNS[0].replace(out, "[REDACTED_GEMINI_KEY]")
-        out = SECRET_LOG_PATTERNS[1].replace(out, "[REDACTED_API_KEY]")
-        out = SECRET_LOG_PATTERNS[2].replace(out, "[REDACTED_GROQ_KEY]")
-        out = SECRET_LOG_PATTERNS[3].replace(out, "[REDACTED_NVIDIA_KEY]")
-        out = SECRET_LOG_PATTERNS[4].replace(out, "[REDACTED_XAI_KEY]")
-        out = SECRET_LOG_PATTERNS[5].replace(out, "$1[REDACTED]")
-        out = SECRET_LOG_PATTERNS[6].replace(out, "$1[REDACTED]")
-        out = SECRET_LOG_PATTERNS[7].replace(out, "$1[REDACTED]")
+        for ((pattern, replacement) in SECRET_LOG_PATTERNS) {
+            out = pattern.replace(out, replacement)
+        }
         return out
     }
 

@@ -102,13 +102,55 @@ class CosmicCharacterVoiceEngine(
             emptySet()
         }
     }
-    private val synthExecutor = Executors.newSingleThreadExecutor { r ->
-        Thread(r, "CosmicVoice-StudioMaster").apply { isDaemon = true }
+    private val liveSpeakExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "CosmicVoice-LiveSpeak").apply {
+            isDaemon = true
+            priority = (Thread.NORM_PRIORITY + 1).coerceAtMost(Thread.MAX_PRIORITY)
+        }
+    }
+    private val prewarmExecutor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "CosmicVoice-Prewarm").apply {
+            isDaemon = true
+            priority = (Thread.MIN_PRIORITY + 1).coerceAtMost(Thread.NORM_PRIORITY)
+        }
     }
     private val synthLatches = ConcurrentHashMap<String, CountDownLatch>()
     private val synthSucceeded = ConcurrentHashMap<String, Boolean>()
-    private val envelopeByPath = ConcurrentHashMap<String, FloatArray>()
+    private val envelopeLock = Any()
+    private val envelopeByPath = object : LinkedHashMap<String, FloatArray>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, FloatArray>?): Boolean {
+            return size > MAX_CACHED_ENVELOPES
+        }
+    }
+    private val playbackLock = Any()
     private val speakGeneration = AtomicInteger(0)
+    private val prewarmGeneration = AtomicInteger(0)
+
+    internal fun putEnvelope(path: String, envelope: FloatArray) {
+        synchronized(envelopeLock) {
+            envelopeByPath[path] = envelope
+        }
+    }
+
+    private fun getEnvelope(path: String): FloatArray? = synchronized(envelopeLock) {
+        envelopeByPath[path]
+    }
+
+    private fun removeEnvelope(path: String) {
+        synchronized(envelopeLock) {
+            envelopeByPath.remove(path)
+        }
+    }
+
+    private fun clearEnvelopes() {
+        synchronized(envelopeLock) {
+            envelopeByPath.clear()
+        }
+    }
+
+    internal fun cachedEnvelopeCountForTest(): Int = synchronized(envelopeLock) {
+        envelopeByPath.size
+    }
 
     @Volatile private var tts: TextToSpeech? = null
     @Volatile private var clipPlayer: MediaPlayer? = null
@@ -130,8 +172,8 @@ class CosmicCharacterVoiceEngine(
     @Volatile private var localTrVoices: List<Voice> = emptyList()
 
     init {
-        // Purge older v3/v4 cached audio directories once so legacy robotic/accented clips never linger
-        synthExecutor.execute {
+        // Purge older v3/v4 cached audio directories once on the low-priority prewarm thread
+        prewarmExecutor.execute {
             try {
                 File(appContext.cacheDir, "cosmic_studio_voices_v3").deleteRecursively()
                 File(appContext.cacheDir, "cosmic_studio_voices_v4").deleteRecursively()
@@ -354,13 +396,26 @@ class CosmicCharacterVoiceEngine(
             tts?.stop()
         } catch (_: Throwable) {
         }
+        val oldPlayer: MediaPlayer? = synchronized(playbackLock) {
+            val existing = clipPlayer
+            clipPlayer = null
+            existing
+        }
+        if (oldPlayer != null) {
+            safeReleasePlayer(oldPlayer)
+        }
+        notifySpeaking(false)
+    }
+
+    private fun safeReleasePlayer(player: MediaPlayer) {
         try {
-            clipPlayer?.stop()
-            clipPlayer?.release()
+            if (player.isPlaying) player.stop()
         } catch (_: Throwable) {
         }
-        clipPlayer = null
-        notifySpeaking(false)
+        try {
+            player.release()
+        } catch (_: Throwable) {
+        }
     }
 
     /**
@@ -409,10 +464,11 @@ class CosmicCharacterVoiceEngine(
      */
     fun prewarmLines(lines: List<Triple<String, String, String?>>) {
         if (released || lines.isEmpty()) return
-        synthExecutor.execute {
-            if (released) return@execute
+        val myPrewarmGen = prewarmGeneration.incrementAndGet()
+        prewarmExecutor.execute {
+            if (released || myPrewarmGen != prewarmGeneration.get()) return@execute
             for ((speaker, text, lineId) in lines) {
-                if (released || text.isBlank()) break
+                if (released || myPrewarmGen != prewarmGeneration.get() || text.isBlank()) break
                 // Tier 0 DLC voice pack: pre-master ElevenLabs MP3 through Character Cinema DSP + 20Hz lip-sync WAV cache!
                 val studioHashKey = studioVoiceAssetFileName(speaker, text).removeSuffix(".mp3")
                 val dlcStudio = com.example.book.BookContentPackManager.findDownloadedVoiceFile(appContext, studioHashKey)
@@ -443,7 +499,7 @@ class CosmicCharacterVoiceEngine(
 
                 // Offline fallback: pre-warm Tier 3 studio-mastered WAV
                 if (!ready) readyLatch.await(2500, TimeUnit.MILLISECONDS)
-                if (!ready || released) continue
+                if (!ready || released || myPrewarmGen != prewarmGeneration.get()) continue
                 val cacheFile = cacheFileFor(speaker, text)
                 if (!cacheFile.exists() || cacheFile.length() < 1024L) {
                     synthesizeAndMasterToWav(speaker, text, cacheFile)
@@ -461,13 +517,21 @@ class CosmicCharacterVoiceEngine(
 
     private fun pruneBookVoiceCacheIfNeeded(maxBytes: Long = 40L * 1024L * 1024L) {
         try {
-            val files = cacheDir.listFiles()?.filter { it.isFile } ?: return
+            val allFiles = cacheDir.listFiles()?.filter { it.isFile } ?: return
+            val staleTmpCutoff = System.currentTimeMillis() - 60_000L
+            allFiles.filter { it.name.endsWith(".tmp") && it.lastModified() < staleTmpCutoff }
+                .forEach { it.delete() }
+            val files = allFiles.filter { it.exists() && !it.name.endsWith(".tmp") }
             var total = files.sumOf { it.length() }
             if (total <= maxBytes) return
             files.sortedBy { it.lastModified() }.forEach { f ->
                 if (total <= maxBytes) return@forEach
                 val len = f.length()
-                if (f.delete()) total -= len
+                val path = f.absolutePath
+                if (f.delete()) {
+                    total -= len
+                    removeEnvelope(path)
+                }
             }
         } catch (_: Throwable) {
         }
@@ -529,9 +593,8 @@ class CosmicCharacterVoiceEngine(
         val offlineCacheFile = cacheFileFor(speakerKey, text)
 
         // Tier 2 (100% FREE, ZERO API KEY): ALWAYS try native Turkish Edge Neural TTS + Studio Mastering
-        // BEFORE falling back to cached offline Android TTS, so a brief network blip never traps a line
-        // on robotic offline TTS!
-        synthExecutor.execute {
+        // on the dedicated liveSpeakExecutor so background prewarm NEVER head-of-line blocks live speech!
+        liveSpeakExecutor.execute {
             if (released || muted || myGen != speakGeneration.get()) return@execute
 
             val freeNeuralFile = trySynthesizeFreeNeuralVoice(speakerKey, text, freeNeuralCacheMp3)
@@ -591,6 +654,7 @@ class CosmicCharacterVoiceEngine(
 
     companion object {
         const val STUDIO_VOICES_ASSET_DIR = "studio_voices"
+        internal const val MAX_CACHED_ENVELOPES = 48
 
         /**
          * Deterministic filename for pre-rendered offline ElevenLabs studio voice clips
@@ -924,7 +988,7 @@ class CosmicCharacterVoiceEngine(
                     tmpWav.delete()
                 }
                 if (masteredWav.exists() && masteredWav.length() > 1024L) {
-                    envelopeByPath[masteredWav.absolutePath] = envelope
+                    putEnvelope(masteredWav.absolutePath, envelope)
                     return masteredWav
                 }
             }
@@ -1163,12 +1227,17 @@ class CosmicCharacterVoiceEngine(
         val (left, right) = applyCharacterCinemaDsp(mono, sampleRate, profile.dspStyle, genderShiftSemitones)
         val envelope = computeSpeechRmsEnvelope(left, right, sampleRate)
 
-        val tmpFile = File(cacheDir, "${outFile.name}.tmp")
+        val tmpFile = File(cacheDir, "${outFile.name}.${UUID.randomUUID()}.tmp")
         return try {
             writeStereoWav16(tmpFile, sampleRate, left, right)
-            if (outFile.exists()) outFile.delete()
-            val ok = tmpFile.renameTo(outFile)
-            if (ok) envelopeByPath[outFile.absolutePath] = envelope
+            val ok = if (tmpFile.renameTo(outFile)) {
+                true
+            } else {
+                tmpFile.copyTo(outFile, overwrite = true)
+                tmpFile.delete()
+                outFile.exists() && outFile.length() > 1024L
+            }
+            if (ok) putEnvelope(outFile.absolutePath, envelope)
             ok
         } catch (_: Throwable) {
             tmpFile.delete()
@@ -1669,19 +1738,29 @@ class CosmicCharacterVoiceEngine(
     private fun masterStudioDlcClipIfNeeded(dlcFile: File, speakerKey: String): File {
         val masteredWav = masteredDlcWavFileFor(dlcFile, speakerKey)
         if (masteredWav.exists() && masteredWav.length() > 1024L) return masteredWav
+        val tmpWav = File(cacheDir, "${masteredWav.name}.${UUID.randomUUID()}.tmp")
         return try {
             val decoded = decodeCompressedAudioToMonoFloat(dlcFile)
             if (decoded != null && decoded.samples.size > decoded.sampleRate / 12) {
                 val profile = profileFor(speakerKey)
                 val (left, right) = applyCharacterCinemaDsp(decoded.samples, decoded.sampleRate, profile.dspStyle, 0f)
-                writeStereoWav16(masteredWav, decoded.sampleRate, left, right)
-                envelopeByPath[masteredWav.absolutePath] = computeSpeechRmsEnvelope(left, right, decoded.sampleRate)
-                pruneBookVoiceCacheIfNeeded()
-                masteredWav
+                writeStereoWav16(tmpWav, decoded.sampleRate, left, right)
+                if (!tmpWav.renameTo(masteredWav)) {
+                    tmpWav.copyTo(masteredWav, overwrite = true)
+                    tmpWav.delete()
+                }
+                if (masteredWav.exists() && masteredWav.length() > 1024L) {
+                    putEnvelope(masteredWav.absolutePath, computeSpeechRmsEnvelope(left, right, decoded.sampleRate))
+                    pruneBookVoiceCacheIfNeeded()
+                    masteredWav
+                } else {
+                    dlcFile
+                }
             } else {
                 dlcFile
             }
         } catch (_: Throwable) {
+            try { tmpWav.delete() } catch (_: Throwable) {}
             dlcFile
         }
     }
@@ -1694,7 +1773,7 @@ class CosmicCharacterVoiceEngine(
             playFileClip(cachedMaster, expectedGen, speed)
             return
         }
-        synthExecutor.execute {
+        liveSpeakExecutor.execute {
             if (muted || released || expectedGen != speakGeneration.get()) return@execute
             val readyFile = masterStudioDlcClipIfNeeded(dlcFile, speakerKey)
             if (muted || released || expectedGen != speakGeneration.get()) return@execute
@@ -1702,198 +1781,241 @@ class CosmicCharacterVoiceEngine(
         }
     }
 
-    @Synchronized
     private fun playBundledStudioAsset(assetPath: String, expectedGen: Int, playbackSpeed: Float = 1.0f) {
-        if (muted || released || expectedGen != speakGeneration.get()) return
-        try {
+        synchronized(playbackLock) {
+            if (muted || released || expectedGen != speakGeneration.get()) return
+            var mp: MediaPlayer? = null
             try {
-                clipPlayer?.stop()
-                clipPlayer?.release()
-            } catch (_: Throwable) {}
-            clipPlayer = null
-            activeEnvelope = null
+                clipPlayer?.let { safeReleasePlayer(it) }
+                clipPlayer = null
+                activeEnvelope = null
 
-            val mp = MediaPlayer()
-            mp.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            var preparedViaFd = false
-            try {
-                appContext.assets.openFd(assetPath).use { afd ->
-                    mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                }
-                preparedViaFd = true
-            } catch (_: Throwable) {
-                // Fallback if APK compressed the asset: extract once to cacheDir and play from file
-                val cached = File(cacheDir, assetPath.substringAfterLast('/'))
-                if (!cached.exists() || cached.length() < 1024L) {
-                    appContext.assets.open(assetPath).use { input ->
-                        FileOutputStream(cached).use { output -> input.copyTo(output) }
-                    }
-                }
-                mp.setDataSource(cached.absolutePath)
-                preparedViaFd = true
-            }
-            if (!preparedViaFd) {
-                mp.release()
-                return
-            }
-            mp.setOnCompletionListener { player ->
-                try { player.release() } catch (_: Throwable) {}
-                if (clipPlayer === player) {
-                    clipPlayer = null
-                    notifySpeaking(false)
-                }
-            }
-            mp.setOnErrorListener { player, _, _ ->
-                try { player.release() } catch (_: Throwable) {}
-                if (clipPlayer === player) {
-                    clipPlayer = null
-                    notifySpeaking(false)
-                }
-                true
-            }
-            mp.prepare()
-            if (playbackSpeed != 1.0f) {
+                val created = MediaPlayer()
+                mp = created
+                created.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                var preparedViaFd = false
                 try {
-                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
-                } catch (_: Throwable) {}
+                    appContext.assets.openFd(assetPath).use { afd ->
+                        created.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
+                    }
+                    preparedViaFd = true
+                } catch (_: Throwable) {
+                    // Fallback if APK compressed the asset: extract atomically once to cacheDir and play from file
+                    val cached = File(cacheDir, assetPath.substringAfterLast('/'))
+                    if (!cached.exists() || cached.length() < 1024L) {
+                        val tmp = File(cacheDir, "${cached.name}.${UUID.randomUUID()}.tmp")
+                        try {
+                            appContext.assets.open(assetPath).use { input ->
+                                FileOutputStream(tmp).use { output -> input.copyTo(output) }
+                            }
+                            if (!tmp.renameTo(cached)) {
+                                tmp.copyTo(cached, overwrite = true)
+                                tmp.delete()
+                            }
+                        } catch (t: Throwable) {
+                            try { tmp.delete() } catch (_: Throwable) {}
+                            throw t
+                        }
+                    }
+                    created.setDataSource(cached.absolutePath)
+                    preparedViaFd = true
+                }
+                if (!preparedViaFd) {
+                    safeReleasePlayer(created)
+                    return
+                }
+                created.setOnCompletionListener { player ->
+                    safeReleasePlayer(player)
+                    val cleared = synchronized(playbackLock) {
+                        if (clipPlayer === player) {
+                            clipPlayer = null
+                            true
+                        } else false
+                    }
+                    if (cleared) notifySpeaking(false)
+                }
+                created.setOnErrorListener { player, _, _ ->
+                    safeReleasePlayer(player)
+                    val cleared = synchronized(playbackLock) {
+                        if (clipPlayer === player) {
+                            clipPlayer = null
+                            true
+                        } else false
+                    }
+                    if (cleared) notifySpeaking(false)
+                    true
+                }
+                created.prepare()
+                if (muted || released || expectedGen != speakGeneration.get()) {
+                    safeReleasePlayer(created)
+                    return
+                }
+                if (playbackSpeed != 1.0f) {
+                    try {
+                        created.playbackParams = created.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
+                    } catch (_: Throwable) {}
+                }
+                created.setVolume(1.0f, 1.0f)
+                directFallbackStartMs = System.currentTimeMillis()
+                clipPlayer = created
+                notifySpeaking(true)
+                created.start()
+            } catch (_: Throwable) {
+                mp?.let { if (clipPlayer !== it) safeReleasePlayer(it) }
+                notifySpeaking(false)
             }
-            mp.setVolume(1.0f, 1.0f)
-            directFallbackStartMs = System.currentTimeMillis()
-            clipPlayer = mp
-            notifySpeaking(true)
-            mp.start()
-        } catch (_: Throwable) {
-            notifySpeaking(false)
         }
     }
 
     private fun playRawClip(resId: Int, expectedGen: Int, playbackSpeed: Float = 1.0f) {
-        if (muted || released || expectedGen != speakGeneration.get()) return
-        try {
+        synchronized(playbackLock) {
+            if (muted || released || expectedGen != speakGeneration.get()) return
+            var mp: MediaPlayer? = null
             try {
-                clipPlayer?.stop()
-                clipPlayer?.release()
-            } catch (_: Throwable) {}
-            clipPlayer = null
-            activeEnvelope = null
-            val afd = appContext.resources.openRawResourceFd(resId) ?: return
-            val mp = MediaPlayer()
-            mp.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            afd.use { mp.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
-            mp.setOnCompletionListener { player ->
-                try { player.release() } catch (_: Throwable) {}
-                if (clipPlayer === player) {
-                    clipPlayer = null
-                    notifySpeaking(false)
+                clipPlayer?.let { safeReleasePlayer(it) }
+                clipPlayer = null
+                activeEnvelope = null
+                val afd = appContext.resources.openRawResourceFd(resId) ?: return
+                val created = MediaPlayer()
+                mp = created
+                created.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                afd.use { created.setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+                created.setOnCompletionListener { player ->
+                    safeReleasePlayer(player)
+                    val cleared = synchronized(playbackLock) {
+                        if (clipPlayer === player) {
+                            clipPlayer = null
+                            true
+                        } else false
+                    }
+                    if (cleared) notifySpeaking(false)
                 }
-            }
-            mp.setOnErrorListener { player, _, _ ->
-                try { player.release() } catch (_: Throwable) {}
-                if (clipPlayer === player) {
-                    clipPlayer = null
-                    notifySpeaking(false)
+                created.setOnErrorListener { player, _, _ ->
+                    safeReleasePlayer(player)
+                    val cleared = synchronized(playbackLock) {
+                        if (clipPlayer === player) {
+                            clipPlayer = null
+                            true
+                        } else false
+                    }
+                    if (cleared) notifySpeaking(false)
+                    true
                 }
-                true
+                created.prepare()
+                if (muted || released || expectedGen != speakGeneration.get()) {
+                    safeReleasePlayer(created)
+                    return
+                }
+                if (playbackSpeed != 1.0f) {
+                    try {
+                        created.playbackParams = created.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
+                    } catch (_: Throwable) {}
+                }
+                created.setVolume(1.0f, 1.0f)
+                directFallbackStartMs = System.currentTimeMillis()
+                clipPlayer = created
+                notifySpeaking(true)
+                created.start()
+            } catch (_: Throwable) {
+                mp?.let { if (clipPlayer !== it) safeReleasePlayer(it) }
+                notifySpeaking(false)
             }
-            mp.prepare()
-            if (playbackSpeed != 1.0f) {
-                try {
-                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
-                } catch (_: Throwable) {}
-            }
-            mp.setVolume(1.0f, 1.0f)
-            directFallbackStartMs = System.currentTimeMillis()
-            clipPlayer = mp
-            notifySpeaking(true)
-            mp.start()
-        } catch (_: Throwable) {
-            notifySpeaking(false)
         }
     }
 
-    @Synchronized
     private fun playFileClip(file: File, expectedGen: Int, playbackSpeed: Float = 1.0f) {
-        if (muted || released || expectedGen != speakGeneration.get()) return
-        try {
+        synchronized(playbackLock) {
+            if (muted || released || expectedGen != speakGeneration.get()) return
+            var mp: MediaPlayer? = null
             try {
-                clipPlayer?.stop()
-                clipPlayer?.release()
+                clipPlayer?.let { safeReleasePlayer(it) }
+                clipPlayer = null
+
+                // Load or lazily compute 20Hz RMS lip-sync envelope for cached WAV files
+                var env = getEnvelope(file.absolutePath)
+                if (env == null && file.name.endsWith(".wav", ignoreCase = true)) {
+                    val decoded = decodeWavToMonoFloat(file)
+                    if (decoded != null && decoded.samples.isNotEmpty()) {
+                        env = computeSpeechRmsEnvelope(decoded.samples, decoded.samples, decoded.sampleRate)
+                        putEnvelope(file.absolutePath, env)
+                    }
+                }
+                activeEnvelope = env
+
+                val created = MediaPlayer()
+                mp = created
+                created.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                created.setDataSource(file.absolutePath)
+                created.setOnCompletionListener { player ->
+                    safeReleasePlayer(player)
+                    val cleared = synchronized(playbackLock) {
+                        if (clipPlayer === player) {
+                            clipPlayer = null
+                            true
+                        } else false
+                    }
+                    if (cleared) notifySpeaking(false)
+                }
+                created.setOnErrorListener { player, _, _ ->
+                    safeReleasePlayer(player)
+                    val cleared = synchronized(playbackLock) {
+                        if (clipPlayer === player) {
+                            clipPlayer = null
+                            true
+                        } else false
+                    }
+                    if (cleared) notifySpeaking(false)
+                    true
+                }
+                created.prepare()
+                if (muted || released || expectedGen != speakGeneration.get()) {
+                    safeReleasePlayer(created)
+                    return
+                }
+                if (playbackSpeed != 1.0f) {
+                    try {
+                        created.playbackParams = created.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
+                    } catch (_: Throwable) {}
+                }
+                created.setVolume(1.0f, 1.0f)
+                directFallbackStartMs = System.currentTimeMillis()
+                clipPlayer = created
+                notifySpeaking(true)
+                created.start()
             } catch (_: Throwable) {
+                mp?.let { if (clipPlayer !== it) safeReleasePlayer(it) }
+                activeEnvelope = null
+                notifySpeaking(false)
             }
-            clipPlayer = null
-
-            // Load or lazily compute 20Hz RMS lip-sync envelope for cached WAV files
-            var env = envelopeByPath[file.absolutePath]
-            if (env == null && file.name.endsWith(".wav", ignoreCase = true)) {
-                val decoded = decodeWavToMonoFloat(file)
-                if (decoded != null && decoded.samples.isNotEmpty()) {
-                    env = computeSpeechRmsEnvelope(decoded.samples, decoded.samples, decoded.sampleRate)
-                    envelopeByPath[file.absolutePath] = env
-                }
-            }
-            activeEnvelope = env
-
-            val mp = MediaPlayer()
-            mp.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_GAME)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build()
-            )
-            mp.setDataSource(file.absolutePath)
-            mp.setOnCompletionListener { player ->
-                try {
-                    player.release()
-                } catch (_: Throwable) {
-                }
-                if (clipPlayer === player) {
-                    clipPlayer = null
-                    notifySpeaking(false)
-                }
-            }
-            mp.setOnErrorListener { player, _, _ ->
-                try {
-                    player.release()
-                } catch (_: Throwable) {
-                }
-                if (clipPlayer === player) {
-                    clipPlayer = null
-                    notifySpeaking(false)
-                }
-                true
-            }
-            mp.prepare()
-            if (playbackSpeed != 1.0f) {
-                try {
-                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
-                } catch (_: Throwable) {}
-            }
-            mp.setVolume(1.0f, 1.0f)
-            directFallbackStartMs = System.currentTimeMillis()
-            clipPlayer = mp
-            notifySpeaking(true)
-            mp.start()
-        } catch (_: Throwable) {
-            activeEnvelope = null
-            notifySpeaking(false)
         }
     }
 
     fun stopAndRelease() {
         released = true
+        prewarmGeneration.incrementAndGet()
         stopCurrentLine()
+        clearEnvelopes()
         try {
-            synthExecutor.shutdownNow()
+            liveSpeakExecutor.shutdownNow()
+        } catch (_: Throwable) {
+        }
+        try {
+            prewarmExecutor.shutdownNow()
         } catch (_: Throwable) {
         }
         try {

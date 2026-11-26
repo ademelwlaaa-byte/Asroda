@@ -674,16 +674,16 @@ class ProviderFallbackManager(
                 val latestUserText = messages.lastOrNull { it.role == "user" }?.text.orEmpty()
                 val isPureOocTurn = com.example.util.UserSentimentAnalyzer.isPureOocMessage(latestUserText)
 
-                // Shared connection pool streaming OkHttp client aligned with strict timeout flag
+                // Shared connection pool streaming OkHttp client with per-chunk stall guard & bounded call deadline
                 val streamClient = RetrofitClient.okHttpClient.newBuilder()
                     .connectTimeout(30_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
                     .writeTimeout(30_000L, java.util.concurrent.TimeUnit.MILLISECONDS)
                     .readTimeout(
-                        if (timeoutCfg.strictEnabled) timeoutCfg.readTimeoutMs else 0L,
+                        if (timeoutCfg.strictEnabled) timeoutCfg.readTimeoutMs else 60_000L,
                         java.util.concurrent.TimeUnit.MILLISECONDS
                     )
                     .callTimeout(
-                        if (timeoutCfg.strictEnabled) 0L else 0L, // Do not kill long streaming responses mid-generation
+                        240_000L, // 4-min ceiling prevents hung proxy sockets without cutting long RP chapters
                         java.util.concurrent.TimeUnit.MILLISECONDS
                     )
                     .build()
@@ -733,6 +733,7 @@ class ProviderFallbackManager(
                     var refusalReason = ""
                     var totalPromptTokens = 0L
                     var totalCandidateTokens = 0L
+                    var lastFinishReason = ""
 
                     suspend fun handleRawToken(rawToken: String) {
                         if (rawToken.isEmpty()) return
@@ -809,6 +810,7 @@ class ProviderFallbackManager(
                                 SseStreamParser.stream(streamClient, httpRequest, sseFormat).collect { chunk ->
                                     if (chunk.promptTokens > 0L) totalPromptTokens = chunk.promptTokens
                                     if (chunk.candidateTokens > 0L) totalCandidateTokens = chunk.candidateTokens
+                                    if (chunk.finishReason.isNotEmpty()) lastFinishReason = chunk.finishReason
                                     if (chunk.reasoningToken.isNotEmpty()) {
                                         handleReasoningToken(chunk.reasoningToken)
                                     }
@@ -840,8 +842,12 @@ class ProviderFallbackManager(
                         val visibleClean = EmochiRepository.cleanEmotionTags(sanitizer.visibleText)
                             .ifBlank { EmochiRepository.cleanEmotionTags(streamResponse.text) }
                             .trim()
+                        val isSafetyTruncated = lastFinishReason.uppercase(Locale.ROOT) in setOf(
+                            "SAFETY", "PROHIBITED_CONTENT", "CONTENT_FILTER", "RECITATION", "BLOCKLIST"
+                        ) && visibleClean.length < 40
 
-                        if (visibleClean.isBlank()) {
+                        if (visibleClean.isBlank() || isSafetyTruncated) {
+                            if (isSafetyTruncated) onResetVisibleStream()
                             // Empty/think-only stream -> try one non-stream safe retry on same provider
                             val safePrompt = com.example.data.repository.SystemPromptBuilder.sanitizeForSafeRetry(
                                 systemPrompt = activeSystemPrompt,
@@ -1076,7 +1082,7 @@ class ProviderFallbackManager(
         )
     }
 
-    private fun buildNarrativeStreamHttpRequest(
+    internal fun buildNarrativeStreamHttpRequest(
         providerKey: String,
         model: String,
         settings: UserSettingsEntity,
@@ -1097,7 +1103,12 @@ class ProviderFallbackManager(
                 format = SseStreamParser.SseFormat.GEMINI
                 url = "https://generativelanguage.googleapis.com/v1beta/models/$model:streamGenerateContent?alt=sse"
             }
-            providerKey == "claude" -> return null // Anthropic handled via single-shot adapter
+            providerKey == "claude" -> {
+                apiKey = settings.claudeApiKey.trim()
+                if (apiKey.isBlank()) return null
+                format = SseStreamParser.SseFormat.CLAUDE
+                url = "https://api.anthropic.com/v1/messages"
+            }
             providerKey == "groq" -> {
                 apiKey = settings.groqApiKey.trim()
                 if (apiKey.isBlank()) return null
@@ -1148,7 +1159,10 @@ class ProviderFallbackManager(
                 apiKey = decryptCustomApiKey(customEntity.apiKeyEncrypted)
                 val fmt = customEntity.apiFormat.lowercase().trim()
                 when {
-                    fmt == "anthropic" || cleanBase.contains("anthropic.com") -> return null
+                    fmt == "anthropic" || cleanBase.contains("anthropic.com") -> {
+                        format = SseStreamParser.SseFormat.CLAUDE
+                        url = resolveAnthropicMessagesUrl(cleanBase)
+                    }
                     fmt == "gemini" || cleanBase.contains("generativelanguage.googleapis.com") -> {
                         format = SseStreamParser.SseFormat.GEMINI
                         url = resolveGeminiEndpointUrl(cleanBase, model, stream = true)
@@ -1235,6 +1249,19 @@ class ProviderFallbackManager(
                     )
                 }
             }
+            SseStreamParser.SseFormat.CLAUDE -> {
+                reqBuilder.header("anthropic-version", "2023-06-01")
+                if (apiKey.isNotBlank()) reqBuilder.header("x-api-key", apiKey)
+                val msgsArr = buildAnthropicAlternatingMessages(messages)
+                JSONObject().apply {
+                    put("model", model)
+                    if (systemPrompt.isNotBlank()) put("system", systemPrompt)
+                    put("max_tokens", 4096)
+                    put("temperature", 0.90)
+                    put("stream", true)
+                    put("messages", msgsArr)
+                }
+            }
             else -> {
                 if (apiKey.isNotBlank()) reqBuilder.header("Authorization", "Bearer $apiKey")
                 val msgsArr = JSONArray()
@@ -1246,11 +1273,14 @@ class ProviderFallbackManager(
                     val role = if (msg.role == "user") "user" else "assistant"
                     msgsArr.put(JSONObject().put("role", role).put("content", msg.text))
                 }
+                val isReasoning = isOpenAiReasoningModel(model)
                 JSONObject().apply {
                     put("model", model)
                     put("messages", msgsArr)
-                    put("temperature", 0.90)
-                    put("top_p", 0.95)
+                    if (!isReasoning) {
+                        put("temperature", 0.90)
+                        put("top_p", 0.95)
+                    }
                     put("stream", true)
                 }
             }
@@ -1541,7 +1571,7 @@ class ProviderFallbackManager(
                 val fmt = customEntity.apiFormat.lowercase().trim()
                 if (fmt == "anthropic" || cleanBase.contains("anthropic.com")) {
                     format = "anthropic"
-                    url = if (cleanBase.endsWith("/messages")) cleanBase else "$cleanBase/v1/messages"
+                    url = resolveAnthropicMessagesUrl(cleanBase)
                 } else if (fmt == "gemini" || cleanBase.contains("generativelanguage.googleapis.com")) {
                     format = "gemini"
                     url = resolveGeminiEndpointUrl(cleanBase, model, stream = false)
@@ -1616,11 +1646,16 @@ class ProviderFallbackManager(
             }
             else -> {
                 if (apiKey.isNotBlank()) reqBuilder.header("Authorization", "Bearer $apiKey")
+                val isReasoning = isOpenAiReasoningModel(model)
                 JSONObject().apply {
                     put("model", model)
-                    put("temperature", com.example.EmochiApplication.UTILITY_TEMPERATURE)
-                    put("top_p", com.example.EmochiApplication.UTILITY_TOP_P)
-                    put("max_tokens", maxTokens)
+                    if (isReasoning) {
+                        put("max_completion_tokens", maxTokens)
+                    } else {
+                        put("temperature", com.example.EmochiApplication.UTILITY_TEMPERATURE)
+                        put("top_p", com.example.EmochiApplication.UTILITY_TOP_P)
+                        put("max_tokens", maxTokens)
+                    }
                     val msgsArr = JSONArray()
                     if (systemPrompt.isNotBlank()) {
                         msgsArr.put(JSONObject().put("role", "system").put("content", systemPrompt))
@@ -1775,7 +1810,7 @@ class ProviderFallbackManager(
 
             // 2. Anthropic Messages API test
             if (format == "anthropic" || cleanUrl.contains("anthropic.com")) {
-                val endpoint = if (cleanUrl.endsWith("/messages")) cleanUrl else "$cleanUrl/v1/messages"
+                val endpoint = resolveAnthropicMessagesUrl(cleanUrl)
                 val payload = JSONObject().apply {
                     put("model", modelName.ifBlank { "claude-3-5-sonnet-20241022" })
                     put("max_tokens", 24)
@@ -1826,8 +1861,10 @@ class ProviderFallbackManager(
             // 3. OpenAI-compatible Chat Completions test (OpenAI, Groq, OpenRouter, DeepSeek, OVH, Pollinations, LLM7, Ollama, etc.)
             val endpoint = resolveOpenAiChatCompletionsUrl(cleanUrl)
 
+            val safeModel = modelName.ifBlank { "openai" }
+            val isReasoning = isOpenAiReasoningModel(safeModel)
             val payload = JSONObject().apply {
-                put("model", modelName.ifBlank { "openai" })
+                put("model", safeModel)
                 put(
                     "messages",
                     JSONArray().apply {
@@ -1837,7 +1874,11 @@ class ProviderFallbackManager(
                         })
                     }
                 )
-                put("max_tokens", 24)
+                if (isReasoning) {
+                    put("max_completion_tokens", 24)
+                } else {
+                    put("max_tokens", 24)
+                }
                 if (testTools) {
                     put("tools", MemoryToolRegistry.toOpenAiToolsJsonArray())
                 }
@@ -1904,21 +1945,23 @@ class ProviderFallbackManager(
         val raw = encrypted.trim()
         if (raw.isBlank()) return ""
         return try {
-            com.example.util.KeystoreEncryptionManager.decrypt(raw).trim()
+            com.example.util.SecureApiKeyVault.decryptFlexible(raw).trim()
         } catch (_: Exception) {
-            try {
-                com.example.util.SecureApiKeyVault.decrypt(raw).trim()
-            } catch (_: Exception) {
-                ""
-            }
+            ""
         }
     }
 
-    private fun resolveOpenAiChatCompletionsUrl(baseUrl: String): String {
-        val cleanUrl = baseUrl.trim().trimEnd('/')
+    internal fun resolveOpenAiChatCompletionsUrl(baseUrl: String): String {
+        val cleanUrl = baseUrl.trim().substringBefore('?').trimEnd('/')
         return when {
             cleanUrl.endsWith("/chat/completions") -> cleanUrl
-            cleanUrl.contains("pollinations.ai") -> cleanUrl
+            cleanUrl.contains("pollinations.ai", ignoreCase = true) -> {
+                if (cleanUrl.endsWith("/openai", ignoreCase = true)) {
+                    "$cleanUrl/chat/completions"
+                } else {
+                    "$cleanUrl/openai/chat/completions"
+                }
+            }
             cleanUrl.endsWith("/v1") ||
                 cleanUrl.endsWith("/v2") ||
                 cleanUrl.endsWith("/v3") ||
@@ -1930,8 +1973,18 @@ class ProviderFallbackManager(
         }
     }
 
-    private fun resolveGeminiEndpointUrl(baseUrl: String, model: String, stream: Boolean): String {
-        val cleanBase = baseUrl.trim().trimEnd('/')
+    internal fun resolveAnthropicMessagesUrl(baseUrl: String): String {
+        val cleanBase = baseUrl.trim().substringBefore('?').trimEnd('/')
+        if (cleanBase.isBlank()) return "https://api.anthropic.com/v1/messages"
+        return when {
+            cleanBase.endsWith("/messages", ignoreCase = true) -> cleanBase
+            cleanBase.endsWith("/v1", ignoreCase = true) -> "$cleanBase/messages"
+            else -> "$cleanBase/v1/messages"
+        }
+    }
+
+    internal fun resolveGeminiEndpointUrl(baseUrl: String, model: String, stream: Boolean): String {
+        val cleanBase = baseUrl.trim().substringBefore('?').trimEnd('/')
         val suffix = if (stream) ":streamGenerateContent?alt=sse" else ":generateContent"
         val cleanModel = model.trim().removePrefix("models/")
         if (cleanBase.isBlank() || cleanBase.contains("generativelanguage.googleapis.com", ignoreCase = true)) {
@@ -1939,10 +1992,49 @@ class ProviderFallbackManager(
         }
         return when {
             cleanBase.contains(":generateContent") || cleanBase.contains(":streamGenerateContent") -> cleanBase
-            cleanBase.endsWith("/models") -> "$cleanBase/$cleanModel$suffix"
-            cleanBase.endsWith("/v1beta") || cleanBase.endsWith("/v1") -> "$cleanBase/models/$cleanModel$suffix"
+            cleanBase.endsWith("/models", ignoreCase = true) -> "$cleanBase/$cleanModel$suffix"
+            cleanBase.endsWith("/v1beta", ignoreCase = true) || cleanBase.endsWith("/v1", ignoreCase = true) -> "$cleanBase/models/$cleanModel$suffix"
             else -> "$cleanBase/v1beta/models/$cleanModel$suffix"
         }
+    }
+
+    internal fun isOpenAiReasoningModel(model: String): Boolean {
+        val bare = model.trim().lowercase(Locale.ROOT).substringAfterLast('/')
+        return bare == "o1" ||
+            bare.startsWith("o1-") ||
+            bare == "o3" ||
+            bare.startsWith("o3-") ||
+            bare == "o4" ||
+            bare.startsWith("o4-") ||
+            bare == "gpt-5" ||
+            bare.startsWith("gpt-5-")
+    }
+
+    internal fun buildAnthropicAlternatingMessages(messages: List<MessageEntity>): JSONArray {
+        val merged = mutableListOf<Pair<String, StringBuilder>>()
+        for (msg in messages) {
+            val text = msg.text.trim()
+            if (text.isEmpty()) continue
+            val role = if (msg.role == "user") "user" else "assistant"
+            if (merged.isEmpty() && role == "assistant") {
+                // Anthropic Messages API requires the conversation array to begin with a "user" turn
+                merged.add("user" to StringBuilder("..."))
+            }
+            val last = merged.lastOrNull()
+            if (last != null && last.first == role) {
+                last.second.append("\n\n").append(text)
+            } else {
+                merged.add(role to StringBuilder(text))
+            }
+        }
+        if (merged.isEmpty()) {
+            merged.add("user" to StringBuilder("..."))
+        }
+        val arr = JSONArray()
+        for ((role, sb) in merged) {
+            arr.put(JSONObject().put("role", role).put("content", sb.toString()))
+        }
+        return arr
     }
 
     private fun inferKnownProviderKey(url: String): String? {
