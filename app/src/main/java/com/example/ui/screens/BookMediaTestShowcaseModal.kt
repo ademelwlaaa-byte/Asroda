@@ -367,21 +367,21 @@ object BookMediaTestCatalog {
     )
 
     val studioVoices: List<BookTestVoiceEntry> = listOf(
-        BookTestVoiceEntry("NATASHA", "Natasha Romanoff", "Lily · Kadifemsi Ajan", "Aşağıdaki Manhattan ışıklarına bak Aiden... Yukarıda herkes gülüyor ama en gerçek sessizlik senin yanında.", Color(0xFFF472B6)),
-        BookTestVoiceEntry("WANDA", "Wanda Maximoff", "Sarah · Sıcak & Duygusal", "Gölün sularında yıldızlar parlıyor Aiden... İlk kez zihnimde hiç kâbus yok, sadece senin sıcaklığın var.", Color(0xFFC084FC)),
-        BookTestVoiceEntry("MIRA", "Mira · Denek 8-C", "Jessica · Genç & Parlak", "Aiden! Geldiğini kapıdan bile değil, enerjinin sakinliğinden anladım. Sana göstermek istediğim yeni bir şey öğrendim!", Color(0xFF38BDF8)),
-        BookTestVoiceEntry("AIDEN", "Aiden Blackwood", "Charlie · Karizmatik Kahraman", "Bütün ekibim için — BURADA BİTİYOR ULTRON!", Color(0xFF60A5FA)),
-        BookTestVoiceEntry("TWIN_AIDEN", "Twin Aiden · Post-Credits", "Callum · Karanlık Gelecek", "Kapıyı aç... zaman kırılmadan önce sana onları nasıl hayatta tutacağını göstereyim.", Color(0xFF818CF8)),
-        BookTestVoiceEntry("ZERO", "Sıfır · Yara İzli Aiden", "Callum · Kırık Ayna", "Kendi yüzüne beş yıl sonrasından bakmak garip, değil mi Aiden? Yara izime bakıp korkma — bu kaderi hâlâ değiştirebilirsin.", Color(0xFF38BDF8)),
-        BookTestVoiceEntry("VOSS", "Elias Voss · Denek 6-B", "Harry · Sert & Samimi", "Hoş geldin 7-A. Çay demledim — senin öğrettiğin nefes egzersizi sayesinde üç haftadır tek bir cam bile çatlatmadım.", Color(0xFFF87171)),
-        BookTestVoiceEntry("STEVE", "Steve Rogers", "Brian · Lider Bariton", "Kalkanımı yolladım Aiden! Gardı kırıldı, şimdi yüklen!", Color(0xFF3B82F6)),
-        BookTestVoiceEntry("TONY", "Tony Stark", "Chris · Zeki & Esprili", "Kenara ışınlan evlat — yörünge ışınını tam üstüne indiriyorum!", Color(0xFFF59E0B)),
-        BookTestVoiceEntry("THOR", "Thor Odinson", "Adam · Asgard Gücü", "Asgard'ın fırtınası üstüne insin! Hazır mısın Aiden?", Color(0xFF38BDF8)),
-        BookTestVoiceEntry("VAELOR", "Yüce Hakem Vaelor", "Adam · Kozmik Lord", "Diz çök Aiden Blackwood! O mavi kıvılcım Soluk Mühür'e aittir!", Color(0xFFF43F5E)),
-        BookTestVoiceEntry("ULTRON", "Ultron Prime", "Daniel · Soğuk Yapay Zekâ", "Kuklalarım koparıldı ama bu şehir gökten düşecek Aiden Blackwood! İplerim artık yok!", Color(0xFFEF4444)),
-        BookTestVoiceEntry("ARCHITECT", "Asıl Mimar", "Bill · Kadim & Ürpertici", "Birinci perde kapandı, Kayıp Anahtarım... Demir kuklayı kırdın, ama insanların korkusunu kıramazsın.", Color(0xFFFDE047)),
-        BookTestVoiceEntry("VISION", "Vision", "George · Dingin & Bilge", "Zihin Taşı'nı odaklıyorum Aiden — zırhı açıldı, şimdi vur!", Color(0xFF34D399)),
-        BookTestVoiceEntry("PIETRO", "Pietro Maximoff", "Liam · Hızlı & Enerjik", "Bunu görmedin mi Ultron?! Nöbetçileri temizledim — sıra sende Aiden!", Color(0xFF22D3EE))
+        BookTestVoiceEntry("NATASHA", "Natasha Romanoff", "Sultan (TR) · Buğulu Tiyatral Dublaj", "Aşağıdaki Manhattan ışıklarına bak Aiden... Yukarıda herkes gülüyor ama en gerçek sessizlik senin yanında.", Color(0xFFF472B6)),
+        BookTestVoiceEntry("WANDA", "Wanda Maximoff", "Ayça (TR) · Duygusal & Yumuşak Dublaj", "Gölün sularında yıldızlar parlıyor Aiden... İlk kez zihnimde hiç kâbus yok, sadece senin sıcaklığın var.", Color(0xFFC084FC)),
+        BookTestVoiceEntry("MIRA", "Mira · Denek 8-C", "Gökçe Deniz (TR) · Genç & Canlı", "Aiden! Geldiğini kapıdan bile değil, enerjinin sakinliğinden anladım. Sana göstermek istediğim yeni bir şey öğrendim!", Color(0xFF38BDF8)),
+        BookTestVoiceEntry("AIDEN", "Aiden Blackwood", "Yunus (TR) · Karizmatik Kahraman", "Bütün ekibim için — BURADA BİTİYOR ULTRON!", Color(0xFF60A5FA)),
+        BookTestVoiceEntry("TWIN_AIDEN", "Twin Aiden · Post-Credits", "Can Seçkin (TR) · Nefesli & Karanlık", "Kapıyı aç... zaman kırılmadan önce sana onları nasıl hayatta tutacağını göstereyim.", Color(0xFF818CF8)),
+        BookTestVoiceEntry("ZERO", "Sıfır · Yara İzli Aiden", "Can Seçkin (TR) · Kırık Ayna", "Kendi yüzüne beş yıl sonrasından bakmak garip, değil mi Aiden? Yara izime bakıp korkma — bu kaderi hâlâ değiştirebilirsin.", Color(0xFF38BDF8)),
+        BookTestVoiceEntry("VOSS", "Elias Voss · Denek 6-B", "Cem (TR) · Yoğun & Sert Savaşçı", "Hoş geldin 7-A. Çay demledim — senin öğrettiğin nefes egzersizi sayesinde üç haftadır tek bir cam bile çatlatmadım.", Color(0xFFF87171)),
+        BookTestVoiceEntry("STEVE", "Steve Rogers", "Mustafa Silici (TR) · Ödüllü Lider Bariton", "Kalkanımı yolladım Aiden! Gardı kırıldı, şimdi yüklen!", Color(0xFF3B82F6)),
+        BookTestVoiceEntry("TONY", "Tony Stark", "Cavit (TR) · Hızlı, Enerjik & Esprili", "Kenara ışınlan evlat — yörünge ışınını tam üstüne indiriyorum!", Color(0xFFF59E0B)),
+        BookTestVoiceEntry("THOR", "Thor Odinson", "Adam (TR) · Kalın & Gür Asgard Tonu", "Asgard'ın fırtınası üstüne insin! Hazır mısın Aiden?", Color(0xFF38BDF8)),
+        BookTestVoiceEntry("VAELOR", "Yüce Hakem Vaelor", "Ahmet (TR) · Derin Kozmik Bas", "Diz çök Aiden Blackwood! O mavi kıvılcım Soluk Mühür'e aittir!", Color(0xFFF43F5E)),
+        BookTestVoiceEntry("ULTRON", "Ultron Prime", "Mert Aksoy (TR) · Soğuk & Keskin YZ", "Kuklalarım koparıldı ama bu şehir gökten düşecek Aiden Blackwood! İplerim artık yok!", Color(0xFFEF4444)),
+        BookTestVoiceEntry("ARCHITECT", "Asıl Mimar", "Emrullah Uzun (TR) · Kadim Bariton", "Birinci perde kapandı, Kayıp Anahtarım... Demir kuklayı kırdın, ama insanların korkusunu kıramazsın.", Color(0xFFFDE047)),
+        BookTestVoiceEntry("VISION", "Vision", "Orçun Togan (TR) · Dingin & Ölçülü", "Zihin Taşı'nı odaklıyorum Aiden — zırhı açıldı, şimdi vur!", Color(0xFF34D399)),
+        BookTestVoiceEntry("PIETRO", "Pietro Maximoff", "Arman (TR) · Genç & Çok Atik", "Bunu görmedin mi Ultron?! Nöbetçileri temizledim — sıra sende Aiden!", Color(0xFF22D3EE))
     )
 }
 
