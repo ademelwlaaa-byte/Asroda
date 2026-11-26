@@ -184,21 +184,21 @@ fun GlobalSettingsModal(
         outputRgb565 = false
     )
     val blurredBg = blurredBgState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
-    val refPlates = remember(context) { loadGlobalSettingsRefPlates(context) }
+    val refPlates = rememberGlobalSettingsRefPlates()
     val motionConfig = LocalCosmicMotionConfig.current
-    val currentMotionMode by CosmicMotionPreferences.mode.collectAsState()
-    val refusalAutoFallback by com.example.util.AppFeatureFlags.refusalAutoFallback.collectAsState()
-    val strictApiTimeout by com.example.util.AppFeatureFlags.strictApiTimeout.collectAsState()
-    val ttsEngineMode by com.example.util.AppFeatureFlags.ttsEngineMode.collectAsState()
-    val ttsEmotionalProsody by com.example.util.AppFeatureFlags.ttsEmotionalProsody.collectAsState()
-    val ttsNeuralVoice by com.example.util.AppFeatureFlags.ttsNeuralVoice.collectAsState()
-    val aiUtilityModelsMap by com.example.util.AppFeatureFlags.aiUtilityModels.collectAsState()
-    val isSelectingUtilityKey by viewModel.isSelectingUtilityModel.collectAsState()
-    val utilitySelectionFeedback by viewModel.utilityModelSelectionMessage.collectAsState()
-    val isTurkishVoiceMissing by viewModel.isTurkishVoiceMissing.collectAsState()
-    val providerHealthMap by com.example.data.managers.ProviderHealthTracker.healthSnapshot.collectAsState()
+    val currentMotionMode by CosmicMotionPreferences.mode.collectAsStateWithLifecycle()
+    val refusalAutoFallback by com.example.util.AppFeatureFlags.refusalAutoFallback.collectAsStateWithLifecycle()
+    val strictApiTimeout by com.example.util.AppFeatureFlags.strictApiTimeout.collectAsStateWithLifecycle()
+    val ttsEngineMode by com.example.util.AppFeatureFlags.ttsEngineMode.collectAsStateWithLifecycle()
+    val ttsEmotionalProsody by com.example.util.AppFeatureFlags.ttsEmotionalProsody.collectAsStateWithLifecycle()
+    val ttsNeuralVoice by com.example.util.AppFeatureFlags.ttsNeuralVoice.collectAsStateWithLifecycle()
+    val aiUtilityModelsMap by com.example.util.AppFeatureFlags.aiUtilityModels.collectAsStateWithLifecycle()
+    val isSelectingUtilityKey by viewModel.isSelectingUtilityModel.collectAsStateWithLifecycle()
+    val utilitySelectionFeedback by viewModel.utilityModelSelectionMessage.collectAsStateWithLifecycle()
+    val isTurkishVoiceMissing by viewModel.isTurkishVoiceMissing.collectAsStateWithLifecycle()
+    val providerHealthMap by com.example.data.managers.ProviderHealthTracker.healthSnapshot.collectAsStateWithLifecycle()
 
-    val customProviders by viewModel.customProviders.collectAsState()
+    val customProviders by viewModel.customProviders.collectAsStateWithLifecycle()
 
     // ── Built-in Keyed Provider State ──
     var geminiApiKey by remember { mutableStateOf(settings.customApiKey) }
@@ -273,10 +273,10 @@ fun GlobalSettingsModal(
     var pendingImportJson by remember { mutableStateOf<String?>(null) }
     var showVoicePickerDialog by remember { mutableStateOf(false) }
 
-    val availableTtsVoices by viewModel.availableTtsVoices.collectAsState()
-    val isTtsSpeaking by viewModel.isSpeaking.collectAsState()
-    val ttsReadActions by com.example.util.AppFeatureFlags.ttsReadActions.collectAsState()
-    val ttsAutoReadReplies by com.example.util.AppFeatureFlags.ttsAutoReadReplies.collectAsState()
+    val availableTtsVoices by viewModel.availableTtsVoices.collectAsStateWithLifecycle()
+    val isTtsSpeaking by viewModel.isSpeaking.collectAsStateWithLifecycle()
+    val ttsReadActions by com.example.util.AppFeatureFlags.ttsReadActions.collectAsStateWithLifecycle()
+    val ttsAutoReadReplies by com.example.util.AppFeatureFlags.ttsAutoReadReplies.collectAsStateWithLifecycle()
 
     DisposableEffect(Unit) {
         onDispose { viewModel.stopSpeaking() }
@@ -436,7 +436,7 @@ fun GlobalSettingsModal(
                 val cp = customMap[key]
                 if (cp != null) {
                     val decrypted = try {
-                        com.example.util.KeystoreEncryptionManager.decrypt(cp.apiKeyEncrypted)
+                        com.example.util.SecureApiKeyVault.decryptFlexible(cp.apiKeyEncrypted)
                     } catch (_: Exception) {
                         ""
                     }
@@ -3012,7 +3012,7 @@ fun GlobalSettingsModal(
             onTestConnection = { baseUrl, key, model, format ->
                 val resolvedKey = if (key.isBlank() && existingCustom != null) {
                     try {
-                        com.example.util.KeystoreEncryptionManager.decrypt(existingCustom.apiKeyEncrypted)
+                        com.example.util.SecureApiKeyVault.decryptFlexible(existingCustom.apiKeyEncrypted)
                     } catch (_: Exception) {
                         ""
                     }
@@ -3022,7 +3022,7 @@ fun GlobalSettingsModal(
             onFetchModels = { baseUrl, key ->
                 val resolvedKey = if (key.isBlank() && existingCustom != null) {
                     try {
-                        com.example.util.KeystoreEncryptionManager.decrypt(existingCustom.apiKeyEncrypted)
+                        com.example.util.SecureApiKeyVault.decryptFlexible(existingCustom.apiKeyEncrypted)
                     } catch (_: Exception) {
                         ""
                     }
@@ -3119,7 +3119,7 @@ fun GlobalSettingsModal(
             onTestConnection = { baseUrl, key, model, format ->
                 val resolvedKey = if (key.isBlank() && editing != null) {
                     try {
-                        com.example.util.KeystoreEncryptionManager.decrypt(editing.apiKeyEncrypted)
+                        com.example.util.SecureApiKeyVault.decryptFlexible(editing.apiKeyEncrypted)
                     } catch (_: Exception) {
                         ""
                     }
@@ -3129,7 +3129,7 @@ fun GlobalSettingsModal(
             onFetchModels = { baseUrl, key ->
                 val resolvedKey = if (key.isBlank() && editing != null) {
                     try {
-                        com.example.util.KeystoreEncryptionManager.decrypt(editing.apiKeyEncrypted)
+                        com.example.util.SecureApiKeyVault.decryptFlexible(editing.apiKeyEncrypted)
                     } catch (_: Exception) {
                         ""
                     }
@@ -3202,7 +3202,7 @@ fun GlobalSettingsModal(
     }
 
     if (showFallbackLogModal) {
-        val logs = viewModel.providerFallbackLog.collectAsState().value
+        val logs = viewModel.providerFallbackLog.collectAsStateWithLifecycle().value
         FallbackLogModal(logs = logs, onDismiss = { showFallbackLogModal = false })
     }
 

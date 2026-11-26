@@ -53,19 +53,23 @@ import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.book.BookStateRepository
 import com.example.book.CosmicDriftBookRegistry
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -109,28 +113,37 @@ import com.example.ui.animation.cosmicTapSpring
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.graphics.asImageBitmap
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 
+@Volatile
 private var cachedCosmicDriftBannerBitmap: ImageBitmap? = null
 
-private fun getCachedCosmicDriftBannerBitmap(context: android.content.Context): ImageBitmap? {
-    cachedCosmicDriftBannerBitmap?.let { return it }
-    return try {
-        val opts = android.graphics.BitmapFactory.Options().apply {
-            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+@Composable
+private fun rememberCosmicDriftBannerBitmap(context: android.content.Context): State<ImageBitmap?> {
+    return produceState(initialValue = cachedCosmicDriftBannerBitmap, key1 = context.applicationContext) {
+        if (value != null) return@produceState
+        val decoded = withContext(Dispatchers.IO) {
+            cachedCosmicDriftBannerBitmap ?: try {
+                val opts = android.graphics.BitmapFactory.Options().apply {
+                    inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                }
+                android.graphics.BitmapFactory.decodeResource(
+                    context.resources,
+                    R.drawable.img_book_kozmik_suruklenis_banner,
+                    opts
+                )?.asImageBitmap()?.also { cachedCosmicDriftBannerBitmap = it }
+            } catch (_: Throwable) {
+                null
+            }
         }
-        android.graphics.BitmapFactory.decodeResource(
-            context.resources,
-            R.drawable.img_book_kozmik_suruklenis_banner,
-            opts
-        )?.asImageBitmap()?.also { cachedCosmicDriftBannerBitmap = it }
-    } catch (_: Throwable) {
-        null
+        value = decoded
     }
 }
 
@@ -148,9 +161,21 @@ fun BooksTabContent(
 ) {
     val context = LocalContext.current
     val isEnglish = userSettings?.appLanguage == "en"
-    val resolvedBackdrop = frostedBackdrop ?: remember(context) {
-        createFrostedGothicManorBitmap(context, R.drawable.img_botlist_gothic_wisteria_bg)
-    }
+    val asyncFallbackBackdrop = if (frostedBackdrop == null) {
+        com.example.util.rememberFrostedBackdrop(
+            key = "gothic_manor_${R.drawable.img_botlist_gothic_wisteria_bg}",
+            drawableResId = R.drawable.img_botlist_gothic_wisteria_bg,
+            targetWidth = 360,
+            maxHeight = 860,
+            blurRadius = 4,
+            blurPasses = 2,
+            violetShiftWarmPixels = true,
+            outputRgb565 = true
+        ).value
+    } else null
+    val resolvedBackdrop = frostedBackdrop ?: asyncFallbackBackdrop ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
+    // templatesBackdropBlur tracks real window coords in draw phase; avoid scroll-triggered recompositions.
+    val effectiveScrollSync = if (scrollSync < Int.MIN_VALUE) scrollSync else 0
 
     val presetMcuBook = remember(isEnglish) {
         BotEntity(
@@ -295,7 +320,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
 
     val cosmicBookState by remember {
         BookStateRepository.stateFlow(context, CosmicDriftBookRegistry.BOOK_ID)
-    }.collectAsState()
+    }.collectAsStateWithLifecycle()
     val totalChaptersCount = CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS
     val completedChaptersCount = cosmicBookState.completedChapters.size
     val activeChapterNum = cosmicBookState.activeChapter.coerceIn(1, totalChaptersCount)
@@ -422,33 +447,33 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
     }
 
     val motionConfig = LocalCosmicMotionConfig.current
-    val orbitDeg: Float
-    val featuredGlow: Float
-    val starTwinkle: Float
+    val orbitDegState: State<Float>
+    val featuredGlowState: State<Float>
+    val starTwinkleState: State<Float>
     if (motionConfig.enableAmbientLoops) {
         val booksInfinite = rememberInfiniteTransition(label = "booksCosmicAnim")
-        orbitDeg = booksInfinite.animateFloat(
+        orbitDegState = booksInfinite.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(tween(24000, easing = LinearEasing)),
             label = "booksOrbit"
-        ).value
-        featuredGlow = booksInfinite.animateFloat(
+        )
+        featuredGlowState = booksInfinite.animateFloat(
             initialValue = 0.62f,
             targetValue = 1.0f,
             animationSpec = infiniteRepeatable(tween(2400, easing = LinearEasing), RepeatMode.Reverse),
             label = "booksGlow"
-        ).value
-        starTwinkle = booksInfinite.animateFloat(
+        )
+        starTwinkleState = booksInfinite.animateFloat(
             initialValue = 0.45f,
             targetValue = 1.0f,
             animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Reverse),
             label = "booksStar"
-        ).value
+        )
     } else {
-        orbitDeg = 0f
-        featuredGlow = 0.85f
-        starTwinkle = 0.82f
+        orbitDegState = remember { mutableFloatStateOf(0f) }
+        featuredGlowState = remember { mutableFloatStateOf(0.85f) }
+        starTwinkleState = remember { mutableFloatStateOf(0.82f) }
     }
 
     val displayChapter = activeChapterNum
@@ -484,14 +509,14 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                             .booksCosmicOuterGlow(
                                 cornerRadius = 26.dp,
                                 glowColor = Color(0xFFB366FF),
-                                alpha = 0.46f * featuredGlow,
+                                alphaProvider = { 0.46f * featuredGlowState.value },
                                 blurDp = 12.dp
                             )
                             .clip(RoundedCornerShape(50))
                             .templatesBackdropBlur(
                                 blurredBitmap = resolvedBackdrop,
                                 alpha = 0.78f,
-                                scrollSync = scrollSync
+                                scrollSync = effectiveScrollSync
                             )
                             .background(
                                 Brush.verticalGradient(
@@ -546,7 +571,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                     coreColor = Color(0xFFFAF5FF),
                                     edgeColor = Color(0xFFD8B4FE),
                                     glowColor = Color(0xFFC084FC),
-                                    glowAlpha = 0.55f * starTwinkle
+                                    glowAlpha = 0.55f * starTwinkleState.value
                                 )
                             }
                             Text(
@@ -594,7 +619,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                             coreColor = Color.White,
                             edgeColor = Color(0xFFE9D5FF),
                             glowColor = Color(0xFFC084FC),
-                            glowAlpha = 0.72f * starTwinkle
+                            glowAlpha = 0.72f * starTwinkleState.value
                         )
                     }
                 }
@@ -603,11 +628,13 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 if (onOpenSettings != null) {
                     MorCamSettingsButton(
                         frostedManorBitmap = resolvedBackdrop,
-                        scrollSync = scrollSync,
-                        orbitDeg = orbitDeg,
-                        glowAlpha = featuredGlow,
+                        scrollSync = effectiveScrollSync,
+                        orbitDeg = 0f,
+                        glowAlpha = 0.85f,
                         onClick = onOpenSettings,
-                        testTag = "books_settings_button"
+                        testTag = "books_settings_button",
+                        orbitDegProvider = { orbitDegState.value },
+                        glowAlphaProvider = { featuredGlowState.value }
                     )
                 }
             }
@@ -624,8 +651,8 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 CosmicGlassStatPill(
                     modifier = Modifier.weight(1f),
                     resolvedBackdrop = resolvedBackdrop,
-                    scrollSync = scrollSync,
-                    glowAlpha = featuredGlow,
+                    scrollSync = effectiveScrollSync,
+                    glowAlphaProvider = { featuredGlowState.value },
                     testTag = "books_stat_count_pill",
                     onClick = { showChapterModal = true }
                 ) {
@@ -653,8 +680,8 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 CosmicGlassStatPill(
                     modifier = Modifier.weight(1.06f),
                     resolvedBackdrop = resolvedBackdrop,
-                    scrollSync = scrollSync,
-                    glowAlpha = featuredGlow,
+                    scrollSync = effectiveScrollSync,
+                    glowAlphaProvider = { featuredGlowState.value },
                     testTag = "books_stat_chapter_pill",
                     onClick = { showChapterModal = true }
                 ) {
@@ -680,8 +707,8 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 CosmicGlassStatPill(
                     modifier = Modifier.weight(0.98f),
                     resolvedBackdrop = resolvedBackdrop,
-                    scrollSync = scrollSync,
-                    glowAlpha = featuredGlow,
+                    scrollSync = effectiveScrollSync,
+                    glowAlphaProvider = { featuredGlowState.value },
                     testTag = "books_stat_showcase_pill",
                     onClick = { showMediaTestShowcase = true }
                 ) {
@@ -713,14 +740,14 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                     .booksCosmicOuterGlow(
                         cornerRadius = 20.dp,
                         glowColor = Color(0xFF38BDF8),
-                        alpha = 0.38f * featuredGlow,
+                        alphaProvider = { 0.38f * featuredGlowState.value },
                         blurDp = 12.dp
                     )
                     .clip(RoundedCornerShape(20.dp))
                     .templatesBackdropBlur(
                         blurredBitmap = resolvedBackdrop,
                         alpha = 0.78f,
-                        scrollSync = scrollSync
+                        scrollSync = effectiveScrollSync
                     )
                     .background(
                         Brush.horizontalGradient(
@@ -828,7 +855,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         .booksCosmicOuterGlow(
                             cornerRadius = 28.dp,
                             glowColor = Color(0xFFA855F7),
-                            alpha = 0.52f * featuredGlow,
+                            alphaProvider = { 0.52f * featuredGlowState.value },
                             blurDp = 18.dp
                         )
                         .clip(cardShape)
@@ -836,7 +863,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         .templatesBackdropBlur(
                             blurredBitmap = resolvedBackdrop,
                             alpha = 0.80f,
-                            scrollSync = scrollSync
+                            scrollSync = effectiveScrollSync
                         )
                         .background(
                             Brush.verticalGradient(
@@ -868,20 +895,24 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                             }
                             .testTag("aiden_cosmic_drift_hero_banner")
                     ) {
-                        val bannerBitmap = remember(context) { getCachedCosmicDriftBannerBitmap(context) }
+                        val bannerBitmap by rememberCosmicDriftBannerBitmap(context)
                         if (bannerBitmap != null) {
                             Image(
-                                bitmap = bannerBitmap,
+                                bitmap = bannerBitmap!!,
                                 contentDescription = if (isEnglish) "Cosmic Drift Aiden Blackwood cover logo" else "Kozmik Sürükleniş Aiden Blackwood kapak logosu",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                         } else {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_book_kozmik_suruklenis_banner),
-                                contentDescription = if (isEnglish) "Cosmic Drift Aiden Blackwood cover logo" else "Kozmik Sürükleniş Aiden Blackwood kapak logosu",
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                            // Zero-main-thread-IO shimmer placeholder while Dispatchers.IO decode finishes (~15ms)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(
+                                        Brush.verticalGradient(
+                                            listOf(Color(0xFF231048), Color(0xFF14082C), Color(0xFF0E0521))
+                                        )
+                                    )
                             )
                         }
                         // Subtle violet rim veil so artwork harmonizes with the frosted crystal border
@@ -938,7 +969,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                     .booksCosmicOuterGlow(
                                         cornerRadius = 18.dp,
                                         glowColor = Color(0xFFA855F7),
-                                        alpha = 0.42f * featuredGlow,
+                                        alphaProvider = { 0.42f * featuredGlowState.value },
                                         blurDp = 8.dp
                                     )
                                     .clip(RoundedCornerShape(50))
@@ -994,7 +1025,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                     .booksCosmicOuterGlow(
                                         cornerRadius = 18.dp,
                                         glowColor = Color(0xFF60A5FA),
-                                        alpha = 0.28f * featuredGlow,
+                                        alphaProvider = { 0.28f * featuredGlowState.value },
                                         blurDp = 7.dp
                                     )
                                     .clip(RoundedCornerShape(50))
@@ -1193,7 +1224,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                             .booksCosmicOuterGlow(
                                                 cornerRadius = 5.dp,
                                                 glowColor = Color(0xFFD8B4FE),
-                                                alpha = 0.72f * featuredGlow,
+                                                alphaProvider = { 0.72f * featuredGlowState.value },
                                                 blurDp = 5.dp
                                             )
                                             .clip(RoundedCornerShape(50))
@@ -1311,7 +1342,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                 .booksCosmicOuterGlow(
                                     cornerRadius = 27.dp,
                                     glowColor = Color(0xFFC084FC),
-                                    alpha = 0.56f * featuredGlow,
+                                    alphaProvider = { 0.56f * featuredGlowState.value },
                                     blurDp = 12.dp
                                 )
                                 .clip(RoundedCornerShape(50))
@@ -1319,7 +1350,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                 .templatesBackdropBlur(
                                     blurredBitmap = resolvedBackdrop,
                                     alpha = 0.65f,
-                                    scrollSync = scrollSync
+                                    scrollSync = effectiveScrollSync
                                 )
                                 .background(
                                     Brush.verticalGradient(
@@ -1396,7 +1427,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                                     coreColor = Color(0xFFE9D5FF).copy(alpha = 0.82f),
                                     edgeColor = Color(0xFFA855F7).copy(alpha = 0.65f),
                                     glowColor = Color(0xFFC084FC),
-                                    glowAlpha = 0.42f * starTwinkle
+                                    glowAlpha = 0.42f * starTwinkleState.value
                                 )
                             }
 
@@ -1544,23 +1575,24 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         )
 
                         // Crisp cosmic starlight glints along right rim (matching reference aesthetic)
+                        val twinkle = starTwinkleState.value
                         drawFourPointStar(
                             center = Offset(size.width * 0.74f, size.height * 0.875f),
                             outerRadius = 7.dp.toPx(),
                             innerRadius = 1.6.dp.toPx(),
-                            coreColor = Color.White.copy(alpha = 0.90f * starTwinkle),
+                            coreColor = Color.White.copy(alpha = 0.90f * twinkle),
                             edgeColor = Color(0xFFE9D5FF),
                             glowColor = Color(0xFFC084FC),
-                            glowAlpha = 0.65f * starTwinkle
+                            glowAlpha = 0.65f * twinkle
                         )
                         drawFourPointStar(
                             center = Offset(size.width * 0.96f, size.height * 0.31f),
                             outerRadius = 5.5.dp.toPx(),
                             innerRadius = 1.3.dp.toPx(),
-                            coreColor = Color.White.copy(alpha = 0.85f * starTwinkle),
+                            coreColor = Color.White.copy(alpha = 0.85f * twinkle),
                             edgeColor = Color(0xFFD8B4FE),
                             glowColor = Color(0xFFA855F7),
-                            glowAlpha = 0.55f * starTwinkle
+                            glowAlpha = 0.55f * twinkle
                         )
                     }
                 }
@@ -1578,7 +1610,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         .templatesBackdropBlur(
                             blurredBitmap = resolvedBackdrop,
                             alpha = 0.72f,
-                            scrollSync = scrollSync
+                            scrollSync = effectiveScrollSync
                         )
                         .background(Color(0x42241145))
                         .border(
@@ -1650,7 +1682,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                         .templatesBackdropBlur(
                             blurredBitmap = resolvedBackdrop,
                             alpha = 0.74f,
-                            scrollSync = scrollSync
+                            scrollSync = effectiveScrollSync
                         )
                         .background(
                             Brush.linearGradient(
@@ -1780,7 +1812,7 @@ private fun CosmicGlassStatPill(
     modifier: Modifier = Modifier,
     resolvedBackdrop: ImageBitmap,
     scrollSync: Int,
-    glowAlpha: Float,
+    glowAlphaProvider: () -> Float,
     testTag: String,
     onClick: () -> Unit,
     content: @Composable () -> Unit
@@ -1791,7 +1823,7 @@ private fun CosmicGlassStatPill(
             .booksCosmicOuterGlow(
                 cornerRadius = 21.dp,
                 glowColor = Color(0xFFA855F7),
-                alpha = 0.34f * glowAlpha,
+                alphaProvider = { 0.34f * glowAlphaProvider() },
                 blurDp = 9.dp
             )
             .clip(RoundedCornerShape(50))
@@ -1863,28 +1895,28 @@ private fun CastEmblemOrb(
     Box(
         modifier = Modifier
             .size(32.dp)
-            .drawBehind {
-                drawIntoCanvas { canvas ->
-                    val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 2.dp.toPx()
-                        color = android.graphics.Color.argb(
-                            140,
-                            (ringColor.red * 255).toInt(),
-                            (ringColor.green * 255).toInt(),
-                            (ringColor.blue * 255).toInt()
-                        )
-                        maskFilter = android.graphics.BlurMaskFilter(
-                            4.5.dp.toPx(),
-                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                        )
-                    }
-                    canvas.nativeCanvas.drawCircle(
-                        size.width * 0.5f,
-                        size.height * 0.5f,
-                        size.minDimension * 0.47f,
-                        glowPaint
+            .drawWithCache {
+                val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 2.dp.toPx()
+                    color = android.graphics.Color.argb(
+                        140,
+                        (ringColor.red * 255).toInt(),
+                        (ringColor.green * 255).toInt(),
+                        (ringColor.blue * 255).toInt()
                     )
+                    maskFilter = android.graphics.BlurMaskFilter(
+                        4.5.dp.toPx(),
+                        android.graphics.BlurMaskFilter.Blur.NORMAL
+                    )
+                }
+                val cx = size.width * 0.5f
+                val cy = size.height * 0.5f
+                val radius = size.minDimension * 0.47f
+                onDrawBehind {
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawCircle(cx, cy, radius, glowPaint)
+                    }
                 }
             }
             .clip(CircleShape)
@@ -1917,43 +1949,49 @@ private fun CastEmblemOrb(
     }
 }
 
-// ── Outer Violet Cosmic Bloom Modifier ──────────────────────────────────────
+// ── Outer Violet Cosmic Bloom Modifier (Cached Paint + BlurMaskFilter via drawWithCache) ──
 private fun Modifier.booksCosmicOuterGlow(
     cornerRadius: Dp,
     glowColor: Color,
-    alpha: Float,
+    alphaProvider: () -> Float,
     blurDp: Dp
-): Modifier = this.drawBehind {
+): Modifier = this.drawWithCache {
     val cr = cornerRadius.toPx()
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-        val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.FILL
-            color = android.graphics.Color.argb(95, 8, 3, 20)
-            maskFilter = android.graphics.BlurMaskFilter(10.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-        }
-        native.drawRoundRect(
-            2.dp.toPx(),
-            4.dp.toPx(),
-            size.width - 2.dp.toPx(),
-            size.height + 4.dp.toPx(),
-            cr,
-            cr,
-            shadowPaint
+    val insetX = 2.dp.toPx()
+    val shadowOffsetY = 4.dp.toPx()
+    val w = size.width
+    val h = size.height
+    val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.FILL
+        color = android.graphics.Color.argb(95, 8, 3, 20)
+        maskFilter = android.graphics.BlurMaskFilter(10.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    val haloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 3.2.dp.toPx()
+        color = android.graphics.Color.rgb(
+            (glowColor.red * 255).toInt(),
+            (glowColor.green * 255).toInt(),
+            (glowColor.blue * 255).toInt()
         )
-
-        val haloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 3.2.dp.toPx()
-            color = android.graphics.Color.argb(
-                (alpha.coerceIn(0f, 1f) * 255).toInt(),
-                (glowColor.red * 255).toInt(),
-                (glowColor.green * 255).toInt(),
-                (glowColor.blue * 255).toInt()
+        maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    onDrawBehind {
+        val alphaInt = (alphaProvider().coerceIn(0f, 1f) * 255).toInt()
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.drawRoundRect(
+                insetX,
+                shadowOffsetY,
+                w - insetX,
+                h + shadowOffsetY,
+                cr,
+                cr,
+                shadowPaint
             )
-            maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            haloPaint.alpha = alphaInt
+            native.drawRoundRect(0f, 0f, w, h, cr, cr, haloPaint)
         }
-        native.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, haloPaint)
     }
 }
 
@@ -2280,7 +2318,7 @@ fun ChapterSelectionModal(
     val isEnglish = userSettings?.appLanguage == "en"
     val bookState by remember(botId) {
         BookStateRepository.stateFlow(context, CosmicDriftBookRegistry.BOOK_ID)
-    }.collectAsState()
+    }.collectAsStateWithLifecycle()
     val completedSet = bookState.completedChapters
     val progress = bookState.highestCompletedChapter
     val activeChapter = bookState.activeChapter
@@ -2301,13 +2339,18 @@ fun ChapterSelectionModal(
             }
     }
 
-    val modalInfinite = rememberInfiniteTransition(label = "chModalGlow")
-    val modalGlow by modalInfinite.animateFloat(
-        initialValue = 0.55f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
-        label = "mg"
-    )
+    val motionConfig = LocalCosmicMotionConfig.current
+    val modalGlowState: State<Float> = if (motionConfig.enableAmbientLoops) {
+        val modalInfinite = rememberInfiniteTransition(label = "chModalGlow")
+        modalInfinite.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1500), RepeatMode.Reverse),
+            label = "mg"
+        )
+    } else {
+        remember { mutableFloatStateOf(0.82f) }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -2328,7 +2371,7 @@ fun ChapterSelectionModal(
                 .booksCosmicOuterGlow(
                     cornerRadius = 26.dp,
                     glowColor = Color(0xFFA855F7),
-                    alpha = 0.45f * modalGlow,
+                    alphaProvider = { 0.45f * modalGlowState.value },
                     blurDp = 16.dp
                 )
                 .clip(RoundedCornerShape(26.dp))

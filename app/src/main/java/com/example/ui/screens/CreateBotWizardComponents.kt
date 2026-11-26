@@ -58,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -94,43 +95,51 @@ import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 
-// ── Outer Violet Cosmic Bloom Modifier (Consistent with Mor Cam Glass Language) ──
+// ── Outer Violet Cosmic Bloom Modifier (Cached Paint + BlurMaskFilter via drawWithCache) ──
 internal fun Modifier.wizardMorCamGlow(
     cornerRadius: Dp,
     glowColor: Color = Color(0xFFA855F7),
     alpha: Float = 0.45f,
-    blurDp: Dp = 12.dp
-): Modifier = this.drawBehind {
+    blurDp: Dp = 12.dp,
+    alphaProvider: (() -> Float)? = null
+): Modifier = this.drawWithCache {
     val cr = cornerRadius.toPx()
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-        val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.FILL
-            color = android.graphics.Color.argb(92, 8, 3, 20)
-            maskFilter = android.graphics.BlurMaskFilter(10.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-        }
-        native.drawRoundRect(
-            2.dp.toPx(),
-            3.dp.toPx(),
-            size.width - 2.dp.toPx(),
-            size.height + 3.dp.toPx(),
-            cr,
-            cr,
-            shadowPaint
+    val w = size.width
+    val h = size.height
+    val insetX = 2.dp.toPx()
+    val shadowOffsetY = 3.dp.toPx()
+    val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.FILL
+        color = android.graphics.Color.argb(92, 8, 3, 20)
+        maskFilter = android.graphics.BlurMaskFilter(10.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    val haloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 3.dp.toPx()
+        color = android.graphics.Color.rgb(
+            (glowColor.red * 255).toInt(),
+            (glowColor.green * 255).toInt(),
+            (glowColor.blue * 255).toInt()
         )
-        if (alpha > 0.01f) {
-            val haloPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 3.dp.toPx()
-                color = android.graphics.Color.argb(
-                    (alpha.coerceIn(0f, 1f) * 255).toInt(),
-                    (glowColor.red * 255).toInt(),
-                    (glowColor.green * 255).toInt(),
-                    (glowColor.blue * 255).toInt()
-                )
-                maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+        maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    onDrawBehind {
+        val currentAlpha = alphaProvider?.invoke() ?: alpha
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.drawRoundRect(
+                insetX,
+                shadowOffsetY,
+                w - insetX,
+                h + shadowOffsetY,
+                cr,
+                cr,
+                shadowPaint
+            )
+            if (currentAlpha > 0.01f) {
+                haloPaint.alpha = (currentAlpha.coerceIn(0f, 1f) * 255).toInt()
+                native.drawRoundRect(0f, 0f, w, h, cr, cr, haloPaint)
             }
-            native.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, haloPaint)
         }
     }
 }
@@ -186,8 +195,10 @@ internal fun WizardMorCamHeader(
     glowAlpha: Float,
     onBackClick: () -> Unit,
     onStepSelect: ((Int) -> Unit)? = null,
-    canJumpToStep: ((Int) -> Boolean)? = null
+    canJumpToStep: ((Int) -> Boolean)? = null,
+    glowAlphaProvider: (() -> Float)? = null
 ) {
+    val resolveGlow: () -> Float = glowAlphaProvider ?: { glowAlpha }
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
     val backScale by animateFloatAsState(
@@ -219,7 +230,7 @@ internal fun WizardMorCamHeader(
                 modifier = Modifier
                     .size(46.dp)
                     .graphicsLayer { scaleX = backScale; scaleY = backScale }
-                    .wizardMorCamGlow(cornerRadius = 23.dp, alpha = 0.34f * glowAlpha, blurDp = 9.dp)
+                    .wizardMorCamGlow(cornerRadius = 23.dp, blurDp = 9.dp, alphaProvider = { 0.34f * resolveGlow() })
                     .clip(CircleShape)
                     .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.76f, scrollSync = scrollSync)
                     .background(
@@ -256,7 +267,7 @@ internal fun WizardMorCamHeader(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
-                        .wizardMorCamGlow(cornerRadius = 24.dp, alpha = 0.42f * glowAlpha, blurDp = 11.dp)
+                        .wizardMorCamGlow(cornerRadius = 24.dp, blurDp = 11.dp, alphaProvider = { 0.42f * resolveGlow() })
                         .clip(RoundedCornerShape(50))
                         .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.78f, scrollSync = scrollSync)
                         .background(
@@ -329,7 +340,7 @@ internal fun WizardMorCamHeader(
                         center = Offset(cx, cy),
                         outerRadius = 5.5.dp.toPx(),
                         innerRadius = 1.5.dp.toPx(),
-                        glowAlpha = 0.7f * glowAlpha
+                        glowAlpha = 0.7f * resolveGlow()
                     )
                 }
             }
@@ -339,7 +350,7 @@ internal fun WizardMorCamHeader(
                 modifier = Modifier
                     .size(46.dp)
                     .cosmicPopOnTrigger(triggerKey = stepIdx, peakScale = 1.14f)
-                    .wizardMorCamGlow(cornerRadius = 23.dp, alpha = 0.36f * glowAlpha, blurDp = 9.dp)
+                    .wizardMorCamGlow(cornerRadius = 23.dp, blurDp = 9.dp, alphaProvider = { 0.36f * resolveGlow() })
                     .clip(CircleShape)
                     .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.76f, scrollSync = scrollSync)
                     .background(
@@ -409,8 +420,8 @@ internal fun WizardMorCamHeader(
                                     Modifier.wizardMorCamGlow(
                                         cornerRadius = 3.dp,
                                         glowColor = Color(0xFFD8B4FE),
-                                        alpha = 0.75f * glowAlpha,
-                                        blurDp = 6.dp
+                                        blurDp = 6.dp,
+                                        alphaProvider = { 0.75f * resolveGlow() }
                                     )
                                 } else Modifier
                             )
@@ -457,8 +468,10 @@ internal fun WizardMorCamBottomDock(
     onNext: () -> Unit,
     validationHint: String? = null,
     onDisabledNextClick: (() -> Unit)? = null,
-    isSubmitting: Boolean = false
+    isSubmitting: Boolean = false,
+    glowAlphaProvider: (() -> Float)? = null
 ) {
+    val resolveGlow: () -> Float = glowAlphaProvider ?: { glowAlpha }
     val backInteraction = remember { MutableInteractionSource() }
     val backPressed by backInteraction.collectIsPressedAsState()
     val backScale by animateFloatAsState(
@@ -526,7 +539,7 @@ internal fun WizardMorCamBottomDock(
                     .weight(0.92f)
                     .height(52.dp)
                     .graphicsLayer { scaleX = backScale; scaleY = backScale }
-                    .wizardMorCamGlow(cornerRadius = 26.dp, alpha = 0.28f * glowAlpha, blurDp = 9.dp)
+                    .wizardMorCamGlow(cornerRadius = 26.dp, blurDp = 9.dp, alphaProvider = { 0.28f * resolveGlow() })
                     .clip(RoundedCornerShape(50))
                     .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.76f, scrollSync = scrollSync)
                     .background(
@@ -586,8 +599,8 @@ internal fun WizardMorCamBottomDock(
                             Modifier.wizardMorCamGlow(
                                 cornerRadius = 26.dp,
                                 glowColor = Color(0xFFC084FC),
-                                alpha = 0.62f * glowAlpha,
-                                blurDp = 14.dp
+                                blurDp = 14.dp,
+                                alphaProvider = { 0.62f * resolveGlow() }
                             )
                         } else Modifier
                     )
@@ -701,8 +714,10 @@ internal fun WizardMorCamBottomDock(
 internal fun WizardStepHeader(
     title: String,
     subtitle: String,
-    glowAlpha: Float
+    glowAlpha: Float,
+    glowAlphaProvider: (() -> Float)? = null
 ) {
+    val resolveGlow: () -> Float = glowAlphaProvider ?: { glowAlpha }
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start
@@ -719,7 +734,7 @@ internal fun WizardStepHeader(
                     coreColor = Color.White,
                     edgeColor = Color(0xFFD8B4FE),
                     glowColor = Color(0xFFA855F7),
-                    glowAlpha = 0.65f * glowAlpha
+                    glowAlpha = 0.65f * resolveGlow()
                 )
             }
             Box(
@@ -780,8 +795,10 @@ internal fun WizardMorCamChoiceCard(
     scrollSync: Int,
     glowAlpha: Float,
     testTag: String = "",
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    glowAlphaProvider: (() -> Float)? = null
 ) {
+    val resolveGlow: () -> Float = glowAlphaProvider ?: { glowAlpha }
     val cardShape = RoundedCornerShape(24.dp)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -799,8 +816,8 @@ internal fun WizardMorCamChoiceCard(
             .wizardMorCamGlow(
                 cornerRadius = 24.dp,
                 glowColor = if (isSelected) Color(0xFFC084FC) else Color(0xFF7C3AED),
-                alpha = if (isSelected) 0.56f * glowAlpha else 0.22f,
-                blurDp = if (isSelected) 16.dp else 9.dp
+                blurDp = if (isSelected) 16.dp else 9.dp,
+                alphaProvider = { if (isSelected) 0.56f * resolveGlow() else 0.22f }
             )
             .clip(cardShape)
             .templatesBackdropBlur(
@@ -990,7 +1007,7 @@ internal fun WizardMorCamChoiceCard(
                     center = Offset(size.width * 0.90f, size.height * 0.02f),
                     outerRadius = 5.5.dp.toPx(),
                     innerRadius = 1.4.dp.toPx(),
-                    glowAlpha = 0.65f * glowAlpha
+                    glowAlpha = 0.65f * resolveGlow()
                 )
             }
         }

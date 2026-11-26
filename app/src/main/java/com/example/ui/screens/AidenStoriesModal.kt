@@ -894,54 +894,66 @@ fun AidenStoriesModalContent(
         }
     }
 
-    val infiniteTransition = rememberInfiniteTransition(label = "aiden_modal_ambient")
-    val ambientPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "ambient_phase"
-    )
-    val emberPhase by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 12000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "ember_phase"
-    )
-    val glowPulse by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "glow_pulse"
-    )
-    // Section 3.1: Periodic soft lightning flash pulse every ~4.5 seconds behind Aiden's silhouette & clouds
-    val lightningFlash by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 0f,
-        animationSpec = infiniteRepeatable(
-            animation = keyframes {
-                durationMillis = 4600
-                0.00f at 0
-                0.00f at 3200
-                0.85f at 3340
-                0.18f at 3460
-                1.00f at 3580
-                0.35f at 3780
-                0.00f at 4200
-                0.00f at 4600
-            },
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "lightning_flash_pulse"
-    )
+    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
+    val ambientPhase: Float
+    val emberPhase: Float
+    val glowPulse: Float
+    val lightningFlash: Float
+    if (motionConfig.enableAmbientLoops) {
+        val infiniteTransition = rememberInfiniteTransition(label = "aiden_modal_ambient")
+        ambientPhase = infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 6000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "ambient_phase"
+        ).value
+        emberPhase = infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 12000, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "ember_phase"
+        ).value
+        glowPulse = infiniteTransition.animateFloat(
+            initialValue = 0.85f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 2400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "glow_pulse"
+        ).value
+        // Section 3.1: Periodic soft lightning flash pulse every ~4.5 seconds behind Aiden's silhouette & clouds
+        lightningFlash = infiniteTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 0f,
+            animationSpec = infiniteRepeatable(
+                animation = keyframes {
+                    durationMillis = 4600
+                    0.00f at 0
+                    0.00f at 3200
+                    0.85f at 3340
+                    0.18f at 3460
+                    1.00f at 3580
+                    0.35f at 3780
+                    0.00f at 4200
+                    0.00f at 4600
+                },
+                repeatMode = RepeatMode.Restart
+            ),
+            label = "lightning_flash_pulse"
+        ).value
+    } else {
+        ambientPhase = 0f
+        emberPhase = 0f
+        glowPulse = 0.92f
+        lightningFlash = 0f
+    }
 
     val scrollPx by remember {
         derivedStateOf {

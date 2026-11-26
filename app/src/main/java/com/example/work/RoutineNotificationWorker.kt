@@ -38,6 +38,7 @@ class RoutineNotificationWorker(
         const val WORK_TAG = "routine_notification_daily"
         private const val PREFS_NAME = "emochi_routine_notif_prefs"
         private const val NOTIF_ID_BASE = 9100
+        const val MAX_NOTIFICATIONS_PER_RUN = 3
         private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
         fun isQuietHours(hourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)): Boolean {
@@ -49,13 +50,36 @@ class RoutineNotificationWorker(
             activeBotId: String?,
             isRoutineNotifEnabled: Boolean,
             proactiveEnabled: Boolean = true,
-            currentHourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+            currentHourOfDay: Int = Calendar.getInstance().get(Calendar.HOUR_OF_DAY),
+            botMode: String = "personal"
         ): Boolean {
             if (!isRoutineNotifEnabled) return false
             if (!proactiveEnabled) return false
+            if (botMode.equals("book", ignoreCase = true)) return false
+            if (com.example.book.CosmicDriftBookRegistry.supportsDeterministicEngine(botId)) return false
             if (isQuietHours(currentHourOfDay)) return false
             if (botId == activeBotId) return false
             return true
+        }
+
+        /**
+         * Stable per-routine notification ID so PendingIntents never overwrite unrelated bots across runs.
+         */
+        fun computeStableNotificationId(routineId: Long): Int {
+            return NOTIF_ID_BASE + ((routineId.hashCode() and 0x7FFFFFFF) % 4096)
+        }
+
+        /**
+         * Cleans and validates a routine description for Turkish notification display; returns null
+         * if blank or English-dominant so broken English routine artifacts never spam notifications.
+         */
+        fun sanitizeRoutineNotificationText(rawDescription: String): String? {
+            val cleaned = EmochiRepository.cleanEmotionTags(rawDescription)
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+            if (cleaned.length < 3) return null
+            if (com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(cleaned)) return null
+            return cleaned.take(80)
         }
 
         fun schedule(context: Context) {
@@ -130,17 +154,27 @@ class RoutineNotificationWorker(
 
             // Real-world daily dedup kept strictly separate from in-story routine.lastMentionedStoryDate!
             val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            // Prune stale daily dedup keys from prior days so SharedPreferences stays tiny
+            val staleKeys = prefs.all.entries
+                .filter { it.key.startsWith("notified_") && it.value != today }
+                .map { it.key }
+            if (staleKeys.isNotEmpty()) {
+                prefs.edit().apply { staleKeys.forEach { remove(it) } }.apply()
+            }
+
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             ensureChannel(nm)
 
-            var notifId = NOTIF_ID_BASE
+            var sentCount = 0
             for (bot in bots) {
+                if (sentCount >= MAX_NOTIFICATIONS_PER_RUN) break
                 if (!shouldNotifyRoutine(
                         botId = bot.id,
                         activeBotId = EmochiRepository.activeBotId,
                         isRoutineNotifEnabled = AppFeatureFlags.isRoutineNotifEnabled,
                         proactiveEnabled = bot.proactiveEnabled,
-                        currentHourOfDay = currentHour
+                        currentHourOfDay = currentHour,
+                        botMode = bot.mode
                     )
                 ) continue
 
@@ -148,11 +182,15 @@ class RoutineNotificationWorker(
                     db.routineDao().getRoutinesForBot(bot.id)
                 } catch (_: Exception) { continue }
 
+                var sentForBot = false
                 for (routine in routines) {
+                    if (sentCount >= MAX_NOTIFICATIONS_PER_RUN || sentForBot) break
                     val prefKey = "notified_${routine.id}"
                     if (prefs.getString(prefKey, null) == today) continue
                     if (!matchesDayOfWeek(routine.dayOfWeek, todayDow)) continue
+                    val safeText = sanitizeRoutineNotificationText(routine.routineDescription) ?: continue
 
+                    val stableNotifId = computeStableNotificationId(routine.id)
                     val openIntent = Intent(ctx, com.example.MainActivity::class.java).apply {
                         action = "com.example.OPEN_CHAT"
                         putExtra("botId", bot.id)
@@ -160,7 +198,7 @@ class RoutineNotificationWorker(
                     }
                     val pi = PendingIntent.getActivity(
                         ctx,
-                        notifId,
+                        stableNotifId,
                         openIntent,
                         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                     )
@@ -168,14 +206,16 @@ class RoutineNotificationWorker(
                     val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
                         .setSmallIcon(R.drawable.ic_notification_emochi)
                         .setContentTitle("${bot.aiName} seni bekliyor")
-                        .setContentText(routine.routineDescription.take(80))
+                        .setContentText(safeText)
                         .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                         .setContentIntent(pi)
                         .setAutoCancel(true)
                         .build()
 
-                    nm.notify(notifId++, notif)
+                    nm.notify(stableNotifId, notif)
                     prefs.edit().putString(prefKey, today).apply()
+                    sentCount++
+                    sentForBot = true
                 }
             }
             Result.success()

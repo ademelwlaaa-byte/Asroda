@@ -40,7 +40,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import com.example.ui.animation.CosmicMotionSpecs
 import com.example.ui.animation.LocalCosmicMotionConfig
 import com.example.ui.animation.cosmicDialogEnter
@@ -144,7 +149,25 @@ internal data class GlobalSettingsRefPlates(
     val footerCheck: ImageBitmap?
 )
 
+private val EMPTY_GLOBAL_SETTINGS_REF_PLATES = GlobalSettingsRefPlates(
+    orbLeft = null, headerPill = null, orbRight = null,
+    tabActive = null, tabInactive = null,
+    cardTop = null, cardMid = null, cardBottom = null,
+    iconPurple = null, iconEmerald = null,
+    badgePurple = null, badgeEmerald = null,
+    footerClose = null, footerSave = null, footerCheck = null
+)
+
+private val refPlatesCacheLock = Any()
+
+@Volatile
 private var cachedGlobalSettingsRefPlates: GlobalSettingsRefPlates? = null
+
+fun evictGlobalSettingsRefPlatesCache() {
+    synchronized(refPlatesCacheLock) {
+        cachedGlobalSettingsRefPlates = null
+    }
+}
 
 private fun decodeRefPlate(res: android.content.res.Resources, resId: Int): ImageBitmap? {
     return try {
@@ -160,24 +183,45 @@ private fun decodeRefPlate(res: android.content.res.Resources, resId: Int): Imag
 
 internal fun loadGlobalSettingsRefPlates(context: android.content.Context): GlobalSettingsRefPlates {
     cachedGlobalSettingsRefPlates?.let { return it }
-    val res = context.resources
-    return GlobalSettingsRefPlates(
-        orbLeft = decodeRefPlate(res, R.drawable.img_gs_ref_orb_left),
-        headerPill = decodeRefPlate(res, R.drawable.img_gs_ref_header_pill),
-        orbRight = decodeRefPlate(res, R.drawable.img_gs_ref_orb_right),
-        tabActive = decodeRefPlate(res, R.drawable.img_gs_ref_tab_active),
-        tabInactive = decodeRefPlate(res, R.drawable.img_gs_ref_tab_inactive),
-        cardTop = decodeRefPlate(res, R.drawable.img_gs_ref_card_top),
-        cardMid = decodeRefPlate(res, R.drawable.img_gs_ref_card_mid),
-        cardBottom = decodeRefPlate(res, R.drawable.img_gs_ref_card_bottom),
-        iconPurple = decodeRefPlate(res, R.drawable.img_gs_ref_icon_purple),
-        iconEmerald = decodeRefPlate(res, R.drawable.img_gs_ref_icon_emerald),
-        badgePurple = decodeRefPlate(res, R.drawable.img_gs_ref_badge_purple),
-        badgeEmerald = decodeRefPlate(res, R.drawable.img_gs_ref_badge_emerald),
-        footerClose = decodeRefPlate(res, R.drawable.img_gs_ref_footer_close),
-        footerSave = decodeRefPlate(res, R.drawable.img_gs_ref_footer_save),
-        footerCheck = decodeRefPlate(res, R.drawable.img_gs_ref_footer_check)
-    ).also { cachedGlobalSettingsRefPlates = it }
+    synchronized(refPlatesCacheLock) {
+        cachedGlobalSettingsRefPlates?.let { return it }
+        val res = context.applicationContext.resources
+        return GlobalSettingsRefPlates(
+            orbLeft = decodeRefPlate(res, R.drawable.img_gs_ref_orb_left),
+            headerPill = decodeRefPlate(res, R.drawable.img_gs_ref_header_pill),
+            orbRight = decodeRefPlate(res, R.drawable.img_gs_ref_orb_right),
+            tabActive = decodeRefPlate(res, R.drawable.img_gs_ref_tab_active),
+            tabInactive = decodeRefPlate(res, R.drawable.img_gs_ref_tab_inactive),
+            cardTop = decodeRefPlate(res, R.drawable.img_gs_ref_card_top),
+            cardMid = decodeRefPlate(res, R.drawable.img_gs_ref_card_mid),
+            cardBottom = decodeRefPlate(res, R.drawable.img_gs_ref_card_bottom),
+            iconPurple = decodeRefPlate(res, R.drawable.img_gs_ref_icon_purple),
+            iconEmerald = decodeRefPlate(res, R.drawable.img_gs_ref_icon_emerald),
+            badgePurple = decodeRefPlate(res, R.drawable.img_gs_ref_badge_purple),
+            badgeEmerald = decodeRefPlate(res, R.drawable.img_gs_ref_badge_emerald),
+            footerClose = decodeRefPlate(res, R.drawable.img_gs_ref_footer_close),
+            footerSave = decodeRefPlate(res, R.drawable.img_gs_ref_footer_save),
+            footerCheck = decodeRefPlate(res, R.drawable.img_gs_ref_footer_check)
+        ).also { cachedGlobalSettingsRefPlates = it }
+    }
+}
+
+/**
+ * Loads the 15 Global Settings glass plates off the UI thread on first open and serves
+ * the in-memory cache immediately thereafter, preventing 150-250ms main-thread decode jank.
+ */
+@Composable
+internal fun rememberGlobalSettingsRefPlates(): GlobalSettingsRefPlates {
+    val context = LocalContext.current
+    val initial = cachedGlobalSettingsRefPlates ?: EMPTY_GLOBAL_SETTINGS_REF_PLATES
+    val state = produceState(initialValue = initial, key1 = context.applicationContext) {
+        if (cachedGlobalSettingsRefPlates == null) {
+            value = withContext(Dispatchers.IO) {
+                loadGlobalSettingsRefPlates(context.applicationContext)
+            }
+        }
+    }
+    return state.value
 }
 
 /**
@@ -341,47 +385,49 @@ internal fun Modifier.morNeonDoubleHalo(
     intensity: Float = 0.55f,
     outerBlur: Dp = 10.dp,
     midBlur: Dp = 4.dp
-): Modifier = this.drawBehind {
+): Modifier = this.drawWithCache {
     val w = size.width
     val h = size.height
-    if (w <= 1f || h <= 1f || intensity <= 0.01f) return@drawBehind
+    if (w <= 1f || h <= 1f || intensity <= 0.01f) {
+        return@drawWithCache onDrawBehind {}
+    }
     val cr = cornerRadius.toPx().coerceAtMost(minOf(w, h) / 2f)
     val clamped = intensity.coerceIn(0f, 1.1f)
-
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-
-        val outerPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 3.0.dp.toPx()
-            color = android.graphics.Color.argb(
-                (0.48f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
-                (outerColor.red * 255).toInt(),
-                (outerColor.green * 255).toInt(),
-                (outerColor.blue * 255).toInt()
-            )
-            maskFilter = android.graphics.BlurMaskFilter(
-                outerBlur.toPx().coerceAtLeast(1f),
-                android.graphics.BlurMaskFilter.Blur.NORMAL
-            )
+    // Cache Paint & BlurMaskFilter instances per layout/size instead of allocating every draw frame
+    val outerPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 3.0.dp.toPx()
+        color = android.graphics.Color.argb(
+            (0.48f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
+            (outerColor.red * 255).toInt(),
+            (outerColor.green * 255).toInt(),
+            (outerColor.blue * 255).toInt()
+        )
+        maskFilter = android.graphics.BlurMaskFilter(
+            outerBlur.toPx().coerceAtLeast(1f),
+            android.graphics.BlurMaskFilter.Blur.NORMAL
+        )
+    }
+    val midPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 1.5.dp.toPx()
+        color = android.graphics.Color.argb(
+            (0.55f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
+            (midColor.red * 255).toInt(),
+            (midColor.green * 255).toInt(),
+            (midColor.blue * 255).toInt()
+        )
+        maskFilter = android.graphics.BlurMaskFilter(
+            midBlur.toPx().coerceAtLeast(1f),
+            android.graphics.BlurMaskFilter.Blur.NORMAL
+        )
+    }
+    onDrawBehind {
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.drawRoundRect(0f, 0f, w, h, cr, cr, outerPaint)
+            native.drawRoundRect(0f, 0f, w, h, cr, cr, midPaint)
         }
-        native.drawRoundRect(0f, 0f, w, h, cr, cr, outerPaint)
-
-        val midPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 1.5.dp.toPx()
-            color = android.graphics.Color.argb(
-                (0.55f * clamped).coerceIn(0f, 1f).let { (it * 255).toInt() },
-                (midColor.red * 255).toInt(),
-                (midColor.green * 255).toInt(),
-                (midColor.blue * 255).toInt()
-            )
-            maskFilter = android.graphics.BlurMaskFilter(
-                midBlur.toPx().coerceAtLeast(1f),
-                android.graphics.BlurMaskFilter.Blur.NORMAL
-            )
-        }
-        native.drawRoundRect(0f, 0f, w, h, cr, cr, midPaint)
     }
 }
 

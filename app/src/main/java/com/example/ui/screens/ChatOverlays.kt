@@ -94,6 +94,8 @@ import com.example.ui.theme.EmochiError
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -391,8 +393,12 @@ internal fun ChatStarredMessagesSheet(
 
                             MorCamDivider()
 
+                            val previewText = remember(starred.id, starred.text) {
+                                val cleaned = cleanCopyText(starred.text)
+                                if (cleaned.length > 220) cleaned.take(220) + "…" else cleaned
+                            }
                             Text(
-                                text = cleanCopyText(starred.text).take(220) + if (starred.text.length > 220) "…" else "",
+                                text = previewText,
                                 fontFamily = LiterarySerifFontFamily,
                                 color = MorCamTokens.SilverLavenderBright,
                                 fontSize = 13.sp,
@@ -712,14 +718,33 @@ internal fun ChatMilestoneCelebrationBanner(
     ) {
         val milestone = activeMilestone ?: return@AnimatedVisibility
         val isNarrative = milestone.isNarrative
-        val infinite = rememberInfiniteTransition(label = "milestoneGlow")
-        val glowAlpha by infinite.animateFloat(0.58f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "mg")
-        val particleProgress by infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "mp")
-
-        val goldLavenderRim = if (isNarrative) {
-            Brush.linearGradient(listOf(Color(0xFFFDE68A), Color(0xFFD8B4FE), Color(0xFFFBBF24), Color(0xFFE9D5FF)))
+        val motionConfig = LocalCosmicMotionConfig.current
+        val glowAlphaState: State<Float>
+        val particleProgressState: State<Float>
+        if (motionConfig.enableAmbientLoops) {
+            val infinite = rememberInfiniteTransition(label = "milestoneGlow")
+            glowAlphaState = infinite.animateFloat(0.58f, 1f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "mg")
+            particleProgressState = infinite.animateFloat(0f, 1f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "mp")
         } else {
-            Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFFFDE68A), Color(0xFFA855F7), Color(0xFFF3E8FF)))
+            glowAlphaState = remember { mutableFloatStateOf(0.88f) }
+            particleProgressState = remember { mutableFloatStateOf(0.25f) }
+        }
+        val starColors = remember {
+            listOf(
+                Color(0xFFFDE68A),
+                MorCamTokens.SilverLavenderBright,
+                MorCamTokens.LavenderLight,
+                Color(0xFFFBBF24),
+                Color(0xFFC4B5FD)
+            )
+        }
+
+        val goldLavenderRim = remember(isNarrative) {
+            if (isNarrative) {
+                Brush.linearGradient(listOf(Color(0xFFFDE68A), Color(0xFFD8B4FE), Color(0xFFFBBF24), Color(0xFFE9D5FF)))
+            } else {
+                Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFFFDE68A), Color(0xFFA855F7), Color(0xFFF3E8FF)))
+            }
         }
 
         Box(
@@ -736,13 +761,7 @@ internal fun ChatMilestoneCelebrationBanner(
             )
 
             Canvas(modifier = Modifier.fillMaxSize()) {
-                val starColors = listOf(
-                    Color(0xFFFDE68A),
-                    MorCamTokens.SilverLavenderBright,
-                    MorCamTokens.LavenderLight,
-                    Color(0xFFFBBF24),
-                    Color(0xFFC4B5FD)
-                )
+                val particleProgress = particleProgressState.value
                 repeat(28) { i ->
                     val x = size.width * ((i * 0.137f + particleProgress * 0.55f) % 1f)
                     val y = size.height * ((i * 0.173f + particleProgress * 0.35f + i * 0.025f) % 1f)
@@ -814,7 +833,7 @@ internal fun ChatMilestoneCelebrationBanner(
                         Text(
                             text = milestone.emoji.ifBlank { if (isNarrative) "✦" else "💜" },
                             fontSize = 34.sp,
-                            modifier = Modifier.graphicsLayer { alpha = glowAlpha }
+                            modifier = Modifier.graphicsLayer { alpha = glowAlphaState.value }
                         )
                     }
 
@@ -1142,6 +1161,32 @@ internal data class ChatEmotionHudState(
     val affectionDeltaPositive: Boolean
 )
 
+private val CHAT_MOOD_JOY_KEYWORDS = listOf("harika", "süper", "mutlu", "güldü", "🎉", "😊")
+private val CHAT_MOOD_WARM_KEYWORDS = listOf("canım", "değerlisin", "sarıl", "güzelim", "sevgi", "💕", "❤️")
+private val CHAT_MOOD_SAD_KEYWORDS = listOf("üzgün", "üzülüyorum", "kötü", "yalnız", "😢")
+private val CHAT_MOOD_TENSE_KEYWORDS = listOf("tehlike", "sinirli", "öfke", "korktu")
+private val CHAT_MOOD_CURIOUS_KEYWORDS = listOf("merak", "acaba", "ilginç")
+private val CHAT_OVERLAY_TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
+
+internal fun detectChatMoodFromAssistantText(text: String): String {
+    if (text.isBlank()) return "calm"
+    val lower = text.lowercase(CHAT_OVERLAY_TR_LOCALE)
+    return when {
+        CHAT_MOOD_JOY_KEYWORDS.any { lower.contains(it) } -> "joy"
+        CHAT_MOOD_WARM_KEYWORDS.any { lower.contains(it) } -> "warm"
+        CHAT_MOOD_SAD_KEYWORDS.any { lower.contains(it) } -> "sad"
+        CHAT_MOOD_TENSE_KEYWORDS.any { lower.contains(it) } -> "tense"
+        CHAT_MOOD_CURIOUS_KEYWORDS.any { lower.contains(it) } -> "curious"
+        else -> "calm"
+    }
+}
+
+internal fun formatAffectionDeltaBadge(diff: Int): String? = when {
+    diff > 0 -> "+$diff Sevgi ✦"
+    diff < 0 -> "$diff Sevgi"
+    else -> null
+}
+
 /**
  * Tracks ambient glow pulse, detected mood aura color, and floating affection delta badge for ChatScreen.
  */
@@ -1161,18 +1206,10 @@ internal fun rememberChatEmotionHudState(
         ).value
     } else 0.62f
 
-    val lastAiText = rawValidMessages.lastOrNull { it.role == "assistant" }?.text ?: ""
-    val detectedMood = remember(lastAiText) {
-        val lower = lastAiText.lowercase()
-        when {
-            listOf("harika", "süper", "mutlu", "güldü", "🎉", "😊").any { lower.contains(it) } -> "joy"
-            listOf("canım", "değerlisin", "sarıl", "güzelim", "sevgi", "💕", "❤️").any { lower.contains(it) } -> "warm"
-            listOf("üzgün", "üzülüyorum", "kötü", "yalnız", "😢").any { lower.contains(it) } -> "sad"
-            listOf("tehlike", "sinirli", "öfke", "korktu").any { lower.contains(it) } -> "tense"
-            listOf("merak", "acaba", "ilginç").any { lower.contains(it) } -> "curious"
-            else -> "calm"
-        }
+    val lastAiText = remember(rawValidMessages) {
+        rawValidMessages.lastOrNull { it.role == "assistant" }?.text ?: ""
     }
+    val detectedMood = remember(lastAiText) { detectChatMoodFromAssistantText(lastAiText) }
 
     val emotionState = remember(bot.emotionState) { EmotionState.fromJson(bot.emotionState) }
     val emotionAuraColor by animateColorAsState(
@@ -1195,9 +1232,10 @@ internal fun rememberChatEmotionHudState(
 
     LaunchedEffect(emotionState.affection) {
         val diff = emotionState.affection - lastObservedAffection
-        if (diff != 0) {
+        val badge = formatAffectionDeltaBadge(diff)
+        if (badge != null) {
             affectionDeltaPositive = diff > 0
-            affectionDeltaText = if (diff > 0) "+$diff Sevgi ✦" else "$diff Sevgi"
+            affectionDeltaText = badge
             affectionDeltaTrigger += 1
             lastObservedAffection = emotionState.affection
         }

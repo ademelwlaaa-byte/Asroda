@@ -69,8 +69,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -588,7 +589,7 @@ fun ChapterSummaryModal(
     // Smooth auto-progress bar for each sequential slide (resumes cleanly after pause)
     val slideProgress = remember { Animatable(0f) }
 
-    val isMusicPlaying by BookAudioController.isPlayingFlow.collectAsState()
+    val isMusicPlaying by BookAudioController.isPlayingFlow.collectAsStateWithLifecycle()
 
     // Ensure "Kozmiksürüklenismüzik" ALWAYS starts automatically ON from 0 -> 100% in 1.5s
     LaunchedEffect(Unit) {
@@ -735,34 +736,35 @@ fun ChapterSummaryModal(
         }
     }
 
-    // Continuous subtle motion loops for Ken Burns breathing, parallax drift & stardust
-    val kenBurnsPhase: Float
-    val ambientDrift: Float
-    val pulseGlow: Float
+    // Continuous subtle motion loops kept as State<Float> so phase values are ONLY read inside
+    // graphicsLayer{} and Canvas{} draw lambdas — eliminating 60-120fps root recomposition storms!
+    val kenBurnsPhaseState: State<Float>
+    val ambientDriftState: State<Float>
+    val pulseGlowState: State<Float>
     if (motionConfig.enableAmbientLoops) {
         val inf = rememberInfiniteTransition(label = "lis2LivingCanvas")
-        kenBurnsPhase = inf.animateFloat(
+        kenBurnsPhaseState = inf.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(15000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
             label = "kenBurnsZoom"
-        ).value
-        ambientDrift = inf.animateFloat(
+        )
+        ambientDriftState = inf.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(22000, easing = LinearEasing)),
             label = "lis2Stardust"
-        ).value
-        pulseGlow = inf.animateFloat(
+        )
+        pulseGlowState = inf.animateFloat(
             initialValue = 0.72f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(tween(3000, easing = LinearEasing), RepeatMode.Reverse),
             label = "lis2Pulse"
-        ).value
+        )
     } else {
-        kenBurnsPhase = 0.35f
-        ambientDrift = 0f
-        pulseGlow = 0.85f
+        kenBurnsPhaseState = remember { mutableFloatStateOf(0.35f) }
+        ambientDriftState = remember { mutableFloatStateOf(0f) }
+        pulseGlowState = remember { mutableFloatStateOf(0.85f) }
     }
 
     val noPadTextStyle = remember {
@@ -790,11 +792,6 @@ fun ChapterSummaryModal(
             animationSpec = tween(durationMillis = 1000, easing = FastOutSlowInEasing),
             label = "lis2ArtworkCrossfade"
         ) { artRes ->
-            val scale = 1.03f + kenBurnsPhase * 0.04f
-            val autoYaw = sin(ambientDrift * 6.283f) * 3.0f
-            val autoPitch = cos(ambientDrift * 6.283f) * 1.8f
-            val driftX = sin(ambientDrift * 6.283f) * 10f - userTiltYaw * 1.5f
-            val driftY = cos(ambientDrift * 6.283f) * 6f
             Image(
                 painter = painterResource(id = artRes),
                 contentDescription = null,
@@ -802,6 +799,13 @@ fun ChapterSummaryModal(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
+                        val kenBurnsPhase = kenBurnsPhaseState.value
+                        val ambientDrift = ambientDriftState.value
+                        val scale = 1.03f + kenBurnsPhase * 0.04f
+                        val autoYaw = sin(ambientDrift * 6.283f) * 3.0f
+                        val autoPitch = cos(ambientDrift * 6.283f) * 1.8f
+                        val driftX = sin(ambientDrift * 6.283f) * 10f - userTiltYaw * 1.5f
+                        val driftY = cos(ambientDrift * 6.283f) * 6f
                         scaleX = scale
                         scaleY = scale
                         translationX = driftX
@@ -844,6 +848,8 @@ fun ChapterSummaryModal(
                 ChoiceAtmosphereMode.GOLDEN_DAWN -> Color(0xFFFDE047)
                 ChoiceAtmosphereMode.RAIN_NEON -> accentColor
             }
+            val ambientDrift = ambientDriftState.value
+            val pulseGlow = pulseGlowState.value
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(moodGlow.copy(alpha = 0.20f * pulseGlow), Color.Transparent),
@@ -1012,7 +1018,7 @@ fun ChapterSummaryModal(
                                 Modifier.morCamCosmicGlow(
                                     cornerRadius = 20.dp,
                                     glowColor = accentColor,
-                                    alpha = 0.42f * pulseGlow,
+                                    alpha = 0.38f,
                                     blurDp = 9.dp
                                 )
                             } else {
@@ -1076,7 +1082,7 @@ fun ChapterSummaryModal(
                         modifier = Modifier
                             .height(40.dp)
                             .cosmicTapSpring(nextInteraction, pressedScale = 0.94f)
-                            .morCamCosmicGlow(cornerRadius = 20.dp, glowColor = accentColor, alpha = 0.48f * pulseGlow, blurDp = 10.dp)
+                            .morCamCosmicGlow(cornerRadius = 20.dp, glowColor = accentColor, alpha = 0.44f, blurDp = 10.dp)
                             .clip(RoundedCornerShape(50))
                             .background(MorCamTokens.PrimaryButtonFill)
                             .border(1.1.dp, MorCamTokens.RimGradient, RoundedCornerShape(50))
@@ -1417,7 +1423,7 @@ fun ChapterSummaryModal(
                                                         .morCamCosmicGlow(
                                                             cornerRadius = 26.dp,
                                                             glowColor = badgeColor,
-                                                            alpha = 0.34f * pulseGlow,
+                                                            alpha = 0.31f,
                                                             blurDp = 18.dp
                                                         )
                                                         .clip(RoundedCornerShape(26.dp))
@@ -1678,7 +1684,7 @@ fun ChapterSummaryModal(
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .morCamCosmicGlow(cornerRadius = 22.dp, glowColor = accentColor, alpha = 0.34f * pulseGlow, blurDp = 14.dp)
+                                        .morCamCosmicGlow(cornerRadius = 22.dp, glowColor = accentColor, alpha = 0.31f, blurDp = 14.dp)
                                         .clip(RoundedCornerShape(22.dp))
                                         .background(
                                             Brush.horizontalGradient(
@@ -1762,8 +1768,6 @@ fun ChapterSummaryModal(
                                                     .height(108.dp)
                                                     .clip(RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp))
                                             ) {
-                                                val cardScale = 1.05f + kenBurnsPhase * 0.07f
-                                                val cardTilt = sin(ambientDrift * 6.283f + idx * 1.1f) * 3.5f
                                                 Image(
                                                     painter = painterResource(id = card.artworkResId),
                                                     contentDescription = card.title,
@@ -1771,6 +1775,8 @@ fun ChapterSummaryModal(
                                                     modifier = Modifier
                                                         .fillMaxSize()
                                                         .graphicsLayer {
+                                                            val cardScale = 1.05f + kenBurnsPhaseState.value * 0.07f
+                                                            val cardTilt = sin(ambientDriftState.value * 6.283f + idx * 1.1f) * 3.5f
                                                             scaleX = cardScale
                                                             scaleY = cardScale
                                                             translationX = cardTilt * 2.5f

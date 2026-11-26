@@ -45,6 +45,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,6 +82,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.ui.animation.LocalCosmicMotionConfig
 import com.example.ui.components.morCamCosmicGlow
 import com.example.ui.screens.cosmic3d.Cosmic3DSoundEngine
 import com.example.ui.screens.cosmic3d.CosmicCharacterVoiceEngine
@@ -553,15 +556,52 @@ fun LiveCharacterEncounterStage(
     }
 }
 
+internal fun filterGyroTiltSample(
+    prevYaw: Float,
+    prevPitch: Float,
+    rawYaw: Float,
+    rawPitch: Float,
+    smoothing: Float = 0.14f,
+    deadzoneDeg: Float = 0.15f
+): Pair<Float, Float> {
+    val clampedTargetYaw = rawYaw.coerceIn(-22f, 22f)
+    val clampedTargetPitch = rawPitch.coerceIn(-10f, 10f)
+    val nextYaw = (prevYaw + (clampedTargetYaw - prevYaw) * smoothing).coerceIn(-22f, 22f)
+    val nextPitch = (prevPitch + (clampedTargetPitch - prevPitch) * smoothing).coerceIn(-10f, 10f)
+    val outYaw = if (abs(nextYaw - prevYaw) >= deadzoneDeg) nextYaw else prevYaw
+    val outPitch = if (abs(nextPitch - prevPitch) >= deadzoneDeg) nextPitch else prevPitch
+    return outYaw to outPitch
+}
+
+internal fun computeWindGustEnvelope(elapsedSec: Float): Float {
+    val slowCycle = (sin(elapsedSec * 0.60f) * 0.5f + 0.5f)
+    val gustWave = (sin(elapsedSec * 1.12f + 1.1f) * 0.5f + 0.5f) * slowCycle * slowCycle
+    val ripple = sin(elapsedSec * 3.3f) * 0.05f
+    return (0.14f + gustWave * 0.84f + ripple).coerceIn(0.08f, 1.0f)
+}
+
+internal fun computeGazeTrackingVector(
+    camYawDeg: Float,
+    camPitchDeg: Float,
+    microSaccadeX: Float,
+    microSaccadeY: Float
+): Pair<Float, Float> {
+    val gx = ((-camYawDeg / 78f) * 0.65f + microSaccadeX).coerceIn(-0.95f, 0.95f)
+    val gy = ((-camPitchDeg / 18f) * 0.45f + microSaccadeY).coerceIn(-0.75f, 0.75f)
+    return gx to gy
+}
+
 @Composable
 private fun rememberFirstPersonGyroOffset(enabled: Boolean): Pair<Float, Float> {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val motionEnabled = LocalCosmicMotionConfig.current.enableAmbientLoops
+    val active = enabled && motionEnabled
     var gyroYaw by remember { mutableFloatStateOf(0f) }
     var gyroPitch by remember { mutableFloatStateOf(0f) }
 
-    DisposableEffect(context, lifecycleOwner, enabled) {
-        if (!enabled) {
+    DisposableEffect(context, lifecycleOwner, active) {
+        if (!active) {
             gyroYaw = 0f
             gyroPitch = 0f
             return@DisposableEffect onDispose {}
@@ -576,6 +616,7 @@ private fun rememberFirstPersonGyroOffset(enabled: Boolean): Pair<Float, Float> 
         val orient = FloatArray(3)
         var sx = 0f
         var sy = 0f
+        var isRegistered = false
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
@@ -584,32 +625,53 @@ private fun rememberFirstPersonGyroOffset(enabled: Boolean): Pair<Float, Float> 
                 if (event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR) {
                     SensorManager.getRotationMatrixFromVector(rotMat, event.values)
                     SensorManager.getOrientation(rotMat, orient)
-                    tx = (orient[2] * 26f).coerceIn(-22f, 22f)
-                    ty = ((orient[1] + 0.65f) * 14f).coerceIn(-10f, 10f)
+                    tx = orient[2] * 26f
+                    ty = (orient[1] + 0.65f) * 14f
                 } else {
-                    tx = (-event.values[0] * 2.4f).coerceIn(-22f, 22f)
-                    ty = ((event.values[1] - 5.5f) * 1.4f).coerceIn(-10f, 10f)
+                    tx = -event.values[0] * 2.4f
+                    ty = (event.values[1] - 5.5f) * 1.4f
                 }
-                sx += (tx - sx) * 0.14f
-                sy += (ty - sy) * 0.14f
-                gyroYaw = sx
-                gyroPitch = sy
+                val (filteredYaw, filteredPitch) = filterGyroTiltSample(
+                    prevYaw = sx,
+                    prevPitch = sy,
+                    rawYaw = tx,
+                    rawPitch = ty
+                )
+                if (filteredYaw != sx || filteredPitch != sy) {
+                    sx = filteredYaw
+                    sy = filteredPitch
+                    gyroYaw = sx
+                    gyroPitch = sy
+                }
             }
 
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
-        sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+        fun registerIfNeeded() {
+            if (!isRegistered) {
+                isRegistered = sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+            }
+        }
+        fun unregisterIfNeeded() {
+            if (isRegistered) {
+                sm.unregisterListener(listener)
+                isRegistered = false
+            }
+        }
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            registerIfNeeded()
+        }
         val obs = LifecycleEventObserver { _, ev ->
             when (ev) {
-                Lifecycle.Event.ON_PAUSE -> sm.unregisterListener(listener)
-                Lifecycle.Event.ON_RESUME -> sm.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> unregisterIfNeeded()
+                Lifecycle.Event.ON_RESUME -> registerIfNeeded()
                 else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(obs)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(obs)
-            sm.unregisterListener(listener)
+            unregisterIfNeeded()
         }
     }
     return gyroYaw to gyroPitch
@@ -685,9 +747,16 @@ private fun LiveEncounterCoreContent(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    val motionConfig = LocalCosmicMotionConfig.current
+    var isLifecycleResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
     DisposableEffect(lifecycleOwner, sfxEngine, voiceEngine, profile.speakerKey) {
         if (isFullscreen) {
             sfxEngine.start(ambientSceneId = profile.ambientType, ambientVolume = 0.34f)
+            if (!isLifecycleResumed) {
+                sfxEngine.setMuted(true)
+            }
         }
         val initialPrewarm = buildList {
             add(Triple(profile.speakerKey, profile.openingLine, "live_${profile.speakerKey.lowercase()}_open"))
@@ -698,11 +767,13 @@ private fun LiveEncounterCoreContent(
         voiceEngine.prewarmLines(initialPrewarm)
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    isLifecycleResumed = false
                     voiceEngine.stopCurrentLine()
                     sfxEngine.setMuted(true)
                 }
                 Lifecycle.Event.ON_RESUME -> {
+                    isLifecycleResumed = true
                     sfxEngine.setMuted(!voiceEnabled)
                 }
                 else -> Unit
@@ -724,31 +795,29 @@ private fun LiveEncounterCoreContent(
     var microSaccadeXTarget by remember { mutableFloatStateOf(0f) }
     var microSaccadeYTarget by remember { mutableFloatStateOf(0f) }
 
-    val microSaccadeX by animateFloatAsState(
+    val microSaccadeXState = animateFloatAsState(
         targetValue = microSaccadeXTarget,
         animationSpec = tween(260, easing = FastOutSlowInEasing),
         label = "micro_saccade_x"
     )
-    val microSaccadeY by animateFloatAsState(
+    val microSaccadeYState = animateFloatAsState(
         targetValue = microSaccadeYTarget,
         animationSpec = tween(260, easing = FastOutSlowInEasing),
         label = "micro_saccade_y"
     )
 
-    // Continuous 60fps wind gust envelope
-    LaunchedEffect(profile.speakerKey) {
+    // Continuous 60fps wind gust envelope — paused automatically on background or reduced motion
+    LaunchedEffect(profile.speakerKey, isLifecycleResumed, motionConfig.enableAmbientLoops) {
+        if (!isLifecycleResumed || !motionConfig.enableAmbientLoops) return@LaunchedEffect
         var lastNs = 0L
-        var elapsed = 0f
+        var elapsed = windTimeSec
         while (true) {
             withFrameNanos { now ->
                 if (lastNs != 0L) {
                     val dt = ((now - lastNs) / 1_000_000_000f).coerceIn(0.001f, 0.05f)
                     elapsed += dt
                     windTimeSec = elapsed
-                    val slowCycle = (sin(elapsed * 0.60f) * 0.5f + 0.5f)
-                    val gustWave = (sin(elapsed * 1.12f + 1.1f) * 0.5f + 0.5f) * slowCycle * slowCycle
-                    val ripple = sin(elapsed * 3.3f) * 0.05f
-                    windGustIntensity = (0.14f + gustWave * 0.84f + ripple).coerceIn(0.08f, 1.0f)
+                    windGustIntensity = computeWindGustEnvelope(elapsed)
                 }
                 lastNs = now
             }
@@ -819,8 +888,9 @@ private fun LiveEncounterCoreContent(
         }
     }
 
-    // Subtle organic eye micro-saccades
-    LaunchedEffect(profile.speakerKey) {
+    // Subtle organic eye micro-saccades — paused when backgrounded
+    LaunchedEffect(profile.speakerKey, isLifecycleResumed) {
+        if (!isLifecycleResumed) return@LaunchedEffect
         val rng = Random(profile.speakerKey.hashCode() + 99)
         while (true) {
             delay(rng.nextLong(1250L, 2800L))
@@ -831,7 +901,11 @@ private fun LiveEncounterCoreContent(
 
     // 100% synchronized natural human blinking (both eyes close & open at the exact same millisecond!)
     var blinkTarget by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(profile.speakerKey) {
+    LaunchedEffect(profile.speakerKey, isLifecycleResumed) {
+        if (!isLifecycleResumed) {
+            blinkTarget = 0f
+            return@LaunchedEffect
+        }
         val rng = Random(profile.speakerKey.hashCode())
         while (true) {
             delay(rng.nextLong(2200L, 3900L))
@@ -847,7 +921,7 @@ private fun LiveEncounterCoreContent(
         }
     }
 
-    val smoothBlink by animateFloatAsState(
+    val smoothBlinkState = animateFloatAsState(
         targetValue = blinkTarget,
         animationSpec = tween(durationMillis = if (blinkTarget > 0.5f) 58 else 102, easing = FastOutSlowInEasing),
         label = "blink_sync"
@@ -875,23 +949,24 @@ private fun LiveEncounterCoreContent(
             camYawTarget = 0f
             camPitchTarget = 0f
         }
-        if (voiceEnabled) {
+        if (voiceEnabled && isLifecycleResumed) {
             voiceEngine.speak(profile.speakerKey, line, lineKey)
         }
     }
 
     // Start in SILENT SCENERY LOOKOUT (0° profile) for 1.5s, then smoothly turn head (0° -> 45° -> 90°) as she speaks!
-    LaunchedEffect(isFullscreen, profile.speakerKey) {
-        if (isFullscreen && voiceEnabled) {
+    LaunchedEffect(isFullscreen, profile.speakerKey, isLifecycleResumed) {
+        if (isFullscreen && voiceEnabled && isLifecycleResumed) {
             delay(1500L)
-            if (interactionTick == 0) {
+            if (interactionTick == 0 && isLifecycleResumed) {
                 speakLine(profile.openingLine, "live_${profile.speakerKey.lowercase()}_open")
             }
         }
     }
 
-    // Organic Idle Spoken Personality System
-    LaunchedEffect(interactionTick, isFullscreen, profile.speakerKey) {
+    // Organic Idle Spoken Personality System — never speaks while app is backgrounded
+    LaunchedEffect(interactionTick, isFullscreen, profile.speakerKey, isLifecycleResumed) {
+        if (!isLifecycleResumed) return@LaunchedEffect
         val waitMs = when (idleIdx) {
             0 -> if (isFullscreen) 11500L else 14000L
             1 -> 14000L
@@ -899,51 +974,76 @@ private fun LiveEncounterCoreContent(
             else -> 18000L
         }
         delay(waitMs)
+        if (!isLifecycleResumed) return@LaunchedEffect
         val line = profile.idleLines[idleIdx % profile.idleLines.size]
         idleIdx++
         speakLine(line, "live_${profile.speakerKey.lowercase()}_idle_$idleIdx")
     }
 
-    val inf = rememberInfiniteTransition(label = "live3d_fps_${profile.speakerKey}")
-    val breath by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Reverse),
-        label = "breath"
-    )
-    val weatherFlow by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
-        label = "weather"
-    )
+    val breathState: State<Float>
+    val weatherFlowState: State<Float>
+    if (motionConfig.enableAmbientLoops && isLifecycleResumed) {
+        val inf = rememberInfiniteTransition(label = "live3d_fps_${profile.speakerKey}")
+        breathState = inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Reverse),
+            label = "breath"
+        )
+        weatherFlowState = inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
+            label = "weather"
+        )
+    } else {
+        breathState = remember { mutableFloatStateOf(0.5f) }
+        weatherFlowState = remember { mutableFloatStateOf(0f) }
+    }
 
     // ONLY zoom in subtly when the user explicitly taps "🤝 Yaklaş" — NEVER jump-zoom when turning head!
-    val smoothLean by animateFloatAsState(
+    val smoothLeanState = animateFloatAsState(
         targetValue = if (isLeanedIn) 1.30f else 1.0f,
         animationSpec = spring(dampingRatio = 0.84f, stiffness = Spring.StiffnessLow),
         label = "lean_zoom"
     )
-    val smoothCamYaw by animateFloatAsState(
+    val smoothCamYawState = animateFloatAsState(
         targetValue = (camYawTarget + gyroYaw).coerceIn(-78f, 78f),
         animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
         label = "fp_cam_yaw"
     )
-    val smoothCamPitch by animateFloatAsState(
+    val smoothCamPitchState = animateFloatAsState(
         targetValue = (camPitchTarget + gyroPitch).coerceIn(-18f, 18f),
         animationSpec = spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow),
         label = "fp_cam_pitch"
     )
 
-    val isLookingAwayFromCompanion = abs(smoothCamYaw) > 42f
+    val isLookingAwayFromCompanion by remember {
+        derivedStateOf { abs(smoothCamYawState.value) > 42f }
+    }
+    val roundedYawDeg by remember {
+        derivedStateOf { smoothCamYawState.value.roundToInt() }
+    }
+    val isStrongWindGust by remember {
+        derivedStateOf { windGustIntensity > 0.62f }
+    }
     val isLookingAtPlayer = (isSpeaking || attentionLocked || isLeanedIn || !profile.watchesSceneryWhenSilent) && !isLookingAwayFromCompanion
 
     // Crisp 520ms real 3-keyframe head-turn animation (0° profile -> 45° oblique mid-turn -> 90° eye contact)
-    val turnToPlayerProgress by animateFloatAsState(
+    val turnToPlayerProgressState = animateFloatAsState(
         targetValue = if (isLookingAtPlayer) 1f else 0f,
         animationSpec = tween(durationMillis = 520, easing = FastOutSlowInEasing),
         label = "head_turn_progress"
     )
+    val isTurnedToPlayer by remember {
+        derivedStateOf { turnToPlayerProgressState.value > 0.55f }
+    }
+
+    val starlightPierBrush = remember(profile.accent) {
+        Brush.horizontalGradient(
+            listOf(Color.Transparent, profile.accent.copy(alpha = 0.18f), Color(0x44BAE6FD), Color.Transparent)
+        )
+    }
 
     val particles = remember(profile.speakerKey) {
         List(36) { i ->
@@ -997,8 +1097,14 @@ private fun LiveEncounterCoreContent(
                 } else {
                     // ── GPU DRAWBITMAPMESH LIVING 3D PANORAMA + HIGH-RES FACIAL RIG ──
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val trackGazeX = ((-smoothCamYaw / 78f) * 0.65f + microSaccadeX).coerceIn(-0.95f, 0.95f)
-                        val trackGazeY = ((-smoothCamPitch / 18f) * 0.45f + microSaccadeY).coerceIn(-0.75f, 0.75f)
+                        val yaw = smoothCamYawState.value
+                        val pitch = smoothCamPitchState.value
+                        val (trackGazeX, trackGazeY) = computeGazeTrackingVector(
+                            camYawDeg = yaw,
+                            camPitchDeg = pitch,
+                            microSaccadeX = microSaccadeXState.value,
+                            microSaccadeY = microSaccadeYState.value
+                        )
                         drawIntoCanvas { composeCanvas ->
                             meshRenderer.drawScene(
                                 canvas = composeCanvas.nativeCanvas,
@@ -1007,14 +1113,14 @@ private fun LiveEncounterCoreContent(
                                 params = Living3DEncounterMeshRenderer.FrameParams(
                                     canvasW = size.width,
                                     canvasH = size.height,
-                                    camYawDeg = smoothCamYaw,
-                                    camPitchDeg = smoothCamPitch,
-                                    leanZoom = smoothLean,
-                                    turnProgress = turnToPlayerProgress,
-                                    breathPhase = breath,
+                                    camYawDeg = yaw,
+                                    camPitchDeg = pitch,
+                                    leanZoom = smoothLeanState.value,
+                                    turnProgress = turnToPlayerProgressState.value,
+                                    breathPhase = breathState.value,
                                     windTimeSec = windTimeSec,
                                     windGust = windGustIntensity,
-                                    blink = smoothBlink,
+                                    blink = smoothBlinkState.value,
                                     gazeX = trackGazeX,
                                     gazeY = trackGazeY,
                                     speakingNodDeg = speakingNodDeg,
@@ -1029,11 +1135,15 @@ private fun LiveEncounterCoreContent(
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
-                    val fgShiftX = -smoothCamYaw * (w * 0.014f)
-                    val fgShiftY = -smoothCamPitch * (h * 0.009f)
+                    val weatherFlow = weatherFlowState.value
+                    val gust = windGustIntensity
+                    val fgShiftX = -smoothCamYawState.value * (w * 0.014f)
+                    val fgShiftY = -smoothCamPitchState.value * (h * 0.009f)
 
                     if (profile.ambientType == "BALCONY_CITY" || profile.ambientType == "RAIN_WARM") {
-                        cityLights.take(14).forEachIndexed { idx, (lx, ly, r) ->
+                        val lightCount = minOf(14, cityLights.size)
+                        for (idx in 0 until lightCount) {
+                            val (lx, ly, r) = cityLights[idx]
                             val sx = (((lx * w * 1.6f - w * 0.3f + fgShiftX * 0.55f) % (w * 1.4f)) + w * 1.4f) % (w * 1.4f) - w * 0.2f
                             val sy = ly * h + fgShiftY * 0.45f
                             val tw = 0.35f + 0.65f * sin(weatherFlow * 6.28f + idx * 1.4f)
@@ -1043,11 +1153,9 @@ private fun LiveEncounterCoreContent(
                     } else if (profile.ambientType == "STARLIGHT_PIER") {
                         for (row in 0..4) {
                             val ry = h * (0.66f + row * 0.05f) + fgShiftY * 0.40f
-                            val wave = sin(weatherFlow * 6.28f + row * 0.95f) * (10f + windGustIntensity * 8f)
+                            val wave = sin(weatherFlow * 6.28f + row * 0.95f) * (10f + gust * 8f)
                             drawLine(
-                                brush = Brush.horizontalGradient(
-                                    listOf(Color.Transparent, profile.accent.copy(alpha = 0.18f), Color(0x44BAE6FD), Color.Transparent)
-                                ),
+                                brush = starlightPierBrush,
                                 start = Offset(w * 0.16f + wave + fgShiftX * 0.35f, ry),
                                 end = Offset(w * 0.86f + wave + fgShiftX * 0.35f, ry),
                                 strokeWidth = 1.8f
@@ -1055,26 +1163,24 @@ private fun LiveEncounterCoreContent(
                         }
                     }
 
-                    val gustSlant = profile.rig.windDir * (8f + windGustIntensity * 24f)
+                    val gustSlant = profile.rig.windDir * (8f + gust * 24f)
                     particles.forEachIndexed { idx, (px, py, spd) ->
                         when (profile.ambientType) {
                             "BALCONY_CITY", "RAIN_WARM" -> {
-                                val rProg = (py + weatherFlow * spd * (1.72f + windGustIntensity * 0.52f)) % 1f
-                                val rx = ((((px + profile.rig.windDir * rProg * (0.10f + windGustIntensity * 0.14f)) % 1f) + 1f) % 1f) * w
+                                val rProg = (py + weatherFlow * spd * (1.72f + gust * 0.52f)) % 1f
+                                val rx = ((((px + profile.rig.windDir * rProg * (0.10f + gust * 0.14f)) % 1f) + 1f) % 1f) * w
                                 drawLine(
-                                    color = Color(0xFFBAE6FD).copy(alpha = 0.14f + windGustIntensity * 0.14f),
+                                    color = Color(0xFFBAE6FD).copy(alpha = 0.14f + gust * 0.14f),
                                     start = Offset(rx, rProg * h),
                                     end = Offset(rx + gustSlant * 0.32f, rProg * h + 14f),
                                     strokeWidth = 1.15f
                                 )
-                                if (windGustIntensity > 0.58f && idx < 3) {
-                                    val mistAlpha = ((windGustIntensity - 0.58f) / 0.42f) * 0.10f
+                                if (gust > 0.58f && idx < 3) {
+                                    val mistAlpha = ((gust - 0.58f) / 0.42f) * 0.10f
                                     val mx = (((weatherFlow * 1.35f + idx * 0.28f) % 1f) * w * 1.4f - w * 0.2f)
                                     val my = h * (0.22f + idx * 0.16f)
                                     drawLine(
-                                        brush = Brush.horizontalGradient(
-                                            listOf(Color.Transparent, Color(0xFFE0F2FE).copy(alpha = mistAlpha), Color.Transparent)
-                                        ),
+                                        color = Color(0xFFE0F2FE).copy(alpha = mistAlpha),
                                         start = Offset(mx, my),
                                         end = Offset(mx + profile.rig.windDir * w * 0.36f, my + 7f),
                                         strokeWidth = 2.2f,
@@ -1084,7 +1190,7 @@ private fun LiveEncounterCoreContent(
                             }
                             "STARLIGHT_PIER" -> {
                                 val fProg = (1f - ((py + weatherFlow * spd * 0.46f) % 1f))
-                                val fx = (px * w + cos(weatherFlow * 6.28f + idx) * (13f + windGustIntensity * 12f) + fgShiftX * 0.2f + w) % w
+                                val fx = (px * w + cos(weatherFlow * 6.28f + idx) * (13f + gust * 12f) + fgShiftX * 0.2f + w) % w
                                 val col = if (idx % 2 == 0) profile.accent else Color(0xFFBAE6FD)
                                 drawCircle(col.copy(alpha = 0.54f), radius = 1.9f + (idx % 2), center = Offset(fx, fProg * h))
                             }
@@ -1239,7 +1345,7 @@ private fun LiveEncounterCoreContent(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        val yawDeg = smoothCamYaw.roundToInt()
+                        val yawDeg = roundedYawDeg
                         Text(
                             text = "← ${profile.compassLeftLabel}",
                             fontFamily = InterFontFamily,
@@ -1250,7 +1356,7 @@ private fun LiveEncounterCoreContent(
                         Text(
                             text = when {
                                 abs(yawDeg) > 16 -> "↺ ${if (yawDeg > 0) "+$yawDeg°" else "$yawDeg°"} · ${profile.compassCenterLabel}'ya Dön"
-                                windGustIntensity > 0.62f && profile.rig.hasLongFlowingHair -> "🌬 Gece Rüzgârı · ↔ Sürükleyip Etrafa Bak"
+                                isStrongWindGust && profile.rig.hasLongFlowingHair -> "🌬 Gece Rüzgârı · ↔ Sürükleyip Etrafa Bak"
                                 else -> "↔ Parmağınla 1. Şahıs Kamerayı Döndür"
                             },
                             fontFamily = InterFontFamily,
@@ -1290,7 +1396,7 @@ private fun LiveEncounterCoreContent(
                                 .background(if (isSpeaking) Color(0xFF34D399) else profile.accent)
                         )
                         Text(
-                            text = if (turnToPlayerProgress > 0.55f) profile.speakingStatusLabel else profile.silentStatusLabel,
+                            text = if (isTurnedToPlayer) profile.speakingStatusLabel else profile.silentStatusLabel,
                             fontFamily = InterFontFamily,
                             color = Color(0xFFF3E8FF),
                             fontSize = 9.2.sp,
@@ -1308,7 +1414,7 @@ private fun LiveEncounterCoreContent(
                         currentDialogue = currentDialogue,
                         subtitle = "",
                         statusLabel = if (!isLookingAwayFromCompanion) {
-                            if (turnToPlayerProgress > 0.55f) profile.speakingStatusLabel else profile.silentStatusLabel
+                            if (isTurnedToPlayer) profile.speakingStatusLabel else profile.silentStatusLabel
                         } else {
                             null
                         },

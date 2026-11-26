@@ -43,7 +43,6 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -108,7 +107,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -269,202 +270,247 @@ internal fun Modifier.templatesBackdropBlur(
 }
 
 // Stage 1 (BEFORE .clip): Subtle dark-plum drop shadow + calm outer violet rim aura
+// Cached Paint + BlurMaskFilter via drawWithCache + draw-phase glowAlphaProvider (zero per-frame allocs & recompositions).
 private fun Modifier.morCamCardOuterAura(
     cornerRadius: Dp = 24.dp,
-    glowAlpha: Float = 0.85f
-): Modifier = this.drawBehind {
+    glowAlphaProvider: () -> Float = { 0.85f }
+): Modifier = this.drawWithCache {
     val cr = cornerRadius.toPx()
     val w = size.width
     val h = size.height
-    drawIntoCanvas { canvas ->
-        val native = canvas.nativeCanvas
-
-        val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.FILL
-            color = android.graphics.Color.argb(85, 10, 4, 22)
-            maskFilter = android.graphics.BlurMaskFilter(9.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    val insetX = 2.dp.toPx()
+    val shadowOffsetY = 3.dp.toPx()
+    val shadowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.FILL
+        color = android.graphics.Color.argb(85, 10, 4, 22)
+        maskFilter = android.graphics.BlurMaskFilter(9.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    val rimBloomPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE
+        strokeWidth = 1.6.dp.toPx()
+        color = android.graphics.Color.rgb(168, 112, 228)
+        maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+    }
+    onDrawBehind {
+        val alphaInt = (38 * glowAlphaProvider()).toInt().coerceIn(0, 255)
+        drawIntoCanvas { canvas ->
+            val native = canvas.nativeCanvas
+            native.drawRoundRect(
+                insetX,
+                shadowOffsetY,
+                w - insetX,
+                h + shadowOffsetY,
+                cr,
+                cr,
+                shadowPaint
+            )
+            rimBloomPaint.alpha = alphaInt
+            native.drawRoundRect(0f, 0f, w, h, cr, cr, rimBloomPaint)
         }
-        native.drawRoundRect(
-            2.dp.toPx(),
-            3.dp.toPx(),
-            w - 2.dp.toPx(),
-            h + 3.dp.toPx(),
-            cr,
-            cr,
-            shadowPaint
-        )
-
-        val rimBloomPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            style = android.graphics.Paint.Style.STROKE
-            strokeWidth = 1.6.dp.toPx()
-            color = android.graphics.Color.argb((38 * glowAlpha).toInt().coerceIn(0, 255), 168, 112, 228)
-            maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-        }
-        native.drawRoundRect(0f, 0f, w, h, cr, cr, rimBloomPaint)
     }
 }
 
 // Stage 2 (INSIDE .clip, over templatesBackdropBlur):
-// True See-Through Frosted Mor Cam Glass with calm, natural refraction (no excessive glare or sparkles)
+// True See-Through Frosted Mor Cam Glass with calm, natural refraction (cached Paints/Brushes via drawWithCache).
 private fun Modifier.morCamInnerFrostAndMist(
     cornerRadius: Dp = 24.dp,
-    borderBeamDeg: Float = 0f,
-    glowAlpha: Float = 0.85f,
+    borderBeamDegProvider: () -> Float = { 0f },
     isHeroCard: Boolean = false
 ): Modifier = this
-    .drawBehind {
-        val w = size.width
-        val h = size.height
-        val cr = cornerRadius.toPx()
-
-        // 1. Sheer Translucent Smoky-Violet Glass Glaze (only 16%..25% alpha so background is clearly visible!)
-        drawRect(
-            brush = Brush.horizontalGradient(
-                colorStops = arrayOf(
-                    0.00f to Color(0x40180C2E),
-                    0.42f to Color(0x38140A26),
-                    0.72f to Color(0x2C281648),
-                    1.00f to Color(0x344E2E74)
-                )
-            )
-        )
-
-        // 2. Subtle Top Inner Frosted Glass Refraction Shelf (gentle 15% top glass edge refraction)
-        drawRect(
-            brush = Brush.verticalGradient(
-                colorStops = arrayOf(
-                    0.00f to Color(0x26C4B5FD),
-                    0.08f to Color(0x128B5CF6),
-                    0.20f to Color.Transparent,
-                    0.85f to Color.Transparent,
-                    1.00f to Color(0x186D28D9)
-                )
-            )
-        )
-
-        // 3. Diagonal Specular Glass Surface Reflection (very soft 135° light band)
-        drawRect(
-            brush = Brush.linearGradient(
-                colorStops = arrayOf(
-                    0.00f to Color.White.copy(alpha = 0.04f),
-                    0.30f to Color(0xFFE9D5FF).copy(alpha = 0.02f),
-                    0.55f to Color.Transparent,
-                    0.85f to Color(0xFFD8B4FE).copy(alpha = 0.02f),
-                    1.00f to Color.White.copy(alpha = 0.04f)
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(w, h)
-            )
-        )
-
-        // 4. Right-Side Subtle Amethyst Edge Refraction
-        drawCircle(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0x18B794F4),
-                    Color(0x0C7E52B0),
-                    Color.Transparent
-                ),
-                center = Offset(w * 0.92f, h * (if (isHeroCard) 0.34f else 0.40f)),
-                radius = w * 0.30f
-            ),
-            center = Offset(w * 0.92f, h * (if (isHeroCard) 0.34f else 0.40f)),
-            radius = w * 0.30f
-        )
-
-        // 5. Calm Inner Frosted Glass Rim Bevel along the card perimeter
-        drawIntoCanvas { canvas ->
-            val edgeFrostPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                style = android.graphics.Paint.Style.STROKE
-                strokeWidth = 4.5.dp.toPx()
-                color = android.graphics.Color.argb(38, 224, 204, 250)
-                maskFilter = android.graphics.BlurMaskFilter(3.8.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-            }
-            canvas.nativeCanvas.drawRoundRect(0f, 0f, w, h, cr, cr, edgeFrostPaint)
-        }
-    }
-    // Stage 3: Clean 1.15.dp Translucent Lavender Glass Border + Gentle Border Shimmer
-    .drawWithContent {
-        drawContent()
+    .drawWithCache {
         val w = size.width
         val h = size.height
         val cr = cornerRadius.toPx()
         val halfStroke = 0.58.dp.toPx()
+        val rimStroke = Stroke(width = 1.15.dp.toPx())
+        val beamStroke = Stroke(width = 1.2.dp.toPx())
+        val glintStrokeW = 0.9.dp.toPx()
+        val glintOffsetY = 0.7.dp.toPx()
+        val cornerRad = CornerRadius(cr, cr)
+        val borderTopLeft = Offset(halfStroke, halfStroke)
+        val borderSize = Size((w - halfStroke * 2f).coerceAtLeast(0f), (h - halfStroke * 2f).coerceAtLeast(0f))
 
-        // 1. Refined 1.15dp lavender glass rim
-        drawRoundRect(
-            brush = Brush.linearGradient(
-                colors = listOf(
-                    Color(0xC8E2D0F8),
-                    Color(0x98B48AE8),
-                    Color(0x788C5EC8),
-                    Color(0x98B48AE8),
-                    Color(0xC8E2D0F8)
-                ),
-                start = Offset(0f, 0f),
-                end = Offset(w, h)
-            ),
-            topLeft = Offset(halfStroke, halfStroke),
-            size = Size(w - halfStroke * 2, h - halfStroke * 2),
-            cornerRadius = CornerRadius(cr, cr),
-            style = Stroke(width = 1.15.dp.toPx())
+        val glazeBrush = Brush.horizontalGradient(
+            colorStops = arrayOf(
+                0.00f to Color(0x40180C2E),
+                0.42f to Color(0x38140A26),
+                0.72f to Color(0x2C281648),
+                1.00f to Color(0x344E2E74)
+            )
         )
-
-        // 2. Subtle Rotating Border Beam Shimmer along the glass rim
-        val rad = Math.toRadians(borderBeamDeg.toDouble())
-        val bx = w * 0.5f + (w * 0.48f) * kotlin.math.cos(rad).toFloat()
-        val by = h * 0.5f + (h * 0.48f) * kotlin.math.sin(rad).toFloat()
-        drawRoundRect(
-            brush = Brush.radialGradient(
-                colors = listOf(
-                    Color(0xFFE9D5FF).copy(alpha = 0.28f),
-                    Color(0xFFC084FC).copy(alpha = 0.14f),
-                    Color.Transparent
-                ),
-                center = Offset(bx, by),
-                radius = w * 0.30f
-            ),
-            topLeft = Offset(halfStroke, halfStroke),
-            size = Size(w - halfStroke * 2, h - halfStroke * 2),
-            cornerRadius = CornerRadius(cr, cr),
-            style = Stroke(width = 1.2.dp.toPx())
+        val shelfBrush = Brush.verticalGradient(
+            colorStops = arrayOf(
+                0.00f to Color(0x26C4B5FD),
+                0.08f to Color(0x128B5CF6),
+                0.20f to Color.Transparent,
+                0.85f to Color.Transparent,
+                1.00f to Color(0x186D28D9)
+            )
         )
-
-        // 3. Delicate top & bottom specular border glints
+        val diagBrush = Brush.linearGradient(
+            colorStops = arrayOf(
+                0.00f to Color.White.copy(alpha = 0.04f),
+                0.30f to Color(0xFFE9D5FF).copy(alpha = 0.02f),
+                0.55f to Color.Transparent,
+                0.85f to Color(0xFFD8B4FE).copy(alpha = 0.02f),
+                1.00f to Color.White.copy(alpha = 0.04f)
+            ),
+            start = Offset(0f, 0f),
+            end = Offset(w, h)
+        )
+        val amethystCenter = Offset(w * 0.92f, h * (if (isHeroCard) 0.34f else 0.40f))
+        val amethystRadius = (w * 0.30f).coerceAtLeast(1f)
+        val amethystBrush = Brush.radialGradient(
+            colors = listOf(
+                Color(0x18B794F4),
+                Color(0x0C7E52B0),
+                Color.Transparent
+            ),
+            center = amethystCenter,
+            radius = amethystRadius
+        )
+        val edgeFrostPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            style = android.graphics.Paint.Style.STROKE
+            strokeWidth = 4.5.dp.toPx()
+            color = android.graphics.Color.argb(38, 224, 204, 250)
+            maskFilter = android.graphics.BlurMaskFilter(3.8.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+        }
+        val rimBrush = Brush.linearGradient(
+            colors = listOf(
+                Color(0xC8E2D0F8),
+                Color(0x98B48AE8),
+                Color(0x788C5EC8),
+                Color(0x98B48AE8),
+                Color(0xC8E2D0F8)
+            ),
+            start = Offset(0f, 0f),
+            end = Offset(w, h)
+        )
+        val beamColors = listOf(
+            Color(0xFFE9D5FF).copy(alpha = 0.28f),
+            Color(0xFFC084FC).copy(alpha = 0.14f),
+            Color.Transparent
+        )
+        val beamRadius = (w * 0.30f).coerceAtLeast(1f)
         val inset = cr.coerceAtMost(w * 0.22f)
-        if (w > inset * 2f) {
-            drawLine(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color.White.copy(alpha = 0.22f),
-                        Color.Transparent
-                    ),
-                    startX = inset,
-                    endX = w * 0.52f
-                ),
-                start = Offset(inset, 0.7.dp.toPx()),
-                end = Offset(w * 0.52f, 0.7.dp.toPx()),
-                strokeWidth = 0.9.dp.toPx(),
-                cap = StrokeCap.Round
+        val topGlintBrush = if (w > inset * 2f) {
+            Brush.horizontalGradient(
+                colors = listOf(Color.Transparent, Color.White.copy(alpha = 0.22f), Color.Transparent),
+                startX = inset,
+                endX = w * 0.52f
             )
-            drawLine(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(
-                        Color.Transparent,
-                        Color(0xFFF3E8FF).copy(alpha = 0.26f),
-                        Color.Transparent
-                    ),
-                    startX = w * 0.48f,
-                    endX = w - inset * 0.5f
-                ),
-                start = Offset(w * 0.48f, h - 0.7.dp.toPx()),
-                end = Offset(w - inset * 0.5f, h - 0.7.dp.toPx()),
-                strokeWidth = 0.9.dp.toPx(),
-                cap = StrokeCap.Round
+        } else null
+        val bottomGlintBrush = if (w > inset * 2f) {
+            Brush.horizontalGradient(
+                colors = listOf(Color.Transparent, Color(0xFFF3E8FF).copy(alpha = 0.26f), Color.Transparent),
+                startX = w * 0.48f,
+                endX = w - inset * 0.5f
             )
+        } else null
+
+        onDrawWithContent {
+            // 1. Sheer Translucent Smoky-Violet Glass Glaze
+            drawRect(brush = glazeBrush)
+            // 2. Subtle Top Inner Frosted Glass Refraction Shelf
+            drawRect(brush = shelfBrush)
+            // 3. Diagonal Specular Glass Surface Reflection
+            drawRect(brush = diagBrush)
+            // 4. Right-Side Subtle Amethyst Edge Refraction
+            drawCircle(brush = amethystBrush, center = amethystCenter, radius = amethystRadius)
+            // 5. Calm Inner Frosted Glass Rim Bevel along the card perimeter
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawRoundRect(0f, 0f, w, h, cr, cr, edgeFrostPaint)
+            }
+
+            drawContent()
+
+            // Stage 3: Clean 1.15.dp Translucent Lavender Glass Border + Gentle Border Shimmer
+            drawRoundRect(
+                brush = rimBrush,
+                topLeft = borderTopLeft,
+                size = borderSize,
+                cornerRadius = cornerRad,
+                style = rimStroke
+            )
+
+            val rad = Math.toRadians(borderBeamDegProvider().toDouble())
+            val bx = w * 0.5f + (w * 0.48f) * kotlin.math.cos(rad).toFloat()
+            val by = h * 0.5f + (h * 0.48f) * kotlin.math.sin(rad).toFloat()
+            drawRoundRect(
+                brush = Brush.radialGradient(
+                    colors = beamColors,
+                    center = Offset(bx, by),
+                    radius = beamRadius
+                ),
+                topLeft = borderTopLeft,
+                size = borderSize,
+                cornerRadius = cornerRad,
+                style = beamStroke
+            )
+
+            if (topGlintBrush != null && bottomGlintBrush != null) {
+                drawLine(
+                    brush = topGlintBrush,
+                    start = Offset(inset, glintOffsetY),
+                    end = Offset(w * 0.52f, glintOffsetY),
+                    strokeWidth = glintStrokeW,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    brush = bottomGlintBrush,
+                    start = Offset(w * 0.48f, h - glintOffsetY),
+                    end = Offset(w - inset * 0.5f, h - glintOffsetY),
+                    strokeWidth = glintStrokeW,
+                    cap = StrokeCap.Round
+                )
+            }
         }
     }
+
+internal fun normalizeExploreSearchQuery(query: String): String =
+    query.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR"))
+
+internal fun shouldShowAidenExploreHeroCard(
+    selectedCategory: String,
+    normalizedQuery: String
+): Boolean {
+    val catOk = selectedCategory == "all" || selectedCategory == "universe"
+    if (!catOk) return false
+    if (normalizedQuery.isBlank()) return true
+    return "aiden blackwood stories galatasaray hikaye evren özel".contains(normalizedQuery)
+}
+
+internal fun filterExploreTemplates(
+    presets: List<BotEntity>,
+    selectedCategory: String,
+    normalizedQuery: String
+): List<BotEntity> {
+    val byCat = when (selectedCategory) {
+        "universe" -> presets.filter { it.mode == "universe" }
+        "personal" -> presets.filter { it.mode == "personal" }
+        else -> presets
+    }
+    if (normalizedQuery.isBlank()) return byCat
+    val trLocale = java.util.Locale.forLanguageTag("tr-TR")
+    return byCat.filter { p ->
+        p.aiName.lowercase(trLocale).contains(normalizedQuery) ||
+            p.universeName.lowercase(trLocale).contains(normalizedQuery) ||
+            p.scenario.lowercase(trLocale).contains(normalizedQuery) ||
+            p.aiPersonality.lowercase(trLocale).contains(normalizedQuery)
+    }
+}
+
+internal fun findExistingBotForTemplatePreset(
+    existingBots: List<BotEntity>,
+    preset: BotEntity
+): BotEntity? {
+    return existingBots.firstOrNull { bot ->
+        !bot.isTemplate && (
+            (preset.mode == "universe" && preset.universeName.isNotBlank() && bot.universeName.equals(preset.universeName, ignoreCase = true)) ||
+                (preset.aiName.isNotBlank() && bot.aiName.equals(preset.aiName, ignoreCase = true))
+            )
+    }
+}
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
@@ -497,47 +543,22 @@ fun ExploreTabContent(
     )
     val frostedManorBitmap = frostedManorState.value ?: com.example.util.FrostedBackdropCache.placeholderImageBitmap
     var rootSize by remember { mutableStateOf(IntSize.Zero) }
-    val scrollSync = lazyListState.firstVisibleItemIndex * 100000 + lazyListState.firstVisibleItemScrollOffset
+    // templatesBackdropBlur tracks layoutCoordinates.positionInRoot() in draw phase; avoid reading scroll state in composition.
+    val scrollSync = 0
 
     val presets = remember(isEnglish) { getAppPresets(isEnglish) }
-    val normalizedQuery = remember(searchQuery) { searchQuery.trim().lowercase(java.util.Locale.forLanguageTag("tr-TR")) }
+    val normalizedQuery = remember(searchQuery) { normalizeExploreSearchQuery(searchQuery) }
 
     val showAidenHeroCard = remember(selectedCategory, normalizedQuery) {
-        val catOk = selectedCategory == "all" || selectedCategory == "universe"
-        if (!catOk) false
-        else if (normalizedQuery.isBlank()) true
-        else {
-            "aiden blackwood stories galatasaray hikaye evren özel".contains(normalizedQuery)
-        }
+        shouldShowAidenExploreHeroCard(selectedCategory, normalizedQuery)
     }
 
     val filteredPresets = remember(normalizedQuery, selectedCategory, presets) {
-        val byCat = when (selectedCategory) {
-            "universe" -> presets.filter { it.mode == "universe" }
-            "personal" -> presets.filter { it.mode == "personal" }
-            else -> presets
-        }
-        if (normalizedQuery.isBlank()) {
-            byCat
-        } else {
-            val trLocale = java.util.Locale.forLanguageTag("tr-TR")
-            byCat.filter { p ->
-                p.aiName.lowercase(trLocale).contains(normalizedQuery) ||
-                    p.universeName.lowercase(trLocale).contains(normalizedQuery) ||
-                    p.scenario.lowercase(trLocale).contains(normalizedQuery) ||
-                    p.aiPersonality.lowercase(trLocale).contains(normalizedQuery)
-            }
-        }
+        filterExploreTemplates(presets, selectedCategory, normalizedQuery)
     }
 
-    fun findExistingBotForTemplate(preset: BotEntity): BotEntity? {
-        return existingBots.firstOrNull { bot ->
-            !bot.isTemplate && (
-                (preset.mode == "universe" && preset.universeName.isNotBlank() && bot.universeName.equals(preset.universeName, ignoreCase = true)) ||
-                    (preset.aiName.isNotBlank() && bot.aiName.equals(preset.aiName, ignoreCase = true))
-                )
-        }
-    }
+    fun findExistingBotForTemplate(preset: BotEntity): BotEntity? =
+        findExistingBotForTemplatePreset(existingBots, preset)
 
     fun launchFreshTemplate(preset: BotEntity) {
         if (isLaunchingTemplate) return
@@ -551,21 +572,21 @@ fun ExploreTabContent(
         isLaunchingTemplate = false
     }
 
-    // ── BÖLÜM 1 & 2: Master Infinite Transitions (60 FPS, gated by MotionIntensityMode) ──
+    // ── BÖLÜM 1 & 2: Master Infinite Transitions kept as State<Float> (read only in draw/graphicsLayer -> 0 root recomps/sec) ──
     val motionConfig = LocalCosmicMotionConfig.current
-    val cardLevitateProgress: Float
-    val playTrianglePulse: Float
-    val outerOrbitDeg: Float
-    val innerOrbitDeg: Float
-    val flarePulse: Float
-    val borderBeamDeg: Float
-    val neonBreath: Float
-    val radarPulse: Float
+    val cardLevitateProgressState: State<Float>
+    val playTrianglePulseState: State<Float>
+    val outerOrbitDegState: State<Float>
+    val innerOrbitDegState: State<Float>
+    val flarePulseState: State<Float>
+    val borderBeamDegState: State<Float>
+    val neonBreathState: State<Float>
+    val radarPulseState: State<Float>
     if (motionConfig.enableAmbientLoops) {
         val infinite = rememberInfiniteTransition(label = "templatesMasterInfinite")
 
         // 1.1: 3D Play Card Levitation (-4dp <-> +4dp) & 3D Tilt (-3deg <-> +2deg, 4.5s)
-        cardLevitateProgress = infinite.animateFloat(
+        cardLevitateProgressState = infinite.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -573,10 +594,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Reverse
             ),
             label = "cardLevitateProgress"
-        ).value
+        )
 
         // 1.1b: Center Play (▶) Triangle Breathing Scale (0.96 <-> 1.05) & Neon Drop-Shadow
-        playTrianglePulse = infinite.animateFloat(
+        playTrianglePulseState = infinite.animateFloat(
             initialValue = 0.96f,
             targetValue = 1.05f,
             animationSpec = infiniteRepeatable(
@@ -584,10 +605,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Reverse
             ),
             label = "playTrianglePulse"
-        ).value
+        )
 
         // 1.2a: Outer Orbital Ring Clockwise Rotation (0deg -> 360deg, 14s linear)
-        outerOrbitDeg = infinite.animateFloat(
+        outerOrbitDegState = infinite.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
@@ -595,10 +616,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Restart
             ),
             label = "outerOrbitDeg"
-        ).value
+        )
 
         // 1.2b: Inner Energy Ring & Cross Arcs Counter-Clockwise Rotation (360deg -> 0deg, 18s linear)
-        innerOrbitDeg = infinite.animateFloat(
+        innerOrbitDegState = infinite.animateFloat(
             initialValue = 360f,
             targetValue = 0f,
             animationSpec = infiniteRepeatable(
@@ -606,10 +627,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Restart
             ),
             label = "innerOrbitDeg"
-        ).value
+        )
 
         // 1.3a: Orbiting Star Lens Flares (scale 0.6 <-> 1.3, opacity 0.4 <-> 1.0)
-        flarePulse = infinite.animateFloat(
+        flarePulseState = infinite.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -617,10 +638,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Reverse
             ),
             label = "flarePulse"
-        ).value
+        )
 
         // 2.1: Border Beam / Shimmer Sweep around Mor Cam Cards
-        borderBeamDeg = infinite.animateFloat(
+        borderBeamDegState = infinite.animateFloat(
             initialValue = 0f,
             targetValue = 360f,
             animationSpec = infiniteRepeatable(
@@ -628,10 +649,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Restart
             ),
             label = "borderBeamDeg"
-        ).value
+        )
 
         // 2.2: Breathing Neon Glow (3s ease-in-out infinite) for Stories script, ⚡ bolt, and 🔥 flame
-        neonBreath = infinite.animateFloat(
+        neonBreathState = infinite.animateFloat(
             initialValue = 0.65f,
             targetValue = 1.0f,
             animationSpec = infiniteRepeatable(
@@ -639,10 +660,10 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Reverse
             ),
             label = "neonBreath"
-        ).value
+        )
 
         // 2.4: Live Radar Pulse for Status Spheres (Aria, Eldoria, Tokyo)
-        radarPulse = infinite.animateFloat(
+        radarPulseState = infinite.animateFloat(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
@@ -650,16 +671,16 @@ fun ExploreTabContent(
                 repeatMode = RepeatMode.Restart
             ),
             label = "radarPulse"
-        ).value
+        )
     } else {
-        cardLevitateProgress = 0.5f
-        playTrianglePulse = 1.0f
-        outerOrbitDeg = 0f
-        innerOrbitDeg = 0f
-        flarePulse = 0.5f
-        borderBeamDeg = 45f
-        neonBreath = 0.85f
-        radarPulse = 0.35f
+        cardLevitateProgressState = remember { mutableFloatStateOf(0.5f) }
+        playTrianglePulseState = remember { mutableFloatStateOf(1.0f) }
+        outerOrbitDegState = remember { mutableFloatStateOf(0f) }
+        innerOrbitDegState = remember { mutableFloatStateOf(0f) }
+        flarePulseState = remember { mutableFloatStateOf(0.5f) }
+        borderBeamDegState = remember { mutableFloatStateOf(45f) }
+        neonBreathState = remember { mutableFloatStateOf(0.85f) }
+        radarPulseState = remember { mutableFloatStateOf(0.35f) }
     }
 
     // Track filter switches for BÖLÜM 3.2 Staggered Cascade Animation
@@ -716,15 +737,16 @@ fun ExploreTabContent(
                                 modifier = Modifier
                                     .size(width = 26.dp, height = 35.dp)
                                     .graphicsLayer {
-                                        val s = 0.98f + 0.03f * neonBreath
+                                        val s = 0.98f + 0.03f * neonBreathState.value
                                         scaleX = s
                                         scaleY = s
                                     }
                                     .drawBehind {
+                                        val breath = neonBreathState.value
                                         drawCircle(
                                             brush = Brush.radialGradient(
                                                 colors = listOf(
-                                                    Color(0xFFA855F7).copy(alpha = 0.20f * neonBreath),
+                                                    Color(0xFFA855F7).copy(alpha = 0.20f * breath),
                                                     Color.Transparent
                                                 )
                                             ),
@@ -760,16 +782,17 @@ fun ExploreTabContent(
                                         .height(32.dp)
                                         .offset(x = (-6).dp, y = (-2).dp)
                                         .graphicsLayer {
-                                            val s = 0.99f + 0.02f * neonBreath
+                                            val s = 0.99f + 0.02f * neonBreathState.value
                                             scaleX = s
                                             scaleY = s
                                         }
                                         .drawBehind {
+                                            val breath = neonBreathState.value
                                             drawCircle(
                                                 brush = Brush.radialGradient(
                                                     colors = listOf(
-                                                        Color(0xFFD946EF).copy(alpha = 0.18f * neonBreath),
-                                                        Color(0xFF9333EA).copy(alpha = 0.08f * neonBreath),
+                                                        Color(0xFFD946EF).copy(alpha = 0.18f * breath),
+                                                        Color(0xFF9333EA).copy(alpha = 0.08f * breath),
                                                         Color.Transparent
                                                     )
                                                 ),
@@ -799,7 +822,7 @@ fun ExploreTabContent(
 
                         // Glowing Horizontal Divider with 4-Point Diamond Star (─── ✦ ───)
                         GlowingStarDivider(
-                            glowIntensity = neonBreath,
+                            glowIntensityProvider = { neonBreathState.value },
                             modifier = Modifier
                                 .fillMaxWidth(0.84f)
                                 .height(13.dp)
@@ -811,9 +834,11 @@ fun ExploreTabContent(
                         rootSize = rootSize,
                         frostedManorBitmap = frostedManorBitmap,
                         scrollSync = scrollSync,
-                        orbitDeg = outerOrbitDeg,
-                        glowAlpha = neonBreath,
-                        onClick = { onOpenSettings?.invoke() }
+                        orbitDeg = 0f,
+                        glowAlpha = 0.85f,
+                        onClick = { onOpenSettings?.invoke() },
+                        orbitDegProvider = { outerOrbitDegState.value },
+                        glowAlphaProvider = { neonBreathState.value }
                     )
                 }
 
@@ -870,16 +895,17 @@ fun ExploreTabContent(
                                 modifier = Modifier
                                     .size(44.dp)
                                     .graphicsLayer {
-                                        val s = 0.98f + 0.03f * neonBreath
+                                        val s = 0.98f + 0.03f * neonBreathState.value
                                         scaleX = s
                                         scaleY = s
                                     }
                                     .drawBehind {
+                                        val breath = neonBreathState.value
                                         drawCircle(
                                             brush = Brush.radialGradient(
                                                 colors = listOf(
-                                                    Color(0xFFF59E0B).copy(alpha = 0.20f * neonBreath),
-                                                    Color(0xFFEC4899).copy(alpha = 0.08f * neonBreath),
+                                                    Color(0xFFF59E0B).copy(alpha = 0.20f * breath),
+                                                    Color(0xFFEC4899).copy(alpha = 0.08f * breath),
                                                     Color.Transparent
                                                 )
                                             ),
@@ -933,11 +959,11 @@ fun ExploreTabContent(
 
                     // BÖLÜM 1.1: Right 3D Animated Play Portal (Vibrant, Solid, NO ugly diagonal line!)
                     AnimatedPlayPortal3D(
-                        levitateProgress = cardLevitateProgress,
-                        playTrianglePulse = playTrianglePulse,
-                        outerOrbitDeg = outerOrbitDeg,
-                        innerOrbitDeg = innerOrbitDeg,
-                        flarePulse = flarePulse,
+                        levitateProgressProvider = { cardLevitateProgressState.value },
+                        playTrianglePulseProvider = { playTrianglePulseState.value },
+                        outerOrbitDegProvider = { outerOrbitDegState.value },
+                        innerOrbitDegProvider = { innerOrbitDegState.value },
+                        flarePulseProvider = { flarePulseState.value },
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .size(158.dp)
@@ -955,7 +981,7 @@ fun ExploreTabContent(
                 scrollSync = scrollSync,
                 selectedCategory = selectedCategory,
                 isEnglish = isEnglish,
-                glowAlpha = neonBreath,
+                glowAlphaProvider = { neonBreathState.value },
                 onSelectCategory = { selectedCategory = it }
             )
         }
@@ -972,8 +998,8 @@ fun ExploreTabContent(
                         frostedManorBitmap = frostedManorBitmap,
                         scrollSync = scrollSync,
                         isEnglish = isEnglish,
-                        borderBeamDeg = borderBeamDeg,
-                        neonBreath = neonBreath,
+                        borderBeamDegProvider = { borderBeamDegState.value },
+                        neonBreathProvider = { neonBreathState.value },
                         onClick = { onOpenAidenMenu?.invoke() }
                     )
                 }
@@ -987,6 +1013,7 @@ fun ExploreTabContent(
             contentType = { _, _ -> "template_card" }
         ) { idx, preset ->
             val cascadeIdx = if (showAidenHeroCard) idx + 1 else idx
+            val phaseOffsetDeg = (idx + 1) * 75f
             StaggeredCascadeItem(
                 index = cascadeIdx,
                 triggerKey = cascadeTrigger
@@ -997,9 +1024,9 @@ fun ExploreTabContent(
                     scrollSync = scrollSync,
                     preset = preset,
                     isEnglish = isEnglish,
-                    borderBeamDeg = (borderBeamDeg + (idx + 1) * 75f) % 360f,
-                    radarPulse = radarPulse,
-                    neonBreath = neonBreath,
+                    borderBeamDegProvider = { (borderBeamDegState.value + phaseOffsetDeg) % 360f },
+                    radarPulseProvider = { radarPulseState.value },
+                    neonBreathProvider = { neonBreathState.value },
                     onStartTemplate = {
                         if (isLaunchingTemplate) return@MorCamTemplateCard
                         val existing = findExistingBotForTemplate(preset)
@@ -1224,105 +1251,100 @@ private fun StaggeredCascadeItem(
 // ── BÖLÜM 1.1: Living 3D Play Portal (Levitation + 3D Tilt + Counter-Rotating Rings + Orbiting Stars) ──
 @Composable
 private fun AnimatedPlayPortal3D(
-    levitateProgress: Float,
-    playTrianglePulse: Float,
-    outerOrbitDeg: Float,
-    innerOrbitDeg: Float,
-    flarePulse: Float,
+    levitateProgressProvider: () -> Float,
+    playTrianglePulseProvider: () -> Float,
+    outerOrbitDegProvider: () -> Float,
+    innerOrbitDegProvider: () -> Float,
+    flarePulseProvider: () -> Float,
     modifier: Modifier = Modifier
 ) {
-    // Smooth sinusoidal levitation (-4.5dp <-> +4.5dp) and 3D tilt (-3deg <-> +2deg)
-    val translateYDp = -4.5f + 9f * levitateProgress
-    val tiltZDeg = -3f + 5f * levitateProgress
-    val tiltXDeg = 4f - 8f * levitateProgress
-    val tiltYDeg = -5f + 10f * levitateProgress
-
+    val reusableStarPath = remember { Path() }
     Box(
         modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
         // Layer 1 & 2: Deep Violet Aura + Outer Clockwise Orbital Ring (14s) + Inner Counter-Clockwise Energy Ring (18s)
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val cx = size.width * 0.50f
-            val cy = size.height * 0.50f
-            val minDim = size.minDimension
-
-            // Rich dark-violet ambient glow behind the 3D Play Card so it pops vividly against the background
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color(0x663B1468),
-                        Color(0x38581C87),
-                        Color.Transparent
-                    ),
-                    center = Offset(cx, cy),
-                    radius = minDim * 0.48f
-                ),
-                radius = minDim * 0.48f,
-                center = Offset(cx, cy)
-            )
-
-            // 1.2a: Outer Clockwise Rotating Elliptical Orbital Ring (0 -> 360 deg, 14s)
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.save()
-                canvas.nativeCanvas.rotate(outerOrbitDeg, cx, cy)
-
-                val outerGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    style = android.graphics.Paint.Style.STROKE
-                    strokeWidth = 2.0.dp.toPx()
-                    color = android.graphics.Color.argb(72, 192, 132, 252)
-                    maskFilter = android.graphics.BlurMaskFilter(
-                        4.dp.toPx(),
-                        android.graphics.BlurMaskFilter.Blur.NORMAL
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    val cx = size.width * 0.50f
+                    val cy = size.height * 0.50f
+                    val minDim = size.minDimension
+                    val ambientRadius = (minDim * 0.48f).coerceAtLeast(1f)
+                    val ambientBrush = Brush.radialGradient(
+                        colors = listOf(
+                            Color(0x663B1468),
+                            Color(0x38581C87),
+                            Color.Transparent
+                        ),
+                        center = Offset(cx, cy),
+                        radius = ambientRadius
                     )
+                    val outerGlowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 2.0.dp.toPx()
+                        color = android.graphics.Color.argb(72, 192, 132, 252)
+                        maskFilter = android.graphics.BlurMaskFilter(
+                            4.dp.toPx(),
+                            android.graphics.BlurMaskFilter.Blur.NORMAL
+                        )
+                    }
+                    val outerCorePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 1.0.dp.toPx()
+                        color = android.graphics.Color.argb(145, 237, 228, 255)
+                    }
+                    val innerArcPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                        style = android.graphics.Paint.Style.STROKE
+                        strokeWidth = 1.2.dp.toPx()
+                        color = android.graphics.Color.argb(115, 216, 180, 254)
+                        maskFilter = android.graphics.BlurMaskFilter(
+                            2.5.dp.toPx(),
+                            android.graphics.BlurMaskFilter.Blur.NORMAL
+                        )
+                    }
+                    val rx = minDim * 0.46f
+                    val ry = minDim * 0.41f
+                    val oval = android.graphics.RectF(cx - rx, cy - ry, cx + rx, cy + ry)
+                    val irx = minDim * 0.42f
+                    val iry = minDim * 0.34f
+                    val innerOval = android.graphics.RectF(cx - irx, cy - iry, cx + irx, cy + iry)
+
+                    onDrawBehind {
+                        drawCircle(
+                            brush = ambientBrush,
+                            radius = ambientRadius,
+                            center = Offset(cx, cy)
+                        )
+                        drawIntoCanvas { canvas ->
+                            val native = canvas.nativeCanvas
+                            native.save()
+                            native.rotate(outerOrbitDegProvider(), cx, cy)
+                            native.drawOval(oval, outerGlowPaint)
+                            native.drawOval(oval, outerCorePaint)
+                            native.restore()
+
+                            native.save()
+                            native.rotate(innerOrbitDegProvider(), cx, cy)
+                            native.drawArc(innerOval, -35f, 125f, false, innerArcPaint)
+                            native.drawArc(innerOval, 145f, 125f, false, innerArcPaint)
+                            native.restore()
+                        }
+                    }
                 }
-                val outerCorePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    style = android.graphics.Paint.Style.STROKE
-                    strokeWidth = 1.0.dp.toPx()
-                    color = android.graphics.Color.argb(145, 237, 228, 255)
-                }
-
-                val rx = minDim * 0.46f
-                val ry = minDim * 0.41f
-                val oval = android.graphics.RectF(cx - rx, cy - ry, cx + rx, cy + ry)
-                canvas.nativeCanvas.drawOval(oval, outerGlowPaint)
-                canvas.nativeCanvas.drawOval(oval, outerCorePaint)
-                canvas.nativeCanvas.restore()
-            }
-
-            // 1.2b: Inner Counter-Clockwise Rotating Energy Ring & Diagonal Light Arcs (360 -> 0 deg, 18s)
-            drawIntoCanvas { canvas ->
-                canvas.nativeCanvas.save()
-                canvas.nativeCanvas.rotate(innerOrbitDeg, cx, cy)
-
-                val innerArcPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                    style = android.graphics.Paint.Style.STROKE
-                    strokeWidth = 1.2.dp.toPx()
-                    color = android.graphics.Color.argb(115, 216, 180, 254)
-                    maskFilter = android.graphics.BlurMaskFilter(
-                        2.5.dp.toPx(),
-                        android.graphics.BlurMaskFilter.Blur.NORMAL
-                    )
-                }
-
-                val irx = minDim * 0.42f
-                val iry = minDim * 0.34f
-                val innerOval = android.graphics.RectF(cx - irx, cy - iry, cx + irx, cy + iry)
-                canvas.nativeCanvas.drawArc(innerOval, -35f, 125f, false, innerArcPaint)
-                canvas.nativeCanvas.drawArc(innerOval, 145f, 125f, false, innerArcPaint)
-                canvas.nativeCanvas.restore()
-            }
-        }
+        )
 
         // Layer 3: 3D Levitating & Tilting Mor Cam Play Card + Breathing ▶ Triangle Aura
         Box(
             modifier = Modifier
                 .size(width = 132.dp, height = 148.dp)
                 .graphicsLayer {
-                    translationY = translateYDp.dp.toPx()
-                    rotationZ = tiltZDeg
-                    rotationX = tiltXDeg
-                    rotationY = tiltYDeg
+                    val lev = levitateProgressProvider()
+                    translationY = (-4.5f + 9f * lev).dp.toPx()
+                    rotationZ = -3f + 5f * lev
+                    rotationX = 4f - 8f * lev
+                    rotationY = -5f + 10f * lev
                     cameraDistance = 14f * density
                 },
             contentAlignment = Alignment.Center
@@ -1337,13 +1359,14 @@ private fun AnimatedPlayPortal3D(
 
             // Subtle Breathing Neon Play (▶) Triangle Glow
             Canvas(modifier = Modifier.fillMaxSize()) {
+                val pulse = playTrianglePulseProvider()
                 val cx = size.width * 0.50f
                 val cy = size.height * 0.51f
-                val triRadius = size.minDimension * 0.14f * playTrianglePulse
+                val triRadius = size.minDimension * 0.14f * pulse
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = listOf(
-                            Color(0xFFE879F9).copy(alpha = 0.24f * (playTrianglePulse - 0.35f)),
+                            Color(0xFFE879F9).copy(alpha = 0.24f * (pulse - 0.35f)),
                             Color(0xFF9333EA).copy(alpha = 0.12f),
                             Color.Transparent
                         ),
@@ -1358,18 +1381,24 @@ private fun AnimatedPlayPortal3D(
 
         // Layer 4: Subtle Orbiting 4-Point Star Lens Flares (✦) along the orbital path
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val outerDeg = outerOrbitDegProvider()
+            val innerDeg = innerOrbitDegProvider()
+            val flarePulse = flarePulseProvider()
             val cx = size.width * 0.50f
             val cy = size.height * 0.50f
             val rx = size.minDimension * 0.45f
             val ry = size.minDimension * 0.40f
 
-            val flares = listOf(
-                Triple(-152f + 18f * kotlin.math.sin(Math.toRadians(outerOrbitDeg.toDouble())).toFloat(), flarePulse, 7.dp.toPx()),
-                Triple(32f + 22f * kotlin.math.cos(Math.toRadians(outerOrbitDeg.toDouble())).toFloat(), 1f - flarePulse, 8.5.dp.toPx()),
-                Triple(-68f + 15f * kotlin.math.sin(Math.toRadians(innerOrbitDeg.toDouble())).toFloat(), 0.5f + 0.5f * flarePulse, 6.dp.toPx())
-            )
+            val outerRad = Math.toRadians(outerDeg.toDouble())
+            val innerRad = Math.toRadians(innerDeg.toDouble())
+            val a0 = -152f + 18f * kotlin.math.sin(outerRad).toFloat()
+            val a1 = 32f + 22f * kotlin.math.cos(outerRad).toFloat()
+            val a2 = -68f + 15f * kotlin.math.sin(innerRad).toFloat()
+            val r0 = 7.dp.toPx()
+            val r1 = 8.5.dp.toPx()
+            val r2 = 6.dp.toPx()
 
-            flares.forEach { (angleDeg, phase, baseRayLen) ->
+            fun drawFlare(angleDeg: Float, phase: Float, baseRayLen: Float) {
                 val rad = Math.toRadians(angleDeg.toDouble())
                 val fx = cx + rx * kotlin.math.cos(rad).toFloat()
                 val fy = cy + ry * kotlin.math.sin(rad).toFloat()
@@ -1391,19 +1420,22 @@ private fun AnimatedPlayPortal3D(
                     center = Offset(fx, fy)
                 )
 
-                val starPath = Path().apply {
-                    moveTo(fx, fy - ray)
-                    quadraticTo(fx, fy, fx + ray, fy)
-                    quadraticTo(fx, fy, fx, fy + ray)
-                    quadraticTo(fx, fy, fx - ray, fy)
-                    quadraticTo(fx, fy, fx, fy - ray)
-                    close()
-                }
+                reusableStarPath.reset()
+                reusableStarPath.moveTo(fx, fy - ray)
+                reusableStarPath.quadraticTo(fx, fy, fx + ray, fy)
+                reusableStarPath.quadraticTo(fx, fy, fx, fy + ray)
+                reusableStarPath.quadraticTo(fx, fy, fx - ray, fy)
+                reusableStarPath.quadraticTo(fx, fy, fx, fy - ray)
+                reusableStarPath.close()
                 drawPath(
-                    path = starPath,
+                    path = reusableStarPath,
                     color = Color.White.copy(alpha = alpha)
                 )
             }
+
+            drawFlare(a0, flarePulse, r0)
+            drawFlare(a1, 1f - flarePulse, r1)
+            drawFlare(a2, 0.5f + 0.5f * flarePulse, r2)
         }
     }
 }
@@ -1411,10 +1443,12 @@ private fun AnimatedPlayPortal3D(
 // ── Glowing Horizontal Divider with 4-Point Star (─── ✦ ───) ──────────────────
 @Composable
 private fun GlowingStarDivider(
-    glowIntensity: Float,
+    glowIntensityProvider: () -> Float,
     modifier: Modifier = Modifier
 ) {
+    val starPath = remember { Path() }
     Canvas(modifier = modifier) {
+        val glowIntensity = glowIntensityProvider()
         val w = size.width
         val cy = size.height * 0.5f
         val starX = w * 0.50f
@@ -1449,14 +1483,13 @@ private fun GlowingStarDivider(
             center = Offset(starX, cy)
         )
 
-        val starPath = Path().apply {
-            moveTo(starX, cy - starR)
-            quadraticTo(starX, cy, starX + starR * 0.85f, cy)
-            quadraticTo(starX, cy, starX, cy + starR)
-            quadraticTo(starX, cy, starX - starR * 0.85f, cy)
-            quadraticTo(starX, cy, starX, cy - starR)
-            close()
-        }
+        starPath.reset()
+        starPath.moveTo(starX, cy - starR)
+        starPath.quadraticTo(starX, cy, starX + starR * 0.85f, cy)
+        starPath.quadraticTo(starX, cy, starX, cy + starR)
+        starPath.quadraticTo(starX, cy, starX - starR * 0.85f, cy)
+        starPath.quadraticTo(starX, cy, starX, cy - starR)
+        starPath.close()
         drawPath(starPath, color = Color(0xFFF3E8FF).copy(alpha = 0.88f))
     }
 }
@@ -1470,7 +1503,9 @@ internal fun MorCamSettingsButton(
     orbitDeg: Float,
     glowAlpha: Float,
     onClick: () -> Unit,
-    testTag: String = "templates_settings_button"
+    testTag: String = "templates_settings_button",
+    orbitDegProvider: (() -> Float)? = null,
+    glowAlphaProvider: (() -> Float)? = null
 ) {
     Box(
         modifier = Modifier
@@ -1487,15 +1522,20 @@ internal fun MorCamSettingsButton(
                     )
                 )
             )
-            .drawBehind {
-                drawIntoCanvas { canvas ->
-                    val rimFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 4.5.dp.toPx()
-                        color = android.graphics.Color.argb(38, 230, 214, 255)
-                        maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+            .drawWithCache {
+                val rimFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 4.5.dp.toPx()
+                    color = android.graphics.Color.argb(38, 230, 214, 255)
+                    maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                }
+                val cx = size.width * 0.5f
+                val cy = size.height * 0.5f
+                val radius = size.minDimension * 0.5f
+                onDrawBehind {
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawCircle(cx, cy, radius, rimFrost)
                     }
-                    canvas.nativeCanvas.drawCircle(size.width * 0.5f, size.height * 0.5f, size.minDimension * 0.5f, rimFrost)
                 }
             }
             .border(
@@ -1521,7 +1561,7 @@ internal fun MorCamSettingsButton(
         Box(
             modifier = Modifier
                 .size(44.dp)
-                .graphicsLayer { rotationZ = orbitDeg * 0.5f }
+                .graphicsLayer { rotationZ = (orbitDegProvider?.invoke() ?: orbitDeg) * 0.5f }
                 .clip(CircleShape)
                 .background(
                     Brush.radialGradient(
@@ -1553,7 +1593,7 @@ internal fun MorCamSettingsButton(
             modifier = Modifier
                 .size(24.dp)
                 .graphicsLayer {
-                    val s = 0.98f + 0.03f * glowAlpha
+                    val s = 0.98f + 0.03f * (glowAlphaProvider?.invoke() ?: glowAlpha)
                     scaleX = s
                     scaleY = s
                 }
@@ -1569,7 +1609,7 @@ private fun SlidingMorCamFilterBar(
     scrollSync: Int,
     selectedCategory: String,
     isEnglish: Boolean,
-    glowAlpha: Float,
+    glowAlphaProvider: () -> Float,
     onSelectCategory: (String) -> Unit
 ) {
     val tabs = remember(isEnglish) {
@@ -1626,29 +1666,36 @@ private fun SlidingMorCamFilterBar(
                                     )
                                 )
                             )
-                            .drawBehind {
+                            .drawWithCache {
                                 val r = size.height / 2f
-                                drawIntoCanvas { canvas ->
-                                    val edgeFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                        style = android.graphics.Paint.Style.STROKE
-                                        strokeWidth = 4.dp.toPx()
-                                        color = android.graphics.Color.argb(if (isCurrent) 0 else 32, 224, 204, 250)
-                                        maskFilter = android.graphics.BlurMaskFilter(3.5.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-                                    }
-                                    canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, edgeFrost)
+                                val edgeFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                    style = android.graphics.Paint.Style.STROKE
+                                    strokeWidth = 4.dp.toPx()
+                                    color = android.graphics.Color.argb(if (isCurrent) 0 else 32, 224, 204, 250)
+                                    maskFilter = android.graphics.BlurMaskFilter(3.5.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
                                 }
-                                drawCircle(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color(0xFFE9D5FF).copy(alpha = if (isCurrent) 0f else 0.14f),
-                                            Color.Transparent
-                                        ),
-                                        center = Offset(size.width * 0.48f, size.height),
-                                        radius = size.width * 0.30f
+                                val radCenter = Offset(size.width * 0.48f, size.height)
+                                val radRadius = (size.width * 0.30f).coerceAtLeast(1f)
+                                val bottomSheen = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0xFFE9D5FF).copy(alpha = if (isCurrent) 0f else 0.14f),
+                                        Color.Transparent
                                     ),
-                                    center = Offset(size.width * 0.48f, size.height),
-                                    radius = size.width * 0.30f
+                                    center = radCenter,
+                                    radius = radRadius
                                 )
+                                onDrawBehind {
+                                    if (!isCurrent) {
+                                        drawIntoCanvas { canvas ->
+                                            canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, edgeFrost)
+                                        }
+                                        drawCircle(
+                                            brush = bottomSheen,
+                                            center = radCenter,
+                                            radius = radRadius
+                                        )
+                                    }
+                                }
                             }
                             .border(
                                 width = 1.05.dp,
@@ -1671,22 +1718,22 @@ private fun SlidingMorCamFilterBar(
                     .offset(x = indicatorOffsetX)
                     .width(pillWidth)
                     .fillMaxHeight()
-                    .drawBehind {
-                        drawIntoCanvas { canvas ->
-                            val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                style = android.graphics.Paint.Style.STROKE
-                                strokeWidth = 1.8.dp.toPx()
-                                color = android.graphics.Color.argb(
-                                    (58 * glowAlpha).toInt(),
-                                    180, 120, 244
-                                )
-                                maskFilter = android.graphics.BlurMaskFilter(
-                                    5.dp.toPx(),
-                                    android.graphics.BlurMaskFilter.Blur.NORMAL
-                                )
+                    .drawWithCache {
+                        val r = size.height / 2f
+                        val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = 1.8.dp.toPx()
+                            color = android.graphics.Color.rgb(180, 120, 244)
+                            maskFilter = android.graphics.BlurMaskFilter(
+                                5.dp.toPx(),
+                                android.graphics.BlurMaskFilter.Blur.NORMAL
+                            )
+                        }
+                        onDrawBehind {
+                            glowPaint.alpha = (58 * glowAlphaProvider()).toInt().coerceIn(0, 255)
+                            drawIntoCanvas { canvas ->
+                                canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, glowPaint)
                             }
-                            val r = size.height / 2f
-                            canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, glowPaint)
                         }
                     }
                     .clip(RoundedCornerShape(50))
@@ -1700,44 +1747,51 @@ private fun SlidingMorCamFilterBar(
                             )
                         )
                     )
-                    .drawBehind {
+                    .drawWithCache {
                         val r = size.height / 2f
-                        drawIntoCanvas { canvas ->
-                            val innerRim = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                style = android.graphics.Paint.Style.STROKE
-                                strokeWidth = 4.5.dp.toPx()
-                                color = android.graphics.Color.argb(42, 237, 228, 255)
-                                maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-                            }
-                            canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, innerRim)
+                        val innerRim = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = 4.5.dp.toPx()
+                            color = android.graphics.Color.argb(42, 237, 228, 255)
+                            maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
                         }
-                        // Subtle top & bottom specular border glints matching reference [⭐ Tümü]
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.28f),
-                                    Color(0xFFE9D5FF).copy(alpha = 0.12f),
-                                    Color.Transparent
-                                ),
-                                center = Offset(size.width * 0.34f, 0f),
-                                radius = size.width * 0.36f
+                        val topGlintCenter = Offset(size.width * 0.34f, 0f)
+                        val topGlintRadius = (size.width * 0.36f).coerceAtLeast(1f)
+                        val topGlintBrush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.28f),
+                                Color(0xFFE9D5FF).copy(alpha = 0.12f),
+                                Color.Transparent
                             ),
-                            center = Offset(size.width * 0.34f, 0f),
-                            radius = size.width * 0.36f
+                            center = topGlintCenter,
+                            radius = topGlintRadius
                         )
-                        drawCircle(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.32f),
-                                    Color(0xFFD8B4FE).copy(alpha = 0.14f),
-                                    Color.Transparent
-                                ),
-                                center = Offset(size.width * 0.44f, size.height),
-                                radius = size.width * 0.36f
+                        val bottomGlintCenter = Offset(size.width * 0.44f, size.height)
+                        val bottomGlintRadius = (size.width * 0.36f).coerceAtLeast(1f)
+                        val bottomGlintBrush = Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.32f),
+                                Color(0xFFD8B4FE).copy(alpha = 0.14f),
+                                Color.Transparent
                             ),
-                            center = Offset(size.width * 0.44f, size.height),
-                            radius = size.width * 0.36f
+                            center = bottomGlintCenter,
+                            radius = bottomGlintRadius
                         )
+                        onDrawBehind {
+                            drawIntoCanvas { canvas ->
+                                canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, innerRim)
+                            }
+                            drawCircle(
+                                brush = topGlintBrush,
+                                center = topGlintCenter,
+                                radius = topGlintRadius
+                            )
+                            drawCircle(
+                                brush = bottomGlintBrush,
+                                center = bottomGlintCenter,
+                                radius = bottomGlintRadius
+                            )
+                        }
                     }
                     .border(
                         width = 1.25.dp,
@@ -1886,8 +1940,8 @@ private fun MorCamAidenHeroCard(
     frostedManorBitmap: ImageBitmap,
     scrollSync: Int,
     isEnglish: Boolean,
-    borderBeamDeg: Float,
-    neonBreath: Float,
+    borderBeamDegProvider: () -> Float,
+    neonBreathProvider: () -> Float,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -1924,13 +1978,12 @@ private fun MorCamAidenHeroCard(
                 scaleX = cardScale
                 scaleY = cardScale
             }
-            .morCamCardOuterAura(cornerRadius = 24.dp, glowAlpha = neonBreath)
+            .morCamCardOuterAura(cornerRadius = 24.dp, glowAlphaProvider = neonBreathProvider)
             .clip(cardShape)
             .templatesBackdropBlur(rootSize, frostedManorBitmap, alpha = 0.74f, scrollSync = scrollSync)
             .morCamInnerFrostAndMist(
                 cornerRadius = 24.dp,
-                borderBeamDeg = borderBeamDeg,
-                glowAlpha = neonBreath,
+                borderBeamDegProvider = borderBeamDegProvider,
                 isHeroCard = true
             )
             .clickable(
@@ -2052,16 +2105,17 @@ private fun MorCamAidenHeroCard(
                                 .height(40.dp)
                                 .offset(x = (-4).dp, y = (-2).dp)
                                 .graphicsLayer {
-                                    val s = 0.99f + 0.02f * neonBreath
+                                    val s = 0.99f + 0.02f * neonBreathProvider()
                                     scaleX = s
                                     scaleY = s
                                 }
                                 .drawBehind {
+                                    val breath = neonBreathProvider()
                                     drawCircle(
                                         brush = Brush.radialGradient(
                                             colors = listOf(
-                                                Color(0xFFD946EF).copy(alpha = 0.18f * neonBreath),
-                                                Color(0xFF9333EA).copy(alpha = 0.08f * neonBreath),
+                                                Color(0xFFD946EF).copy(alpha = 0.18f * breath),
+                                                Color(0xFF9333EA).copy(alpha = 0.08f * breath),
                                                 Color.Transparent
                                             )
                                         ),
@@ -2071,7 +2125,7 @@ private fun MorCamAidenHeroCard(
                         )
 
                         GlowingStarDivider(
-                            glowIntensity = neonBreath,
+                            glowIntensityProvider = neonBreathProvider,
                             modifier = Modifier
                                 .fillMaxWidth(0.88f)
                                 .height(12.dp)
@@ -2098,10 +2152,11 @@ private fun MorCamAidenHeroCard(
                             modifier = Modifier
                                 .size(42.dp)
                                 .drawBehind {
+                                    val breath = neonBreathProvider()
                                     drawCircle(
                                         brush = Brush.radialGradient(
                                             colors = listOf(
-                                                Color(0xFFA855F7).copy(alpha = 0.22f * neonBreath),
+                                                Color(0xFFA855F7).copy(alpha = 0.22f * breath),
                                                 Color.Transparent
                                             )
                                         ),
@@ -2118,15 +2173,20 @@ private fun MorCamAidenHeroCard(
                                         )
                                     )
                                 )
-                                .drawBehind {
-                                    drawIntoCanvas { canvas ->
-                                        val rim = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                            style = android.graphics.Paint.Style.STROKE
-                                            strokeWidth = 4.dp.toPx()
-                                            color = android.graphics.Color.argb(42, 230, 214, 255)
-                                            maskFilter = android.graphics.BlurMaskFilter(3.5.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                                .drawWithCache {
+                                    val rim = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                        style = android.graphics.Paint.Style.STROKE
+                                        strokeWidth = 4.dp.toPx()
+                                        color = android.graphics.Color.argb(42, 230, 214, 255)
+                                        maskFilter = android.graphics.BlurMaskFilter(3.5.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
+                                    }
+                                    val cx = size.width * 0.5f
+                                    val cy = size.height * 0.5f
+                                    val rad = size.minDimension * 0.5f
+                                    onDrawBehind {
+                                        drawIntoCanvas { canvas ->
+                                            canvas.nativeCanvas.drawCircle(cx, cy, rad, rim)
                                         }
-                                        canvas.nativeCanvas.drawCircle(size.width * 0.5f, size.height * 0.5f, size.minDimension * 0.5f, rim)
                                     }
                                 }
                                 .border(
@@ -2162,9 +2222,9 @@ private fun MorCamTemplateCard(
     scrollSync: Int,
     preset: BotEntity,
     isEnglish: Boolean,
-    borderBeamDeg: Float,
-    radarPulse: Float,
-    neonBreath: Float,
+    borderBeamDegProvider: () -> Float,
+    radarPulseProvider: () -> Float,
+    neonBreathProvider: () -> Float,
     onStartTemplate: () -> Unit
 ) {
     val isUniverse = preset.mode == "universe"
@@ -2234,13 +2294,12 @@ private fun MorCamTemplateCard(
                 scaleX = cardScale
                 scaleY = cardScale
             }
-            .morCamCardOuterAura(cornerRadius = 22.dp, glowAlpha = neonBreath)
+            .morCamCardOuterAura(cornerRadius = 22.dp, glowAlphaProvider = neonBreathProvider)
             .clip(cardShape)
             .templatesBackdropBlur(rootSize, frostedManorBitmap, alpha = 0.74f, scrollSync = scrollSync)
             .morCamInnerFrostAndMist(
                 cornerRadius = 22.dp,
-                borderBeamDeg = borderBeamDeg,
-                glowAlpha = neonBreath,
+                borderBeamDegProvider = borderBeamDegProvider,
                 isHeroCard = false
             )
             .clickable(
@@ -2304,11 +2363,12 @@ private fun MorCamTemplateCard(
                 ) {
                     // BÖLÜM 2.4: Live Radar Pulse Sphere
                     Canvas(modifier = Modifier.size(18.dp)) {
+                        val pulse = radarPulseProvider()
                         val cx = size.width * 0.5f
                         val cy = size.height * 0.5f
                         val coreR = size.minDimension * 0.36f
-                        val pulseScale = 1.0f + 1.15f * radarPulse
-                        val pulseAlpha = (1.0f - radarPulse) * 0.42f
+                        val pulseScale = 1.0f + 1.15f * pulse
+                        val pulseAlpha = (1.0f - pulse) * 0.42f
 
                         val pulseColor = when {
                             isAria || isEldoria -> Color(0xFFF59E0B)

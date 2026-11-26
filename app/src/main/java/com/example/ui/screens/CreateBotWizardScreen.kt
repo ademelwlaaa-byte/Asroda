@@ -58,6 +58,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -136,7 +137,9 @@ private val OPENING_TONE_OPTIONS = listOf(
     "mysterious" to "Gizemli & Yavaş"
 )
 
-private fun serializeWizardKeyCharacters(list: List<KeyCharacter>, dropBlank: Boolean): String {
+private val ISO_STORY_DATE_REGEX = Regex("^\\d{4}-\\d{2}-\\d{2}$")
+
+internal fun serializeWizardKeyCharacters(list: List<KeyCharacter>, dropBlank: Boolean): String {
     val filtered = if (dropBlank) list.filter { it.name.isNotBlank() } else list
     if (filtered.isEmpty()) return "[]"
     val array = JSONArray()
@@ -150,7 +153,7 @@ private fun serializeWizardKeyCharacters(list: List<KeyCharacter>, dropBlank: Bo
     return array.toString()
 }
 
-private fun deserializeWizardKeyCharacters(json: String): List<KeyCharacter> {
+internal fun deserializeWizardKeyCharacters(json: String): List<KeyCharacter> {
     if (json.isBlank() || json == "[]") return emptyList()
     return try {
         val arr = JSONArray(json)
@@ -171,16 +174,85 @@ private fun deserializeWizardKeyCharacters(json: String): List<KeyCharacter> {
     }
 }
 
-private fun isValidIsoStoryDate(input: String): Boolean {
+internal fun isValidIsoStoryDate(input: String): Boolean {
     val trimmed = input.trim()
     if (trimmed.isEmpty()) return true
-    if (!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(trimmed)) return false
+    if (!ISO_STORY_DATE_REGEX.matches(trimmed)) return false
     return try {
         val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
         sdf.parse(trimmed) != null
     } catch (_: Exception) {
         false
     }
+}
+
+internal fun validateWizardStep(
+    stepIdx: Int,
+    mode: String,
+    aiName: String,
+    aiPersonality: String,
+    universeName: String,
+    scenario: String,
+    userCharName: String,
+    openingMessage: String,
+    isAnalyzing: Boolean,
+    storyStartDate: String
+): String? = when (stepIdx) {
+    1 -> if (mode == "personal") {
+        when {
+            aiName.isBlank() && aiPersonality.isBlank() -> "Devam etmek için Karakter Adı ve Kişilik alanlarını doldurun."
+            aiName.isBlank() -> "Devam etmek için Karakter Adı girin."
+            aiPersonality.isBlank() -> "Devam etmek için Kişilik ve Özellikler alanını doldurun."
+            else -> null
+        }
+    } else {
+        if (universeName.isBlank()) "Devam etmek için Evren Adı girin." else null
+    }
+    2 -> when {
+        scenario.isBlank() && userCharName.isBlank() -> "Devam etmek için Senaryo ve Karakterinizin Adını girin."
+        scenario.isBlank() -> "Devam etmek için Senaryo / Bağlam alanını doldurun."
+        userCharName.isBlank() -> "Devam etmek için canlandıracağınız karakterin adını girin."
+        else -> null
+    }
+    3 -> if (openingMessage.isBlank()) "Devam etmek için bir açılış sahnesi yazın veya AI ile üretin." else null
+    4 -> if (isAnalyzing) "Analiz tamamlanana kadar lütfen bekleyin." else null
+    5 -> if (!isValidIsoStoryDate(storyStartDate)) "Başlangıç tarihi yyyy-AA-gg biçiminde olmalı (örn. 2045-06-15) veya boş bırakılmalı." else null
+    else -> null
+}
+
+/**
+ * Atomic double-submit lock with stale-timeout self-recovery so rapid same-frame taps
+ * can never dispatch duplicate DB inserts while still recovering if a callback is dropped.
+ */
+internal class WizardSubmitGuard(
+    private val staleTimeoutMs: Long = 20_000L,
+    private val clockMs: () -> Long = { System.currentTimeMillis() }
+) {
+    private val locked = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile
+    private var acquiredAtMs: Long = 0L
+
+    fun tryAcquire(): Boolean {
+        val now = clockMs()
+        if (locked.compareAndSet(false, true)) {
+            acquiredAtMs = now
+            return true
+        }
+        // Self-recover only if an upstream callback was unexpectedly dropped beyond timeout
+        val elapsed = now - acquiredAtMs
+        if (elapsed >= staleTimeoutMs) {
+            acquiredAtMs = now
+            return true
+        }
+        return false
+    }
+
+    fun release() {
+        acquiredAtMs = 0L
+        locked.set(false)
+    }
+
+    fun isLocked(): Boolean = locked.get()
 }
 
 private const val WIZARD_DRAFT_PREFS = "emochi_wizard_draft_v1"
@@ -282,6 +354,7 @@ fun CreateBotWizardScreen(
     var isGeneratingOpening by remember { mutableStateOf(false) }
     var isProcessingAvatar by remember { mutableStateOf(false) }
     var localSubmitLock by remember { mutableStateOf(false) }
+    val submitGuard = remember { WizardSubmitGuard() }
     var genError by remember { mutableStateOf<String?>(null) }
     var validationHint by remember { mutableStateOf<String?>(null) }
     var showExitConfirmDialog by remember { mutableStateOf(false) }
@@ -351,38 +424,20 @@ fun CreateBotWizardScreen(
 
     val isStoryDateValid = isValidIsoStoryDate(storyStartDate)
 
-    val canNext = when (stepIdx) {
-        0 -> true
-        1 -> if (mode == "personal") aiName.isNotBlank() && aiPersonality.isNotBlank() else universeName.isNotBlank()
-        2 -> scenario.isNotBlank() && userCharName.isNotBlank()
-        3 -> openingMessage.isNotBlank()
-        4 -> !isAnalyzing
-        5 -> isStoryDateValid
-        else -> true
-    }
+    fun computeMissingHint(): String? = validateWizardStep(
+        stepIdx = stepIdx,
+        mode = mode,
+        aiName = aiName,
+        aiPersonality = aiPersonality,
+        universeName = universeName,
+        scenario = scenario,
+        userCharName = userCharName,
+        openingMessage = openingMessage,
+        isAnalyzing = isAnalyzing,
+        storyStartDate = storyStartDate
+    )
 
-    fun computeMissingHint(): String? = when (stepIdx) {
-        1 -> if (mode == "personal") {
-            when {
-                aiName.isBlank() && aiPersonality.isBlank() -> "Devam etmek için Karakter Adı ve Kişilik alanlarını doldurun."
-                aiName.isBlank() -> "Devam etmek için Karakter Adı girin."
-                aiPersonality.isBlank() -> "Devam etmek için Kişilik ve Özellikler alanını doldurun."
-                else -> null
-            }
-        } else {
-            if (universeName.isBlank()) "Devam etmek için Evren Adı girin." else null
-        }
-        2 -> when {
-            scenario.isBlank() && userCharName.isBlank() -> "Devam etmek için Senaryo ve Karakterinizin Adını girin."
-            scenario.isBlank() -> "Devam etmek için Senaryo / Bağlam alanını doldurun."
-            userCharName.isBlank() -> "Devam etmek için canlandıracağınız karakterin adını girin."
-            else -> null
-        }
-        3 -> if (openingMessage.isBlank()) "Devam etmek için bir açılış sahnesi yazın veya AI ile üretin." else null
-        4 -> if (isAnalyzing) "Analiz tamamlanana kadar lütfen bekleyin." else null
-        5 -> if (!isStoryDateValid) "Başlangıç tarihi yyyy-AA-gg biçiminde olmalı (örn. 2045-06-15) veya boş bırakılmalı." else null
-        else -> null
-    }
+    val canNext = computeMissingHint() == null
 
     // Clear soft validation hint whenever user edits inputs or moves steps
     LaunchedEffect(stepIdx, mode, aiName, aiPersonality, universeName, scenario, userCharName, openingMessage, storyStartDate) {
@@ -562,9 +617,9 @@ fun CreateBotWizardScreen(
     }
 
     val motionConfig = LocalCosmicMotionConfig.current
-    val pulseGlowAlpha = if (motionConfig.enableAmbientLoops) {
+    val pulseGlowAlphaState: State<Float> = if (motionConfig.enableAmbientLoops) {
         val infiniteTransition = rememberInfiniteTransition(label = "wizardMorCamAnim")
-        val animatedAlpha by infiniteTransition.animateFloat(
+        infiniteTransition.animateFloat(
             initialValue = 0.68f,
             targetValue = 1.0f,
             animationSpec = infiniteRepeatable(
@@ -573,9 +628,8 @@ fun CreateBotWizardScreen(
             ),
             label = "wizardPulseGlow"
         )
-        animatedAlpha
     } else {
-        0.86f
+        remember { mutableFloatStateOf(0.86f) }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -605,8 +659,8 @@ fun CreateBotWizardScreen(
                     totalSteps = totalSteps,
                     stepLabel = stepLabels.getOrElse(stepIdx) { "" },
                     frostedBackdrop = frostedBackdrop,
-                    scrollSync = scrollState.value,
-                    glowAlpha = pulseGlowAlpha,
+                    scrollSync = 0,
+                    glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                     onBackClick = { handleBackAction() },
                     onStepSelect = { target ->
                         if (target < stepIdx) {
@@ -627,8 +681,8 @@ fun CreateBotWizardScreen(
                     canNext = canNext && !effectiveSubmitting,
                     isSubmitting = effectiveSubmitting,
                     frostedBackdrop = frostedBackdrop,
-                    scrollSync = scrollState.value,
-                    glowAlpha = pulseGlowAlpha,
+                    scrollSync = 0,
+                    glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                     validationHint = submitError ?: validationHint,
                     onDisabledNextClick = {
                         if (!effectiveSubmitting) {
@@ -646,6 +700,7 @@ fun CreateBotWizardScreen(
                                 advanceToStep(stepIdx + 1)
                             }
                             else -> {
+                                if (!submitGuard.tryAcquire()) return@WizardMorCamBottomDock
                                 localSubmitLock = true
                                 onClearSubmitError()
                                 val base = buildCurrentDraft(cleanBlankCast = true)
@@ -703,6 +758,7 @@ fun CreateBotWizardScreen(
                                     base
                                 }
                                 onFinish(finalBot, finalTriggers) { succeeded ->
+                                    submitGuard.release()
                                     localSubmitLock = false
                                     if (succeeded) {
                                         // Sistem #3: Draft cleared ONLY after atomic DB transaction succeeds
@@ -795,7 +851,7 @@ fun CreateBotWizardScreen(
                             WizardStepHeader(
                                 title = "Nasıl bir etkileşim\nistersiniz?",
                                 subtitle = "AI karakter tipini ve hikaye yapısını seçin.",
-                                glowAlpha = pulseGlowAlpha
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value }
                             )
 
                             Spacer(modifier = Modifier.height(22.dp))
@@ -807,8 +863,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.Person,
                                 isSelected = mode == "personal",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 testTag = "wizard_mode_personal",
                                 onClick = { mode = "personal" }
                             )
@@ -822,8 +878,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.AutoMirrored.Filled.MenuBook,
                                 isSelected = mode == "universe",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 testTag = "wizard_mode_universe",
                                 onClick = { mode = "universe" }
                             )
@@ -832,7 +888,7 @@ fun CreateBotWizardScreen(
 
                             WizardMorCamSectionCard(
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value
+                                scrollSync = 0
                             ) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -865,7 +921,7 @@ fun CreateBotWizardScreen(
                                 WizardStepHeader(
                                     title = "Karakterinizi nasıl\ntanımlarsınız?",
                                     subtitle = "Karşınızdaki karakterin portresini, adını ve kişiliğini belirleyin.",
-                                    glowAlpha = pulseGlowAlpha
+                                    glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value }
                                 )
 
                                 Spacer(modifier = Modifier.height(20.dp))
@@ -876,7 +932,7 @@ fun CreateBotWizardScreen(
                                     avatarUrl = avatarUrl,
                                     isProcessing = isProcessingAvatar,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     onPickClick = {
                                         if (!isProcessingAvatar) {
                                             photoPickerLauncher.launch(
@@ -897,7 +953,7 @@ fun CreateBotWizardScreen(
                                     placeholder = "Ör. Aiden Blackwood",
                                     singleLine = true,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("ai_name_input")
@@ -913,7 +969,7 @@ fun CreateBotWizardScreen(
                                     placeholder = "Soğukkanlı mı, korumacı mı, konuşma tarzı ve geçmişi nasıl...",
                                     singleLine = false,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     minHeight = 136.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -957,7 +1013,7 @@ fun CreateBotWizardScreen(
                                 WizardStepHeader(
                                     title = "Evren ve karakter\nkadrosunu kurun",
                                     subtitle = "Kurgusal dünyanın kapağını, adını, anlatıcı kurallarını ve kadrosunu belirleyin.",
-                                    glowAlpha = pulseGlowAlpha
+                                    glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value }
                                 )
 
                                 Spacer(modifier = Modifier.height(20.dp))
@@ -968,7 +1024,7 @@ fun CreateBotWizardScreen(
                                     avatarUrl = avatarUrl,
                                     isProcessing = isProcessingAvatar,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     onPickClick = {
                                         if (!isProcessingAvatar) {
                                             photoPickerLauncher.launch(
@@ -989,7 +1045,7 @@ fun CreateBotWizardScreen(
                                     placeholder = "Ör. Eldoria Krallığı veya Karanlık Akademi",
                                     singleLine = true,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("universe_name_input")
@@ -1005,7 +1061,7 @@ fun CreateBotWizardScreen(
                                     placeholder = "Büyü sistemi, toplumsal hiyerarşi, anlatıcının tonu ve dünya kuralları...",
                                     singleLine = false,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     minHeight = 112.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1046,7 +1102,7 @@ fun CreateBotWizardScreen(
                                 keyCharacters.forEachIndexed { idx, char ->
                                     WizardMorCamSectionCard(
                                         frostedBackdrop = frostedBackdrop,
-                                        scrollSync = scrollState.value,
+                                        scrollSync = 0,
                                         modifier = Modifier.padding(bottom = 10.dp)
                                     ) {
                                         Row(
@@ -1065,7 +1121,7 @@ fun CreateBotWizardScreen(
                                                 placeholder = "İsim",
                                                 singleLine = true,
                                                 frostedBackdrop = frostedBackdrop,
-                                                scrollSync = scrollState.value,
+                                                scrollSync = 0,
                                                 minHeight = 48.dp,
                                                 modifier = Modifier.weight(1f)
                                             )
@@ -1080,7 +1136,7 @@ fun CreateBotWizardScreen(
                                                 placeholder = "Rol / Tanım",
                                                 singleLine = true,
                                                 frostedBackdrop = frostedBackdrop,
-                                                scrollSync = scrollState.value,
+                                                scrollSync = 0,
                                                 minHeight = 48.dp,
                                                 modifier = Modifier.weight(1.45f)
                                             )
@@ -1102,9 +1158,9 @@ fun CreateBotWizardScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(50.dp)
-                                        .wizardMorCamGlow(cornerRadius = 25.dp, alpha = 0.34f * pulseGlowAlpha, blurDp = 9.dp)
+                                        .wizardMorCamGlow(cornerRadius = 25.dp, blurDp = 9.dp, alphaProvider = { 0.34f * pulseGlowAlphaState.value })
                                         .clip(RoundedCornerShape(50))
-                                        .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.74f, scrollSync = scrollState.value)
+                                        .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.74f, scrollSync = 0)
                                         .background(
                                             Brush.horizontalGradient(listOf(Color(0x5A5B21B6), Color(0x463B1470), Color(0x5A6D28D9)))
                                         )
@@ -1146,7 +1202,7 @@ fun CreateBotWizardScreen(
                             WizardStepHeader(
                                 title = "Senaryo ve kendi\nkarakteriniz",
                                 subtitle = "Sahneye giriş bağlamını ve canlandıracağınız rolü tanımlayın.",
-                                glowAlpha = pulseGlowAlpha
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value }
                             )
 
                             Spacer(modifier = Modifier.height(20.dp))
@@ -1159,7 +1215,7 @@ fun CreateBotWizardScreen(
                                 placeholder = "Neredesiniz, aranızdaki ilişki ne, gerilim veya hikaye nasıl başladı...",
                                 singleLine = false,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
+                                scrollSync = 0,
                                 minHeight = 130.dp,
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1176,7 +1232,7 @@ fun CreateBotWizardScreen(
                                 placeholder = "Ör. Zeynep",
                                 singleLine = true,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
+                                scrollSync = 0,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("user_char_name_input")
@@ -1192,7 +1248,7 @@ fun CreateBotWizardScreen(
                                 placeholder = "Yaş, görünüş, kişilik özellikleri veya hikayelerdeki konumunuz...",
                                 singleLine = false,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
+                                scrollSync = 0,
                                 minHeight = 104.dp,
                                 modifier = Modifier.fillMaxWidth()
                             )
@@ -1202,7 +1258,7 @@ fun CreateBotWizardScreen(
                             // Collapsible Pinned Memory / World Rule section
                             WizardMorCamSectionCard(
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
+                                scrollSync = 0,
                                 modifier = Modifier.testTag("wizard_pinned_memory_card")
                             ) {
                                 Row(
@@ -1259,7 +1315,7 @@ fun CreateBotWizardScreen(
                                             placeholder = "Ör. Karakter asla gerçek adını ilk buluşmada söylemez...",
                                             singleLine = false,
                                             frostedBackdrop = frostedBackdrop,
-                                            scrollSync = scrollState.value,
+                                            scrollSync = 0,
                                             minHeight = 96.dp,
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -1275,7 +1331,7 @@ fun CreateBotWizardScreen(
                             WizardStepHeader(
                                 title = "Başlangıç sahnesi\nnasıl açılsın?",
                                 subtitle = "Sohbet bu açılış mesajı ve atmosfer betimlemesiyle başlayacak.",
-                                glowAlpha = pulseGlowAlpha
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value }
                             )
 
                             Spacer(modifier = Modifier.height(20.dp))
@@ -1294,7 +1350,7 @@ fun CreateBotWizardScreen(
                                     placeholder = "Açılış mesajını kendiniz yazın veya aşağıdaki yapay zeka kartını kullanın...",
                                     singleLine = false,
                                     frostedBackdrop = frostedBackdrop,
-                                    scrollSync = scrollState.value,
+                                    scrollSync = 0,
                                     minHeight = 190.dp,
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1376,8 +1432,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.AutoAwesome,
                                 isSelected = true,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 testTag = "wizard_ai_generate_opening_button",
                                 onClick = {
                                     if (!isGeneratingOpening) {
@@ -1430,8 +1486,8 @@ fun CreateBotWizardScreen(
                                 reviewBigFive = reviewBigFive,
                                 reviewAxes = reviewAxes,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                pulseGlowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                pulseGlowAlpha = 0.86f,
                                 onRelTypeChange = { rt ->
                                     reviewRelType = rt
                                     userEditedFields = userEditedFields + "relationshipType"
@@ -1498,7 +1554,7 @@ fun CreateBotWizardScreen(
                             WizardStepHeader(
                                 title = "Yazım tarzı ve\ngörünürlük ayarları",
                                 subtitle = "Yanıtların biçimini, tematik yoğunluğunu, kuralları ve gizliliğini seçin.",
-                                glowAlpha = pulseGlowAlpha
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value }
                             )
 
                             Spacer(modifier = Modifier.height(20.dp))
@@ -1513,8 +1569,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.AutoMirrored.Filled.MenuBook,
                                 isSelected = writingStyle == "rp",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 onClick = { writingStyle = "rp" }
                             )
 
@@ -1527,8 +1583,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.Person,
                                 isSelected = writingStyle == "chat",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 onClick = { writingStyle = "chat" }
                             )
 
@@ -1544,8 +1600,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.Settings,
                                 isSelected = intensity == "normal",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 onClick = { intensity = "normal" }
                             )
 
@@ -1558,8 +1614,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.AutoAwesome,
                                 isSelected = intensity == "intense",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 onClick = { intensity = "intense" }
                             )
 
@@ -1595,7 +1651,7 @@ fun CreateBotWizardScreen(
                                 placeholder = "Ör. 2045-06-15 (yyyy-AA-gg)",
                                 singleLine = true,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
+                                scrollSync = 0,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("wizard_story_date_input")
@@ -1647,8 +1703,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.Lock,
                                 isSelected = !isPublic,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 testTag = "wizard_visibility_private",
                                 onClick = { isPublic = false }
                             )
@@ -1662,8 +1718,8 @@ fun CreateBotWizardScreen(
                                 iconVector = Icons.Default.Public,
                                 isSelected = isPublic,
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
-                                glowAlpha = pulseGlowAlpha,
+                                scrollSync = 0,
+                                glowAlpha = 0.86f, glowAlphaProvider = { pulseGlowAlphaState.value },
                                 testTag = "wizard_visibility_public",
                                 onClick = { isPublic = true }
                             )
@@ -1680,7 +1736,7 @@ fun CreateBotWizardScreen(
                             WizardMorCamSectionCard(
                                 title = "✦ Oluşturma Özeti",
                                 frostedBackdrop = frostedBackdrop,
-                                scrollSync = scrollState.value,
+                                scrollSync = 0,
                                 modifier = Modifier.testTag("wizard_final_summary_card")
                             ) {
                                 Text(
