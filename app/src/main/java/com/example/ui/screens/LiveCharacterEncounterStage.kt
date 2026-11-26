@@ -687,7 +687,7 @@ private fun LiveEncounterCoreContent(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner, sfxEngine, voiceEngine, profile.speakerKey) {
         if (isFullscreen) {
-            sfxEngine.start(ambientSceneId = "BLUE_SKY_2006", ambientVolume = 0.28f)
+            sfxEngine.start(ambientSceneId = profile.ambientType, ambientVolume = 0.34f)
         }
         val initialPrewarm = buildList {
             add(Triple(profile.speakerKey, profile.openingLine, "live_${profile.speakerKey.lowercase()}_open"))

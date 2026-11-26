@@ -512,16 +512,28 @@ class Cosmic3DSoundEngine(
 
     private var mixerThread: Thread? = null
     private var musicPlayer: MediaPlayer? = null
+    private var ambientMediaPlayer: MediaPlayer? = null
     @Volatile private var targetMusicVolume = 0.36f
+    @Volatile private var targetAmbientMediaVolume = 0.24f
 
     fun start(ambientSceneId: String? = null, ambientVolume: Float = 0.52f) {
         if (running.getAndSet(true)) return
         ambientGain = ambientVolume
+        targetAmbientMediaVolume = (ambientVolume * 0.65f).coerceIn(0.10f, 0.42f)
+
+        val realAmbFile = if (ambientSceneId != null && context != null) {
+            val key = "amb_${ambientSceneId.trim().lowercase(java.util.Locale.ROOT)}"
+            com.example.book.BookContentPackManager.findDownloadedMediaFile(context.applicationContext, key)
+        } else null
+
+        if (realAmbFile != null) {
+            startRealAmbientBed(realAmbFile)
+        }
 
         mixerThread = Thread({
             try {
                 ensureSfxBankBuilt()
-                if (ambientSceneId != null) {
+                if (ambientSceneId != null && realAmbFile == null) {
                     ambientBuffer = getOrBuildAmbient(ambientSceneId)
                 }
                 runMixerLoop()
@@ -535,6 +547,27 @@ class Cosmic3DSoundEngine(
 
         if (enableOrchestralMusic && context != null) {
             startOrchestralBed(context.applicationContext)
+        }
+    }
+
+    private fun startRealAmbientBed(file: java.io.File) {
+        try {
+            val mp = MediaPlayer()
+            mp.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_GAME)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            mp.setDataSource(file.absolutePath)
+            mp.isLooping = true
+            mp.prepare()
+            val v = if (muted) 0f else targetAmbientMediaVolume
+            mp.setVolume(v, v)
+            mp.start()
+            ambientMediaPlayer = mp
+        } catch (_: Throwable) {
+            ambientMediaPlayer = null
         }
     }
 
@@ -561,10 +594,16 @@ class Cosmic3DSoundEngine(
     }
 
     private fun applyMusicVolume() {
-        val duckMult = if (voiceDucking) 0.48f else 1.0f
+        val duckMult = if (voiceDucking) 0.42f else 1.0f
         val v = if (muted) 0f else (targetMusicVolume * duckMult)
+        val ambDuckMult = if (voiceDucking) 0.38f else 1.0f
+        val ambV = if (muted) 0f else (targetAmbientMediaVolume * ambDuckMult)
         try {
             musicPlayer?.setVolume(v, v)
+        } catch (_: Throwable) {
+        }
+        try {
+            ambientMediaPlayer?.setVolume(ambV, ambV)
         } catch (_: Throwable) {
         }
     }
@@ -605,6 +644,12 @@ class Cosmic3DSoundEngine(
         } catch (_: Throwable) {
         }
         musicPlayer = null
+        try {
+            ambientMediaPlayer?.stop()
+            ambientMediaPlayer?.release()
+        } catch (_: Throwable) {
+        }
+        ambientMediaPlayer = null
         try {
             mixerThread?.join(350L)
         } catch (_: InterruptedException) {
