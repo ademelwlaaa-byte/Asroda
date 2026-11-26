@@ -848,10 +848,10 @@ class MemoryRetrievalManager(
 
         if (aiSelector != null && shortlist.isNotEmpty()) {
             val aiSystemPrompt = """
-Sen Emochi'nin Ortak RAG Seçicisisin. SADECE geçerli ve tek satır JSON döndür; açıklama yazma.
+Sen Asroda'nın Ortak RAG Seçicisisin. SADECE geçerli ve tek satır JSON döndür; açıklama yazma.
 Görevin: Son konuşmaya, alt metne, duyguya ve karakter ilişkilerine gerçekten hizmet eden en keskin 4-8 aday ID'sini "pick" dizisinde seçmek.
 Kullanıcı 'dünkinden', 'sabahki', 'aynısından', 'geçen günkü' gibi dolaylı zamansal ifade kullandıysa, aday indeksindeki [Dün | Geçici] veya [Bugün | Geçici] etiketli kayıtları ÖNCELİKLE seç.
-Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki adaylarda eksik kalan gizli bir anı varsa, "miss_queries" içine 1-2 kısa Türkçe arama ifadesi yaz; yoksa [] bırak.
+Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki adaylarda eksik kalan gizli bir anı varsa, "miss_queries" içine 1-2 kısa %100 TÜRKÇE arama ifadesi yaz (asla İngilizce arama yazma); yoksa [] bırak.
 Şema: {"pick":["F12","E7","C3"],"miss_queries":[]}
             """.trimIndent()
 

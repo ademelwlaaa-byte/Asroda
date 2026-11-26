@@ -441,11 +441,12 @@ object UserSentimentAnalyzer {
         }
 
         val systemPrompt = """
-Sen Emochi'nin Türkçe alt metin ve duygu analiz motorusun.
+Sen Asroda'nın Türkçe alt metin ve duygu analiz motorusun.
 Yalnızca GEÇERLİ tek JSON nesnesi üret; markdown veya açıklama YAZMA.
 Kullanıcının mesajındaki gizli kırgınlık, ironi, pasif-agresif ton, samimiyet ve OOC (karakter dışı) direktifini tespit et.
+"subtext" alanı KESİNLİKLE %100 DOĞAL TÜRKÇE olmalıdır; İngilizce açıklama YAZMA.
 JSON ŞEMASI:
-{"tone":"hurt|warm|tense|playful|distant|sarcastic|neutral","valence":-0.75,"intensity":0.80,"is_ooc_meta":false,"subtext":"kısa alt metin","resistance_delta":-0.08}
+{"tone":"hurt|warm|tense|playful|distant|sarcastic|neutral","valence":-0.75,"intensity":0.80,"is_ooc_meta":false,"subtext":"kısa Türkçe alt metin","resistance_delta":-0.08}
         """.trimIndent()
 
         val userPrompt = buildString {
@@ -518,6 +519,10 @@ JSON ŞEMASI:
             else -> local.mood
         }
 
+        val safeAiSubtext = ai.subtext.takeIf {
+            it.isNotBlank() && !com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(it)
+        }.orEmpty()
+
         return SentimentAnalysisResult(
             mood = mood,
             tone = ai.tone.ifBlank { local.tone },
@@ -525,7 +530,7 @@ JSON ŞEMASI:
             intensity = blendedIntensity,
             isOocMeta = effectiveOoc,
             oocDirective = local.oocDirective,
-            subtext = ai.subtext.ifBlank { local.subtext },
+            subtext = safeAiSubtext.ifBlank { local.subtext },
             resistanceDelta = clampedDelta,
             needsMicroAiDisambiguation = false,
             usedMicroAi = true

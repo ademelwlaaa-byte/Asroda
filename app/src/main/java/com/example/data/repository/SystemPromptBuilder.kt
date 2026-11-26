@@ -329,7 +329,9 @@ object SystemPromptBuilder {
 
         // Reserve room for P3 (rules ~480 tok) + P5 (state contract ~110 tok) + closing notice
         val p4TokenCeiling = (maxPromptTokens - 680).coerceAtLeast(1200)
-        fun hasBudgetFor(line: String): Boolean = estimateTokens(sb.toString()) + estimateTokens(line) <= p4TokenCeiling
+        // O(1) incremental token budget check (avoids O(N^2) StringBuilder.toString() re-allocations)
+        fun hasBudgetFor(line: String): Boolean =
+            ((sb.length + line.length) / 3.5).toInt() <= p4TokenCeiling
 
         val cleanGraphLower = input.graphResolutionNote?.trim()?.lowercase(TR_LOCALE).orEmpty()
         if (!input.graphResolutionNote.isNullOrBlank()) {
@@ -538,6 +540,8 @@ object SystemPromptBuilder {
         sb.appendLine("7. HAFIZA SÜREKLİLİĞİ, TEKRAR YASAĞI VE CANLI SAHNE RİTMİ:")
         sb.appendLine("   - NEURAL VAULT kayıtlarıyla ASLA çelişme; YAŞANAN ANILAR'ı robotik özet gibi sıralamak yerine ses tonuna, bakışa ve satır arasına yedir.")
         sb.appendLine("   - Önceki yanıtlarındaki aynı açılış cümlelerini ve klişe jestleri tekrarlama; her yanıt sahneyi psikolojik veya dramatik olarak bir adım ileri taşısın.")
+        sb.appendLine("8. DOĞAL TÜRKÇE DİL SAFLIĞI:")
+        sb.appendLine("   - Tüm anlatım, diyalog, iç ses, duygu etiketi ve hafıza çağrıları akıcı, edebi ve %100 TÜRKÇE olmalıdır. Özel karakter/yer adları dışında İngilizce cümle, başlık veya sahne notu karıştırma.")
 
         // ═══════════════════════════════════════════════════════════════════════
         // P5 — UNIFIED COMPACT OPTIONAL [[STATE_JSON]] CONTRACT (Conditional Tokens)

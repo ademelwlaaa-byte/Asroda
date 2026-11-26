@@ -153,9 +153,11 @@ class CastMemberManager(
         val (canonicalName, titleRole) = CastDetectorEngine.extractCanonicalNameAndRole(rawClean)
         val cleanName = CastDetectorEngine.normalizeTurkishEntityName(canonicalName.ifBlank { rawClean })
         if (cleanName.length < 2) return@withContext
-        // Hard gate: never register unnamed/generic background extras (e.g., "zorba çocuk", "garson", "school bully")
+        // Hard gate: never register unnamed/generic background extras OR places/organizations/English non-names
         if (CastDetectorEngine.isGenericBackgroundExtra(rawClean, role) ||
-            CastDetectorEngine.isGenericBackgroundExtra(cleanName, titleRole ?: role)
+            CastDetectorEngine.isGenericBackgroundExtra(cleanName, titleRole ?: role) ||
+            CastDetectorEngine.isNonPersonPlaceOrOrganization(rawClean) ||
+            CastDetectorEngine.isNonPersonPlaceOrOrganization(cleanName)
         ) {
             return@withContext
         }
@@ -188,10 +190,12 @@ class CastMemberManager(
             inferredRole = titleRole ?: role
         )
         val effectiveConfidence = confidence ?: candidateScore.confidence
+        val normalizedRoleInput = CastDetectorEngine.normalizeTurkishCastRole(role)
+        val normalizedRelation = CastDetectorEngine.normalizeTurkishCastRelation(relation)
         val resolvedRole = when {
-            role.isNotBlank() && role != "Yan Karakter" -> role
-            !titleRole.isNullOrBlank() -> titleRole
-            else -> candidateScore.role
+            normalizedRoleInput.isNotBlank() && normalizedRoleInput != "Yan Karakter" -> normalizedRoleInput
+            !titleRole.isNullOrBlank() -> CastDetectorEngine.normalizeTurkishCastRole(titleRole)
+            else -> CastDetectorEngine.normalizeTurkishCastRole(candidateScore.role)
         }
         val difficultyMult = EmochiRepository.calculateCastMemberDifficultyMultiplier(
             role = resolvedRole,
@@ -206,7 +210,7 @@ class CastMemberManager(
             }
         }
         val enrichedDesc = buildString {
-            if (relation.isNotBlank()) append(relation.trim())
+            if (normalizedRelation.isNotBlank()) append(normalizedRelation.trim())
             if (cueSentence.isNotBlank()) {
                 if (isNotEmpty()) append(" — ")
                 append(cueSentence.take(200))
@@ -243,7 +247,7 @@ class CastMemberManager(
                     appearanceCount = 1,
                     lastSceneContext = cueSentence.take(200),
                     baseAffectionDifficultyMultiplier = difficultyMult,
-                    secondaryRole = relation.take(40),
+                    secondaryRole = normalizedRelation.take(40),
                     multiRoleJson = multiRoleWithAliases,
                     lastRoleEvaluationIndex = currentMessageIndex ?: 0,
                     personalityJson = personalityJson
@@ -257,13 +261,27 @@ class CastMemberManager(
                 newCount >= 3 -> maxOf(existing.importanceScore, 80)
                 else -> maxOf(existing.importanceScore, 60)
             }
+            // Canonical full-name promotion: if an auto-added card was "Natasha" and now "Natasha Romanoff"
+            // appears as a strict superset alias, promote the canonical name & keep "Natasha" as alias!
+            val existingTokens = existing.name.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+            val newTokens = cleanName.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+            val shouldPromoteFullName = existing.isAutoAdded &&
+                newTokens.size in 2..3 &&
+                newTokens.size > existingTokens.size &&
+                CastDetectorEngine.isLikelyAlias(existing.name, cleanName) &&
+                allExisting.none { it.id != existing.id && it.name.equals(cleanName, ignoreCase = true) }
+            val finalCanonicalName = if (shouldPromoteFullName) cleanName else existing.name
+            val combinedAliases = buildList {
+                addAll(aliasesToPersist)
+                if (shouldPromoteFullName) add(existing.name)
+            }
             val ensuredPersonality = existing.personalityJson.ifBlank {
-                PersonalityProfile.deriveFromPersonality(existing.name, resolvedRole, cueSentence).toJson()
+                PersonalityProfile.deriveFromPersonality(finalCanonicalName, resolvedRole, cueSentence).toJson()
             }
             val mergedMultiRole = CastDetectorEngine.mergeStoredAliases(
                 existingMultiRoleJson = existing.multiRoleJson,
-                newAliases = aliasesToPersist,
-                canonicalName = existing.name
+                newAliases = combinedAliases,
+                canonicalName = finalCanonicalName
             )
             val updatedAge = if (age != null && age in 1..150 && (existing.currentAge == 20 || existing.currentAge <= 0)) {
                 age
@@ -271,11 +289,13 @@ class CastMemberManager(
                 existing.currentAge
             }
             val autoConfirmedOnRecurrence = existing.isAutoAdded && existing.pendingUserConfirmation && newCount >= 2
+            val currentRoleClean = CastDetectorEngine.normalizeTurkishCastRole(existing.role)
             castMemberDao.updateCastMember(
                 existing.copy(
-                    role = if (existing.role.isBlank() || existing.role == "Yan Karakter") resolvedRole else existing.role,
+                    name = finalCanonicalName,
+                    role = if (currentRoleClean.isBlank() || currentRoleClean == "Yan Karakter") resolvedRole else currentRoleClean,
                     description = if (existing.description.isBlank() && enrichedDesc.isNotBlank()) enrichedDesc else existing.description,
-                    secondaryRole = if (existing.secondaryRole.isBlank() && relation.isNotBlank()) relation.take(40) else existing.secondaryRole,
+                    secondaryRole = if (existing.secondaryRole.isBlank() && normalizedRelation.isNotBlank()) normalizedRelation.take(40) else existing.secondaryRole,
                     currentAge = updatedAge,
                     initialAge = if (existing.initialAge == 20 && updatedAge != 20) updatedAge else existing.initialAge,
                     affectionScore = updatedAffection,
@@ -288,9 +308,25 @@ class CastMemberManager(
                     personalityJson = ensuredPersonality
                 )
             )
+            // Keep CharacterEmotionEntity synchronized if canonical name was promoted
+            if (shouldPromoteFullName && finalCanonicalName != existing.name) {
+                val oldEmo = emotionDao.getEmotionForCharacter(botId, existing.name)
+                if (oldEmo != null && emotionDao.getEmotionForCharacter(botId, finalCanonicalName) == null) {
+                    emotionDao.insertOrUpdate(oldEmo.copy(id = 0L, characterName = finalCanonicalName))
+                    emotionDao.deleteByCharacterName(botId, existing.name)
+                }
+            }
         }
 
-        val canonicalForEmotion = existing?.name ?: cleanName
+        val canonicalForEmotion = if (existing != null && !existing.isBlacklisted) {
+            val existingTokens = existing.name.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+            val newTokens = cleanName.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+            if (existing.isAutoAdded && newTokens.size in 2..3 && newTokens.size > existingTokens.size &&
+                CastDetectorEngine.isLikelyAlias(existing.name, cleanName)
+            ) cleanName else existing.name
+        } else {
+            existing?.name ?: cleanName
+        }
         val existingEmotion = emotionDao.getEmotionForCharacter(botId, canonicalForEmotion)
         if (existingEmotion == null) {
             val baseState = EmotionState.calculateBaselineEmotionState(
@@ -474,13 +510,20 @@ class CastMemberManager(
             val rolesSet = linkedSetOf<String>()
             if (member.role.isNotBlank()) rolesSet.add(member.role)
             if (updatedSecondary.isNotBlank()) rolesSet.add(updatedSecondary)
-            val multiArr = JSONArray()
-            rolesSet.forEach { multiArr.put(it) }
+            val rolesOnlyArr = JSONArray()
+            rolesSet.forEach { rolesOnlyArr.put(it) }
+            // Preserve all previously stored alias:... entries inside multiRoleJson!
+            val preservedAliases = CastDetectorEngine.extractStoredAliases(member.multiRoleJson)
+            val mergedMultiRoleJson = CastDetectorEngine.mergeStoredAliases(
+                existingMultiRoleJson = rolesOnlyArr.toString(),
+                newAliases = preservedAliases,
+                canonicalName = member.name
+            )
 
             castMemberDao.updateCastMember(
                 member.copy(
                     secondaryRole = updatedSecondary,
-                    multiRoleJson = multiArr.toString(),
+                    multiRoleJson = mergedMultiRoleJson,
                     lastRoleEvaluationIndex = currentMessageCount,
                     lastSceneContext = sceneContext.take(200),
                     baseAffectionDifficultyMultiplier = if (member.baseAffectionDifficultyMultiplier > 0.0) {
@@ -604,5 +647,94 @@ class CastMemberManager(
                 castMemberDao.updateCastMember(member.copy(currentAge = computedAge))
             }
         }
+    }
+
+    data class CastCleanupReport(
+        val removedFalsePositives: Int = 0,
+        val mergedDuplicates: Int = 0,
+        val normalizedTurkishRoles: Int = 0
+    )
+
+    /**
+     * Audits and self-heals a bot's auto-added cast roster:
+     * 1. Removes auto-added false positives (generic extras, places, buildings, organizations, English non-names).
+     * 2. Merges duplicate alias cards (e.g. "Natasha" + "Natasha Romanoff") into the fuller canonical card.
+     * 3. Normalizes any leaked English role/secondaryRole labels into crisp Turkish.
+     */
+    suspend fun auditAndCleanCastForBot(botId: String): CastCleanupReport = withContext(Dispatchers.IO) {
+        val all = castMemberDao.getCastMembersForBot(botId).filter { !it.isBlacklisted }
+        if (all.isEmpty()) return@withContext CastCleanupReport()
+
+        var removed = 0
+        var merged = 0
+        var normalizedRoles = 0
+
+        val survivors = mutableListOf<CastMemberEntity>()
+        // Prioritize manual cards & fuller names & higher appearance counts
+        val ordered = all.sortedWith(
+            compareBy<CastMemberEntity> { it.isAutoAdded }
+                .thenByDescending { it.name.trim().split(Regex("""\s+""")).size }
+                .thenByDescending { it.appearanceCount }
+                .thenByDescending { it.importanceScore }
+        )
+
+        for (member in ordered) {
+            if (member.isAutoAdded && (
+                CastDetectorEngine.isGenericBackgroundExtra(member.name, member.role) ||
+                    CastDetectorEngine.isNonPersonPlaceOrOrganization(member.name)
+                )
+            ) {
+                castMemberDao.deleteCastMember(member.id)
+                emotionDao.deleteByCharacterName(botId, member.name)
+                removed++
+                continue
+            }
+
+            val existingMatchIdx = survivors.indexOfFirst { kept ->
+                CastDetectorEngine.matchesMemberOrAlias(
+                    candidateName = member.name,
+                    candidateAliases = CastDetectorEngine.extractStoredAliases(member.multiRoleJson),
+                    member = kept
+                )
+            }
+            if (existingMatchIdx >= 0 && member.isAutoAdded) {
+                val kept = survivors[existingMatchIdx]
+                val mergedAliases = CastDetectorEngine.mergeStoredAliases(
+                    existingMultiRoleJson = kept.multiRoleJson,
+                    newAliases = CastDetectorEngine.extractStoredAliases(member.multiRoleJson) + member.name,
+                    canonicalName = kept.name
+                )
+                val upgradedKept = kept.copy(
+                    appearanceCount = kept.appearanceCount + member.appearanceCount,
+                    importanceScore = maxOf(kept.importanceScore, member.importanceScore),
+                    description = kept.description.ifBlank { member.description },
+                    secondaryRole = kept.secondaryRole.ifBlank { member.secondaryRole },
+                    multiRoleJson = mergedAliases
+                )
+                castMemberDao.updateCastMember(upgradedKept)
+                castMemberDao.deleteCastMember(member.id)
+                emotionDao.deleteByCharacterName(botId, member.name)
+                survivors[existingMatchIdx] = upgradedKept
+                merged++
+                continue
+            }
+
+            val cleanRole = CastDetectorEngine.normalizeTurkishCastRole(member.role)
+            val cleanSecondary = CastDetectorEngine.normalizeTurkishCastRelation(member.secondaryRole)
+            if (cleanRole != member.role || cleanSecondary != member.secondaryRole) {
+                val updated = member.copy(role = cleanRole, secondaryRole = cleanSecondary)
+                castMemberDao.updateCastMember(updated)
+                survivors.add(updated)
+                normalizedRoles++
+            } else {
+                survivors.add(member)
+            }
+        }
+
+        CastCleanupReport(
+            removedFalsePositives = removed,
+            mergedDuplicates = merged,
+            normalizedTurkishRoles = normalizedRoles
+        )
     }
 }

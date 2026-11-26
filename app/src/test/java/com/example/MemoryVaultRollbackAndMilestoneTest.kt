@@ -172,21 +172,51 @@ class MemoryVaultRollbackAndMilestoneTest {
     }
 
     @Test
-    fun test3_livingMemoryAcceptsSalience5AndOptionalInnerThought() = runBlocking {
-        val botId = "bot_living_mem_easy"
+    fun test3_livingMemoryEnforcesSalience7CooldownAndTurkishPurity() = runBlocking {
+        val botId = "bot_living_mem_strict"
         repo.saveBot(makeBot(botId))
 
+        // Low-salience (5) routine moment must be rejected to prevent memory spam
+        val lowSalienceRejected = repo.commitLivingMemory(
+            botId = botId,
+            povCharacter = "Natasha",
+            title = "Sıradan Sohbet",
+            emotionTag = "Huzur",
+            salience = 5,
+            narrative = "Balkonun serin rüzgarında Aiden yanıma yaklaşıp sessizce kahvesini yudumladı.",
+            innerThought = "",
+            storyDayIndex = 1L,
+            currentMessageCount = 6
+        )
+        assertFalse("Routine salience 5 moment must be rejected to prevent memory spam", lowSalienceRejected)
+
+        // English-dominant Living Memory must be hard-blocked
+        val englishRejected = repo.commitLivingMemory(
+            botId = botId,
+            povCharacter = "Natasha",
+            title = "Silent Trust",
+            emotionTag = "Trust",
+            salience = 8,
+            narrative = "In the quiet night on the rooftop, I finally realized I could trust him with my secret.",
+            innerThought = "He is different from everyone else I have ever met.",
+            storyDayIndex = 1L,
+            currentMessageCount = 8
+        )
+        assertFalse("English Living Memory must be blocked by TurkishLanguageGuard", englishRejected)
+
+        // Genuine high-salience (7+) Turkish turning point commits cleanly even without innerThought
         val ok = repo.commitLivingMemory(
             botId = botId,
             povCharacter = "Natasha",
             title = "Balkonda Sessiz Güven",
             emotionTag = "Huzur",
-            salience = 5,
+            salience = 7,
             narrative = "Balkonun serin rüzgarında Aiden yanıma yaklaşıp sessizce omzuma yaslandığında ilk kez gardımı indirdim.",
             innerThought = "",
-            storyDayIndex = 1L
+            storyDayIndex = 1L,
+            currentMessageCount = 10
         )
-        assertTrue("Salience 5 meaningful moment without innerThought must now commit to Anılar", ok)
+        assertTrue("Salience 7 meaningful Turkish moment without innerThought must commit to Anılar", ok)
         assertEquals(1, db.memoryEventDao().getActiveEvents(botId).size)
     }
 

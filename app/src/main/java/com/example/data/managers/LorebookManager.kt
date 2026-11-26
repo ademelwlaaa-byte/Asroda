@@ -63,38 +63,69 @@ class LorebookManager(
                 .trim()
         }
 
-        fun parseKeywords(raw: String): List<String> {
-            return raw.split(",", ";", "\n", "|")
-                .map { normalizeTr(it) }
-                .filter { it.length >= 2 }
-                .distinct()
+        /**
+         * Parses positive and optional negative (`-kelime` / `!kelime`) keywords.
+         */
+        fun parsePositiveAndNegativeKeywords(raw: String): Pair<List<String>, List<String>> {
+            val pos = mutableListOf<String>()
+            val neg = mutableListOf<String>()
+            raw.split(",", ";", "\n", "|").forEach { rawTok ->
+                val trimmed = rawTok.trim()
+                if (trimmed.startsWith("-") || trimmed.startsWith("!")) {
+                    val norm = normalizeTr(trimmed.drop(1))
+                    if (norm.length >= 2) neg.add(norm)
+                } else {
+                    val norm = normalizeTr(trimmed)
+                    if (norm.length >= 2) pos.add(norm)
+                }
+            }
+            return Pair(pos.distinct(), neg.distinct())
         }
 
+        fun parseKeywords(raw: String): List<String> = parsePositiveAndNegativeKeywords(raw).first
+
         /**
-         * Türkçe ek uyumlu eşleştirme:
+         * Türkçe ek + ünsüz yumuşaması (p->b, ç->c, t->d, k->ğ) + kök uyumlu eşleştirme:
          * - Çok kelimeli ifadelerde tam alt-dize eşleşmesi.
-         * - Tek kelimelerde kelime başı eşleşmesi (örn. "nevermore" -> "nevermore'da", "kolye" -> "kolyesine",
-         *   "weems" -> "weems'in"), kısa köklerde (<=3 harf) tam kelime eşleşmesi ile yanlış pozitif önlenir.
+         * - Tek kelimelerde kelime başı, yumuşamış kök ("kitap" -> "kitabı", "kılıç" -> "kılıcını",
+         *   "yüzük" -> "yüzüğünü", "kalp" -> "kalbini") ve Türkçe gövde eşleşmesi;
+         *   kısa köklerde (<=3 harf) tam kelime / apostrof / ünsüz yumuşaması ile yanlış pozitif önlenir.
          */
         fun matchesKeyword(normalizedText: String, normalizedKeyword: String): Boolean {
             if (normalizedText.isBlank() || normalizedKeyword.isBlank()) return false
             if (normalizedKeyword.contains(' ')) {
                 return normalizedText.contains(normalizedKeyword)
             }
+            val softenedRoot = when {
+                normalizedKeyword.length >= 3 && normalizedKeyword.endsWith('p') -> normalizedKeyword.dropLast(1) + "b"
+                normalizedKeyword.length >= 3 && normalizedKeyword.endsWith('ç') -> normalizedKeyword.dropLast(1) + "c"
+                normalizedKeyword.length >= 3 && normalizedKeyword.endsWith('t') -> normalizedKeyword.dropLast(1) + "d"
+                normalizedKeyword.length >= 4 && normalizedKeyword.endsWith('k') -> normalizedKeyword.dropLast(1) + "ğ"
+                else -> null
+            }
             val words = normalizedText.split(' ')
             return if (normalizedKeyword.length <= 3) {
-                words.any { it == normalizedKeyword || it.startsWith("$normalizedKeyword'") }
+                words.any { w ->
+                    w == normalizedKeyword ||
+                        w.startsWith("$normalizedKeyword'") ||
+                        (softenedRoot != null && w.startsWith(softenedRoot) && w.length <= softenedRoot.length + 5)
+                }
             } else {
+                val kwStem = com.example.data.repository.TurkishTextAnalyzer.stemToken(normalizedKeyword)
                 words.any { w ->
                     w == normalizedKeyword ||
                         w.startsWith(normalizedKeyword) ||
-                        (normalizedKeyword.length >= 6 && w.startsWith(normalizedKeyword.dropLast(1)))
+                        (softenedRoot != null && w.startsWith(softenedRoot)) ||
+                        (normalizedKeyword.length >= 6 && w.startsWith(normalizedKeyword.dropLast(1))) ||
+                        (kwStem.length >= 4 && com.example.data.repository.TurkishTextAnalyzer.stemToken(w) == kwStem)
                 }
             }
         }
 
         /**
          * Pure selection engine — easily unit-testable without Room.
+         * Supports negative exclusion keywords (`-kelime`), Turkish softening/stem matching,
+         * 1-step chained triggering, and recency + match-density tie-breaking within priority tiers.
          */
         fun selectEntriesForContext(
             entries: List<LorebookEntryEntity>,
@@ -109,29 +140,40 @@ class LorebookManager(
 
             val safeBudget = tokenBudget.coerceIn(120, 3_000)
             val triggeredById = LinkedHashMap<String, TriggeredEntry>()
+            val matchRelevanceScore = HashMap<String, Int>()
 
             // Step 1: Constant (always-active) entries
             for (entry in activeEntries) {
                 if (entry.isConstant) {
                     triggeredById[entry.id] = TriggeredEntry(entry, "sabit")
+                    matchRelevanceScore[entry.id] = 100
                 }
             }
 
             // Pre-normalize recent messages (newest last)
             val normalizedMessages = recentMessageTexts.map { normalizeTr(it) }
+            val latestNormalizedMsg = normalizedMessages.lastOrNull().orEmpty()
 
-            // Step 2: Direct keyword scan against recent messages (respecting scanDepth per entry)
+            // Step 2: Direct keyword scan against recent messages (respecting scanDepth & negative exclusions)
             val directMatches = mutableListOf<LorebookEntryEntity>()
             for (entry in activeEntries) {
                 if (triggeredById.containsKey(entry.id)) continue
-                val keywords = parseKeywords(entry.keywords)
+                val (keywords, exclusions) = parsePositiveAndNegativeKeywords(entry.keywords)
                 if (keywords.isEmpty()) continue
 
                 val depth = entry.scanDepth.coerceIn(1, 12)
                 val windowText = normalizedMessages.takeLast(depth).joinToString(" ")
-                val hit = keywords.firstOrNull { kw -> matchesKeyword(windowText, kw) }
-                if (hit != null) {
-                    triggeredById[entry.id] = TriggeredEntry(entry, "anahtar:$hit")
+                val matchedKws = keywords.filter { kw -> matchesKeyword(windowText, kw) }
+                if (matchedKws.isNotEmpty()) {
+                    // If an exclusion keyword is present AND no other non-excluded context overrides it, skip!
+                    val excluded = exclusions.isNotEmpty() && exclusions.any { ex -> matchesKeyword(windowText, ex) } &&
+                        matchedKws.all { kw -> exclusions.any { ex -> ex.contains(kw) || kw.contains(ex) } }
+                    if (excluded) continue
+
+                    val inLatestBonus = if (matchedKws.any { kw -> matchesKeyword(latestNormalizedMsg, kw) }) 20 else 0
+                    val score = (matchedKws.size * 10) + inLatestBonus
+                    triggeredById[entry.id] = TriggeredEntry(entry, "anahtar:${matchedKws.first()}")
+                    matchRelevanceScore[entry.id] = score
                     directMatches.add(entry)
                 }
             }
@@ -143,11 +185,12 @@ class LorebookManager(
                 )
                 for (entry in activeEntries) {
                     if (triggeredById.containsKey(entry.id)) continue
-                    val keywords = parseKeywords(entry.keywords)
+                    val (keywords, _) = parsePositiveAndNegativeKeywords(entry.keywords)
                     if (keywords.isEmpty()) continue
                     val hit = keywords.firstOrNull { kw -> matchesKeyword(chainCorpus, kw) }
                     if (hit != null) {
                         triggeredById[entry.id] = TriggeredEntry(entry, "zincir:$hit")
+                        matchRelevanceScore[entry.id] = 5
                     }
                 }
             }
@@ -156,10 +199,11 @@ class LorebookManager(
                 return SelectionResult(emptyList(), 0, "")
             }
 
-            // Step 4: Deterministic priority sort (Constant first, then Priority DESC, then Title ASC)
+            // Step 4: Deterministic priority sort (Constant first, Priority DESC, Recency/Match Score DESC, Title ASC)
             val ordered = triggeredById.values.sortedWith(
                 compareByDescending<TriggeredEntry> { it.entry.isConstant }
                     .thenByDescending { it.entry.priority }
+                    .thenByDescending { matchRelevanceScore[it.entry.id] ?: 0 }
                     .thenBy { it.entry.title.lowercase(TR_LOCALE) }
             )
 

@@ -33,24 +33,24 @@ object MemoryToolRegistry {
     val CENTRAL_TOOLS: List<MemoryToolDefinition> = listOf(
         MemoryToolDefinition(
             name = "save_memory",
-            description = "Konuşma sırasında bağlamsal olarak anlamlı bir bilgi veya geçici/kalıcı olay fark ettiğinde Neural Vault hafızasına kaydeder. 'Elini masaya koydu', 'derin nefes aldı', 'pencereden baktı' gibi sıradan fiziksel hareketler ASLA kaydedilmez; ancak aynı hareket gizli kanıt saklamak veya ilk kez güvenmek gibi olay örgüsünü değiştiriyorsa kaydedilir. Günlük geçici detaylar (yenen yemek, giyilen ceket, baş ağrısı) tier='ephemeral' (ttl_days=2..3) ile kaydedilir.",
+            description = "Konuşma sırasında bağlamsal olarak gerçekten önemli ve kalıcı bir bilgi veya hikâye kırılması fark ettiğinde Neural Vault hafızasına kaydeder. ZORUNLU DİL KURALI: content ve key alanları %100 DOĞAL TÜRKÇE yazılmalıdır; İngilizce açıklama/etiket YASAKTIR. Sıradan sohbet ve fiziksel jestler ASLA kaydedilmez.",
             properties = mapOf(
                 "content" to MemoryToolProperty(
                     type = "string",
-                    description = "Hatırlanacak net bilgi veya olay açıklaması"
+                    description = "Hatırlanacak net bilgi veya dönüm noktası açıklaması (%100 TÜRKÇE, 3. tekil şahıs, ham diyalog kopyalamadan)"
                 ),
                 "category" to MemoryToolProperty(
                     type = "string",
-                    description = "Bilgi türü: fact (bilgi/durum/tercih/ilişki) veya event (yaşanan önemli olay/söz)",
+                    description = "Bilgi türü: fact (kalıcı bilgi/durum/tercih/ilişki) veya event (yalnızca çok nadir, yüksek etkili hikâye dönüm noktası, importance >= 7)",
                     enum = listOf("fact", "event")
                 ),
                 "key" to MemoryToolProperty(
                     type = "string",
-                    description = "Opsiyonel 1-3 kelimelik kısa Türkçe konu başlığı (ör. 'Akşam Yemeği', 'Gizli Sır', 'Meslek', 'Güven Durumu')"
+                    description = "1-3 kelimelik kısa TÜRKÇE konu başlığı (ör. 'Akşam Yemeği', 'Gizli Sır', 'Meslek', 'Güven Durumu' — asla İngilizce değil)"
                 ),
                 "tier" to MemoryToolProperty(
                     type = "string",
-                    description = "Bellek katmanı: ephemeral (2-3 hikâye günü geçici detay: yemek, kıyafet, hafif ağrı), arc (10-14 gün süren görev/yara/küs kalma durumu), core (kalıcı kimlik, sır, kalıcı tercih, ilişki).",
+                    description = "Bellek katmanı: ephemeral (2-3 hikâye günü geçici detay), arc (10-14 gün süren görev/yara/küs kalma durumu), core (kalıcı kimlik, sır, kalıcı tercih, ilişki).",
                     enum = listOf("ephemeral", "arc", "core")
                 ),
                 "ttl_days" to MemoryToolProperty(
@@ -59,7 +59,7 @@ object MemoryToolRegistry {
                 ),
                 "importance" to MemoryToolProperty(
                     type = "integer",
-                    description = "Önem derecesi 1-10. 2 ve altı: gürültü (kaydedilmez). 3-5: geçici (ephemeral). 6-7: orta/arc. 8+: kalıcı/çok önemli (core)."
+                    description = "Önem derecesi 1-10. 1-2: gürültü (kaydedilmez). 3-6: gizli arka plan RAG. 7-10: görünür Neural Vault / Anı."
                 ),
                 "subject" to MemoryToolProperty(
                     type = "string",
@@ -70,7 +70,7 @@ object MemoryToolRegistry {
         ),
         MemoryToolDefinition(
             name = "update_memory",
-            description = "Var olan bir Neural Vault hafıza kaydını #ID ile günceller (★ kilitli kayıtlar yalnızca kullanıcı açıkça isterse değişir).",
+            description = "Var olan bir Neural Vault hafıza kaydını #ID ile günceller (★ kilitli kayıtlar yalnızca kullanıcı açıkça isterse değişir). newContent ve reason %100 TÜRKÇE olmalıdır.",
             properties = mapOf(
                 "memoryId" to MemoryToolProperty(
                     type = "string",
@@ -78,11 +78,11 @@ object MemoryToolRegistry {
                 ),
                 "newContent" to MemoryToolProperty(
                     type = "string",
-                    description = "Güncellenmiş yeni içerik"
+                    description = "Güncellenmiş yeni içerik (%100 TÜRKÇE)"
                 ),
                 "reason" to MemoryToolProperty(
                     type = "string",
-                    description = "Opsiyonel güncelleme nedeni"
+                    description = "Opsiyonel Türkçe güncelleme nedeni"
                 )
             ),
             required = listOf("memoryId", "newContent")

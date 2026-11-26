@@ -60,6 +60,101 @@ object EmotionEngine {
         "reapp"    to "reapp"
     )
 
+    private val EMOTION_LABEL_EN_TO_TR: Map<String, String> = mapOf(
+        "happy" to "mutlu",
+        "joyful" to "sevinçli",
+        "joy" to "sevinçli",
+        "cheerful" to "neşeli",
+        "excited" to "heyecanlı",
+        "angry" to "öfkeli",
+        "furious" to "hiddetli",
+        "annoyed" to "sinirli",
+        "irritated" to "gergin",
+        "frustrated" to "bunalmış",
+        "sad" to "hüzünlü",
+        "sorrowful" to "kederli",
+        "melancholic" to "melankolik",
+        "depressed" to "çökkün",
+        "heartbroken" to "kalbi kırık",
+        "hurt" to "kırgın",
+        "scared" to "korkmuş",
+        "afraid" to "korkmuş",
+        "fearful" to "tedirgin",
+        "terrified" to "dehşete düşmüş",
+        "anxious" to "kaygılı",
+        "nervous" to "gergin",
+        "tense" to "gergin",
+        "uneasy" to "huzursuz",
+        "worried" to "endişeli",
+        "calm" to "sakin",
+        "peaceful" to "huzurlu",
+        "relaxed" to "rahat",
+        "relieved" to "rahatlamış",
+        "neutral" to "nötr",
+        "surprised" to "şaşkın",
+        "shocked" to "şoke olmuş",
+        "confused" to "kafası karışık",
+        "curious" to "meraklı",
+        "intrigued" to "ilgili",
+        "suspicious" to "şüpheci",
+        "guarded" to "temkinli",
+        "cautious" to "temkinli",
+        "wary" to "tetikte",
+        "trusting" to "güvenen",
+        "affectionate" to "şefkatli",
+        "loving" to "sevgi dolu",
+        "tender" to "şefkatli",
+        "warm" to "sıcak",
+        "flirty" to "flörtöz",
+        "playful" to "oyuncu",
+        "teasing" to "alaycı",
+        "sarcastic" to "alaycı",
+        "cold" to "soğuk",
+        "distant" to "mesafeli",
+        "detached" to "mesafeli",
+        "protective" to "koruyucu",
+        "possessive" to "sahiplenici",
+        "jealous" to "kıskanç",
+        "guilty" to "suçlu",
+        "remorseful" to "pişman",
+        "regretful" to "pişman",
+        "ashamed" to "mahcup",
+        "shy" to "utangaç",
+        "embarrassed" to "mahcup",
+        "proud" to "gururlu",
+        "confident" to "kendinden emin",
+        "determined" to "kararlı",
+        "focused" to "odaklanmış",
+        "grateful" to "minnettar",
+        "hopeful" to "umutlu",
+        "lonely" to "yalnız",
+        "longing" to "özlem dolu",
+        "nostalgic" to "nostaljik",
+        "tired" to "yorgun",
+        "exhausted" to "bitkin",
+        "vulnerable" to "kırılgan",
+        "conflicted" to "kararsız",
+        "defensive" to "savunmacı",
+        "serious" to "ciddi",
+        "thoughtful" to "düşünceli"
+    )
+
+    /**
+     * Normalizes leaked English emotion labels from [[STATE_JSON]] (e.g., "suspicious", "protective")
+     * into natural Turkish labels ("şüpheci", "koruyucu") for consistent UI display & prompt continuity.
+     */
+    fun normalizeTurkishEmotionLabel(raw: String, fallback: String = "nötr"): String {
+        val clean = raw.trim().replace(Regex("""\s+"""), " ")
+        if (clean.isBlank()) return fallback
+        val low = clean.lowercase(Locale.ROOT)
+        EMOTION_LABEL_EN_TO_TR[low]?.let { return it }
+        if (TurkishLanguageGuard.isEnglishDominant(clean)) {
+            return TurkishLanguageGuard.normalizeTurkishEmotionTag(clean, fallback = fallback)
+                .lowercase(Locale.forLanguageTag("tr-TR"))
+        }
+        return clean.take(32)
+    }
+
     /**
      * JSONObject içindeki kısa takma adları kanonik uzun ada çevirir (yerinde).
      * Uzun ad zaten varsa kısa adı yok sayar (uzun ad öncelikli).

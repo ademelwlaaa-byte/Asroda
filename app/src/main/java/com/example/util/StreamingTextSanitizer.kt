@@ -26,14 +26,24 @@ class StreamingTextSanitizer {
     }
 
     private companion object {
-        val THINK_OPEN_TAGS = listOf("<think>", "<reasoning>")
+        val THINK_OPEN_TAGS = listOf("<think>", "<reasoning>", "<thought>", "<scratchpad>", "<internal>")
         val THINK_CLOSE_BY_OPEN = mapOf(
             "<think>" to "</think>",
-            "<reasoning>" to "</reasoning>"
+            "<reasoning>" to "</reasoning>",
+            "<thought>" to "</thought>",
+            "<scratchpad>" to "</scratchpad>",
+            "<internal>" to "</internal>"
         )
         val HIDDEN_TAG_PREFIXES = listOf(
             "[[state_json",
+            "[[state ",
+            "[[memory_save",
+            "[[character_emotion",
+            "[[cast_member",
+            "[[world_atmosphere",
             "[character_emotion",
+            "[cast_member",
+            "[world_atmosphere",
             "[active_memory_call",
             "[emotion_update"
         )

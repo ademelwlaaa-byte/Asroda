@@ -122,6 +122,158 @@ object CastDetectorEngine {
         "background", "unnamed", "extra", "random extra", "minor extra"
     )
 
+    private val ENGLISH_NON_NAME_BLACKLIST = setOf(
+        "however", "suddenly", "chapter", "scene", "system", "morning", "evening", "night",
+        "today", "tomorrow", "yesterday", "silence", "shadow", "voice", "door", "window",
+        "room", "street", "city", "tower", "academy", "office", "hospital", "coffee", "rain",
+        "maybe", "actually", "anyway", "nothing", "something", "someone", "everyone", "nobody",
+        "finally", "quietly", "softly", "slowly", "really", "always", "never", "still", "already",
+        "because", "although", "between", "through", "without", "assistant", "narrator", "character",
+        "memory", "secret", "trust", "promise", "moment", "story", "world", "universe", "flashback",
+        "epilogue", "prologue", "part", "section", "note", "update", "status", "mood", "emotion",
+        "hello", "sorry", "please", "thanks", "thank", "welcome", "goodbye", "listen", "wait",
+        "shield", "hydra", "avengers", "nevermore", "jericho", "manhattan", "brooklyn", "queens",
+        "new york", "central park", "times square", "stark tower", "avengers tower"
+    )
+
+    private val NON_PERSON_SUFFIX_WORDS = setOf(
+        // Turkish place, building, institution & organization suffixes
+        "kulesi", "kule", "akademisi", "akademi", "lisesi", "üniversitesi", "hastanesi", "kliniği",
+        "sokağı", "caddesi", "bulvarı", "meydanı", "köprüsü", "parkı", "bahçesi", "sarayı", "kalesi",
+        "malikanesi", "malikânesi", "köşkü", "konağı", "sarnıcı", "konseyi", "teşkilatı", "örgütü",
+        "birliği", "bakanlığı", "binası", "merkezi", "üssü", "laboratuvarı", "odası", "salonu",
+        "mahzeni", "kripti", "ormanı", "dağı", "denizi", "nehri", "gölü", "adası", "körfezi",
+        "limanı", "iskelesi", "istasyonu", "havaalanı", "oteli", "kafesi", "restoranı", "barı",
+        "kulübü", "vakfı", "şirketi", "holdingi", "dairesi", "bölümü", "komitesi", "meclisi",
+        "derneği", "imparatorluğu", "krallığı", "cumhuriyeti", "devleti", "eyaleti", "ilçesi",
+        "mahallesi", "semti", "çarşısı", "pazarı", "tesisi", "protokolü", "programı", "projesi",
+        "dosyası", "defteri", "kolyesi", "yüzüğü", "kılıcı", "taşı", "mührü", "nokta", "noktası",
+        // English place, building & organization suffixes
+        "tower", "academy", "hall", "park", "street", "avenue", "road", "boulevard", "building",
+        "center", "centre", "base", "lab", "laboratory", "agency", "council", "order", "guild",
+        "kingdom", "empire", "city", "town", "village", "island", "bridge", "hotel", "cafe",
+        "station", "airport", "hospital", "school", "university", "college", "square", "plaza",
+        "mansion", "castle", "palace", "room", "house", "corp", "corporation", "industries",
+        "foundation", "institute", "protocol", "project", "program", "department", "division",
+        "cistern", "fortress", "citadel", "sanctuary", "temple", "church", "cathedral", "library"
+    )
+
+    private val CAST_ROLE_EN_TO_TR: Map<String, String> = mapOf(
+        "side character" to "Yan Karakter",
+        "supporting character" to "Yan Karakter",
+        "character" to "Yan Karakter",
+        "friend" to "Arkadaş",
+        "best friend" to "En Yakın Dost",
+        "close friend" to "Yakın Dost",
+        "ally" to "Müttefik",
+        "enemy" to "Düşman",
+        "rival" to "Rakip",
+        "villain" to "Düşman",
+        "antagonist" to "Rakip / Düşman",
+        "stranger" to "Yabancı",
+        "acquaintance" to "Tanıdık",
+        "doctor" to "Doktor",
+        "physician" to "Doktor",
+        "healer" to "Şifacı",
+        "nurse" to "Hemşire",
+        "detective" to "Dedektif",
+        "investigator" to "Müfettiş",
+        "agent" to "Ajan",
+        "spy" to "Casus",
+        "captain" to "Kaptan",
+        "commander" to "Komutan",
+        "leader" to "Lider",
+        "director" to "Direktör",
+        "boss" to "Patron",
+        "mentor" to "Akıl Hocası",
+        "teacher" to "Öğretmen",
+        "professor" to "Profesör",
+        "headmaster" to "Müdür",
+        "principal" to "Müdür",
+        "partner" to "Ortak",
+        "colleague" to "İş Arkadaşı",
+        "neighbor" to "Komşu",
+        "lover" to "Sevgili",
+        "ex-lover" to "Eski Sevgili",
+        "ex" to "Eski Sevgili",
+        "spouse" to "Eş",
+        "wife" to "Eş",
+        "husband" to "Eş",
+        "sibling" to "Kardeş",
+        "brother" to "Erkek Kardeş",
+        "sister" to "Kız Kardeş",
+        "mother" to "Anne",
+        "father" to "Baba",
+        "guardian" to "Vasi",
+        "caretaker" to "Bakıcı",
+        "bodyguard" to "Koruma",
+        "assistant" to "Yardımcı",
+        "scientist" to "Bilim İnsanı",
+        "engineer" to "Mühendis",
+        "inventor" to "Mucit",
+        "journalist" to "Gazeteci",
+        "lawyer" to "Avukat",
+        "merchant" to "Tüccar",
+        "warrior" to "Savaşçı",
+        "knight" to "Şövalye",
+        "mage" to "Büyücü",
+        "witch" to "Cadı",
+        "prince" to "Prens",
+        "princess" to "Prenses",
+        "king" to "Kral",
+        "queen" to "Kraliçe"
+    )
+
+    /**
+     * Returns true when [candidateName] clearly refers to a place, building, organization,
+     * institution, artifact, or English non-name token (e.g., "Galata Kulesi", "Nevermore Akademisi",
+     * "Stark Tower", "Kurucular Konseyi", "Kör Nokta", "However").
+     */
+    fun isNonPersonPlaceOrOrganization(candidateName: String): Boolean {
+        val clean = normalizeTurkishEntityName(candidateName).ifBlank { candidateName.trim() }
+        val lower = clean.lowercase(TR_LOCALE).replace(Regex("""\s+"""), " ").trim()
+        if (lower.length < 2) return true
+        if (lower in ENGLISH_NON_NAME_BLACKLIST) return true
+        if (lower.any { it.isDigit() }) return true // e.g. "Denek 7-A", "Bölüm 3", "Kat 4"
+
+        val tokens = lower.split(" ").filter { it.isNotBlank() }
+        if (tokens.isEmpty() || tokens.size > 4) return true
+        if (tokens.size == 1 && (tokens[0] in ENGLISH_NON_NAME_BLACKLIST || tokens[0] in NON_PERSON_SUFFIX_WORDS)) {
+            return true
+        }
+        // Multi-word candidate ending in a place/building/org/artifact noun -> NOT a person!
+        if (tokens.size >= 2 && (tokens.last() in NON_PERSON_SUFFIX_WORDS || tokens.first() in NON_PERSON_SUFFIX_WORDS)) {
+            return true
+        }
+        // Pure abbreviation / acronym (e.g. "S.H.I.E.L.D.", "FBI", "CIA", "NATO")
+        val lettersOnly = clean.replace(Regex("""[^A-Za-zÇĞİÖŞÜçğıöşü]"""), "")
+        if (lettersOnly.length in 2..8 && lettersOnly.all { it.isUpperCase() } && clean.contains('.')) {
+            return true
+        }
+        return false
+    }
+
+    /** Normalizes any leaked English cast role into crisp Turkish. */
+    fun normalizeTurkishCastRole(rawRole: String, fallback: String = "Yan Karakter"): String {
+        val clean = rawRole.trim().replace(Regex("""\s+"""), " ")
+        if (clean.isBlank()) return fallback
+        val low = clean.lowercase(Locale.ROOT)
+        CAST_ROLE_EN_TO_TR[low]?.let { return it }
+        if (TurkishLanguageGuard.isEnglishDominant(clean)) return fallback
+        return clean.take(40)
+    }
+
+    /** Normalizes any leaked English cast relation into crisp Turkish. */
+    fun normalizeTurkishCastRelation(rawRelation: String): String {
+        val clean = rawRelation.trim().replace(Regex("""\s+"""), " ")
+        if (clean.isBlank()) return ""
+        val fromRel = TurkishLanguageGuard.normalizeTurkishRelation(clean)
+        if (fromRel.isNotBlank()) return fromRel
+        val low = clean.lowercase(Locale.ROOT)
+        CAST_ROLE_EN_TO_TR[low]?.let { return it }
+        return if (TurkishLanguageGuard.isEnglishDominant(clean)) "" else clean.take(40)
+    }
+
     /**
      * Returns true when [candidateName] (or its [role]) represents an unnamed generic/background extra
      * such as "Zorba Çocuk", "Okul Zorbası", "Garson", "Sınıf Arkadaşı", "School Bully", etc.
@@ -351,13 +503,17 @@ object CastDetectorEngine {
         val lower = clean.lowercase(TR_LOCALE)
         val blacklist = getBlacklist(context)
 
-        if (isGenericBackgroundExtra(clean, inferredRole) || blacklist.contains(lower) || clean.length < 2) {
+        if (isGenericBackgroundExtra(clean, inferredRole) ||
+            isNonPersonPlaceOrOrganization(clean) ||
+            blacklist.contains(lower) ||
+            clean.length < 2
+        ) {
             return CandidateScore(
                 isSignificant = false,
                 role = "Figüran",
                 confidence = 15,
                 difficultyMultiplier = 1.0,
-                reason = "Genel figüran veya kara liste eşleşmesi."
+                reason = "Genel figüran, mekan/kurum veya kara liste eşleşmesi."
             )
         }
 
@@ -440,7 +596,9 @@ object CastDetectorEngine {
             if (canonical.isBlank() || canonical.length < 2) return
             if (strength == SignalStrength.WEAK && canonical.length <= 2) return
             val lower = canonical.lowercase(TR_LOCALE)
-            if (isGenericBackgroundExtra(canonical, role)) return
+            val normalizedRole = normalizeTurkishCastRole(role)
+            if (isGenericBackgroundExtra(canonical, normalizedRole)) return
+            if (isNonPersonPlaceOrOrganization(canonical)) return
             if (lower in AMBIGUOUS_PROPER_NAMES && strength == SignalStrength.WEAK) return
             if (lower in blacklist && lower !in AMBIGUOUS_PROPER_NAMES) return
             if (lower in blacklist && lower in AMBIGUOUS_PROPER_NAMES && strength == SignalStrength.WEAK) return
@@ -449,7 +607,7 @@ object CastDetectorEngine {
 
             val existing = candidates[lower]
             if (existing == null || (existing.signalStrength == SignalStrength.WEAK && strength == SignalStrength.STRONG)) {
-                candidates[lower] = CandidateHit(rawName, canonical, role, strength, cue)
+                candidates[lower] = CandidateHit(rawName, canonical, normalizedRole, strength, cue)
             }
         }
 
@@ -680,14 +838,15 @@ object CastDetectorEngine {
         }
 
         val systemPrompt = """
-Sen Emochi'nin hikâye karakteri çıkarıcı ve figüran/yanlış pozitif eleyici yardımcı motorusun.
+Sen Asroda'nın hikâye karakteri çıkarıcı ve figüran/yanlış pozitif eleyici yardımcı motorusun.
 Yalnızca GEÇERLİ tek JSON nesnesi üret; markdown veya açıklama YAZMA.
 Kurallar:
-1. Yalnızca GERÇEK ÖZEL İSMİ olan ve hikâyede/olay örgüsünde anlamlı veya tekrar eden rolü bulunan karakterleri "cast" dizisine al ("is_person": true).
+1. Yalnızca GERÇEK ÖZEL İSMİ olan ve hikâyede/olay örgüsünde anlamlı veya tekrar eden rolü bulunan gerçek karakterleri "cast" dizisine al ("is_person": true).
 2. Ana bot ($botName) ve kullanıcı karakterini ($userCharName) ASLA ekleme.
-3. İsimsiz, tek sahnelik veya sıradan figüranları ("zorba çocuk", "okul zorbası", "garson", "öğrenci", "sınıf arkadaşı", "güvenlik görevlisi", "polis", "şoför", "yabancı" vb.) ve şehir/mekan/soyut kavramları ("Galata", "Karanlık" vb.) ASLA cast'e alma, doğrudan "rejected" dizisine koy.
+3. İsimsiz, tek sahnelik veya sıradan figüranları ("zorba çocuk", "okul zorbası", "garson", "öğrenci", "sınıf arkadaşı", "güvenlik görevlisi", "polis", "şoför", "yabancı" vb.) ve şehir/mekan/kurum/bina/soyut kavramları ("Galata", "Galata Kulesi", "Nevermore Akademisi", "Stark Tower", "Karanlık" vb.) ASLA cast'e alma, doğrudan "rejected" dizisine koy.
 4. Türkçe çekim eklerini soyup kanonik ad yaz ("Leyla'nın" -> "Leyla").
-5. Şu anda fiziksel olarak sahnede aktif olanlar için "in_scene": true, sadece geçmişten anılanlar için false yaz.
+5. "role" ve "relation" alanları KESİNLİKLE %100 DOĞAL TÜRKÇE olmalıdır ("Friend", "Enemy", "Doctor" gibi İngilizce etiketler YASAKTIR!).
+6. Şu anda fiziksel olarak sahnede aktif olanlar için "in_scene": true, sadece geçmişten anılanlar için false yaz.
 JSON ŞEMASI:
 {"cast":[{"name":"Kadir","is_person":true,"aliases":["yaşlı saatçi"],"role":"saat ustası","relation":"mahalle tanıdığı","age":62,"in_scene":true}],"rejected":["Galata","zorba çocuk"]}
         """.trimIndent()
@@ -818,7 +977,11 @@ JSON ŞEMASI:
             }
             if (normalizedName.length < 2) continue
             if (lower in excludedMain || lower in rejectedNormalized) continue
-            if (isGenericBackgroundExtra(normalizedName, rawMember.role)) {
+            val normalizedRole = normalizeTurkishCastRole(rawMember.role)
+            val normalizedRelation = normalizeTurkishCastRelation(rawMember.relation)
+            if (isGenericBackgroundExtra(normalizedName, normalizedRole) ||
+                isNonPersonPlaceOrOrganization(normalizedName)
+            ) {
                 rejectedNormalized.add(lower)
                 continue
             }
@@ -840,20 +1003,44 @@ JSON ŞEMASI:
                 continue
             }
 
-            val existing = deduped[lower]
+            // Merge with an existing entry if exact match OR alias match (e.g., "Natasha" & "Natasha Romanoff")
+            val aliasKey = deduped.entries.firstOrNull { (k, dto) ->
+                k == lower ||
+                    isLikelyAlias(normalizedName, dto.name) ||
+                    cleanedAliases.any { isLikelyAlias(it, dto.name) } ||
+                    dto.aliases.any { isLikelyAlias(normalizedName, it) }
+            }?.key
+            val existing = aliasKey?.let { deduped[it] }
             if (existing == null) {
                 deduped[lower] = rawMember.copy(
                     name = normalizedName,
+                    role = normalizedRole,
+                    relation = normalizedRelation,
                     aliases = cleanedAliases
                 )
             } else {
-                deduped[lower] = existing.copy(
-                    aliases = (existing.aliases + cleanedAliases).distinct(),
-                    role = if (existing.role == "Yan Karakter" && rawMember.role.isNotBlank()) rawMember.role else existing.role,
-                    relation = existing.relation.ifBlank { rawMember.relation },
+                // Prefer the fuller canonical name (e.g., "Natasha Romanoff" over "Natasha") and retain the shorter as alias
+                val preferNewName = normalizedName.split(' ').size > existing.name.split(' ').size &&
+                    isLikelyAlias(existing.name, normalizedName)
+                val finalName = if (preferNewName) normalizedName else existing.name
+                val extraAlias = if (preferNewName) existing.name else normalizedName
+                val mergedAliases = (existing.aliases + cleanedAliases + extraAlias)
+                    .filter { it.length >= 2 && !it.equals(finalName, ignoreCase = true) }
+                    .distinct()
+                val mergedDto = existing.copy(
+                    name = finalName,
+                    aliases = mergedAliases,
+                    role = if (existing.role == "Yan Karakter" && normalizedRole.isNotBlank()) normalizedRole else existing.role,
+                    relation = existing.relation.ifBlank { normalizedRelation },
                     age = existing.age ?: rawMember.age,
                     inScene = existing.inScene || rawMember.inScene
                 )
+                if (preferNewName) {
+                    deduped.remove(aliasKey!!)
+                    deduped[finalName.lowercase(TR_LOCALE)] = mergedDto
+                } else {
+                    deduped[aliasKey!!] = mergedDto
+                }
             }
         }
 

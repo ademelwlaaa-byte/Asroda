@@ -314,6 +314,24 @@ class WorldStateManager(
         "babası"
     )
 
+    private fun isSymmetricRelation(rel: String): Boolean = normalizeRelationStep(rel) in setOf(
+        "kardeşi",
+        "eşi",
+        "eski eşi",
+        "sevgilisi",
+        "eski sevgilisi",
+        "dostu",
+        "arkadaşı",
+        "en yakın arkadaşı",
+        "yakın dostu",
+        "müttefiki",
+        "düşmanı",
+        "rakibi",
+        "ortağı",
+        "komşusu",
+        "iş arkadaşı"
+    )
+
     suspend fun getEntityRelationsForBot(botId: String): List<EntityRelationEntity> = withContext(Dispatchers.IO) {
         entityRelationDao.getRelationsForBot(botId)
     }
@@ -338,8 +356,11 @@ class WorldStateManager(
     ): EntityRelationEntity? = withContext(Dispatchers.IO) {
         val cleanSource = sourceName.trim().replace("’", "'").substringBefore("'").trim()
         val cleanTarget = targetName.trim().replace("’", "'").substringBefore("'").trim()
-        val cleanRel = normalizeRelationStep(relationType)
+        val turkishRel = com.example.data.repository.TurkishLanguageGuard.normalizeTurkishRelation(relationType)
+            .ifBlank { relationType }
+        val cleanRel = normalizeRelationStep(turkishRel)
         if (cleanSource.length < 2 || cleanTarget.length < 2 || cleanRel.isBlank()) return@withContext null
+        if (com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(cleanRel)) return@withContext null
         val normSource = normalizeGraphEntity(cleanSource)
         val normTarget = normalizeGraphEntity(cleanTarget)
         if (normSource.isBlank() || normTarget.isBlank() || normSource == normTarget) return@withContext null
@@ -512,10 +533,14 @@ class WorldStateManager(
         val normStart = normalizeGraphEntity(startEntity)
         if (normStart.isBlank()) return@withContext null
 
-        // Resolve canonical casing from stored relations if available
+        // Resolve canonical casing from stored relations if available (checking both source & target for symmetric edges)
         var current = allRelations.firstOrNull {
             normalizeGraphEntity(it.sourceEntityName) == normStart
-        }?.sourceEntityName ?: startEntity.trim()
+        }?.sourceEntityName
+            ?: allRelations.firstOrNull {
+                normalizeGraphEntity(it.targetEntityName) == normStart
+            }?.targetEntityName
+            ?: startEntity.trim()
 
         val visited = mutableListOf(current)
         val visitedLower = mutableSetOf(normalizeGraphEntity(current))
@@ -524,15 +549,28 @@ class WorldStateManager(
         for (rawStep in boundedSteps) {
             val step = normalizeRelationStep(rawStep)
             val currentNorm = normalizeGraphEntity(current)
-            val candidates = allRelations.filter { rel ->
-                normalizeGraphEntity(rel.sourceEntityName) == currentNorm &&
-                    normalizeRelationStep(rel.relationType) == step &&
-                    !visitedLower.contains(normalizeGraphEntity(rel.targetEntityName))
+            val allowReverse = isSymmetricRelation(step)
+            val candidates = allRelations.mapNotNull { rel ->
+                if (normalizeRelationStep(rel.relationType) != step) return@mapNotNull null
+                val srcNorm = normalizeGraphEntity(rel.sourceEntityName)
+                val tgtNorm = normalizeGraphEntity(rel.targetEntityName)
+                when {
+                    srcNorm == currentNorm && !visitedLower.contains(tgtNorm) ->
+                        Triple(rel, rel.targetEntityName, false)
+                    allowReverse && tgtNorm == currentNorm && !visitedLower.contains(srcNorm) ->
+                        Triple(rel, rel.sourceEntityName, true)
+                    else -> null
+                }
             }
-            val best = candidates.maxWithOrNull(
-                compareBy<EntityRelationEntity>({ confidenceRank(it.confidence) }, { it.createdAtMessageIndex }, { it.id })
+            val bestTuple = candidates.maxWithOrNull(
+                compareBy<Triple<EntityRelationEntity, String, Boolean>>(
+                    { if (it.third) 0 else 1 }, // prefer direct outgoing edges
+                    { confidenceRank(it.first.confidence) },
+                    { it.first.createdAtMessageIndex },
+                    { it.first.id }
+                )
             )
-            if (best == null) {
+            if (bestTuple == null) {
                 if (pathDescriptions.isEmpty()) return@withContext null
                 val explanation = "Zincirin bir kısmını buldum: ${pathDescriptions.joinToString(" -> ")}. " +
                     "Ancak $current adlı kişinin '$step' bilgisini bilmiyorum."
@@ -545,8 +583,9 @@ class WorldStateManager(
                     promptExplanation = explanation
                 )
             }
-            pathDescriptions.add("$current --[${best.relationType}]--> ${best.targetEntityName}")
-            current = best.targetEntityName
+            val (best, nextTargetName, _) = bestTuple
+            pathDescriptions.add("$current --[${best.relationType}]--> $nextTargetName")
+            current = nextTargetName
             visited.add(current)
             visitedLower.add(normalizeGraphEntity(current))
         }
@@ -579,7 +618,11 @@ class WorldStateManager(
 
         val canonicalStart = allRelations.firstOrNull {
             normalizeGraphEntity(it.sourceEntityName) == normStart
-        }?.sourceEntityName ?: startEntity.trim()
+        }?.sourceEntityName
+            ?: allRelations.firstOrNull {
+                normalizeGraphEntity(it.targetEntityName) == normStart
+            }?.targetEntityName
+            ?: startEntity.trim()
 
         data class BfsNode(
             val entityName: String,
@@ -596,17 +639,27 @@ class WorldStateManager(
             val node = queue.removeFirst()
             if (node.pathDescriptions.size >= depthLimit) continue
             val currentNorm = normalizeGraphEntity(node.entityName)
-            val outgoing = allRelations
-                .filter { normalizeGraphEntity(it.sourceEntityName) == currentNorm }
-                .sortedWith(compareByDescending<EntityRelationEntity> { confidenceRank(it.confidence) }.thenByDescending { it.createdAtMessageIndex })
+            val neighbors = allRelations.mapNotNull { rel ->
+                val srcNorm = normalizeGraphEntity(rel.sourceEntityName)
+                val tgtNorm = normalizeGraphEntity(rel.targetEntityName)
+                when {
+                    srcNorm == currentNorm -> Triple(rel, rel.targetEntityName, false)
+                    tgtNorm == currentNorm && isSymmetricRelation(rel.relationType) -> Triple(rel, rel.sourceEntityName, true)
+                    else -> null
+                }
+            }.sortedWith(
+                compareByDescending<Triple<EntityRelationEntity, String, Boolean>> { !it.third }
+                    .thenByDescending { confidenceRank(it.first.confidence) }
+                    .thenByDescending { it.first.createdAtMessageIndex }
+            )
 
-            for (edge in outgoing) {
-                val nextNorm = normalizeGraphEntity(edge.targetEntityName)
-                val nextPaths = node.pathDescriptions + "${edge.sourceEntityName} --[${edge.relationType}]--> ${edge.targetEntityName}"
-                val nextVisited = node.visitedNodes + edge.targetEntityName
+            for ((edge, nextName, _) in neighbors) {
+                val nextNorm = normalizeGraphEntity(nextName)
+                val nextPaths = node.pathDescriptions + "${node.entityName} --[${edge.relationType}]--> $nextName"
+                val nextVisited = node.visitedNodes + nextName
                 if (nextNorm == normTarget) {
                     return@withContext GraphTraversalResult(
-                        finalTargetName = edge.targetEntityName,
+                        finalTargetName = nextName,
                         isComplete = true,
                         pathDescriptions = nextPaths,
                         visitedNodes = nextVisited,
@@ -615,7 +668,7 @@ class WorldStateManager(
                     )
                 }
                 if (visitedGlobal.add(nextNorm)) {
-                    queue.add(BfsNode(edge.targetEntityName, nextVisited, nextPaths))
+                    queue.add(BfsNode(nextName, nextVisited, nextPaths))
                 }
             }
         }
@@ -633,6 +686,11 @@ class WorldStateManager(
             if (memberNorm == norm) return member.name
             val firstWord = memberNorm.substringBefore(" ")
             if (firstWord.length >= 3 && firstWord == norm) return member.name
+            // Check persisted multiRoleJson "alias:..." entries (e.g. "Kızıl Ajan" -> "Natasha Romanoff")
+            val storedAliases = com.example.data.repository.CastDetectorEngine.extractStoredAliases(member.multiRoleJson)
+            if (storedAliases.any { normalizeGraphEntity(it) == norm }) {
+                return member.name
+            }
             // Also check parenthesized/quoted nicknames inside member.description
             val nickRegex = Regex("""[("«]([\p{L}\s]{2,24})[)"»]""")
             val descAliasMatch = nickRegex.findAll(member.description)

@@ -202,6 +202,431 @@ object TurkishTextAnalyzer {
 }
 
 /**
+ * Runtime Turkish Language Purity Guard for Living Memories ("Anılar"), Neural Vault facts,
+ * Knowledge Graph relations, and Scene Checkpoints.
+ *
+ * Prevents LLM English drift (especially from small/open-source utility models seeing English JSON keys)
+ * without false-rejecting legitimate Turkish text that mentions foreign proper nouns like
+ * "Aiden Blackwood", "Natasha Romanoff", "Manhattan", "Nevermore", or "S.H.I.E.L.D.".
+ */
+object TurkishLanguageGuard {
+    private val TR_DIACRITICS = charArrayOf('ç', 'ğ', 'ı', 'İ', 'ö', 'ş', 'ü', 'Ç', 'Ğ', 'Ö', 'Ş', 'Ü')
+
+    private val ENGLISH_MARKERS: Set<String> = setOf(
+        // High-frequency English function words & pronouns
+        "the", "and", "with", "that", "this", "from", "into", "about", "after", "before",
+        "while", "when", "where", "which", "who", "whom", "whose", "what", "their", "them",
+        "they", "there", "these", "those", "have", "has", "had", "was", "were", "been",
+        "being", "will", "would", "could", "should", "might", "must", "she", "her", "hers",
+        "herself", "him", "his", "himself", "our", "ours", "your", "yours", "yourself",
+        "myself", "itself", "between", "through", "during", "without", "within", "against",
+        "toward", "towards", "under", "over", "because", "although", "however", "suddenly",
+        "quietly", "softly", "slowly", "deeply", "always", "never", "still", "already",
+        "finally", "really", "actually", "almost", "enough", "something", "nothing",
+        "everything", "someone", "anyone", "everyone", "nobody", "not", "but", "for",
+        "are", "did", "does", "didn", "doesn", "can", "cannot", "also", "just", "only",
+        "very", "much", "more", "most", "even", "then", "than", "here", "back", "down",
+        "away", "around", "again", "both", "each", "other", "another", "same", "such",
+        // Common English narrative / memory / emotion / fact words leaked by LLMs
+        "moment", "memory", "memories", "secret", "secrets", "trust", "promise", "promised",
+        "feeling", "feelings", "emotion", "emotional", "betrayal", "betrayed", "confession",
+        "confessed", "revelation", "revealed", "relationship", "conversation", "silence",
+        "silent", "whispered", "realized", "decided", "admitted", "looked", "felt", "held",
+        "spoke", "said", "told", "asked", "answered", "smiled", "cried", "trusted",
+        "protected", "shared", "remembered", "forgotten", "heart", "eyes", "voice", "hand",
+        "hands", "tears", "night", "morning", "evening", "today", "yesterday", "tomorrow",
+        "first", "time", "together", "alone", "truth", "lies", "fear", "anger", "love",
+        "hate", "hope", "pain", "guilt", "shame", "warmth", "cold", "dark", "light",
+        "bond", "vow", "oath", "pact", "deal", "plan", "mission", "danger", "wound",
+        "scar", "healing", "comfort", "relief", "tension", "conflict", "argument", "apology",
+        "forgiveness", "distance", "closeness", "affection", "jealousy", "longing", "despair",
+        "joy", "pride", "courage", "strength", "weakness", "location", "occupation",
+        "profession", "status", "identity", "family", "past", "ability", "power", "outfit",
+        "appearance", "residence", "home", "friend", "enemy", "rival", "ally", "stranger",
+        "mentor", "partner", "lover", "sibling", "brother", "sister", "mother", "father",
+        "turning", "point", "breaking", "hidden", "truths", "shared", "unspoken", "inner",
+        "thought", "thoughts", "scene", "chapter", "story", "character", "user", "he", "it",
+        "its", "my", "me", "we", "us", "you", "to", "of", "in", "on", "at", "by", "as", "if",
+        "is", "be", "am", "do", "so", "up", "out", "off", "all", "any", "now", "way", "who",
+        "new", "old", "big", "little", "long", "great", "good", "bad", "true", "false",
+        "left", "right", "made", "make", "came", "come", "went", "gone", "took", "take",
+        "gave", "give", "knew", "know", "thought", "think", "saw", "see", "heard", "hear",
+        "found", "find", "kept", "keep", "began", "started", "stopped", "tried", "wanted",
+        "needed", "seemed", "became", "turned", "walked", "stood", "sat", "watched", "listened"
+    )
+
+    private val TURKISH_MARKERS: Set<String> = setOf(
+        "bir", "ve", "bu", "şu", "için", "ile", "ama", "fakat", "ancak", "gibi", "kadar",
+        "daha", "çok", "az", "en", "ben", "sen", "biz", "siz", "onlar", "beni", "seni", "onu",
+        "bana", "sana", "ona", "benim", "senin", "onun", "bizim", "sizin", "kendi", "kendimi",
+        "değil", "var", "yok", "olan", "olarak", "oldu", "olmuş", "olacak", "etti", "ettim",
+        "ediyor", "dedi", "dedim", "söyledi", "söyledim", "baktı", "baktım", "hissettim",
+        "hissetti", "anladım", "anladı", "fark", "ilk", "kez", "sonra", "önce", "şimdi",
+        "artık", "hâlâ", "hala", "bile", "sadece", "yalnızca", "çünkü", "rağmen", "karşı",
+        "üzerine", "içinde", "yanında", "arasında", "gözleri", "gözlerime", "sesi", "kalbim",
+        "ellerim", "yüzü", "sır", "sırrı", "güven", "söz", "yemin", "ihanet", "itiraf",
+        "kırgınlık", "özlem", "huzur", "korku", "öfke", "sevgi", "umut", "gece", "sabah",
+        "akşam", "bugün", "dün", "yarın", "birlikte", "yalnız", "sessizce", "derin", "anı",
+        "anlar", "gerçek", "yalan", "acı", "bağ", "karar", "tehlike", "görev", "plan",
+        "yara", "şefkat", "gerilim", "rahatlama", "pişmanlık", "şaşkınlık", "kararlılık",
+        "sadakat", "mesafe", "yakınlık", "sıcaklık", "soğukluk", "gölge", "ışık", "karanlık",
+        "hiç", "her", "hep", "tüm", "bütün", "diğer", "başka", "nasıl", "neden", "kim",
+        "nerede", "burada", "orada", "böyle", "şöyle", "öyle", "artık", "zaten", "belki",
+        "keşke", "sanki", "asla", "mutlaka", "hemen", "yavaşça", "usulca", "aniden"
+    )
+
+    private val TURKISH_MORPH_SUFFIX_REGEX = Regex(
+        """(ıyor|iyor|uyor|üyor|dım|dim|dum|düm|tım|tim|tum|tüm|mış|miş|muş|müş|acak|ecek|ınca|ince|unca|ünce|arak|erek|dığında|diğinde|duğunda|düğünde|tığında|tiğinde|ların|lerin|larda|lerde|lardan|lerden|ımız|imiz|umuz|ümüz|ında|inde|undan|ünden|ıyla|iyle|sız|siz|suz|süz|lık|lik|luk|lük|yorum|yordu|mişti|mıştı|eceğim|acağım|medim|madım|medi|madı)$"""
+    )
+
+    private val EMOTION_TAG_EN_TO_TR: Map<String, String> = mapOf(
+        "trust" to "Güven",
+        "deep trust" to "Derin Güven",
+        "silent trust" to "Sessiz Güven",
+        "betrayal" to "İhanet",
+        "warmth" to "Sıcaklık",
+        "relief" to "Rahatlama",
+        "tension" to "Gerilim",
+        "fear" to "Korku",
+        "dread" to "Dehşet",
+        "anger" to "Öfke",
+        "rage" to "Hiddet",
+        "fury" to "Hiddet",
+        "sadness" to "Hüzün",
+        "grief" to "Yas ve Keder",
+        "sorrow" to "Keder",
+        "love" to "Sevgi",
+        "deep love" to "Derin Sevgi",
+        "affection" to "Şefkat",
+        "tenderness" to "Şefkat",
+        "hope" to "Umut",
+        "guilt" to "Suçluluk",
+        "remorse" to "Pişmanlık",
+        "regret" to "Pişmanlık",
+        "longing" to "Özlem",
+        "yearning" to "Özlem",
+        "shock" to "Şaşkınlık",
+        "surprise" to "Şaşkınlık",
+        "determination" to "Kararlılık",
+        "resolve" to "Kararlılık",
+        "vulnerability" to "Kırılganlık",
+        "fragility" to "Kırılganlık",
+        "pride" to "Gurur",
+        "jealousy" to "Kıskançlık",
+        "envy" to "Kıskançlık",
+        "peace" to "Huzur",
+        "calm" to "Sakinlik",
+        "serenity" to "Huzur",
+        "gratitude" to "Minnet",
+        "courage" to "Cesaret",
+        "despair" to "Çaresizlik",
+        "helplessness" to "Çaresizlik",
+        "protective" to "Koruyuculuk",
+        "protectiveness" to "Koruyuculuk",
+        "emotional" to "Derin Etki",
+        "deep impact" to "Derin Etki",
+        "bittersweet" to "Buruk Huzur",
+        "melancholy" to "Melankoli",
+        "nostalgia" to "Nostalji",
+        "suspicion" to "Şüphe",
+        "doubt" to "Şüphe",
+        "curiosity" to "Merak",
+        "awe" to "Hayranlık",
+        "shame" to "Utanç",
+        "hurt" to "Kırgınlık",
+        "heartbreak" to "Kalp Kırıklığı",
+        "loyalty" to "Sadakat",
+        "devotion" to "Bağlılık",
+        "conflict" to "İç Çatışma",
+        "inner conflict" to "İç Çatışma",
+        "unease" to "Huzursuzluk",
+        "anxiety" to "Kaygı",
+        "comfort" to "Güven ve Huzur",
+        "joy" to "Sevinç",
+        "happiness" to "Mutluluk",
+        "neutral" to "Sakinlik",
+        "loneliness" to "Yalnızlık",
+        "intimacy" to "Yakınlık",
+        "passion" to "Tutku",
+        "turning point" to "Dönüm Noktası",
+        "revelation" to "Yüzleşme",
+        "confession" to "İtiraf"
+    )
+
+    private val FACT_KEY_EN_TO_TR: Map<String, String> = mapOf(
+        "location" to "Konum",
+        "current location" to "Güncel Konum",
+        "occupation" to "Meslek",
+        "profession" to "Meslek",
+        "job" to "Meslek",
+        "secret" to "Gizli Sır",
+        "hidden secret" to "Gizli Sır",
+        "relationship" to "İlişki Durumu",
+        "relationship status" to "İlişki Durumu",
+        "bond" to "Bağ Durumu",
+        "promise" to "Verilen Söz",
+        "vow" to "Yemin",
+        "oath" to "Yemin",
+        "goal" to "Hedef",
+        "mission" to "Görev",
+        "plan" to "Plan",
+        "injury" to "Fiziksel Durum",
+        "health" to "Sağlık Durumu",
+        "physical state" to "Fiziksel Durum",
+        "favorite food" to "Favori Yemek",
+        "favorite drink" to "Favori İçecek",
+        "preference" to "Tercih",
+        "age" to "Yaş",
+        "identity" to "Kimlik",
+        "family" to "Aile",
+        "past" to "Geçmiş",
+        "trauma" to "Geçmiş Travma",
+        "fear" to "Korkusu",
+        "phobia" to "Fobi",
+        "allergy" to "Alerji",
+        "ability" to "Yetenek / Güç",
+        "power" to "Güç",
+        "powers" to "Güçler",
+        "trust" to "Güven Durumu",
+        "trust level" to "Güven Durumu",
+        "outfit" to "Kıyafet",
+        "appearance" to "Görünüm",
+        "residence" to "İkamet",
+        "home" to "Yaşadığı Yer",
+        "status" to "Durum",
+        "hobby" to "Hobi",
+        "trait" to "Karakter Özelliği",
+        "personality" to "Kişilik",
+        "background" to "Geçmiş",
+        "alliance" to "İttifak",
+        "enemy" to "Düşman",
+        "weapon" to "Silah / Eşya",
+        "item" to "Önemli Eşya"
+    )
+
+    private val RELATION_EN_TO_TR: Map<String, String> = mapOf(
+        "brother" to "kardeşi",
+        "sister" to "kız kardeşi",
+        "sibling" to "kardeşi",
+        "mother" to "annesi",
+        "father" to "babası",
+        "parent" to "ebeveyni",
+        "friend" to "arkadaşı",
+        "best friend" to "en yakın dostu",
+        "close friend" to "yakın dostu",
+        "enemy" to "düşmanı",
+        "rival" to "rakibi",
+        "ally" to "müttefiki",
+        "partner" to "ortağı",
+        "lover" to "sevgilisi",
+        "ex-lover" to "eski sevgilisi",
+        "ex" to "eski sevgilisi",
+        "spouse" to "eşi",
+        "wife" to "eşi",
+        "husband" to "eşi",
+        "mentor" to "akıl hocası",
+        "boss" to "patronu",
+        "colleague" to "iş arkadaşı",
+        "neighbor" to "komşusu",
+        "lives in" to "yaşadığı yer",
+        "works at" to "çalıştığı yer",
+        "loves" to "seviyor",
+        "hates" to "nefret ediyor",
+        "trusts" to "güveniyor",
+        "fears" to "korkuyor",
+        "protects" to "koruyor",
+        "betrayed" to "ihanet etti",
+        "knows" to "tanıyor",
+        "owns" to "sahibi",
+        "member of" to "üyesi"
+    )
+
+    fun hasTurkishDiacritics(text: String): Boolean =
+        text.any { ch -> TR_DIACRITICS.any { it == ch } }
+
+    /**
+     * Returns true when [text] is predominantly English or leaks English prose/labels instead of Turkish.
+     * Carefully tolerates English proper names inside Turkish sentences (e.g. "Tony Stark ile Manhattan çatısında buluştuk").
+     */
+    fun isEnglishDominant(text: String): Boolean {
+        val trimmed = text.trim()
+        if (trimmed.length < 3) return false
+
+        val tokens = trimmed
+            .lowercase(Locale.ROOT)
+            .split(Regex("""[^a-zçğıöşü']+"""))
+            .map { it.substringBefore('\'').trim() }
+            .filter { it.length >= 2 }
+        if (tokens.isEmpty()) return false
+
+        var enHits = 0
+        var trHits = 0
+        var morphHits = 0
+        for (tok in tokens) {
+            val isTrWord = tok in TURKISH_MARKERS
+            val isEnWord = tok in ENGLISH_MARKERS && !isTrWord
+            if (isTrWord) trHits++
+            if (isEnWord) enHits++
+            if (!isEnWord && tok.length >= 5 && TURKISH_MORPH_SUFFIX_REGEX.containsMatchIn(tok)) {
+                morphHits++
+            }
+        }
+
+        val hasDiac = hasTurkishDiacritics(trimmed)
+        val effectiveTrSignal = trHits + morphHits + (if (hasDiac) 1 else 0)
+
+        // Short phrases (titles, emotion tags, fact keys: 1..5 words)
+        if (tokens.size <= 5) {
+            if (enHits >= 1 && effectiveTrSignal == 0) return true
+            if (enHits >= 2 && enHits > effectiveTrSignal) return true
+            return false
+        }
+
+        // Sentences & paragraphs (6+ words)
+        val enRatio = enHits.toFloat() / tokens.size.toFloat()
+        if (enHits >= 2 && effectiveTrSignal == 0) return true
+        if (enHits >= 3 && enHits >= effectiveTrSignal * 2) return true
+        if (enHits >= 4 && enRatio >= 0.30f && enHits > trHits + morphHits) return true
+
+        // Check for mixed-language leak: any individual sentence inside a multi-sentence text that is English
+        val sentences = trimmed.split(Regex("""[.!?\n]+""")).map { it.trim() }.filter { it.length >= 18 }
+        if (sentences.size >= 2) {
+            var englishSentences = 0
+            for (s in sentences) {
+                val sTokens = s.lowercase(Locale.ROOT)
+                    .split(Regex("""[^a-zçğıöşü']+"""))
+                    .map { it.substringBefore('\'').trim() }
+                    .filter { it.length >= 2 }
+                if (sTokens.size < 4) continue
+                val sEn = sTokens.count { it in ENGLISH_MARKERS && it !in TURKISH_MARKERS }
+                val sTr = sTokens.count { it in TURKISH_MARKERS || (it.length >= 5 && TURKISH_MORPH_SUFFIX_REGEX.containsMatchIn(it)) }
+                if (sEn >= 3 && sEn > sTr * 2 && !hasTurkishDiacritics(s)) {
+                    englishSentences++
+                }
+            }
+            if (englishSentences > 0) return true
+        }
+
+        return false
+    }
+
+    fun normalizeTurkishEmotionTag(raw: String, fallback: String = "Derin Etki"): String {
+        val clean = raw.trim().replace(Regex("""\s+"""), " ")
+        if (clean.isBlank()) return fallback
+        val low = clean.lowercase(Locale.ROOT)
+        EMOTION_TAG_EN_TO_TR[low]?.let { return it }
+        // Handle compound English emotion tags like "Trust & Relief" or "Fear / Tension"
+        val sepMatch = Regex("""\s*[&/,+]\s*""").find(clean)
+        if (sepMatch != null) {
+            val parts = clean.split(Regex("""\s*[&/,+]\s*""")).map { it.trim() }.filter { it.isNotBlank() }
+            if (parts.size == 2) {
+                val p1 = EMOTION_TAG_EN_TO_TR[parts[0].lowercase(Locale.ROOT)] ?: parts[0]
+                val p2 = EMOTION_TAG_EN_TO_TR[parts[1].lowercase(Locale.ROOT)] ?: parts[1]
+                val joined = "$p1 ve $p2"
+                if (!isEnglishDominant(joined)) return joined
+            }
+        }
+        return if (isEnglishDominant(clean)) fallback else clean.take(36)
+    }
+
+    fun normalizeTurkishFactKey(raw: String, valueForFallback: String = ""): String {
+        val clean = raw.trim().replace(Regex("""\s+"""), " ")
+        if (clean.isBlank()) return MemoryEngine.inferFactKey(valueForFallback)
+        val low = clean.lowercase(Locale.ROOT)
+        FACT_KEY_EN_TO_TR[low]?.let { return it }
+        return if (isEnglishDominant(clean)) {
+            MemoryEngine.inferFactKey(valueForFallback)
+        } else {
+            clean.take(48)
+        }
+    }
+
+    fun normalizeTurkishRelation(raw: String): String {
+        val clean = raw.trim().replace(Regex("""\s+"""), " ")
+        if (clean.isBlank()) return ""
+        val low = clean.lowercase(Locale.ROOT)
+        RELATION_EN_TO_TR[low]?.let { return it }
+        return if (isEnglishDominant(clean)) "" else clean.take(40)
+    }
+
+    fun isLivingMemoryTurkishValid(title: String, narrative: String, innerThought: String): Boolean {
+        if (narrative.isBlank()) return false
+        if (isEnglishDominant(narrative)) return false
+        if (title.isNotBlank() && isEnglishDominant(title)) return false
+        if (innerThought.isNotBlank() && isEnglishDominant(innerThought)) return false
+        return true
+    }
+}
+
+/**
+ * Cognitive anti-spam & pacing policy for Living Memories ("Anılar").
+ * Prevents writing a memory on every single turn while ensuring real climax moments are captured.
+ */
+object LivingMemoryPolicy {
+    const val MIN_SALIENCE = 7
+    const val LANDMARK_SALIENCE = 9
+    const val MIN_MESSAGE_GAP_STANDARD = 6   // 3 full user+AI turns for salience 7..8
+    const val MIN_MESSAGE_GAP_LANDMARK = 4   // 2 full user+AI turns even for climax salience 9..10
+    const val MIN_REALTIME_COOLDOWN_MS = 90_000L
+    const val MAX_NEW_MEMORIES_PER_STORY_DAY = 4
+
+    data class GateDecision(
+        val allowed: Boolean,
+        val reason: String,
+        val allowEnrichExistingOnly: Boolean = false
+    )
+
+    fun evaluateGate(
+        salience: Int,
+        currentMessageCount: Int,
+        lastMemoryMessageCount: Int,
+        nowMs: Long,
+        latestEventTimestampMs: Long,
+        sameStoryDayEventCount: Int
+    ): GateDecision {
+        if (salience < MIN_SALIENCE) {
+            return GateDecision(
+                allowed = false,
+                reason = "Önem puanı ($salience) eşik değerinin ($MIN_SALIENCE) altında.",
+                allowEnrichExistingOnly = false
+            )
+        }
+
+        val isLandmark = salience >= LANDMARK_SALIENCE
+        val requiredMsgGap = if (isLandmark) MIN_MESSAGE_GAP_LANDMARK else MIN_MESSAGE_GAP_STANDARD
+
+        if (currentMessageCount > 0 && lastMemoryMessageCount > 0) {
+            val msgGap = currentMessageCount - lastMemoryMessageCount
+            if (msgGap < requiredMsgGap) {
+                return GateDecision(
+                    allowed = false,
+                    reason = "Tur bekleme süresi aktif ($msgGap/$requiredMsgGap mesaj).",
+                    allowEnrichExistingOnly = true
+                )
+            }
+        }
+
+        if (!isLandmark && latestEventTimestampMs > 0L && (nowMs - latestEventTimestampMs) < MIN_REALTIME_COOLDOWN_MS) {
+            return GateDecision(
+                allowed = false,
+                reason = "Anı yazım hız sınırı aktif (90sn).",
+                allowEnrichExistingOnly = true
+            )
+        }
+
+        if (sameStoryDayEventCount >= MAX_NEW_MEMORIES_PER_STORY_DAY && !isLandmark) {
+            return GateDecision(
+                allowed = false,
+                reason = "Aynı hikâye günü anı kotası ($MAX_NEW_MEMORIES_PER_STORY_DAY) doldu.",
+                allowEnrichExistingOnly = true
+            )
+        }
+
+        return GateDecision(allowed = true, reason = "OK")
+    }
+}
+
+/**
  * Multi-POV First-Person Living Memory ("Yaşanan Anı") model & codec.
  * Stored inside existing MemoryEventEntity.description with zero DB schema changes,
  * while remaining 100% backwards-compatible with plain-text legacy events.
@@ -231,7 +656,10 @@ object LivingMemoryCodec {
     ): String {
         val cleanPov = povCharacter.replace("|", " ").replace("]", "").trim().ifBlank { "Karakter" }
         val cleanTitle = title.replace("|", " ").replace("]", "").trim().ifBlank { "Unutulmaz An" }
-        val cleanEmo = emotionTag.replace("|", " ").replace("]", "").trim().ifBlank { "Derin Etki" }
+        val cleanEmo = TurkishLanguageGuard.normalizeTurkishEmotionTag(
+            emotionTag.replace("|", " ").replace("]", "").trim(),
+            fallback = "Derin Etki"
+        )
         val cleanSalience = salience.coerceIn(1, 10)
         val cleanNarrative = narrative.trim()
         val cleanInner = innerThought.trim()
@@ -1014,10 +1442,12 @@ object MemoryEngine {
      * factual or emotional substance to invoke automatic Neural Vault & Living Memory extraction.
      */
     fun shouldExtractMemoriesForTurn(userText: String, aiReply: String): Boolean {
-        val combined = "$userText $aiReply"
-        if (userText.trim().length < 6 && aiReply.trim().length < 80) return false
-        if (isTrivialCasualMessage(userText) && aiReply.trim().length < 180) return false
+        val trimmedUser = userText.trim()
+        val trimmedAi = aiReply.trim()
+        if (trimmedUser.length < 8 && trimmedAi.length < 100) return false
+        if (isTrivialCasualMessage(trimmedUser) && trimmedAi.length < 240) return false
 
+        val combined = "$trimmedUser $trimmedAi"
         val lower = TurkishTextAnalyzer.normalize(combined)
         val highSignalKeywords = listOf(
             "sır", "itiraf", "söz ver", "yemin", "ihanet", "yalan", "affet", "özür",
@@ -1025,13 +1455,15 @@ object MemoryEngine {
             "annem", "babam", "kardeş", "adım", "yaşım", "güç", "yetenek", "görev",
             "plan", "tehlike", "yaralan", "kurtar", "ölüm", "öldür", "sakla", "gizli",
             "güveniyorum", "güvenmiyorum", "öp", "sarıl", "ağla", "gözyaş", "kalbim",
-            "asla", "unutma", "hatırla", "karar", "seçim", "anlaşma", "ittifak", "düşman",
-            "makarna", "kahve", "ceket", "kıyafet", "ağrıyor", "anahtar", "sehpada", "dosya", "kanıt"
+            "unutma", "hatırla", "karar", "seçim", "anlaşma", "ittifak", "düşman",
+            "dosya", "kanıt", "anahtar", "alerji", "fobi"
         )
-        if (highSignalKeywords.any { lower.contains(it) }) return true
+        if (highSignalKeywords.any { TurkishTextAnalyzer.containsWordPrefix(lower, it, SIGNIFICANCE_PREFIX_EXCEPTIONS) }) {
+            return true
+        }
 
-        // Any substantive RP turn (>= 24 chars from user and >= 140 chars from AI) is worth inspecting
-        return userText.trim().length >= 24 && aiReply.trim().length >= 140
+        // Substantive RP turn (>= 32 chars from user and >= 180 chars from AI)
+        return trimmedUser.length >= 32 && trimmedAi.length >= 180
     }
 
     // ── Vector helpers: SINGLE source of truth (MemoryRetrievalManager & EmochiRepository delegate here) ──
