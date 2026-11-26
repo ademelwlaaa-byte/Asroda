@@ -98,6 +98,8 @@ import com.example.data.repository.EmochiRepository
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import kotlinx.coroutines.delay
@@ -1068,21 +1070,29 @@ fun AdminConsoleModal(
 fun UpdateCheckerModal(
     onDismiss: () -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val currentVersion = com.example.BuildConfig.VERSION_NAME
+    var checkTick by remember { mutableIntStateOf(0) }
     var isChecking by remember { mutableStateOf(true) }
+    var checkResult by remember { mutableStateOf<com.example.util.AppUpdateManager.CheckResult?>(null) }
     var isDownloading by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableFloatStateOf(0f) }
-    var isUpdated by remember { mutableStateOf(false) }
+    var downloadedBytes by remember { mutableLongStateOf(0L) }
+    var totalBytes by remember { mutableLongStateOf(0L) }
+    var downloadedApk by remember { mutableStateOf<java.io.File?>(null) }
+    var statusMessage by remember { mutableStateOf<String?>(null) }
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(Unit) {
-        delay(1000)
+    LaunchedEffect(checkTick) {
+        isChecking = true
+        statusMessage = null
+        checkResult = com.example.util.AppUpdateManager.checkForUpdate(currentVersion)
         isChecking = false
     }
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Asroda Güncelleme Merkezi",
-        subtitle = "Sürüm ve paket denetimi",
+        subtitle = "Mevcut sürüm: v$currentVersion • Resmi Release Kanalı",
         icon = Icons.Default.AutoAwesome
     ) {
         Column(
@@ -1094,7 +1104,7 @@ fun UpdateCheckerModal(
                 EmochiLoadingSpinner(size = 38.dp, color = MorCamTokens.LavenderSoft)
                 Spacer(modifier = Modifier.height(14.dp))
                 Text(
-                    text = "Sunuculardan en güncel Velora sürümü denetleniyor...",
+                    text = "Resmi Asroda sürüm sunucusu kontrol ediliyor...",
                     fontFamily = com.example.ui.theme.InterFontFamily,
                     color = MorCamTokens.LavenderMuted,
                     fontSize = 12.5.sp,
@@ -1102,8 +1112,9 @@ fun UpdateCheckerModal(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             } else if (isDownloading) {
+                val fraction = if (totalBytes > 0L) (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f) else 0f
                 Text(
-                    text = "Yeni Sürüm Paketi İndiriliyor...",
+                    text = "Yeni Asroda APK İndiriliyor...",
                     fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
                     color = MorCamTokens.SilverLavenderBright,
                     fontSize = 15.sp,
@@ -1120,21 +1131,27 @@ fun UpdateCheckerModal(
                 ) {
                     Box(
                         modifier = Modifier
-                            .fillMaxWidth(downloadProgress.coerceIn(0f, 1f))
+                            .fillMaxWidth(fraction)
                             .fillMaxHeight()
                             .clip(RoundedCornerShape(50))
                             .background(MorCamTokens.PrimaryButtonFill)
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
+                val progressText = if (totalBytes > 0L) {
+                    "%${(fraction * 100).toInt()} • ${com.example.util.AppUpdateManager.formatSizeMb(downloadedBytes)} / ${com.example.util.AppUpdateManager.formatSizeMb(totalBytes)}"
+                } else {
+                    "${com.example.util.AppUpdateManager.formatSizeMb(downloadedBytes)} indirildi..."
+                }
                 Text(
-                    text = "%${(downloadProgress * 100).toInt()} Tamamlandı • Paketleniyor...",
+                    text = progressText,
                     fontFamily = com.example.ui.theme.InterFontFamily,
                     color = MorCamTokens.LavenderMuted,
                     fontSize = 12.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-            } else if (isUpdated) {
+            } else if (downloadedApk != null) {
+                val apkFile = downloadedApk!!
                 Box(
                     modifier = Modifier
                         .size(56.dp)
@@ -1152,16 +1169,16 @@ fun UpdateCheckerModal(
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Güncelleme Başarıyla Tamamlandı",
+                    text = "APK İndirildi — Kuruluma Hazır",
                     fontFamily = com.example.ui.theme.DisplaySerifFontFamily,
                     color = MorCamTokens.SilverLavenderBright,
-                    fontSize = 16.5.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Velora paketi başarıyla güncellendi. Tüm botlarınız, sohbetleriniz ve verileriniz eksiksiz korundu.",
+                    text = statusMessage ?: "Android kurulum ekranı açıldı. Tüm botlarınız, sohbetleriniz ve hikâye kayıtlarınız korunur.",
                     fontFamily = com.example.ui.theme.InterFontFamily,
                     color = MorCamTokens.LavenderMuted,
                     fontSize = 12.sp,
@@ -1170,73 +1187,177 @@ fun UpdateCheckerModal(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 MorCamCapsuleButton(
-                    text = "Tamam",
-                    onClick = onDismiss,
-                    variant = MorCamButtonVariant.Primary,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            } else {
-                MorCamGlassCard(highlighted = true, cornerRadius = 18.dp) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(
-                            text = "✦ Yeni Sürüm Hazır",
-                            fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
-                            color = MorCamTokens.SilverLavenderBright,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color(0x457C3AED))
-                                .border(0.8.dp, MorCamTokens.LavenderLight.copy(alpha = 0.7f), RoundedCornerShape(50))
-                                .padding(horizontal = 9.dp, vertical = 3.dp)
-                        ) {
-                            Text(
-                                text = "v${com.example.BuildConfig.VERSION_NAME}",
-                                fontFamily = com.example.ui.theme.InterFontFamily,
-                                color = MorCamTokens.SilverLavenderBright,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "• Mor Cam Lavanta-Gümüş Birleşik Arayüz\n" +
-                                "• Micro-WebP Avatar & %92.2 Depolama Optimizasyonu\n" +
-                                "• Gelişmiş API Kataloğu & Öncelik Sıralaması\n" +
-                                "• Kalıcı Veri & Sohbet Geçmişi Koruması",
-                        fontFamily = com.example.ui.theme.InterFontFamily,
-                        color = MorCamTokens.LavenderMuted,
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                MorCamCapsuleButton(
-                    text = "Sürümü Şimdi Güncelle",
+                    text = "Kurulumu Başlat",
                     icon = Icons.Default.FlashOn,
                     onClick = {
-                        coroutineScope.launch {
-                            isDownloading = true
-                            for (i in 1..10) {
-                                delay(120)
-                                downloadProgress = i / 10f
-                            }
-                            isDownloading = false
-                            isUpdated = true
+                        val launched = com.example.util.AppUpdateManager.launchApkInstaller(context, apkFile)
+                        statusMessage = if (launched) {
+                            "Android kurulum ekranı açıldı."
+                        } else {
+                            "Önce 'Bilinmeyen uygulamalara izin ver' ayarını açıp geri dönün, ardından tekrar basın."
                         }
                     },
                     variant = MorCamButtonVariant.Primary,
                     modifier = Modifier.fillMaxWidth()
                 )
+            } else {
+                when (val res = checkResult) {
+                    is com.example.util.AppUpdateManager.CheckResult.UpdateAvailable -> {
+                        val rel = res.release
+                        MorCamGlassCard(highlighted = true, cornerRadius = 18.dp) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "✦ Yeni Sürüm Hazır",
+                                    fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
+                                    color = MorCamTokens.SilverLavenderBright,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .background(Color(0x457C3AED))
+                                        .border(0.8.dp, MorCamTokens.LavenderLight.copy(alpha = 0.7f), RoundedCornerShape(50))
+                                        .padding(horizontal = 9.dp, vertical = 3.dp)
+                                ) {
+                                    val sizeLabel = com.example.util.AppUpdateManager.formatSizeMb(rel.apkSizeBytes)
+                                    Text(
+                                        text = if (sizeLabel.isNotBlank()) "v${rel.versionName} • $sizeLabel" else "v${rel.versionName}",
+                                        fontFamily = com.example.ui.theme.InterFontFamily,
+                                        color = MorCamTokens.SilverLavenderBright,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = rel.releaseNotes,
+                                fontFamily = com.example.ui.theme.InterFontFamily,
+                                color = MorCamTokens.LavenderMuted,
+                                fontSize = 12.sp,
+                                lineHeight = 18.sp
+                            )
+                        }
+
+                        statusMessage?.let { err ->
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "⚠ $err",
+                                fontFamily = com.example.ui.theme.InterFontFamily,
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 11.5.sp,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        MorCamCapsuleButton(
+                            text = "İndir ve Kur (v${rel.versionName})",
+                            icon = Icons.Default.FlashOn,
+                            onClick = {
+                                coroutineScope.launch {
+                                    isDownloading = true
+                                    downloadedBytes = 0L
+                                    totalBytes = rel.apkSizeBytes
+                                    statusMessage = null
+                                    val dlRes = com.example.util.AppUpdateManager.downloadApk(
+                                        context = context,
+                                        release = rel,
+                                        onProgress = { dl, tot ->
+                                            downloadedBytes = dl
+                                            totalBytes = tot
+                                        }
+                                    )
+                                    isDownloading = false
+                                    dlRes.fold(
+                                        onSuccess = { file ->
+                                            downloadedApk = file
+                                            val launched = com.example.util.AppUpdateManager.launchApkInstaller(context, file)
+                                            statusMessage = if (launched) {
+                                                "Android kurulum ekranı açıldı. Tüm sohbet ve hikâye verileriniz korunur."
+                                            } else {
+                                                "Lütfen 'Bilinmeyen kaynaklardan kurulum' iznini verip geri dönün, ardından Kurulumu Başlat'a dokunun."
+                                            }
+                                        },
+                                        onFailure = { e ->
+                                            statusMessage = e.message ?: "APK indirilemedi."
+                                        }
+                                    )
+                                }
+                            },
+                            variant = MorCamButtonVariant.Primary,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    is com.example.util.AppUpdateManager.CheckResult.UpToDate -> {
+                        Box(
+                            modifier = Modifier
+                                .size(54.dp)
+                                .clip(CircleShape)
+                                .background(Brush.radialGradient(listOf(Color(0x9934D399), Color(0x44065F46))))
+                                .border(1.2.dp, Color(0xFF6EE7B7), CircleShape),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFFD1FAE5),
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Text(
+                            text = "Asroda Güncel (v${res.currentVersion})",
+                            fontFamily = com.example.ui.theme.DisplaySerifFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "Şu anda yayınlanan en güncel Asroda sürümünü kullanıyorsunuz.",
+                            fontFamily = com.example.ui.theme.InterFontFamily,
+                            color = MorCamTokens.LavenderMuted,
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        MorCamCapsuleButton(
+                            text = "Tekrar Kontrol Et",
+                            icon = Icons.Default.Refresh,
+                            onClick = { checkTick++ },
+                            variant = MorCamButtonVariant.Secondary,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    is com.example.util.AppUpdateManager.CheckResult.Error -> {
+                        Text(
+                            text = "⚠ ${res.message}",
+                            fontFamily = com.example.ui.theme.InterFontFamily,
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        MorCamCapsuleButton(
+                            text = "Tekrar Dene",
+                            icon = Icons.Default.Refresh,
+                            onClick = { checkTick++ },
+                            variant = MorCamButtonVariant.Primary,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    null -> Unit
+                }
             }
         }
     }

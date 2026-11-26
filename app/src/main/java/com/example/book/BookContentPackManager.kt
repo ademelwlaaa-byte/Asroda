@@ -67,10 +67,10 @@ object BookContentPackManager {
     /** Current bundled offline content version (Season 1 + Season 2 = 20 Chapters). */
     const val BUNDLED_CONTENT_VERSION = 2
 
-    /** On-demand downloadable ElevenLabs Turkish Studio Voice Pack (15 characters, 119 lines, ~6.6 MB). */
+    /** On-demand downloadable ElevenLabs Turkish Studio Voice Pack (15 characters, 119 lines, ~6.9 MB). */
     const val STUDIO_VOICE_PACK_ID = "elevenlabs_studio_voices_v1"
     const val STUDIO_VOICE_PACK_URL =
-        "https://raw.githubusercontent.com/ademelwlaaa-byte/Asroda/main/public/packs/asroda-studio-voices-v1.zip"
+        "https://github.com/ademelwlaaa-byte/Asroda-Releases/releases/latest/download/asroda-studio-voices-v1.zip"
 
     fun isStudioVoicePackInstalled(context: Context): Boolean {
         ensureLoaded(context)
@@ -96,7 +96,7 @@ object BookContentPackManager {
      * Leave blank to stay 100% offline-ready; paste your GitHub Releases / CDN manifest URL whenever you publish updates!
      */
     const val REMOTE_MANIFEST_URL =
-        "https://raw.githubusercontent.com/ademelwlaaa-byte/Asroda/main/public/packs/story_manifest.json"
+        "https://github.com/ademelwlaaa-byte/Asroda-Releases/releases/latest/download/story_manifest.json"
 
     data class RemoteStoryUpdateInfo(
         val version: Int,
