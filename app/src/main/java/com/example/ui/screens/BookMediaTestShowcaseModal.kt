@@ -135,25 +135,25 @@ object BookMediaTestCatalog {
     val bossDuels: List<BookTestBossEntry> = listOf(
         BookTestBossEntry(
             bossId = CosmicDuelBossId.VAELOR_ROOFTOP,
-            title = "Son Yüzleşme · Vaelor (Avengers Kulesi Çatısı)",
+            title = "2.5D Sinematik Yüzleşme · Vaelor",
             chapterBadge = "1. SEZON · BÖLÜM 10 FİNAL",
-            subtitle = "60fps çatı boss düellosu: Işınlanma, Enerji Emilimi, Beyaz Göz & Kırmızı Göz Ultimate ve Avengers desteği.",
+            subtitle = "4 perdeli 2.5D sinema kurgusu, Canlı Avengers Telsiz Komutası (Steve/Natasha/Tony/Wanda) ve kesilmeyen Zafer Sinematiği.",
             accent = Color(0xFF38BDF8),
             previewRes = R.drawable.img_game_rooftop_arena
         ),
         BookTestBossEntry(
             bossId = CosmicDuelBossId.MIRROR_ZERO,
-            title = "Ayna Düellosu · Sıfır (Kule Terası)",
+            title = "2.5D Ayna Yüzleşmesi · Sıfır",
             chapterBadge = "2. SEZON · BÖLÜM 16",
-            subtitle = "Kendi karanlık geleceğin Sıfır'a karşı ayna-klon fazları, mavi yankı topları ve zihin kırıcı kapışma.",
+            subtitle = "Karanlık geleceğin Sıfır ile çok perdeli 2.5D kader yüzleşmesi, canlı ekip komutası ve kesilmeyen Wanda zafer sahnesi.",
             accent = Color(0xFFA855F7),
             previewRes = R.drawable.img_postcredits_twin_aiden
         ),
         BookTestBossEntry(
             bossId = CosmicDuelBossId.ULTRON_PRIME,
-            title = "Demir ve Yankı · Ultron Prime (Sokovia)",
+            title = "2.5D Sokovia Finali · Ultron Prime",
             chapterBadge = "2. SEZON · BÖLÜM 23 FİNAL",
-            subtitle = "Vibranyum zırh kırma, ışın çarpışması ve Vision/Thor/Wanda/Steve/Natasha/Tony takım destekli final savaşı.",
+            subtitle = "Thor, Vision, Pietro, Tony ve Wanda canlı telsiz destekleri, robotik Ultron & Asıl Mimar replikleri ve Epik Zafer Sinematiği.",
             accent = Color(0xFFF43F5E),
             previewRes = R.drawable.img_portrait_ultron_prime_1795557413989
         )
@@ -162,21 +162,21 @@ object BookMediaTestCatalog {
     val miniGames: List<BookTestMiniGameEntry> = listOf(
         BookTestMiniGameEntry(
             gameId = StoryMiniGameId.WHITE_EYE_RESONANCE,
-            title = "Beyaz Göz Ritim Odağı",
+            title = "2.5D Zaman Kırılması · Beyaz Göz",
             chapterBadge = "1. SEZON · BÖLÜM 3",
-            subtitle = "Daralan kozmik halkaları altın çemberde mühürleyip beş Avenger'ın zihnini tek bir zarar vermeden sabitle!"
+            subtitle = "Telltale tarzı 8 saniyelik zamanlı kritik kararlar, 2.5D ağır çekim kamera ve kesilmeyen ElevenLabs dublaj."
         ),
         BookTestMiniGameEntry(
             gameId = StoryMiniGameId.BOSPHORUS_CORE_BALANCE,
-            title = "Boğaz Çekirdeği Dengesi",
+            title = "2.5D Hologram & Sır İncelemesi · Boğaz",
             chapterBadge = "1. SEZON · BÖLÜM 7",
-            subtitle = "Mavi kozmik itki ile Mira'nın kızıl çekimini dengeleyip çatlayan Rezonans Kulesi'ni dokuz saniye stabil tut!"
+            subtitle = "Rezonans Kulesi'nde 3 gizli hologram düğümünü (Dr. Hale, Mira 8-C, Faz Kilidi) incele ve çekirdeği mühürle."
         ),
         BookTestMiniGameEntry(
             gameId = StoryMiniGameId.RED_EYE_WILLPOWER,
-            title = "Kırmızı Göz İrade Mührü",
+            title = "2.5D Zihin Fırtınası · İrade Diyaloğu",
             chapterBadge = "1. SEZON · BÖLÜM 9",
-            subtitle = "Vance'in kışkırtması öfkeni alevlendirirken hızla açılan kızıl çatlakları mühürle ve kontrolü elinde tut!"
+            subtitle = "3 aşamalı psikolojik direniş sinematiği — öfkeye teslim olmadan Kırmızı Göz'ü kontrol altına al."
         )
     )
 
@@ -459,7 +459,7 @@ fun BookMediaTestShowcaseModal(
                             overflow = TextOverflow.Ellipsis
                         )
                         Text(
-                            text = "6 Oyun · 7 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Foto · 15 Stüdyo Ses",
+                            text = "6 Yeni 2.5D Sahne · 7 Animasyon · 10 Canlı 3D · ${BookMediaTestCatalog.photos.size} Foto · 15 Stüdyo Ses",
                             fontFamily = InterFontFamily,
                             fontSize = 11.5.sp,
                             color = Color(0xFFC4B5FD)
@@ -491,8 +491,8 @@ fun BookMediaTestShowcaseModal(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ShowcaseTabPill(
-                        label = "Oyunlar (6)",
-                        icon = Icons.Default.SportsEsports,
+                        label = "2.5D Sahneler (6)",
+                        icon = Icons.Default.Movie,
                         selected = selectedTab == 0,
                         accent = Color(0xFF38BDF8),
                         tag = "test_showcase_tab_games"
