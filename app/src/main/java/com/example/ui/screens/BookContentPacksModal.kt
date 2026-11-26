@@ -29,13 +29,14 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -54,7 +55,41 @@ import com.example.ui.components.MorCamTokens
 import com.example.ui.components.morCamCosmicGlow
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Atomic single-flight download guard with cancellation generation tokens.
+ * Prevents duplicate download launches on rapid taps and suppresses stale completion/error
+ * callbacks after user cancellation or dialog disposal.
+ */
+internal class PackDownloadSessionGuard {
+    private val inFlight = AtomicBoolean(false)
+    private val generation = AtomicInteger(0)
+
+    fun tryStart(): Int? {
+        if (!inFlight.compareAndSet(false, true)) return null
+        return generation.incrementAndGet()
+    }
+
+    fun isCurrent(token: Int): Boolean = inFlight.get() && generation.get() == token
+
+    fun cancel(): Int {
+        val next = generation.incrementAndGet()
+        inFlight.set(false)
+        return next
+    }
+
+    fun complete(token: Int): Boolean {
+        if (generation.get() != token) return false
+        return inFlight.compareAndSet(true, false)
+    }
+
+    fun isDownloading(): Boolean = inFlight.get()
+}
 
 /**
  * Seamless In-Flow Story Download & Auto-Update Dialog.
@@ -74,25 +109,57 @@ fun StoryLaunchDownloadDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val activeDownload by BookContentPackManager.activeDownload.collectAsState()
+    val activeDownload by BookContentPackManager.activeDownload.collectAsStateWithLifecycle()
 
+    val downloadGuard = remember { PackDownloadSessionGuard() }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
     var isDownloading by remember(autoStartUpdate) { mutableStateOf(autoStartUpdate) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    fun cancelDownloadSession() {
+        downloadGuard.cancel()
+        downloadJob?.cancel()
+        downloadJob = null
+        BookContentPackManager.cancelActiveDownload()
+        isDownloading = false
+    }
+
     fun startDownload() {
+        val token = downloadGuard.tryStart() ?: return
         isDownloading = true
         errorMessage = null
-        scope.launch {
-            val res = BookContentPackManager.downloadAndPrepareBook(
-                context = context,
-                bookId = CosmicDriftBookRegistry.BOOK_ID,
-                remoteUpdate = remoteUpdate
-            )
-            res.onSuccess {
-                onReadyToOpen()
-            }.onFailure { err ->
-                isDownloading = false
-                errorMessage = err.message ?: "İndirme tamamlanamadı. Lütfen tekrar deneyin."
+        downloadJob = scope.launch {
+            try {
+                val res = BookContentPackManager.downloadAndPrepareBook(
+                    context = context,
+                    bookId = CosmicDriftBookRegistry.BOOK_ID,
+                    remoteUpdate = remoteUpdate
+                )
+                if (!downloadGuard.complete(token)) return@launch
+                res.onSuccess {
+                    isDownloading = false
+                    onReadyToOpen()
+                }.onFailure { err ->
+                    isDownloading = false
+                    if (err !is CancellationException) {
+                        errorMessage = err.message ?: "İndirme tamamlanamadı. Lütfen tekrar deneyin."
+                    }
+                }
+            } catch (_: CancellationException) {
+                if (downloadGuard.complete(token)) {
+                    isDownloading = false
+                }
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (downloadGuard.isDownloading()) {
+                downloadGuard.cancel()
+                downloadJob?.cancel()
+                downloadJob = null
+                BookContentPackManager.cancelActiveDownload()
             }
         }
     }
@@ -315,8 +382,7 @@ fun StoryLaunchDownloadDialog(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier
                             .clickable {
-                                BookContentPackManager.cancelActiveDownload()
-                                isDownloading = false
+                                cancelDownloadSession()
                                 onDismiss()
                             }
                             .padding(top = 4.dp, bottom = 2.dp, start = 12.dp, end = 12.dp)

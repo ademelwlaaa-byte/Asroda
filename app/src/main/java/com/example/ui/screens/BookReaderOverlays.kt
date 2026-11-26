@@ -1122,6 +1122,32 @@ private fun DossierLoreCard(
     }
 }
 
+internal data class ReaderChapterSwitcherItem(
+    val chapter: com.example.book.BookChapterMeta,
+    val isCompleted: Boolean,
+    val isActive: Boolean,
+    val isUnlocked: Boolean
+)
+
+internal fun buildReaderChapterSwitcherItems(
+    state: BookReadState,
+    chapters: List<com.example.book.BookChapterMeta> = CosmicDriftBookRegistry.chapters
+): List<ReaderChapterSwitcherItem> {
+    val maxUnlocked = (state.highestCompletedChapter + 1)
+        .coerceIn(1, CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS)
+    return chapters.map { chapter ->
+        val isCompleted = chapter.number in state.completedChapters
+        val isActive = chapter.number == state.activeChapter
+        val isUnlocked = chapter.number <= maxUnlocked || isCompleted || isActive
+        ReaderChapterSwitcherItem(
+            chapter = chapter,
+            isCompleted = isCompleted,
+            isActive = isActive,
+            isUnlocked = isUnlocked
+        )
+    }
+}
+
 /**
  * In-reader Mor Cam Chapter Switcher Modal — allows jumping directly to any unlocked chapter.
  */
@@ -1131,8 +1157,9 @@ fun InReaderChapterSwitcherDialog(
     onDismiss: () -> Unit,
     onSelectChapter: (Int) -> Unit
 ) {
-    val maxUnlocked = (state.highestCompletedChapter + 1)
-        .coerceIn(1, CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS)
+    val chapterItems = remember(state.activeChapter, state.highestCompletedChapter, state.completedChapters) {
+        buildReaderChapterSwitcherItems(state)
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1198,7 +1225,8 @@ fun InReaderChapterSwitcherDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
-                    CosmicDriftBookRegistry.chapters.forEach { chapter ->
+                    chapterItems.forEach { item ->
+                        val chapter = item.chapter
                         if (chapter.number == 1) {
                             Text(
                                 text = "✦ 1. SEZON · KOZMİK SÜRÜKLENİŞ (BÖLÜM I – X)",
@@ -1221,11 +1249,11 @@ fun InReaderChapterSwitcherDialog(
                                 modifier = Modifier.padding(top = 4.dp, bottom = 2.dp, start = 4.dp)
                             )
                         }
-                        val isCompleted = chapter.number in state.completedChapters
-                        val isActive = chapter.number == state.activeChapter
-                        val isUnlocked = chapter.number <= maxUnlocked || isCompleted || isActive
+                        val isCompleted = item.isCompleted
+                        val isActive = item.isActive
+                        val isUnlocked = item.isUnlocked
                         val accent = Color(chapter.accentHex)
-                        val interaction = remember { MutableInteractionSource() }
+                        val interaction = remember(chapter.number) { MutableInteractionSource() }
 
                         Row(
                             modifier = Modifier

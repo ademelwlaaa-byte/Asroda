@@ -28,8 +28,10 @@ import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -218,6 +220,38 @@ val LocalCosmicMotionConfig = compositionLocalOf {
 }
 
 /**
+ * Draw-phase-safe [State] variant of [rememberCosmicPhase] so callers can read `.value` strictly
+ * inside `Canvas {}` / `graphicsLayer {}` / `drawBehind {}` without recomposing parent composables.
+ */
+@Composable
+fun rememberCosmicPhaseState(
+    durationMs: Int,
+    initialValue: Float = 0f,
+    targetValue: Float = 1f,
+    staticValue: Float = initialValue,
+    repeatMode: RepeatMode = RepeatMode.Restart,
+    easing: Easing = LinearEasing,
+    label: String = "cosmicPhase",
+    enabled: Boolean = true
+): State<Float> {
+    val policy = LocalCosmicMotionPolicy.current
+    val config = LocalCosmicMotionConfig.current
+    if (!enabled || !policy.shouldAnimateContinuously || !config.enableAmbientLoops) {
+        return remember(staticValue) { mutableFloatStateOf(staticValue) }
+    }
+    val infinite = rememberInfiniteTransition(label = label)
+    return infinite.animateFloat(
+        initialValue = initialValue,
+        targetValue = targetValue,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMs.coerceAtLeast(16), easing = easing),
+            repeatMode = repeatMode
+        ),
+        label = "${label}_val"
+    )
+}
+
+/**
  * Single lifecycle- and policy-aware phase driver for continuous cosmic effects.
  * Returns a fixed [staticValue] (0 FPS, 0% GPU) whenever the app is in background,
  * Reduce Motion is enabled, or battery saver / system animator scale disables motion.
@@ -232,24 +266,16 @@ fun rememberCosmicPhase(
     easing: Easing = LinearEasing,
     label: String = "cosmicPhase",
     enabled: Boolean = true
-): Float {
-    val policy = LocalCosmicMotionPolicy.current
-    val config = LocalCosmicMotionConfig.current
-    if (!enabled || !policy.shouldAnimateContinuously || !config.enableAmbientLoops) {
-        return staticValue
-    }
-    val infinite = rememberInfiniteTransition(label = label)
-    val value by infinite.animateFloat(
-        initialValue = initialValue,
-        targetValue = targetValue,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMs.coerceAtLeast(16), easing = easing),
-            repeatMode = repeatMode
-        ),
-        label = "${label}_val"
-    )
-    return value
-}
+): Float = rememberCosmicPhaseState(
+    durationMs = durationMs,
+    initialValue = initialValue,
+    targetValue = targetValue,
+    staticValue = staticValue,
+    repeatMode = repeatMode,
+    easing = easing,
+    label = label,
+    enabled = enabled
+).value
 
 /**
  * Persistent preference manager for [MotionIntensityMode] with instant reactive [StateFlow].

@@ -71,9 +71,25 @@ import com.example.data.local.EmotionState
 import com.example.data.local.WorldState
 import com.example.data.local.PendingReappraisalEntity
 import com.example.data.local.SensitiveTriggerEntity
+import com.example.data.repository.EmotionEngine
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+
+private val EMOTION_TR_LOCALE = java.util.Locale.forLanguageTag("tr-TR")
+
+internal fun formatNormalizedTurkishMoodBadge(rawMood: String, fallback: String = "nötr"): String {
+    val normalized = EmotionEngine.normalizeTurkishEmotionLabel(rawMood, fallback = fallback)
+    if (normalized.isBlank()) return ""
+    return normalized.replaceFirstChar { ch ->
+        if (ch.isLowerCase()) ch.titlecase(EMOTION_TR_LOCALE) else ch.toString()
+    }
+}
+
+internal fun formatNormalizedSecondaryEmotion(rawEmotion: String): String {
+    if (rawEmotion.isBlank()) return ""
+    return EmotionEngine.normalizeTurkishEmotionLabel(rawEmotion, fallback = "")
+}
 
 @Composable
 fun EmotionStatusSection(
@@ -153,8 +169,9 @@ fun EmotionStatusSection(
                     .border(BorderStroke(1.dp, MorCamTokens.RimGradient), RoundedCornerShape(50))
                     .padding(horizontal = 11.dp, vertical = 5.dp)
             ) {
+                val displayMood = remember(emotion.mood) { formatNormalizedTurkishMoodBadge(emotion.mood) }
                 Text(
-                    text = "${emotion.getMoodEmoji()} ${emotion.mood.replaceFirstChar { it.uppercase() }}",
+                    text = "${emotion.getMoodEmoji()} $displayMood",
                     fontFamily = LiterarySerifFontFamily,
                     color = MorCamTokens.SilverLavenderBright,
                     fontSize = 11.sp,
@@ -301,8 +318,10 @@ fun EmotionStatusSection(
             }
         }
 
-        // Secondary & Suppressed Emotions
-        if (emotion.secondaryMood.isNotBlank() || emotion.suppressedEmotion.isNotBlank()) {
+        // Secondary & Suppressed Emotions (Turkish-normalized)
+        val normalizedSecondaryMood = remember(emotion.secondaryMood) { formatNormalizedSecondaryEmotion(emotion.secondaryMood) }
+        val normalizedSuppressedEmotion = remember(emotion.suppressedEmotion) { formatNormalizedSecondaryEmotion(emotion.suppressedEmotion) }
+        if (normalizedSecondaryMood.isNotBlank() || normalizedSuppressedEmotion.isNotBlank()) {
             Spacer(modifier = Modifier.height(10.dp))
             Column(
                 modifier = Modifier
@@ -312,18 +331,18 @@ fun EmotionStatusSection(
                     .border(0.8.dp, MorCamTokens.SubtleRimGradient, RoundedCornerShape(12.dp))
                     .padding(10.dp)
             ) {
-                if (emotion.secondaryMood.isNotBlank()) {
+                if (normalizedSecondaryMood.isNotBlank()) {
                     Text(
-                        text = "İkincil Duygu: ${emotion.secondaryMood}",
+                        text = "İkincil Duygu: $normalizedSecondaryMood",
                         fontFamily = InterFontFamily,
                         color = MorCamTokens.LavenderLight,
                         fontSize = 11.5.sp
                     )
                 }
-                if (emotion.suppressedEmotion.isNotBlank()) {
-                    if (emotion.secondaryMood.isNotBlank()) Spacer(modifier = Modifier.height(4.dp))
+                if (normalizedSuppressedEmotion.isNotBlank()) {
+                    if (normalizedSecondaryMood.isNotBlank()) Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "Bastırılmış İç Duygu: ${emotion.suppressedEmotion}",
+                        text = "Bastırılmış İç Duygu: $normalizedSuppressedEmotion",
                         fontFamily = InterFontFamily,
                         color = MorCamTokens.DestructiveRimLight,
                         fontSize = 11.5.sp
@@ -494,8 +513,9 @@ fun EmotionStatusSection(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
+                                val normalizedCharMood = remember(charEmotion.mood) { formatNormalizedTurkishMoodBadge(charEmotion.mood) }
                                 Text(
-                                    text = "${charEmotion.getMoodEmoji()} ${charEmotion.mood}",
+                                    text = "${charEmotion.getMoodEmoji()} $normalizedCharMood",
                                     fontFamily = InterFontFamily,
                                     color = MorCamTokens.LavenderLight,
                                     fontSize = 11.sp
@@ -988,18 +1008,24 @@ private fun EmotionBarItem(
     val targetFraction = (value.toFloat() / maxValue.toFloat()).coerceIn(0f, 1f)
     var animTarget by remember { mutableFloatStateOf(0f) }
     LaunchedEffect(targetFraction) { animTarget = targetFraction }
-    val animatedFraction by animateFloatAsState(
+    val animatedFractionState = animateFloatAsState(
         targetValue = animTarget,
         animationSpec = tween(durationMillis = 850, easing = FastOutSlowInEasing),
         label = "barFill"
     )
 
-    val colorLight = Color(
-        red = (color.red + 0.25f).coerceAtMost(1f),
-        green = (color.green + 0.22f).coerceAtMost(1f),
-        blue = (color.blue + 0.25f).coerceAtMost(1f),
-        alpha = 1f
-    )
+    val colorLight = remember(color) {
+        Color(
+            red = (color.red + 0.25f).coerceAtMost(1f),
+            green = (color.green + 0.22f).coerceAtMost(1f),
+            blue = (color.blue + 0.25f).coerceAtMost(1f),
+            alpha = 1f
+        )
+    }
+    val trackBgBrush = remember {
+        Brush.horizontalGradient(colors = listOf(Color(0xAA1D0E3B), Color(0xCC110626)))
+    }
+    val trackTintColor = remember(color) { color.copy(alpha = 0.14f) }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -1026,20 +1052,19 @@ private fun EmotionBarItem(
                 .fillMaxWidth()
                 .height(7.dp)
         ) {
+            val animatedFraction = animatedFractionState.value
             val trackH = size.height
             val trackW = size.width
             val cr = CornerRadius(trackH / 2f, trackH / 2f)
 
             drawRoundRect(
-                brush = Brush.horizontalGradient(
-                    colors = listOf(Color(0xAA1D0E3B), Color(0xCC110626))
-                ),
+                brush = trackBgBrush,
                 size = Size(trackW, trackH),
                 cornerRadius = cr
             )
 
             drawRoundRect(
-                color = color.copy(alpha = 0.14f),
+                color = trackTintColor,
                 size = Size(trackW, trackH),
                 cornerRadius = cr
             )

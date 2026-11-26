@@ -41,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -78,7 +79,7 @@ fun CosmicOrbLoader(
 ) {
     val policy = LocalCosmicMotionPolicy.current
     val animate = policy.shouldAnimateContinuously
-    val outerAngle = rememberCosmicPhase(
+    val outerAngleState = rememberCosmicPhaseState(
         durationMs = 2200,
         initialValue = 0f,
         targetValue = 360f,
@@ -88,7 +89,7 @@ fun CosmicOrbLoader(
         label = "cosmicOrbOuter",
         enabled = animate
     )
-    val innerAngle = rememberCosmicPhase(
+    val innerAngleState = rememberCosmicPhaseState(
         durationMs = 1500,
         initialValue = 360f,
         targetValue = 0f,
@@ -98,7 +99,7 @@ fun CosmicOrbLoader(
         label = "cosmicOrbInner",
         enabled = animate
     )
-    val pulse = rememberCosmicPhase(
+    val pulseState = rememberCosmicPhaseState(
         durationMs = 1050,
         initialValue = 0.72f,
         targetValue = 1.0f,
@@ -124,65 +125,84 @@ fun CosmicOrbLoader(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Canvas(modifier = Modifier.size(size)) {
-            val r = this.size.minDimension / 2f
-            val center = Offset(this.size.width / 2f, this.size.height / 2f)
+        Box(
+            modifier = Modifier
+                .size(size)
+                .drawWithCache {
+                    val r = this.size.minDimension / 2f
+                    val center = Offset(this.size.width / 2f, this.size.height / 2f)
+                    val outerSweepBrush = Brush.sweepGradient(colors = outerSweepColors, center = center)
+                    val innerSweepBrush = Brush.sweepGradient(colors = innerSweepColors, center = center)
+                    val outerStroke = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
+                    val innerStroke = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
+                    val outerTopLeft = Offset(center.x - r * 0.84f, center.y - r * 0.84f)
+                    val outerSize = Size(r * 1.68f, r * 1.68f)
+                    val innerTopLeft = Offset(center.x - r * 0.56f, center.y - r * 0.56f)
+                    val innerSize = Size(r * 1.12f, r * 1.12f)
+                    val tipRad = Math.toRadians(250.0)
+                    val tip = Offset(
+                        center.x + cos(tipRad).toFloat() * r * 0.84f,
+                        center.y + sin(tipRad).toFloat() * r * 0.84f
+                    )
+                    val tipRadius = 2.6.dp.toPx()
 
-            // Ambient halo
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        secondaryColor.copy(alpha = 0.36f * pulse),
-                        primaryColor.copy(alpha = 0.14f * pulse),
-                        Color.Transparent
-                    ),
-                    center = center,
-                    radius = r
-                ),
-                radius = r,
-                center = center
-            )
+                    onDrawBehind {
+                        val outerAngle = outerAngleState.value
+                        val innerAngle = innerAngleState.value
+                        val pulse = pulseState.value
 
-            // Outer orbiting neon arc
-            rotate(outerAngle, pivot = center) {
-                drawArc(
-                    brush = Brush.sweepGradient(colors = outerSweepColors, center = center),
-                    startAngle = 0f,
-                    sweepAngle = 250f,
-                    useCenter = false,
-                    topLeft = Offset(center.x - r * 0.84f, center.y - r * 0.84f),
-                    size = Size(r * 1.68f, r * 1.68f),
-                    style = Stroke(width = 2.4.dp.toPx(), cap = StrokeCap.Round)
-                )
-                val tipRad = Math.toRadians(250.0)
-                val tip = Offset(
-                    center.x + cos(tipRad).toFloat() * r * 0.84f,
-                    center.y + sin(tipRad).toFloat() * r * 0.84f
-                )
-                drawCircle(color = Color.White, radius = 2.6.dp.toPx(), center = tip)
-            }
+                        // Ambient halo
+                        drawCircle(
+                            brush = Brush.radialGradient(
+                                colors = listOf(
+                                    secondaryColor.copy(alpha = 0.36f * pulse),
+                                    primaryColor.copy(alpha = 0.14f * pulse),
+                                    Color.Transparent
+                                ),
+                                center = center,
+                                radius = r
+                            ),
+                            radius = r,
+                            center = center
+                        )
 
-            // Inner counter-orbiting ring
-            rotate(innerAngle, pivot = center) {
-                drawArc(
-                    brush = Brush.sweepGradient(colors = innerSweepColors, center = center),
-                    startAngle = 40f,
-                    sweepAngle = 190f,
-                    useCenter = false,
-                    topLeft = Offset(center.x - r * 0.56f, center.y - r * 0.56f),
-                    size = Size(r * 1.12f, r * 1.12f),
-                    style = Stroke(width = 1.6.dp.toPx(), cap = StrokeCap.Round)
-                )
-            }
+                        // Outer orbiting neon arc
+                        rotate(outerAngle, pivot = center) {
+                            drawArc(
+                                brush = outerSweepBrush,
+                                startAngle = 0f,
+                                sweepAngle = 250f,
+                                useCenter = false,
+                                topLeft = outerTopLeft,
+                                size = outerSize,
+                                style = outerStroke
+                            )
+                            drawCircle(color = Color.White, radius = tipRadius, center = tip)
+                        }
 
-            // Luminous breathing core
-            val coreR = r * 0.24f * (0.90f + 0.14f * pulse)
-            drawCircle(
-                brush = Brush.radialGradient(colors = coreColors, center = center, radius = coreR),
-                radius = coreR,
-                center = center
-            )
-        }
+                        // Inner counter-orbiting ring
+                        rotate(innerAngle, pivot = center) {
+                            drawArc(
+                                brush = innerSweepBrush,
+                                startAngle = 40f,
+                                sweepAngle = 190f,
+                                useCenter = false,
+                                topLeft = innerTopLeft,
+                                size = innerSize,
+                                style = innerStroke
+                            )
+                        }
+
+                        // Luminous breathing core
+                        val coreR = r * 0.24f * (0.90f + 0.14f * pulse)
+                        drawCircle(
+                            brush = Brush.radialGradient(colors = coreColors, center = center, radius = coreR),
+                            radius = coreR,
+                            center = center
+                        )
+                    }
+                }
+        )
 
         if (!label.isNullOrBlank()) {
             Text(

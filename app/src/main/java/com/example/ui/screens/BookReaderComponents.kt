@@ -44,8 +44,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -134,17 +133,17 @@ fun CollectorChapterCoverCard(
                 .fillMaxWidth()
                 .height(178.dp)
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-                .drawWithContent {
-                    drawContent()
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0.00f to Color.White.copy(alpha = 0.92f),
-                            0.46f to Color.White.copy(alpha = 0.72f),
-                            0.82f to Color.White.copy(alpha = 0.22f),
-                            1.00f to Color.Transparent
-                        ),
-                        blendMode = BlendMode.DstIn
+                .drawWithCache {
+                    val featherMask = Brush.verticalGradient(
+                        0.00f to Color.White.copy(alpha = 0.92f),
+                        0.46f to Color.White.copy(alpha = 0.72f),
+                        0.82f to Color.White.copy(alpha = 0.22f),
+                        1.00f to Color.Transparent
                     )
+                    onDrawWithContent {
+                        drawContent()
+                        drawRect(brush = featherMask, blendMode = BlendMode.DstIn)
+                    }
                 }
         ) {
             val coverContext = LocalContext.current
@@ -331,48 +330,65 @@ fun CollectorChapterCoverCard(
             }
         }
 
-        // Double-rimmed crystal glass border + 4-point corner glints
-        Canvas(modifier = Modifier.matchParentSize()) {
-            val crOuter = 28.dp.toPx()
-            val crInner = 25.dp.toPx()
-            val inset = 3.dp.toPx()
-            drawRoundRect(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xF0FAF5FF),
-                        accentColor.copy(alpha = 0.85f),
-                        Color(0x998B5CF6),
-                        Color(0xDDE9D5FF)
+        // Double-rimmed crystal glass border + 4-point corner glints (cached Brushes/Strokes via drawWithCache)
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .drawWithCache {
+                    val crOuter = CornerRadius(28.dp.toPx(), 28.dp.toPx())
+                    val crInner = CornerRadius(25.dp.toPx(), 25.dp.toPx())
+                    val inset = 3.dp.toPx()
+                    val outerBrush = Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xF0FAF5FF),
+                            accentColor.copy(alpha = 0.85f),
+                            Color(0x998B5CF6),
+                            Color(0xDDE9D5FF)
+                        )
                     )
-                ),
-                cornerRadius = CornerRadius(crOuter, crOuter),
-                style = Stroke(width = 1.4.dp.toPx())
-            )
-            drawRoundRect(
-                color = Color(0x38E9D5FF),
-                topLeft = Offset(inset, inset),
-                size = Size(size.width - inset * 2, size.height - inset * 2),
-                cornerRadius = CornerRadius(crInner, crInner),
-                style = Stroke(width = 0.7.dp.toPx())
-            )
-            // Corner starlight glints
-            drawMorCamFourPointStar(
-                center = Offset(16.dp.toPx(), 16.dp.toPx()),
-                outerRadius = 6.dp.toPx(),
-                innerRadius = 1.9.dp.toPx(),
-                coreColor = Color(0xFFFAF5FF),
-                edgeColor = Color(0xFFE9D5FF),
-                glowColor = accentColor
-            )
-            drawMorCamFourPointStar(
-                center = Offset(size.width - 16.dp.toPx(), 16.dp.toPx()),
-                outerRadius = 5.dp.toPx(),
-                innerRadius = 1.6.dp.toPx(),
-                coreColor = Color(0xFFFAF5FF),
-                edgeColor = accentColor,
-                glowColor = accentColor
-            )
-        }
+                    val outerStroke = Stroke(width = 1.4.dp.toPx())
+                    val innerStroke = Stroke(width = 0.7.dp.toPx())
+                    val innerTopLeft = Offset(inset, inset)
+                    val innerSize = Size((size.width - inset * 2f).coerceAtLeast(0f), (size.height - inset * 2f).coerceAtLeast(0f))
+                    val star1Center = Offset(16.dp.toPx(), 16.dp.toPx())
+                    val star1Outer = 6.dp.toPx()
+                    val star1Inner = 1.9.dp.toPx()
+                    val star2Center = Offset(size.width - 16.dp.toPx(), 16.dp.toPx())
+                    val star2Outer = 5.dp.toPx()
+                    val star2Inner = 1.6.dp.toPx()
+
+                    onDrawBehind {
+                        drawRoundRect(
+                            brush = outerBrush,
+                            cornerRadius = crOuter,
+                            style = outerStroke
+                        )
+                        drawRoundRect(
+                            color = Color(0x38E9D5FF),
+                            topLeft = innerTopLeft,
+                            size = innerSize,
+                            cornerRadius = crInner,
+                            style = innerStroke
+                        )
+                        drawMorCamFourPointStar(
+                            center = star1Center,
+                            outerRadius = star1Outer,
+                            innerRadius = star1Inner,
+                            coreColor = Color(0xFFFAF5FF),
+                            edgeColor = Color(0xFFE9D5FF),
+                            glowColor = accentColor
+                        )
+                        drawMorCamFourPointStar(
+                            center = star2Center,
+                            outerRadius = star2Outer,
+                            innerRadius = star2Inner,
+                            coreColor = Color(0xFFFAF5FF),
+                            edgeColor = accentColor,
+                            glowColor = accentColor
+                        )
+                    }
+                }
+        )
     }
 }
 
@@ -1097,6 +1113,8 @@ fun BookDecisionSealRibbon(
     }
 }
 
+private val BOOK_CHOICE_ROMAN_LABELS = listOf("I", "II", "III", "IV")
+
 /**
  * In-Flow Auto-Revealing Mor Cam Choice Sanctuary.
  * Sits strictly BELOW the last paragraph of the active scene (never overlaps text) and
@@ -1111,7 +1129,8 @@ fun AutoRevealMorCamChoiceSanctuary(
     accentColor: Color,
     glowPulse: Float,
     onForceReveal: () -> Unit,
-    onSelectChoice: (BookChoiceDef) -> Unit
+    onSelectChoice: (BookChoiceDef) -> Unit,
+    glowPulseProvider: (() -> Float)? = null
 ) {
     Column(
         modifier = Modifier
@@ -1168,8 +1187,8 @@ fun AutoRevealMorCamChoiceSanctuary(
                     .morCamCosmicGlow(
                         cornerRadius = 26.dp,
                         glowColor = accentColor,
-                        alpha = 0.42f * glowPulse,
-                        blurDp = 16.dp
+                        blurDp = 16.dp,
+                        alphaProvider = { 0.42f * (glowPulseProvider?.invoke() ?: glowPulse) }
                     )
                     .clip(RoundedCornerShape(26.dp))
                     .background(
@@ -1181,20 +1200,20 @@ fun AutoRevealMorCamChoiceSanctuary(
                             )
                         )
                     )
-                    .drawBehind {
-                        // Top crystal arc reflection sheen
-                        drawRoundRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.16f),
-                                    Color(0xFFE9D5FF).copy(alpha = 0.04f),
-                                    Color.Transparent
-                                ),
-                                startY = 0f,
-                                endY = size.height * 0.25f
+                    .drawWithCache {
+                        val cr = CornerRadius(26.dp.toPx(), 26.dp.toPx())
+                        val sheenBrush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.16f),
+                                Color(0xFFE9D5FF).copy(alpha = 0.04f),
+                                Color.Transparent
                             ),
-                            cornerRadius = CornerRadius(26.dp.toPx(), 26.dp.toPx())
+                            startY = 0f,
+                            endY = (size.height * 0.25f).coerceAtLeast(1f)
                         )
+                        onDrawBehind {
+                            drawRoundRect(brush = sheenBrush, cornerRadius = cr)
+                        }
                     }
                     .border(
                         width = 1.35.dp,
@@ -1280,7 +1299,6 @@ fun AutoRevealMorCamChoiceSanctuary(
                     Spacer(modifier = Modifier.height(2.dp))
 
                     // Sculpted Mor Cam Choice Cards (live BookChoiceParser badges, relationship hints & lock states)
-                    val romanLabels = listOf("I", "II", "III", "IV")
                     choices.forEachIndexed { idx, choice ->
                         val interaction = remember(choice.id) { MutableInteractionSource() }
                         val parsedChoice = remember(choice.id, choice.label, choice.toneHint, choice.effect.isBranching, choice.effect.isRelationship) {
@@ -1298,7 +1316,7 @@ fun AutoRevealMorCamChoiceSanctuary(
                             isBranchingChoice -> Color(0xFFFDE047)
                             else -> accentColor
                         }
-                        val roman = romanLabels.getOrElse(idx) { "${idx + 1}" }
+                        val roman = BOOK_CHOICE_ROMAN_LABELS.getOrElse(idx) { "${idx + 1}" }
 
                         Box(
                             modifier = Modifier
@@ -1315,19 +1333,19 @@ fun AutoRevealMorCamChoiceSanctuary(
                                         }
                                     )
                                 )
-                                .drawBehind {
-                                    // Glossy top crystal highlight
-                                    drawRoundRect(
-                                        brush = Brush.verticalGradient(
-                                            colors = listOf(
-                                                Color.White.copy(alpha = if (parsedChoice.isLocked) 0.05f else 0.14f),
-                                                Color.Transparent
-                                            ),
-                                            startY = 0f,
-                                            endY = size.height * 0.42f
+                                .drawWithCache {
+                                    val cr = CornerRadius(18.dp.toPx(), 18.dp.toPx())
+                                    val highlightBrush = Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = if (parsedChoice.isLocked) 0.05f else 0.14f),
+                                            Color.Transparent
                                         ),
-                                        cornerRadius = CornerRadius(18.dp.toPx(), 18.dp.toPx())
+                                        startY = 0f,
+                                        endY = (size.height * 0.42f).coerceAtLeast(1f)
                                     )
+                                    onDrawBehind {
+                                        drawRoundRect(brush = highlightBrush, cornerRadius = cr)
+                                    }
                                 }
                                 .border(
                                     width = if (isBranchingChoice && !parsedChoice.isLocked) 1.25.dp else 1.05.dp,

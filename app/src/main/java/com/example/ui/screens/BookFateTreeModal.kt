@@ -50,6 +50,56 @@ import com.example.ui.screens.cosmic3d.StoryMiniGameId
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 
+internal data class FateChapterNodeModel(
+    val chapter: BookChapterMeta,
+    val isCompleted: Boolean,
+    val isCurrent: Boolean,
+    val isUnlocked: Boolean,
+    val decisionCount: Int,
+    val latestDecisionLabel: String?,
+    val medalLabel: String?
+)
+
+internal fun buildFateTreeChapterNodes(
+    allChapters: List<BookChapterMeta>,
+    seasonTab: Int,
+    state: BookReadState,
+    savedMiniGameRanks: Map<String, String>,
+    savedBossMedals: Map<String, String>
+): List<FateChapterNodeModel> {
+    val highestUnlocked = (state.highestCompletedChapter + 1)
+        .coerceAtMost(CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS)
+    val seasonChapters = if (seasonTab == 1) {
+        allChapters.filter { it.number <= 10 }
+    } else {
+        allChapters.filter { it.number >= 11 }
+    }
+    return seasonChapters.map { chapter ->
+        val isCompleted = chapter.number in state.completedChapters
+        val isCurrent = chapter.number == state.activeChapter
+        val isUnlocked = chapter.number <= highestUnlocked || isCurrent || isCompleted
+        val decisions = state.chapterDecisions[chapter.number].orEmpty()
+        val chapterMedal = when (chapter.number) {
+            2 -> savedMiniGameRanks[StoryMiniGameId.WHITE_EYE_RESONANCE.key]?.let { "👁 $it" }
+            7 -> savedMiniGameRanks[StoryMiniGameId.BOSPHORUS_CORE_BALANCE.key]?.let { "🌀 $it" }
+            9 -> savedMiniGameRanks[StoryMiniGameId.RED_EYE_WILLPOWER.key]?.let { "🔴 $it" }
+            10 -> savedBossMedals[CosmicDuelBossId.VAELOR_ROOFTOP.name]?.let { "⚔ $it" }
+            13 -> savedBossMedals[CosmicDuelBossId.MIRROR_ZERO.name]?.let { "⚔ $it" }
+            24 -> savedBossMedals[CosmicDuelBossId.ULTRON_PRIME.name]?.let { "⚔ $it" }
+            else -> null
+        }
+        FateChapterNodeModel(
+            chapter = chapter,
+            isCompleted = isCompleted,
+            isCurrent = isCurrent,
+            isUnlocked = isUnlocked,
+            decisionCount = decisions.size,
+            latestDecisionLabel = decisions.lastOrNull()?.selectedOption,
+            medalLabel = chapterMedal
+        )
+    }
+}
+
 /**
  * 100% offline Visual Fate Tree & Medal Archive ("Görsel Kader Ağacı") for Kozmik Sürükleniş.
  * Displays discovered story branches, secrets, earned Boss Duel & Story Mini-Game S/A/B medals,
@@ -68,11 +118,30 @@ fun BookFateTreeModal(
         BookBranchDiscoveryHelper.compute(state)
     }
     val allChapters = remember { CosmicDriftBookRegistry.chapters }
-    val visibleChapters = remember(allChapters, seasonTab) {
-        if (seasonTab == 1) allChapters.filter { it.number <= 10 } else allChapters.filter { it.number >= 11 }
+    val chapterNodes = remember(
+        allChapters,
+        seasonTab,
+        state.completedChapters,
+        state.activeChapter,
+        state.highestCompletedChapter,
+        state.chapterDecisions,
+        savedMiniGameRanks,
+        savedBossMedals
+    ) {
+        buildFateTreeChapterNodes(
+            allChapters = allChapters,
+            seasonTab = seasonTab,
+            state = state,
+            savedMiniGameRanks = savedMiniGameRanks,
+            savedBossMedals = savedBossMedals
+        )
     }
-    val totalMedalsEarned = savedMiniGameRanks.size + savedBossMedals.size
-    val totalMedalsPossible = StoryMiniGameId.entries.size + CosmicDuelBossId.entries.size
+    val totalMedalsEarned = remember(savedMiniGameRanks, savedBossMedals) {
+        savedMiniGameRanks.size + savedBossMedals.size
+    }
+    val totalMedalsPossible = remember {
+        StoryMiniGameId.entries.size + CosmicDuelBossId.entries.size
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -281,33 +350,21 @@ fun BookFateTreeModal(
                     }
                 }
 
-                // Vertical Branching Chapter Timeline
-                items(visibleChapters, key = { "fate_ch_${it.number}" }) { chapter ->
-                    val isCompleted = chapter.number in state.completedChapters
-                    val isCurrent = chapter.number == state.activeChapter
-                    val highestUnlocked = (state.highestCompletedChapter + 1)
-                        .coerceAtMost(CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS)
-                    val isUnlocked = chapter.number <= highestUnlocked || isCurrent
-                    val decisions = state.chapterDecisions[chapter.number].orEmpty()
-                    val chapterMedal = when (chapter.number) {
-                        2 -> savedMiniGameRanks[StoryMiniGameId.WHITE_EYE_RESONANCE.key]?.let { "👁 $it" }
-                        7 -> savedMiniGameRanks[StoryMiniGameId.BOSPHORUS_CORE_BALANCE.key]?.let { "🌀 $it" }
-                        9 -> savedMiniGameRanks[StoryMiniGameId.RED_EYE_WILLPOWER.key]?.let { "🔴 $it" }
-                        10 -> savedBossMedals[CosmicDuelBossId.VAELOR_ROOFTOP.name]?.let { "⚔ $it" }
-                        13 -> savedBossMedals[CosmicDuelBossId.MIRROR_ZERO.name]?.let { "⚔ $it" }
-                        24 -> savedBossMedals[CosmicDuelBossId.ULTRON_PRIME.name]?.let { "⚔ $it" }
-                        else -> null
-                    }
-
+                // Vertical Branching Chapter Timeline (memoized node projection)
+                items(
+                    items = chapterNodes,
+                    key = { "fate_ch_${it.chapter.number}" },
+                    contentType = { "fate_chapter_node" }
+                ) { node ->
                     FateChapterNodeCard(
-                        chapter = chapter,
-                        isCompleted = isCompleted,
-                        isCurrent = isCurrent,
-                        isUnlocked = isUnlocked,
-                        decisionCount = decisions.size,
-                        latestDecisionLabel = decisions.lastOrNull()?.selectedOption,
-                        medalLabel = chapterMedal,
-                        onJump = { onJumpToChapter(chapter.number) }
+                        chapter = node.chapter,
+                        isCompleted = node.isCompleted,
+                        isCurrent = node.isCurrent,
+                        isUnlocked = node.isUnlocked,
+                        decisionCount = node.decisionCount,
+                        latestDecisionLabel = node.latestDecisionLabel,
+                        medalLabel = node.medalLabel,
+                        onJump = { onJumpToChapter(node.chapter.number) }
                     )
                 }
             }

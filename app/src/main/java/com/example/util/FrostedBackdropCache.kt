@@ -13,7 +13,10 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Centralized, memory-bounded (max 4 entries) optical frosted-backdrop cache.
@@ -29,6 +32,9 @@ object FrostedBackdropCache {
     private const val MAX_ENTRIES = 4
     private val cache = object : LruCache<String, ImageBitmap>(MAX_ENTRIES) {}
     private val cacheLock = Any()
+    private val keyLocks = ConcurrentHashMap<String, Mutex>()
+
+    private fun mutexFor(key: String): Mutex = keyLocks.computeIfAbsent(key) { Mutex() }
 
     val fallbackDarkGradientBrush: Brush = Brush.verticalGradient(
         colors = listOf(Color(0xFF090414), Color(0xFF1A0B2E))
@@ -74,22 +80,26 @@ object FrostedBackdropCache {
     ): ImageBitmap? {
         get(key)?.let { return it }
         val appContext = context.applicationContext ?: context
-        return withContext(Dispatchers.Default) {
-            get(key)?.let { return@withContext it }
-            val generated = generateFrostedBitmapInternal(
-                context = appContext,
-                drawableResId = drawableResId,
-                targetWidth = targetWidth,
-                maxHeight = maxHeight,
-                blurRadius = blurRadius,
-                blurPasses = blurPasses,
-                violetShiftWarmPixels = violetShiftWarmPixels,
-                outputRgb565 = outputRgb565
-            )
-            if (generated != null) {
-                put(key, generated)
+        // Single-flight per-key lock eliminates duplicate concurrent bitmap allocations & CPU blur stampedes
+        return mutexFor(key).withLock {
+            get(key)?.let { return@withLock it }
+            withContext(Dispatchers.Default) {
+                get(key)?.let { return@withContext it }
+                val generated = generateFrostedBitmapInternal(
+                    context = appContext,
+                    drawableResId = drawableResId,
+                    targetWidth = targetWidth,
+                    maxHeight = maxHeight,
+                    blurRadius = blurRadius,
+                    blurPasses = blurPasses,
+                    violetShiftWarmPixels = violetShiftWarmPixels,
+                    outputRgb565 = outputRgb565
+                )
+                if (generated != null) {
+                    put(key, generated)
+                }
+                generated
             }
-            generated
         }
     }
 

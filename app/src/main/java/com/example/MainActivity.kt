@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.media.AudioManager
 import android.os.Bundle
 import androidx.activity.compose.BackHandler
@@ -58,13 +59,7 @@ class MainActivity : ComponentActivity() {
         CosmicMotionPreferences.init(applicationContext)
         com.example.util.ReadingStreakTracker.recordActivity(applicationContext)
         enableEdgeToEdge()
-        // Handle proactive notification deep link
-        if (intent?.action == "com.example.OPEN_CHAT") {
-            val botId = intent.getStringExtra("botId")
-            if (!botId.isNullOrBlank()) {
-                viewModel.openBot(botId)
-            }
-        }
+        handleOpenChatIntent(intent)
         setContent {
             val motionMode by CosmicMotionPreferences.mode.collectAsStateWithLifecycle()
             val reduceMotion by AppFeatureFlags.reduceMotion.collectAsStateWithLifecycle()
@@ -116,12 +111,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleOpenChatIntent(intent)
+    }
+
+    private fun handleOpenChatIntent(intent: Intent?) {
+        val botId = extractOpenChatBotId(intent)
+        if (botId != null) {
+            viewModel.openBot(botId)
+        }
+    }
+
     override fun onStop() {
         super.onStop()
         // Sistem #11: Stop active TTS & smoothly pause background book music when app enters background
         // (idempotent with BookReaderView's ON_STOP observer so smooth 250ms fade & ON_START resume stay intact)
         viewModel.stopSpeaking()
         com.example.util.BookAudioController.pauseForBackground(fadeOutMs = 250L)
+    }
+
+    companion object {
+        const val ACTION_OPEN_CHAT = "com.example.OPEN_CHAT"
+        const val EXTRA_BOT_ID = "botId"
+
+        internal fun extractOpenChatBotId(intent: Intent?): String? {
+            if (intent?.action != ACTION_OPEN_CHAT) return null
+            return intent.getStringExtra(EXTRA_BOT_ID)?.trim()?.takeIf { it.isNotBlank() }
+        }
     }
 }
 
@@ -138,15 +156,6 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val botList by viewModel.botList.collectAsStateWithLifecycle()
     val userSettings by viewModel.userSettings.collectAsStateWithLifecycle()
-    val activeBot by viewModel.activeBot.collectAsStateWithLifecycle()
-    val immediateBotCache by viewModel.immediateBotCache.collectAsStateWithLifecycle()
-    val activeMessages by viewModel.activeMessages.collectAsStateWithLifecycle()
-    val immediateOpeningMessageCache by viewModel.immediateOpeningMessageCache.collectAsStateWithLifecycle()
-    val activeCharacterEmotions by viewModel.activeCharacterEmotions.collectAsStateWithLifecycle()
-    val activeAffectionEvents by viewModel.activeAffectionEvents.collectAsStateWithLifecycle()
-    val isSending by viewModel.isSending.collectAsStateWithLifecycle()
-    val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
-    val baselineAnalysisState by viewModel.baselineAnalysisState.collectAsStateWithLifecycle()
 
     AnimatedContent(
         targetState = uiState,
@@ -180,6 +189,7 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
             }
 
             is UiState.SetupWizard -> {
+                val baselineAnalysisState by viewModel.baselineAnalysisState.collectAsStateWithLifecycle()
                 val isCreatingBot by viewModel.isCreatingBot.collectAsStateWithLifecycle()
                 val wizardSubmitError by viewModel.wizardSubmitError.collectAsStateWithLifecycle()
                 CreateBotWizardScreen(
@@ -213,6 +223,14 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
             }
 
             is UiState.Chat -> {
+                val activeBot by viewModel.activeBot.collectAsStateWithLifecycle()
+                val immediateBotCache by viewModel.immediateBotCache.collectAsStateWithLifecycle()
+                val activeMessages by viewModel.activeMessages.collectAsStateWithLifecycle()
+                val immediateOpeningMessageCache by viewModel.immediateOpeningMessageCache.collectAsStateWithLifecycle()
+                val activeCharacterEmotions by viewModel.activeCharacterEmotions.collectAsStateWithLifecycle()
+                val activeAffectionEvents by viewModel.activeAffectionEvents.collectAsStateWithLifecycle()
+                val isSending by viewModel.isSending.collectAsStateWithLifecycle()
+                val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
                 BackHandler {
                     viewModel.openMenu()
                 }

@@ -6,10 +6,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import com.example.ui.animation.CosmicMotionSpecs
@@ -188,7 +185,8 @@ fun Modifier.morCamCosmicGlow(
     cornerRadius: Dp,
     glowColor: Color = MorCamTokens.AmethystGlow,
     alpha: Float = 0.36f,
-    blurDp: Dp = 12.dp
+    blurDp: Dp = 12.dp,
+    alphaProvider: (() -> Float)? = null
 ): Modifier = this.drawWithCache {
     val cr = cornerRadius.toPx()
     val dx = 2.dp.toPx()
@@ -198,21 +196,22 @@ fun Modifier.morCamCosmicGlow(
         color = android.graphics.Color.argb(105, 7, 2, 18)
         maskFilter = android.graphics.BlurMaskFilter(11.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
     }
-    val haloPaint = if (alpha > 0.01f) {
+    val needsHalo = alphaProvider != null || alpha > 0.01f
+    val haloPaint = if (needsHalo) {
         android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
             style = android.graphics.Paint.Style.STROKE
             strokeWidth = 2.6.dp.toPx()
-            color = android.graphics.Color.argb(
-                (alpha.coerceIn(0f, 1f) * 255).toInt(),
-                (glowColor.red * 255).toInt(),
-                (glowColor.green * 255).toInt(),
-                (glowColor.blue * 255).toInt()
+            color = android.graphics.Color.rgb(
+                (glowColor.red * 255).toInt().coerceIn(0, 255),
+                (glowColor.green * 255).toInt().coerceIn(0, 255),
+                (glowColor.blue * 255).toInt().coerceIn(0, 255)
             )
             maskFilter = android.graphics.BlurMaskFilter(blurDp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
         }
     } else null
 
     onDrawBehind {
+        val currentAlpha = alphaProvider?.invoke() ?: alpha
         drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
             native.drawRoundRect(
@@ -224,7 +223,8 @@ fun Modifier.morCamCosmicGlow(
                 cr,
                 shadowPaint
             )
-            if (haloPaint != null) {
+            if (haloPaint != null && currentAlpha > 0.01f) {
+                haloPaint.alpha = (currentAlpha.coerceIn(0f, 1f) * 255).toInt()
                 native.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, haloPaint)
             }
         }
@@ -376,20 +376,25 @@ fun MorCamDialogShell(
                         .cosmicGlassSheen(cornerRadius = 26.dp, periodMs = 6600, maxAlpha = 0.11f)
                         .border(BorderStroke(1.2.dp, MorCamTokens.RimGradient), RoundedCornerShape(26.dp))
                 ) {
-                    // Subtle internal silver-lavender top light refraction
-                    Canvas(modifier = Modifier.matchParentSize()) {
-                        drawRect(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0x2EE9D5FF),
-                                    Color(0x109333EA),
-                                    Color.Transparent
-                                ),
-                                center = Offset(size.width * 0.5f, 0f),
-                                radius = size.width * 0.85f
-                            )
-                        )
-                    }
+                    // Subtle internal silver-lavender top light refraction (cached Brush via drawWithCache)
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .drawWithCache {
+                                val topSheen = Brush.radialGradient(
+                                    colors = listOf(
+                                        Color(0x2EE9D5FF),
+                                        Color(0x109333EA),
+                                        Color.Transparent
+                                    ),
+                                    center = Offset(size.width * 0.5f, 0f),
+                                    radius = (size.width * 0.85f).coerceAtLeast(1f)
+                                )
+                                onDrawBehind {
+                                    drawRect(brush = topSheen)
+                                }
+                            }
+                    )
 
                     Column(
                         modifier = Modifier
@@ -1263,28 +1268,32 @@ fun MorCamPopupMenu(
                     )
                     .border(BorderStroke(1.15.dp, MorCamTokens.RimGradient), menuShape)
             ) {
-                // Soft internal top-center lavender refraction sheen
-                Canvas(modifier = Modifier.matchParentSize()) {
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                Color(0x34E9D5FF),
-                                Color(0x149333EA),
-                                Color.Transparent
-                            ),
-                            center = Offset(size.width * 0.5f, 0f),
-                            radius = size.width * 0.9f
-                        )
-                    )
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            0.00f to Color(0x1EE9D5FF),
-                            0.25f to Color.Transparent,
-                            0.82f to Color.Transparent,
-                            1.00f to Color(0x1F7C3AED)
-                        )
-                    )
-                }
+                // Soft internal top-center lavender refraction sheen (cached Brushes via drawWithCache)
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .drawWithCache {
+                            val topGlow = Brush.radialGradient(
+                                colors = listOf(
+                                    Color(0x34E9D5FF),
+                                    Color(0x149333EA),
+                                    Color.Transparent
+                                ),
+                                center = Offset(size.width * 0.5f, 0f),
+                                radius = (size.width * 0.9f).coerceAtLeast(1f)
+                            )
+                            val verticalSheen = Brush.verticalGradient(
+                                0.00f to Color(0x1EE9D5FF),
+                                0.25f to Color.Transparent,
+                                0.82f to Color.Transparent,
+                                1.00f to Color(0x1F7C3AED)
+                            )
+                            onDrawBehind {
+                                drawRect(brush = topGlow)
+                                drawRect(brush = verticalSheen)
+                            }
+                        }
+                )
 
                 Column(
                     modifier = Modifier
@@ -1460,6 +1469,23 @@ fun MorCamPopupMenuItem(
     }
 }
 
+internal fun mapSliderFractionToValue(
+    rawFraction: Float,
+    start: Float,
+    endInclusive: Float,
+    steps: Int
+): Float {
+    val span = (endInclusive - start).coerceAtLeast(0.0001f)
+    val f = rawFraction.coerceIn(0f, 1f)
+    val snappedFraction = if (steps > 0) {
+        val segments = steps + 1
+        (f * segments).roundToInt().toFloat() / segments.toFloat()
+    } else {
+        f
+    }
+    return (start + snappedFraction * span).coerceIn(start, endInclusive)
+}
+
 /**
  * Shared Mor Cam Translucent Glass-Tube Slider with Glowing Crystal Orb Thumb.
  * Replaces plain Material 3 Slider bars across Emotion Studio, Character Emotion Editor,
@@ -1478,16 +1504,8 @@ fun MorCamGlassSlider(
     val clamped = value.coerceIn(valueRange.start, valueRange.endInclusive)
     val fraction = ((clamped - valueRange.start) / span).coerceIn(0f, 1f)
 
-    fun mapFractionToValue(rawFraction: Float): Float {
-        val f = rawFraction.coerceIn(0f, 1f)
-        val snappedFraction = if (steps > 0) {
-            val segments = steps + 1
-            (f * segments).roundToInt().toFloat() / segments.toFloat()
-        } else {
-            f
-        }
-        return valueRange.start + snappedFraction * span
-    }
+    fun mapFractionToValue(rawFraction: Float): Float =
+        mapSliderFractionToValue(rawFraction, valueRange.start, valueRange.endInclusive, steps)
 
     Box(
         modifier = modifier
