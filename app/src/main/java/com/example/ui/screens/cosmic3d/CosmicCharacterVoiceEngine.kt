@@ -1294,203 +1294,136 @@ class CosmicCharacterVoiceEngine(
         // Step 1: High-pass rumble removal (85Hz) so voice sits cleanly above battle sub-bass
         highPassInPlace(working, sr, 85f)
 
-        // Step 2: Character-specific tonal shaping & vocal layering
-        val extraTailSamples = when (style) {
-            DspStyle.COSMIC_WARLORD_DUAL -> (sr * 0.36f).toInt()
-            DspStyle.WANDA_ETHEREAL_REVERB, DspStyle.THOR_ASGARD_HALL, DspStyle.VISION_SYNTH_CRYSTAL -> (sr * 0.24f).toInt()
-            else -> (sr * 0.14f).toInt()
-        }
+        // Step 2: Character-specific DRY close-mic cinema dubbing tonal shaping (ZERO muddy room/bathroom echo!)
+        val extraTailSamples = (sr * 0.04f).toInt()
         val n = working.size + extraTailSamples
         val left = FloatArray(n)
         val right = FloatArray(n)
 
         when (style) {
             DspStyle.NATASHA_VELVET_INTIMATE -> {
-                // Natasha Romanoff: Velvety smoky alto warmth (300Hz body + smooth de-essed intimacy)
+                // Natasha Romanoff: Clean close-mic smoky alto cinema dubbing (zero room reverb!)
                 val body = working.copyOf()
-                lowPassInPlace(body, sr, 340f)
-                val silk = working.copyOf()
-                lowPassInPlace(silk, sr, 5200f)
-                val dL = (sr * 0.017f).toInt().coerceAtLeast(1)
-                val dR = (sr * 0.025f).toInt().coerceAtLeast(1)
+                lowPassInPlace(body, sr, 320f)
                 for (i in working.indices) {
-                    val base = silk[i] * 0.92f + body[i] * 0.30f
-                    val ambL = if (i >= dL) silk[i - dL] * 0.11f else 0f
-                    val ambR = if (i >= dR) silk[i - dR] * 0.11f else 0f
-                    left[i] = base + ambL
-                    right[i] = base + ambR
+                    val v = working[i] * 0.94f + body[i] * 0.14f
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.MIRA_CRYSTAL_YOUTH -> {
-                // Mira (Denek 8-C): Bright youthful crystalline timbre (+1.1 semitone gentle lift + open air)
-                val bright = resamplePitchPreservingLength(working, 2.0.pow(1.1 / 12.0).toFloat())
-                val dL = (sr * 0.026f).toInt().coerceAtLeast(1)
-                val dR = (sr * 0.039f).toInt().coerceAtLeast(1)
-                for (i in bright.indices) {
-                    val s = bright[i]
-                    val eL = if (i >= dL) bright[i - dL] * 0.13f else 0f
-                    val eR = if (i >= dR) bright[i - dR] * 0.13f else 0f
-                    left[i] = s + eL
-                    right[i] = s + eR
+                // Mira (Denek 8-C): Pure crisp close-mic voice (zero room echo!)
+                for (i in working.indices) {
+                    val v = working[i]
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.IRON_MAN_HELMET -> {
-                // Tony Stark: Iconic crisp HUD helmet comms (high-pass 240Hz + low-pass 4600Hz + 8ms metallic early reflection)
+                // Tony Stark: Crisp dry Iron Man HUD helmet comms bandpass (zero room reverb)
                 highPassInPlace(working, sr, 240f)
-                lowPassInPlace(working, sr, 4600f)
-                val dL = (sr * 0.0085f).toInt().coerceAtLeast(1)
-                val dR = (sr * 0.0115f).toInt().coerceAtLeast(1)
+                lowPassInPlace(working, sr, 4800f)
                 for (i in working.indices) {
                     val s = working[i]
-                    val rL = if (i >= dL) working[i - dL] * 0.22f else 0f
-                    val rR = if (i >= dR) working[i - dR] * 0.20f else 0f
-                    left[i] = s * 0.94f + rL
-                    right[i] = s * 0.94f - rR
+                    left[i] = s
+                    right[i] = s
                 }
                 addSubtleCommsClick(left, right, sr)
             }
 
             DspStyle.TACTICAL_COMMS_WARM -> {
-                // Steve & Pietro: Warm cinematic studio clarity + gentle stereo room
+                // Steve & Pietro: Clean close-mic studio voice + subtle chest warmth (zero room echo)
                 val warmth = working.copyOf()
-                lowPassInPlace(warmth, sr, 420f)
-                val dL = (sr * 0.014f).toInt().coerceAtLeast(1)
-                val dR = (sr * 0.019f).toInt().coerceAtLeast(1)
+                lowPassInPlace(warmth, sr, 360f)
                 for (i in working.indices) {
-                    val base = working[i] + warmth[i] * 0.24f
-                    val ambL = if (i >= dL) working[i - dL] * 0.10f else 0f
-                    val ambR = if (i >= dR) working[i - dR] * 0.10f else 0f
-                    left[i] = base + ambL
-                    right[i] = base + ambR
+                    val base = working[i] * 0.94f + warmth[i] * 0.14f
+                    left[i] = base
+                    right[i] = base
                 }
-                addSubtleCommsClick(left, right, sr)
             }
 
             DspStyle.THOR_ASGARD_HALL -> {
-                // Thor: Deep Asgardian baritone chest warmth + thunderous grand hall reflection
+                // Thor: Deep dry baritone chest warmth (zero bathroom echo)
                 val chest = working.copyOf()
-                lowPassInPlace(chest, sr, 280f)
-                val wetSrc = working.copyOf()
-                lowPassInPlace(wetSrc, sr, 3200f)
-                val d1 = (sr * 0.045f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.078f).toInt().coerceAtLeast(1)
-                val d3 = (sr * 0.145f).toInt().coerceAtLeast(1)
-                for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] * 0.92f + chest[i] * 0.34f else 0f
-                    val e1 = if (i in d1 until working.size + d1) wetSrc[i - d1] * 0.22f else 0f
-                    val e2 = if (i in d2 until working.size + d2) wetSrc[i - d2] * 0.19f else 0f
-                    val e3 = if (i in d3 until working.size + d3) wetSrc[i - d3] * 0.11f else 0f
-                    left[i] = dry + e1 + e3
-                    right[i] = dry + e2 + e3
+                lowPassInPlace(chest, sr, 260f)
+                for (i in working.indices) {
+                    val v = working[i] * 0.92f + chest[i] * 0.22f
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.VISION_SYNTH_CRYSTAL -> {
-                // Vision: Pure crystalline Mind-Stone harmonic shimmer + balanced tranquil space
-                val d1 = (sr * 0.018f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.033f).toInt().coerceAtLeast(1)
-                val d3 = (sr * 0.068f).toInt().coerceAtLeast(1)
-                for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] * 0.94f else 0f
-                    val s1 = if (i in d1 until working.size + d1) working[i - d1] * 0.16f else 0f
-                    val s2 = if (i in d2 until working.size + d2) working[i - d2] * 0.14f else 0f
-                    val s3 = if (i in d3 until working.size + d3) working[i - d3] * 0.09f else 0f
-                    left[i] = dry + s1 + s3
-                    right[i] = dry + s2 + s3
+                // Vision: Crisp, pure synthetic clarity (zero room reverb)
+                for (i in working.indices) {
+                    val v = working[i]
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.WANDA_ETHEREAL_REVERB -> {
-                // Wanda & Strange: Velvet intimate vocal + shimmering stereo hall echo (38ms L / 62ms R)
-                val d1 = (sr * 0.038f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.062f).toInt().coerceAtLeast(1)
-                val d3 = (sr * 0.112f).toInt().coerceAtLeast(1)
-                val wetSrc = working.copyOf()
-                lowPassInPlace(wetSrc, sr, 3600f)
-                for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] else 0f
-                    val e1 = if (i in d1 until working.size + d1) wetSrc[i - d1] * 0.21f else 0f
-                    val e2 = if (i in d2 until working.size + d2) wetSrc[i - d2] * 0.18f else 0f
-                    val e3 = if (i in d3 until working.size + d3) wetSrc[i - d3] * 0.10f else 0f
-                    left[i] = dry + e1 + e3
-                    right[i] = dry + e2 + e3
+                // Wanda & Strange: Clean intimate close-mic dubbing (zero room reverb!)
+                val body = working.copyOf()
+                lowPassInPlace(body, sr, 300f)
+                for (i in working.indices) {
+                    val v = working[i] * 0.95f + body[i] * 0.10f
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.DARK_RIFT_ECHO -> {
-                // Twin Aiden (Sıfır): Razor-clear intimate close-mic young baritone with subtle chest warmth
-                // and whisper-soft cinema night-air depth (ZERO muddy bathroom slapback echo!)
+                // Twin Aiden (Sıfır) & Voss: Dry, intimate close-mic baritone with subtle low-end grit (zero room echo)
                 val chest = working.copyOf()
-                lowPassInPlace(chest, sr, 260f)
-                val airWet = working.copyOf()
-                lowPassInPlace(airWet, sr, 3400f)
-                val d1 = (sr * 0.032f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.049f).toInt().coerceAtLeast(1)
-                for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] * 0.96f + chest[i] * 0.18f else 0f
-                    val ambL = if (i in d1 until working.size + d1) airWet[i - d1] * 0.075f else 0f
-                    val ambR = if (i in d2 until working.size + d2) airWet[i - d2] * 0.065f else 0f
-                    left[i] = dry + ambL
-                    right[i] = dry + ambR
+                lowPassInPlace(chest, sr, 240f)
+                for (i in working.indices) {
+                    val v = working[i] * 0.94f + chest[i] * 0.16f
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.ULTRON_METAL_RESONANCE -> {
-                // Ultron Prime: Iconic cinematic Vibranium AI resonance — cold metallic comb resonator +
-                // subtle 52Hz ring-mod robotic edge + deep -1.4 semitone sub-harmonic metallic shadow!
+                // Ultron Prime: Crisp dry robotic Vibranium AI voice (54Hz ring-mod + -1.4st metallic sub-layer, zero room echo!)
                 val subMetal = resamplePitchPreservingLength(working, 2.0.pow(-1.4 / 12.0).toFloat())
                 highPassInPlace(working, sr, 150f)
-                val d1 = (sr * 0.0065f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.0125f).toInt().coerceAtLeast(1)
-                val d3 = (sr * 0.0210f).toInt().coerceAtLeast(1)
-                val ringStep = (2.0 * PI * 52.0) / sr.toDouble()
-                for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] else 0f
-                    val ring = dry * (0.86f + 0.14f * sin(i * ringStep).toFloat())
-                    val sub = if (i < subMetal.size) subMetal[i] * 0.30f else 0f
-                    val m1 = if (i in d1 until working.size + d1) working[i - d1] * 0.28f else 0f
-                    val m2 = if (i in d2 until working.size + d2) -working[i - d2] * 0.22f else 0f
-                    val m3 = if (i in d3 until working.size + d3) working[i - d3] * 0.14f else 0f
-                    left[i] = ring * 0.82f + sub + m1 + m3
-                    right[i] = ring * 0.82f + sub + m2 - m3
+                val d1 = (sr * 0.0045f).toInt().coerceAtLeast(1)
+                val ringStep = (2.0 * PI * 54.0) / sr.toDouble()
+                for (i in working.indices) {
+                    val dry = working[i]
+                    val ring = dry * (0.84f + 0.16f * sin(i * ringStep).toFloat())
+                    val sub = if (i < subMetal.size) subMetal[i] * 0.28f else 0f
+                    val m1 = if (i >= d1) working[i - d1] * 0.18f else 0f
+                    left[i] = ring * 0.84f + sub + m1
+                    right[i] = ring * 0.84f + sub - m1
                 }
             }
 
             DspStyle.COSMIC_WARLORD_DUAL -> {
-                // Vaelor / Architect: Massive dual-layer cosmic cinema voice (-2.2 semitone sub-shadow + cathedral hall)
-                val subShadow = resamplePitchPreservingLength(working, 2.0.pow(-2.2 / 12.0).toFloat())
+                // Vaelor / Architect: Dry dual-layer deep cosmic voice (-2.0 semitone sub-shadow, zero room echo!)
+                val subShadow = resamplePitchPreservingLength(working, 2.0.pow(-2.0 / 12.0).toFloat())
                 val chest = working.copyOf()
-                lowPassInPlace(chest, sr, 240f)
-                val wet = working.copyOf()
-                lowPassInPlace(wet, sr, 2800f)
-                val d1 = (sr * 0.046f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.084f).toInt().coerceAtLeast(1)
-                val d3 = (sr * 0.138f).toInt().coerceAtLeast(1)
-                for (i in 0 until n) {
-                    val dry = if (i < working.size) working[i] * 0.86f + chest[i] * 0.26f else 0f
-                    val sub = if (i < subShadow.size) subShadow[i] * 0.26f else 0f
-                    val e1 = if (i in d1 until working.size + d1) wet[i - d1] * 0.18f else 0f
-                    val e2 = if (i in d2 until working.size + d2) wet[i - d2] * 0.15f else 0f
-                    val e3 = if (i in d3 until working.size + d3) wet[i - d3] * 0.09f else 0f
-                    left[i] = dry + sub + e1 + e3
-                    right[i] = dry + sub + e2 + e3
+                lowPassInPlace(chest, sr, 220f)
+                for (i in working.indices) {
+                    val dry = working[i] * 0.88f + chest[i] * 0.20f
+                    val sub = if (i < subShadow.size) subShadow[i] * 0.24f else 0f
+                    val v = dry + sub
+                    left[i] = v
+                    right[i] = v
                 }
             }
 
             DspStyle.HERO_CINEMA -> {
-                // Aiden / Hero: Crisp close-mic cinema presence + subtle heroic chest warmth
+                // Aiden / Hero: Pure close-mic cinema dubbing clarity (zero room echo!)
                 val warmth = working.copyOf()
-                lowPassInPlace(warmth, sr, 340f)
-                val d1 = (sr * 0.020f).toInt().coerceAtLeast(1)
-                val d2 = (sr * 0.029f).toInt().coerceAtLeast(1)
+                lowPassInPlace(warmth, sr, 300f)
                 for (i in working.indices) {
-                    val base = working[i] + warmth[i] * 0.18f
-                    val rL = if (i >= d1) working[i - d1] * 0.08f else 0f
-                    val rR = if (i >= d2) working[i - d2] * 0.08f else 0f
-                    left[i] = base + rL
-                    right[i] = base + rR
+                    val v = working[i] * 0.95f + warmth[i] * 0.12f
+                    left[i] = v
+                    right[i] = v
                 }
             }
         }
@@ -1717,7 +1650,7 @@ class CosmicCharacterVoiceEngine(
 
     private fun masteredDlcWavFileFor(dlcFile: File, speakerKey: String): File {
         val styleTag = profileFor(speakerKey).dspStyle.name.lowercase(Locale.ROOT)
-        return File(cacheDir, "dlc_m3_${dlcFile.nameWithoutExtension}_${dlcFile.length()}_$styleTag.wav")
+        return File(cacheDir, "dlc_m4_dry_${dlcFile.nameWithoutExtension}_${dlcFile.length()}_$styleTag.wav")
     }
 
     private fun masterStudioDlcClipIfNeeded(dlcFile: File, speakerKey: String): File {
