@@ -215,20 +215,39 @@ object BookContentPackManager {
         val manifestUrl = REMOTE_MANIFEST_URL.trim()
         if (manifestUrl.isBlank()) return@withContext null
         val currentVer = getInstalledStoryVersion(context, bookId)
+        val hasVoicePack = isStudioVoicePackInstalled(context)
         var conn: HttpURLConnection? = null
         try {
-            conn = (URL(manifestUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 3_000
-                readTimeout = 3_000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Asroda-Updater/2.4")
+            var currentUrl = manifestUrl
+            var redirects = 0
+            while (redirects < 6) {
+                val c = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 7_000
+                    readTimeout = 7_000
+                    instanceFollowRedirects = true
+                    setRequestProperty("User-Agent", "Asroda-Updater/12.1")
+                }
+                val code = c.responseCode
+                if (code in 300..399) {
+                    val loc = c.getHeaderField("Location")
+                    c.disconnect()
+                    if (loc.isNullOrBlank()) return@withContext null
+                    currentUrl = loc
+                    redirects++
+                } else if (code in 200..299) {
+                    conn = c
+                    break
+                } else {
+                    c.disconnect()
+                    return@withContext null
+                }
             }
-            if (conn.responseCode !in 200..299) return@withContext null
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val active = conn ?: return@withContext null
+            val text = active.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(text)
             val remoteVer = json.optInt("version", 0)
             val packUrl = json.optString("packUrl", "").trim()
-            if (remoteVer > currentVer && packUrl.startsWith("http", ignoreCase = true)) {
+            if ((remoteVer > currentVer || !hasVoicePack) && packUrl.startsWith("http", ignoreCase = true)) {
                 RemoteStoryUpdateInfo(
                     version = remoteVer,
                     sizeLabel = json.optString("sizeLabel", "Ek Paket"),

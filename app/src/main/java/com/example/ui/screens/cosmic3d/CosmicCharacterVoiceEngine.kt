@@ -1428,14 +1428,15 @@ class CosmicCharacterVoiceEngine(
             }
         }
 
-        // Step 3: Transparent Cinema RMS Auto-Leveling + Clean Soft-Knee Peak Limiter (zero vocal distortion!)
+        // Step 3: Broadcast Cinema Dialogue Presence + RMS Auto-Leveling + Clean Soft-Knee Peak Limiter
+        // Lifts vocal clarity and loudness so characters sound front-and-center like a cinema dub mix!
         var sumSq = 0.0
         for (i in 0 until n) {
             val v = (left[i] + right[i]) * 0.5f
             sumSq += v * v
         }
         val rms = sqrt(sumSq / n.coerceAtLeast(1)).toFloat().coerceAtLeast(0.01f)
-        val makeupGain = (0.24f / rms).coerceIn(0.65f, 2.35f)
+        val makeupGain = (0.30f / rms).coerceIn(0.75f, 2.65f)
         fun softLimit(x: Float): Float {
             val ax = abs(x)
             if (ax <= 0.78f) return x
@@ -1648,9 +1649,21 @@ class CosmicCharacterVoiceEngine(
 
     // ── MEDIA PLAYER PLAYBACK WITH VOICE DUCKING ────────────────────────────────
 
+    private fun characterPlaybackSpeed(speakerKey: String): Float = when (speakerKey.uppercase(Locale.ROOT)) {
+        "TONY" -> 1.06f
+        "PIETRO" -> 1.11f
+        "ULTRON" -> 0.92f
+        "ARCHITECT", "MIMAR" -> 0.89f
+        "VAELOR" -> 0.93f
+        "TWIN_AIDEN", "ZERO", "SIFIR" -> 0.94f
+        "NATASHA" -> 0.97f
+        "WANDA" -> 0.96f
+        else -> 1.00f
+    }
+
     private fun masteredDlcWavFileFor(dlcFile: File, speakerKey: String): File {
         val styleTag = profileFor(speakerKey).dspStyle.name.lowercase(Locale.ROOT)
-        return File(cacheDir, "dlc_m4_dry_${dlcFile.nameWithoutExtension}_${dlcFile.length()}_$styleTag.wav")
+        return File(cacheDir, "dlc_m5_cine_${dlcFile.nameWithoutExtension}_${dlcFile.length()}_$styleTag.wav")
     }
 
     private fun masterStudioDlcClipIfNeeded(dlcFile: File, speakerKey: String): File {
@@ -1676,20 +1689,21 @@ class CosmicCharacterVoiceEngine(
     private fun playMasteredStudioDlcClip(dlcFile: File, speakerKey: String, expectedGen: Int) {
         if (muted || released || expectedGen != speakGeneration.get()) return
         val cachedMaster = masteredDlcWavFileFor(dlcFile, speakerKey)
+        val speed = characterPlaybackSpeed(speakerKey)
         if (cachedMaster.exists() && cachedMaster.length() > 1024L) {
-            playFileClip(cachedMaster, expectedGen)
+            playFileClip(cachedMaster, expectedGen, speed)
             return
         }
         synthExecutor.execute {
             if (muted || released || expectedGen != speakGeneration.get()) return@execute
             val readyFile = masterStudioDlcClipIfNeeded(dlcFile, speakerKey)
             if (muted || released || expectedGen != speakGeneration.get()) return@execute
-            playFileClip(readyFile, expectedGen)
+            playFileClip(readyFile, expectedGen, speed)
         }
     }
 
     @Synchronized
-    private fun playBundledStudioAsset(assetPath: String, expectedGen: Int) {
+    private fun playBundledStudioAsset(assetPath: String, expectedGen: Int, playbackSpeed: Float = 1.0f) {
         if (muted || released || expectedGen != speakGeneration.get()) return
         try {
             try {
@@ -1743,6 +1757,11 @@ class CosmicCharacterVoiceEngine(
                 true
             }
             mp.prepare()
+            if (playbackSpeed != 1.0f) {
+                try {
+                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
+                } catch (_: Throwable) {}
+            }
             mp.setVolume(1.0f, 1.0f)
             directFallbackStartMs = System.currentTimeMillis()
             clipPlayer = mp
@@ -1753,7 +1772,7 @@ class CosmicCharacterVoiceEngine(
         }
     }
 
-    private fun playRawClip(resId: Int, expectedGen: Int) {
+    private fun playRawClip(resId: Int, expectedGen: Int, playbackSpeed: Float = 1.0f) {
         if (muted || released || expectedGen != speakGeneration.get()) return
         try {
             try {
@@ -1787,6 +1806,11 @@ class CosmicCharacterVoiceEngine(
                 true
             }
             mp.prepare()
+            if (playbackSpeed != 1.0f) {
+                try {
+                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
+                } catch (_: Throwable) {}
+            }
             mp.setVolume(1.0f, 1.0f)
             directFallbackStartMs = System.currentTimeMillis()
             clipPlayer = mp
@@ -1798,7 +1822,7 @@ class CosmicCharacterVoiceEngine(
     }
 
     @Synchronized
-    private fun playFileClip(file: File, expectedGen: Int) {
+    private fun playFileClip(file: File, expectedGen: Int, playbackSpeed: Float = 1.0f) {
         if (muted || released || expectedGen != speakGeneration.get()) return
         try {
             try {
@@ -1849,6 +1873,11 @@ class CosmicCharacterVoiceEngine(
                 true
             }
             mp.prepare()
+            if (playbackSpeed != 1.0f) {
+                try {
+                    mp.playbackParams = mp.playbackParams.setSpeed(playbackSpeed.coerceIn(0.80f, 1.25f))
+                } catch (_: Throwable) {}
+            }
             mp.setVolume(1.0f, 1.0f)
             directFallbackStartMs = System.currentTimeMillis()
             clipPlayer = mp

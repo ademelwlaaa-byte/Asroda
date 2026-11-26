@@ -166,10 +166,10 @@ fun StoryLaunchDownloadDialog(
 
                 Text(
                     text = when {
-                        remoteUpdate != null && isDownloading -> "YENİ GÜNCELLEME İNDİRİLİYOR"
-                        remoteUpdate != null -> "YENİ HİKÂYE GÜNCELLEMESİ HAZIR"
-                        isDownloading -> "HİKÂYE PAKETİ HAZIRLANIYOR"
-                        else -> "HİKÂYE VERİLERİ İNDİRİLSİN Mİ?"
+                        remoteUpdate != null && isDownloading -> "SES & HİKÂYE PAKETİ GÜNCELLENİYOR"
+                        remoteUpdate != null -> "YENİ SES PAKETİ GÜNCELLEMESİ — İNDİRİLSİN Mİ?"
+                        isDownloading -> "HİKÂYE VE SES PAKETİ HAZIRLANIYOR"
+                        else -> "HİKÂYE & SES PAKETİ İNDİRİLSİN Mİ?"
                     },
                     fontFamily = InterFontFamily,
                     color = accent,
@@ -224,7 +224,7 @@ fun StoryLaunchDownloadDialog(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = if (remoteUpdate != null) "GÜNCELLE VE BAŞLA ($sizeText) ▶" else "İNDİR VE BAŞLA ($sizeText) ▶",
+                            text = if (remoteUpdate != null) "SES PAKETİNİ GÜNCELLE VE BAŞLA ($sizeText) ▶" else "İNDİR VE BAŞLA ($sizeText) ▶",
                             fontFamily = InterFontFamily,
                             color = Color.White,
                             fontSize = 13.sp,
@@ -239,12 +239,14 @@ fun StoryLaunchDownloadDialog(
                             .clip(RoundedCornerShape(14.dp))
                             .background(Color(0x441B0D36))
                             .border(0.85.dp, Color(0x55C4B5FD), RoundedCornerShape(14.dp))
-                            .clickable { onDismiss() }
+                            .clickable {
+                                if (remoteUpdate != null) onReadyToOpen() else onDismiss()
+                            }
                             .padding(vertical = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = "Şimdi Değil",
+                            text = if (remoteUpdate != null) "Şimdilik Atla (Mevcutla Aç)" else "Şimdi Değil",
                             fontFamily = InterFontFamily,
                             color = MorCamTokens.LavenderLight,
                             fontSize = 12.sp,

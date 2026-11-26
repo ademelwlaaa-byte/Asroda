@@ -362,7 +362,7 @@ Bu yüzden her içgüdünün sana "ışınlan ve git buradan" diye bağırmasın
                 )
                 if (update != null) {
                     pendingRemoteUpdate = update
-                    autoStartUpdateDownload = true
+                    autoStartUpdateDownload = false
                     showLaunchDownloadDialog = true
                 } else {
                     openCosmicBookImmediately(targetChapter)
