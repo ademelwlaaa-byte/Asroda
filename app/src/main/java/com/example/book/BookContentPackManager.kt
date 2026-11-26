@@ -531,11 +531,17 @@ object BookContentPackManager {
                 var entry = zis.nextEntry
                 while (entry != null) {
                     if (cancelRequested) throw CancellationException("İptal edildi.")
-                    val outFile = File(targetDir, entry.name)
-                    if (!outFile.canonicalPath.startsWith(canonicalRoot)) {
-                        throw SecurityException("Güvensiz ZIP yolu engellendi: ${entry.name}")
+                    val cleanName = entry.name.replace('\\', '/').trimStart('/')
+                    if (cleanName.isBlank()) {
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                        continue
                     }
-                    if (entry.isDirectory) {
+                    val outFile = File(targetDir, cleanName)
+                    if (!outFile.canonicalPath.startsWith(canonicalRoot)) {
+                        throw SecurityException("Güvensiz ZIP yolu engellendi: $cleanName")
+                    }
+                    if (entry.isDirectory || cleanName.endsWith("/")) {
                         outFile.mkdirs()
                     } else {
                         outFile.parentFile?.mkdirs()

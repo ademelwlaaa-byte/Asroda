@@ -14,7 +14,9 @@ class ElevenLabsStudioVoiceCatalogTest {
         assertTrue("On-demand DLC voice zip must exist at ${packZip.absolutePath}", packZip.exists() && packZip.length() > 1_000_000L)
 
         ZipFile(packZip).use { zip ->
-            val entries = zip.entries().toList().associateBy { it.name.replace('\\', '/') }
+            val rawEntries = zip.entries().toList()
+            assertTrue("All ZIP entry names must use POSIX '/' separators for Android/Linux", rawEntries.none { '\\' in it.name })
+            val entries = rawEntries.associateBy { it.name }
             assertTrue("manifest.json must exist inside DLC zip", entries.containsKey("manifest.json"))
 
             val mp3Entries = entries.values.filter { it.name.endsWith(".mp3") }
