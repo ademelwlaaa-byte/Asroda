@@ -1121,7 +1121,7 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
             val picks = mutableListOf<String>()
             if (pickArr != null) {
                 for (i in 0 until pickArr.length()) {
-                    val id = pickArr.optString(i).trim().uppercase()
+                    val id = pickArr.optString(i).trim().uppercase(java.util.Locale.ROOT)
                     if (id.isNotBlank()) picks.add(id)
                 }
             }

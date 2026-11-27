@@ -211,8 +211,8 @@ object SseStreamParser {
         if (message.isBlank()) return null
 
         val numericCode = errObj?.optInt("code", 0) ?: json.optInt("code", 0)
-        val errType = errObj?.optString("type", "").orEmpty().lowercase()
-        val statusStr = errObj?.optString("status", "").orEmpty().uppercase()
+        val errType = errObj?.optString("type", "").orEmpty().lowercase(java.util.Locale.ROOT)
+        val statusStr = errObj?.optString("status", "").orEmpty().uppercase(java.util.Locale.ROOT)
         val resolvedCode = when {
             numericCode in 400..599 -> numericCode
             errType.contains("overloaded") || statusStr == "UNAVAILABLE" -> 529

@@ -466,7 +466,7 @@ object SystemPromptBuilder {
         } else {
             bot.customLength
         }
-        val lengthInstruction = when (effectiveLength.lowercase()) {
+        val lengthInstruction = when (effectiveLength.lowercase(java.util.Locale.ROOT)) {
             "short", "kisa" -> "Yanıtlarını 1 kısa ve vurucu paragraf (2-4 cümle) uzunluğunda, temposu yüksek ve öz olarak yaz."
             "long", "uzun" -> "Yanıtlarını 3 ila 5 paragraf uzunluğunda, atmosferi, mikro ifadeleri, duyusal detayları ve iç dünyayı derinlemesine işleyen sinematik bir roman sahnesi olarak yaz."
             else -> "Yanıtlarını 2 ila 4 dengeli paragraf uzunluğunda, edebi kalitesi yüksek ve akıcı bir sahne olarak yaz."

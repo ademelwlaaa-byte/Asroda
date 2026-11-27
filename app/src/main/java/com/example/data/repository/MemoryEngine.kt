@@ -744,7 +744,7 @@ object LivingMemoryCodec {
         headerBody.split("|").forEach { part ->
             val colonIdx = part.indexOf(':')
             if (colonIdx > 0) {
-                val k = part.substring(0, colonIdx).trim().uppercase()
+                val k = part.substring(0, colonIdx).trim().uppercase(java.util.Locale.ROOT)
                 val v = part.substring(colonIdx + 1).trim()
                 fields[k] = v
             }
@@ -872,7 +872,7 @@ data class MemoryLifecycleMeta(
  */
 object MemoryLifecycleCodec {
     fun parseConfidenceBase(rawConfidence: String): String {
-        val base = rawConfidence.substringBefore('|').trim().lowercase()
+        val base = rawConfidence.substringBefore('|').trim().lowercase(java.util.Locale.ROOT)
         return base.ifBlank { "certain" }
     }
 
@@ -902,7 +902,7 @@ object MemoryLifecycleCodec {
             )
         }
         val parts = trimmed.split('|')
-        val base = parts.firstOrNull()?.trim()?.lowercase().orEmpty().ifBlank { "certain" }
+        val base = parts.firstOrNull()?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty().ifBlank { "certain" }
         var tier = MemoryTier.CORE
         var cd = 1L
         var ed = 0L
@@ -913,7 +913,7 @@ object MemoryLifecycleCodec {
             val kv = parts[i].trim()
             val idx = kv.indexOf(':')
             if (idx <= 0) continue
-            val k = kv.substring(0, idx).lowercase()
+            val k = kv.substring(0, idx).lowercase(java.util.Locale.ROOT)
             val v = kv.substring(idx + 1).trim()
             when (k) {
                 "t" -> tier = MemoryTier.fromRaw(v)

@@ -11,7 +11,7 @@ object StoryDirectorSummaryHelper {
         fontScale: Float,
         hasDirectorRule: Boolean
     ): String {
-        val lenLabel = when (responseLength.trim().lowercase()) {
+        val lenLabel = when (responseLength.trim().lowercase(java.util.Locale.ROOT)) {
             "short" -> "Kısa"
             "detailed" -> "Detaylı"
             "novel" -> "Roman"

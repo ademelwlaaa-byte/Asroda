@@ -601,7 +601,7 @@ class EmochiRepository(
         }
 
         fun getEffectiveModelForProvider(settings: UserSettingsEntity): String {
-            val provider = settings.selectedProvider.lowercase().trim()
+            val provider = settings.selectedProvider.lowercase(java.util.Locale.ROOT).trim()
             val raw = when (provider) {
                 "groq" -> settings.groqModel.ifBlank { "openai/gpt-oss-120b" }
                 "openai" -> settings.openaiModel.ifBlank { "gpt-4o" }
@@ -3553,7 +3553,7 @@ class EmochiRepository(
         val executedDescriptions = mutableListOf<String>()
 
         for (tc in combined) {
-            when (tc.name.lowercase().trim()) {
+            when (tc.name.lowercase(java.util.Locale.ROOT).trim()) {
                 "save_memory" -> {
                     val content = tc.arguments["content"]?.toString()?.trim().orEmpty()
                     val category = tc.arguments["category"]?.toString()?.trim().orEmpty().ifBlank { "fact" }
@@ -7067,7 +7067,7 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
     // --- Context Window & Token Management Engine ---
 
     fun getModelContextLimit(model: String): Int {
-        val m = model.trim().lowercase()
+        val m = model.trim().lowercase(java.util.Locale.ROOT)
         return when {
             m.contains("gemini") -> 1_000_000
             m.contains("gpt-4.1") || m.contains("gpt-5") -> 1_000_000
@@ -9886,7 +9886,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
     )
 
     suspend fun resolveEffectiveModelForProvider(settings: UserSettingsEntity): String {
-        val provider = settings.selectedProvider.lowercase().trim()
+        val provider = settings.selectedProvider.lowercase(java.util.Locale.ROOT).trim()
         if (provider.startsWith("custom_")) {
             val cid = provider.removePrefix("custom_").toLongOrNull()
             if (cid != null) {

@@ -487,10 +487,10 @@ class BackupSnapshotManager(
             }
             if (snapshot.customProviders.isNotEmpty()) {
                 val existingBySignature = existingCustomProviders.associateBy {
-                    "${it.baseUrl.trim().lowercase()}|${it.label.trim().lowercase()}"
+                    "${it.baseUrl.trim().lowercase(java.util.Locale.ROOT)}|${it.label.trim().lowercase(java.util.Locale.ROOT)}"
                 }
                 for (incoming in snapshot.customProviders) {
-                    val sig = "${incoming.baseUrl.trim().lowercase()}|${incoming.label.trim().lowercase()}"
+                    val sig = "${incoming.baseUrl.trim().lowercase(java.util.Locale.ROOT)}|${incoming.label.trim().lowercase(java.util.Locale.ROOT)}"
                     val existing = existingBySignature[sig]
                     val resolvedEncryptedKey = when {
                         incoming.apiKeyEncrypted.isNotBlank() -> {

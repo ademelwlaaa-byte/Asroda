@@ -959,7 +959,7 @@ object BookStateRepository {
         return fresh
     }
 
-    private fun rankTier(rank: String?): Int = when (rank?.uppercase()) {
+    private fun rankTier(rank: String?): Int = when (rank?.uppercase(java.util.Locale.ROOT)) {
         "S" -> 3
         "A" -> 2
         "B" -> 1
@@ -980,8 +980,8 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ): BookReadState {
         val appCtx = context.applicationContext
-        val normalizedKey = gameKey.trim().uppercase()
-        val normalizedRank = rank.trim().uppercase().takeIf { it in setOf("S", "A", "B") } ?: "B"
+        val normalizedKey = gameKey.trim().uppercase(java.util.Locale.ROOT)
+        val normalizedRank = rank.trim().uppercase(java.util.Locale.ROOT).takeIf { it in setOf("S", "A", "B") } ?: "B"
         val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val rankPrefKey = "minigame_rank_${bookId}_$normalizedKey"
         val appliedPrefKey = "minigame_applied_${bookId}_$normalizedKey"
@@ -1058,7 +1058,7 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ): String? {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString("minigame_rank_${bookId}_${gameKey.trim().uppercase()}", null)
+        return prefs.getString("minigame_rank_${bookId}_${gameKey.trim().uppercase(java.util.Locale.ROOT)}", null)
     }
 
     fun getAllMiniGameRanks(
@@ -1085,8 +1085,8 @@ object BookStateRepository {
         bookId: String = CosmicDriftBookRegistry.BOOK_ID
     ): String {
         val appCtx = context.applicationContext
-        val normalizedKey = bossKey.trim().uppercase()
-        val normalizedRank = rank.trim().uppercase().takeIf { it in setOf("S", "A", "B") } ?: "B"
+        val normalizedKey = bossKey.trim().uppercase(java.util.Locale.ROOT)
+        val normalizedRank = rank.trim().uppercase(java.util.Locale.ROOT).takeIf { it in setOf("S", "A", "B") } ?: "B"
         val prefs = appCtx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val prefKey = "boss_medal_${bookId}_$normalizedKey"
         val prev = prefs.getString(prefKey, null)

@@ -36,7 +36,7 @@ object CustomApiUrlNormalizer {
         }
 
         val schemeEnd = cleaned.indexOf("://") + 3
-        val scheme = cleaned.substring(0, schemeEnd).lowercase()
+        val scheme = cleaned.substring(0, schemeEnd).lowercase(java.util.Locale.ROOT)
         val rest = cleaned.substring(schemeEnd).replace(Regex("/{2,}"), "/")
         cleaned = (scheme + rest).trimEnd('/')
 

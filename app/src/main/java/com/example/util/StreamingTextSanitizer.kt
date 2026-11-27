@@ -203,7 +203,7 @@ class StreamingTextSanitizer {
         }
 
         pending.append(ch)
-        val lower = pending.toString().lowercase()
+        val lower = pending.toString().lowercase(java.util.Locale.ROOT)
 
         // 1. Check exact think/reasoning open tag match
         for (openTag in THINK_OPEN_TAGS) {
@@ -250,7 +250,7 @@ class StreamingTextSanitizer {
     }
 
     private fun looksLikeHiddenOrThinkStart(text: String): Boolean {
-        val lower = text.lowercase()
+        val lower = text.lowercase(java.util.Locale.ROOT)
         if (lower.length < 3) return false
         return THINK_OPEN_TAGS.any { it.startsWith(lower) } ||
             HIDDEN_TAG_PREFIXES.any { it.startsWith(lower) }

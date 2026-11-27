@@ -194,7 +194,7 @@ object MemoryToolRegistry {
         var pos = 0
         while (pos < blockBody.length) {
             val m = fnStartRegex.find(blockBody, pos) ?: break
-            val fnName = m.groupValues[1].lowercase().trim()
+            val fnName = m.groupValues[1].lowercase(java.util.Locale.ROOT).trim()
             val argsStart = m.range.last + 1
             val argsEnd = findClosingParenQuoteAware(blockBody, argsStart)
             if (argsEnd < 0) break
@@ -299,7 +299,7 @@ object MemoryToolRegistry {
         val decls = definitions.map { def ->
             val props = def.properties.mapValues { (_, prop) ->
                 GeminiFunctionProperty(
-                    type = prop.type.uppercase(),
+                    type = prop.type.uppercase(java.util.Locale.ROOT),
                     description = prop.description,
                     enum = prop.enum
                 )
@@ -331,7 +331,7 @@ object MemoryToolRegistry {
             val propsObj = JSONObject()
             for ((key, prop) in def.properties) {
                 val propObj = JSONObject()
-                propObj.put("type", prop.type.lowercase())
+                propObj.put("type", prop.type.lowercase(java.util.Locale.ROOT))
                 propObj.put("description", prop.description)
                 if (!prop.enum.isNullOrEmpty()) {
                     val enumArr = JSONArray()
@@ -369,7 +369,7 @@ object MemoryToolRegistry {
             val propsObj = JSONObject()
             for ((key, prop) in def.properties) {
                 val propObj = JSONObject()
-                propObj.put("type", prop.type.lowercase())
+                propObj.put("type", prop.type.lowercase(java.util.Locale.ROOT))
                 propObj.put("description", prop.description)
                 if (!prop.enum.isNullOrEmpty()) {
                     val enumArr = JSONArray()

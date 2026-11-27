@@ -20,7 +20,7 @@ object CustomApiUrlValidationHelper {
         val normalized = CustomApiUrlNormalizer.normalizeBaseUrl(trimmed)
         return try {
             val uri = URI(normalized)
-            val scheme = uri.scheme?.lowercase().orEmpty()
+            val scheme = uri.scheme?.lowercase(java.util.Locale.ROOT).orEmpty()
             val host = uri.host.orEmpty()
             when {
                 scheme != "http" && scheme != "https" -> "URL http:// veya https:// ile başlamalı."
