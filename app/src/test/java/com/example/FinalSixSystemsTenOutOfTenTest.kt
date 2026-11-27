@@ -806,15 +806,23 @@ class FinalSixSystemsTenOutOfTenTest {
     // =========================================================================
     @Test
     fun test13_mainActivityColdLaunch_rendersMenuWithoutCrash() {
-        val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java)
-            .create()
-            .start()
-            .resume()
-            .visible()
-        Shadows.shadowOf(Looper.getMainLooper()).idle()
-        val activity = controller.get()
-        assertNotNull("MainActivity must launch cleanly", activity)
-        assertFalse("MainActivity must not finish immediately", activity.isFinishing)
-        controller.pause().stop().destroy()
+        // Use realistic 60Hz VSYNC (16ms) in Robolectric PAUSED looper mode so Compose
+        // draw-phase infinite animations don't re-post 0ms frames infinitely during idle().
+        @Suppress("DEPRECATION")
+        org.robolectric.shadows.ShadowChoreographer.setPostFrameCallbackDelay(16)
+        try {
+            val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java)
+                .create()
+                .start()
+                .resume()
+                .visible()
+            Shadows.shadowOf(Looper.getMainLooper()).idle()
+            val activity = controller.get()
+            assertNotNull("MainActivity must launch cleanly", activity)
+            assertFalse("MainActivity must not finish immediately", activity.isFinishing)
+            controller.pause().stop().destroy()
+        } finally {
+            org.robolectric.shadows.ShadowChoreographer.reset()
+        }
     }
 }

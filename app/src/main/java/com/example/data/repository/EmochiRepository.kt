@@ -1201,6 +1201,8 @@ class EmochiRepository(
             needsSummarization = false,
             emotionState = calculatedBaseline,
             previousEmotionState = calculatedBaseline,
+            worldAtmosphere = "",
+            sceneTime = "",
             storyCalendarDate = clonedCalendarDate,
             storyDayCounter = 1L,
             currentAge = birthAge,
@@ -1419,6 +1421,13 @@ class EmochiRepository(
         lastNarrativeMilestoneMsgCountMap.remove(id)
         activeInSceneCastMap.remove(id)
         lastSummarizedMessageCount.remove(id)
+        pendingConsistencyNoteMap.remove(id)
+        pendingDecayNoteMap.remove(id)
+        lastUnlockedMilestoneMap.remove(id)
+        lastDetectedUserToneMap.remove(id)
+        lastTriggerMessageIndexMap.remove(id)
+        resetRegenerateCount(id)
+        activeTurnBaselineMap.entries.removeIf { it.value.botId == id }
         db.withTransaction {
             messageDao.deleteMessagesForBot(id)
             emotionDao.deleteEmotionsForBot(id)
@@ -1443,7 +1452,20 @@ class EmochiRepository(
         }
         invalidateMemoryCache(id)
         context?.let { ctx ->
-            com.example.util.ImageStorageManager.deleteLocalBackgroundIfOwned(ctx, existingBot?.chatBgUrl)
+            com.example.util.ChatDraftStore.clearDraft(ctx, id)
+            com.example.util.BotScratchpadStore.clearNote(ctx, id)
+            com.example.util.BotDirectorNoteStore.clearRule(ctx, id)
+            val bgUrl = existingBot?.chatBgUrl
+            if (!bgUrl.isNullOrBlank()) {
+                val stillReferencedByOtherBot = try {
+                    botDao.getAllBotsList().any { it.id != id && it.chatBgUrl == bgUrl }
+                } catch (_: Exception) {
+                    true
+                }
+                if (!stillReferencedByOtherBot) {
+                    com.example.util.ImageStorageManager.deleteLocalBackgroundIfOwned(ctx, bgUrl)
+                }
+            }
         }
         autoBackupToStorage()
     }
@@ -1453,6 +1475,13 @@ class EmochiRepository(
         lastNarrativeMilestoneMsgCountMap.remove(botId)
         activeInSceneCastMap.remove(botId)
         lastSummarizedMessageCount.remove(botId)
+        pendingConsistencyNoteMap.remove(botId)
+        pendingDecayNoteMap.remove(botId)
+        lastUnlockedMilestoneMap.remove(botId)
+        lastDetectedUserToneMap.remove(botId)
+        lastTriggerMessageIndexMap.remove(botId)
+        resetRegenerateCount(botId)
+        activeTurnBaselineMap.entries.removeIf { it.value.botId == botId }
         db.withTransaction {
             emotionDao.deleteEmotionsForBot(botId)
             fragmentDao.deleteFragmentsForBot(botId)
@@ -1510,6 +1539,9 @@ class EmochiRepository(
             val updatedBot = bot.copy(
                 emotionState = calculatedBaseline,
                 previousEmotionState = calculatedBaseline,
+                worldAtmosphere = "",
+                sceneTime = "",
+                lastTimeMismatchCorrectionNote = "",
                 storyNotes = "",
                 memoryNotes = "",
                 pinnedMemory = "",
@@ -1982,7 +2014,15 @@ class EmochiRepository(
                 try { sqlite.execSQL("DELETE FROM archived_memories WHERE botId = ? AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
                 try { sqlite.execSQL("DELETE FROM emotion_history WHERE botId = ? AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
                 try { sqlite.execSQL("DELETE FROM affection_events WHERE botId = ? AND timestamp >= ? AND timestamp <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
-                try { sqlite.execSQL("DELETE FROM cast_members WHERE botId = ? AND isAutoAdded = 1 AND firstAppearedAt >= ? AND firstAppearedAt <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
+                try {
+                    val autoCastInWindow = castMemberDao.getCastMembersForBot(botId)
+                        .filter { it.isAutoAdded && it.firstAppearedAt in windowStart..windowEnd }
+                    for (cm in autoCastInWindow) {
+                        try { emotionDao.deleteByCharacterName(botId, cm.name) } catch (_: Exception) {}
+                        try { castMemberDao.deleteCastMember(cm.id) } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {}
+                try { sqlite.execSQL("DELETE FROM pending_reappraisals WHERE botId = ? AND createdAt >= ? AND createdAt <= ?", arrayOf<Any>(botId, windowStart, windowEnd)) } catch (_: Exception) {}
                 memoryFactDao.clearOrphanedSupersededBy(botId)
                 memoryEventDao.clearOrphanedSupersededBy(botId)
 
@@ -2008,6 +2048,9 @@ class EmochiRepository(
         lastUnlockedMilestoneMap.remove(botId)
         lastLivingMemoryMsgCountMap.remove(botId)
         lastNarrativeMilestoneMsgCountMap.remove(botId)
+        pendingConsistencyNoteMap.remove(botId)
+        pendingDecayNoteMap.remove(botId)
+        lastDetectedUserToneMap.remove(botId)
         result
     }
 
@@ -10105,6 +10148,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 toolCalls = response.toolCalls,
                 explicitUserOverride = MemoryEngine.hasExplicitUserOverrideIntent(latestUserText)
             )
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {
             MemoryCommitSummary()
         }
@@ -10115,6 +10160,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 botId = botId,
                 rawResponse = response.text
             )
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {}
         val unlockedMilestone = lastUnlockedMilestoneMap.remove(botId)
 
@@ -10125,6 +10172,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                     storyDate = prepared.currentStoryDayKey,
                     botId = botId
                 )
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (_: Exception) {}
         }
 
@@ -10132,6 +10181,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             if (totalMessageCount > 0 && totalMessageCount % 50 == 0) {
                 checkAndGenerateCheckpoint(botId, totalMessageCount)
             }
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {}
 
         val cleanedText = cleanEmotionTags(response.text).ifBlank { response.text.trim() }

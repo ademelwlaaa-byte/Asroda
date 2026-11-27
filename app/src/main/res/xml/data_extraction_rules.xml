@@ -7,6 +7,11 @@
         <exclude domain="sharedpref" path="androidx.security.crypto.master_key.xml" />
         <exclude domain="sharedpref" path="emochi_keystore_prefs.xml" />
         <exclude domain="sharedpref" path="emochi_routine_notif_prefs.xml" />
+        <exclude domain="sharedpref" path="asroda_chat_drafts_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_bot_scratchpad_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_bot_director_notes_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_story_bookmarks_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_roleplay_macros_v1.xml" />
         <exclude domain="file" path="emochi_autobackup.json" />
         <exclude domain="file" path="emochi_autobackup.json.tmp" />
         <exclude domain="file" path="image_cache" />
@@ -20,6 +25,11 @@
         <exclude domain="sharedpref" path="androidx.security.crypto.master_key.xml" />
         <exclude domain="sharedpref" path="emochi_keystore_prefs.xml" />
         <exclude domain="sharedpref" path="emochi_routine_notif_prefs.xml" />
+        <exclude domain="sharedpref" path="asroda_chat_drafts_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_bot_scratchpad_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_bot_director_notes_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_story_bookmarks_v1.xml" />
+        <exclude domain="sharedpref" path="asroda_roleplay_macros_v1.xml" />
         <exclude domain="file" path="emochi_autobackup.json" />
         <exclude domain="file" path="emochi_autobackup.json.tmp" />
         <exclude domain="file" path="image_cache" />

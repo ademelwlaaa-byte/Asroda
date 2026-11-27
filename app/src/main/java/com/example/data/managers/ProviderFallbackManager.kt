@@ -12,6 +12,7 @@ import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.EmochiRepository
 import com.example.data.repository.ProviderFallbackLogEntry
 import com.example.util.AppFeatureFlags
+import com.example.util.SecureApiKeyVault
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -209,6 +210,14 @@ class ProviderFallbackManager(
                 }
             }
         }
+        internal fun sanitizeFallbackLogEntry(entry: ProviderFallbackLogEntry): ProviderFallbackLogEntry {
+            val cleanErr = entry.errorMessage?.let { SecureApiKeyVault.redactSecrets(it).take(260) }
+            return if (cleanErr == entry.errorMessage) entry else entry.copy(errorMessage = cleanErr)
+        }
+    }
+
+    private fun emitFallbackLog(entry: ProviderFallbackLogEntry) {
+        onLogFallback(sanitizeFallbackLogEntry(entry))
     }
 
     /** Coroutine-cooperative OkHttp execution: cancels the underlying socket immediately on timeout/cancellation. */
@@ -321,6 +330,8 @@ class ProviderFallbackManager(
             withContext(Dispatchers.IO) {
                 val customList = try {
                     customProviderDao.getAllProviders()
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (_: Exception) {
                     emptyList()
                 }
@@ -337,7 +348,7 @@ class ProviderFallbackManager(
                 val skippedSet = effectiveChain.filter { it !in candidates }
                 for (skippedKey in skippedSet) {
                     val remSec = (ProviderHealthTracker.remainingCooldownMs(skippedKey) / 1000L).coerceAtLeast(1L)
-                    onLogFallback(
+                    emitFallbackLog(
                         ProviderFallbackLogEntry(
                             providerName = skippedKey,
                             status = "COOLDOWN_SKIP",
@@ -347,7 +358,7 @@ class ProviderFallbackManager(
                     )
                 }
 
-                val primarySelected = settings.selectedProvider.lowercase().trim()
+                val primarySelected = settings.selectedProvider.lowercase(Locale.ROOT).trim()
                 val isUtility = resolvedCallType.equals(com.example.EmochiApplication.CALL_TYPE_UTILITY, ignoreCase = true)
                 val effectiveMode = if (isUtility) ExecutionMode.UTILITY else ExecutionMode.NARRATIVE
                 val timeoutCfg = resolveTimeoutConfig(effectiveMode)
@@ -407,7 +418,7 @@ class ProviderFallbackManager(
                         else -> "gemini-2.0-flash"
                     }
 
-                    onLogFallback(
+                    emitFallbackLog(
                         ProviderFallbackLogEntry(
                             providerName = "$providerKey ($resolvedModel)",
                             status = "TRYING",
@@ -546,7 +557,7 @@ class ProviderFallbackManager(
                                 )
                                 lastRefusalResult = candidateResult
                                 val hasNextProvider = idx < boundedCandidates.lastIndex
-                                onLogFallback(
+                                emitFallbackLog(
                                     ProviderFallbackLogEntry(
                                         providerName = "$providerKey ($resolvedModel)",
                                         status = "OOC_REFUSAL_FALLBACK",
@@ -563,7 +574,7 @@ class ProviderFallbackManager(
                         }
 
                         ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
-                        onLogFallback(
+                        emitFallbackLog(
                             ProviderFallbackLogEntry(
                                 providerName = candidateResult.usedProvider,
                                 status = "SUCCESS",
@@ -584,7 +595,7 @@ class ProviderFallbackManager(
                                 errorMessage = e.message ?: "Bilinmeyen hata"
                             )
                         }
-                        onLogFallback(
+                        emitFallbackLog(
                             ProviderFallbackLogEntry(
                                 providerName = providerKey,
                                 status = "FAILED",
@@ -648,6 +659,8 @@ class ProviderFallbackManager(
             withContext(Dispatchers.IO) {
                 val customList = try {
                     customProviderDao.getAllProviders()
+                } catch (ce: CancellationException) {
+                    throw ce
                 } catch (_: Exception) {
                     emptyList()
                 }
@@ -658,7 +671,7 @@ class ProviderFallbackManager(
                 val skippedSet = effectiveChain.filter { it !in candidates }
                 for (skippedKey in skippedSet) {
                     val remSec = (ProviderHealthTracker.remainingCooldownMs(skippedKey) / 1000L).coerceAtLeast(1L)
-                    onLogFallback(
+                    emitFallbackLog(
                         ProviderFallbackLogEntry(
                             providerName = skippedKey,
                             status = "COOLDOWN_SKIP",
@@ -668,7 +681,7 @@ class ProviderFallbackManager(
                     )
                 }
 
-                val primarySelected = settings.selectedProvider.lowercase().trim()
+                val primarySelected = settings.selectedProvider.lowercase(Locale.ROOT).trim()
                 val timeoutCfg = resolveTimeoutConfig(ExecutionMode.NARRATIVE)
                 val refusalGuardEnabled = AppFeatureFlags.isRefusalAutoFallbackEnabled
                 val latestUserText = messages.lastOrNull { it.role == "user" }?.text.orEmpty()
@@ -717,7 +730,7 @@ class ProviderFallbackManager(
                         else -> "gemini-2.0-flash"
                     }
 
-                    onLogFallback(
+                    emitFallbackLog(
                         ProviderFallbackLogEntry(
                             providerName = "$providerKey ($resolvedModel) [SSE]",
                             status = "TRYING",
@@ -908,7 +921,7 @@ class ProviderFallbackManager(
                                     usedStreaming = true
                                 )
                                 lastRefusalResult = refusedResult
-                                onLogFallback(
+                                emitFallbackLog(
                                     ProviderFallbackLogEntry(
                                         providerName = "$providerKey ($resolvedModel) [SSE]",
                                         status = "OOC_REFUSAL_FALLBACK",
@@ -927,7 +940,7 @@ class ProviderFallbackManager(
 
                         val latencyMs = (System.currentTimeMillis() - startMs).coerceAtLeast(1L)
                         ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
-                        onLogFallback(
+                        emitFallbackLog(
                             ProviderFallbackLogEntry(
                                 providerName = streamResponse.usedProvider.ifBlank { providerKey },
                                 status = "SUCCESS",
@@ -941,6 +954,41 @@ class ProviderFallbackManager(
                             visibleText = visibleClean,
                             usedStreaming = true
                         )
+                    } catch (tce: TimeoutCancellationException) {
+                        val timeoutErr = SocketTimeoutException("SSE akışı zaman aşımına uğradı ($providerKey)")
+                        lastError = timeoutErr
+                        if (firstTokenFired) {
+                            sanitizer.finish()
+                            val partialClean = EmochiRepository.cleanEmotionTags(sanitizer.visibleText).trim()
+                            if (partialClean.length >= 25) {
+                                onVisibleDelta(partialClean, false)
+                                return@withContext StreamResult(
+                                    response = ModelResponseResult(
+                                        text = sanitizer.rawFullText.ifBlank { partialClean },
+                                        promptTokens = totalPromptTokens,
+                                        candidateTokens = totalCandidateTokens,
+                                        usedProvider = providerKey
+                                    ),
+                                    visibleText = partialClean,
+                                    usedStreaming = true
+                                )
+                            } else {
+                                onResetVisibleStream()
+                            }
+                        }
+                        ProviderHealthTracker.recordFailure(
+                            providerKey = providerKey,
+                            failureType = ProviderFailureType.SERVER_OR_TIMEOUT,
+                            errorMessage = timeoutErr.message ?: "SSE zaman aşımı"
+                        )
+                        emitFallbackLog(
+                            ProviderFallbackLogEntry(
+                                providerName = "$providerKey [SSE]",
+                                status = "FAILED",
+                                errorMessage = timeoutErr.message ?: "SSE zaman aşımı",
+                                layer = layer
+                            )
+                        )
                     } catch (ce: CancellationException) {
                         // CRITICAL: User stop / coroutine cancel MUST NEVER penalize provider health!
                         throw ce
@@ -950,7 +998,7 @@ class ProviderFallbackManager(
                             failureType = ProviderFailureType.CONTENT_REFUSAL,
                             errorMessage = refusalAbort.reason
                         )
-                        onLogFallback(
+                        emitFallbackLog(
                             ProviderFallbackLogEntry(
                                 providerName = "$providerKey ($resolvedModel) [SSE]",
                                 status = "OOC_REFUSAL_FALLBACK",
@@ -988,6 +1036,13 @@ class ProviderFallbackManager(
                                 onFirstToken()
                                 onVisibleDelta(fallbackClean, false)
                                 ProviderHealthTracker.recordSuccess(providerKey, latencyMs)
+                                emitFallbackLog(
+                                    ProviderFallbackLogEntry(
+                                        providerName = nonStreamFallback.usedProvider.ifBlank { providerKey },
+                                        status = "SUCCESS",
+                                        layer = layer
+                                    )
+                                )
                                 return@withContext StreamResult(
                                     response = nonStreamFallback,
                                     visibleText = fallbackClean,
@@ -1032,7 +1087,7 @@ class ProviderFallbackManager(
                                 retryAfterSeconds = retryAfter
                             )
                         }
-                        onLogFallback(
+                        emitFallbackLog(
                             ProviderFallbackLogEntry(
                                 providerName = "$providerKey [SSE]",
                                 status = "FAILED",
@@ -1157,7 +1212,7 @@ class ProviderFallbackManager(
             customEntity != null -> {
                 val cleanBase = customEntity.baseUrl.trim().trimEnd('/')
                 apiKey = decryptCustomApiKey(customEntity.apiKeyEncrypted)
-                val fmt = customEntity.apiFormat.lowercase().trim()
+                val fmt = customEntity.apiFormat.lowercase(Locale.ROOT).trim()
                 when {
                     fmt == "anthropic" || cleanBase.contains("anthropic.com") -> {
                         format = SseStreamParser.SseFormat.CLAUDE
@@ -1306,6 +1361,8 @@ class ProviderFallbackManager(
     ): ModelResponseResult = withContext(Dispatchers.IO) {
         val customList = try {
             customProviderDao.getAllProviders()
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptyList()
         }
@@ -1440,6 +1497,14 @@ class ProviderFallbackManager(
                         }
                     }
                 }
+            } catch (tce: TimeoutCancellationException) {
+                val timeoutErr = SocketTimeoutException("Utility çağrısı zaman aşımına uğradı ($providerKey)")
+                lastError = timeoutErr
+                ProviderHealthTracker.recordFailure(
+                    providerKey = providerKey,
+                    failureType = ProviderFailureType.SERVER_OR_TIMEOUT,
+                    errorMessage = timeoutErr.message ?: "Utility zaman aşımı"
+                )
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
@@ -1568,7 +1633,7 @@ class ProviderFallbackManager(
             customEntity != null -> {
                 val cleanBase = customEntity.baseUrl.trim().trimEnd('/')
                 apiKey = decryptCustomApiKey(customEntity.apiKeyEncrypted)
-                val fmt = customEntity.apiFormat.lowercase().trim()
+                val fmt = customEntity.apiFormat.lowercase(Locale.ROOT).trim()
                 if (fmt == "anthropic" || cleanBase.contains("anthropic.com")) {
                     format = "anthropic"
                     url = resolveAnthropicMessagesUrl(cleanBase)
@@ -1747,7 +1812,7 @@ class ProviderFallbackManager(
         val startMs = System.currentTimeMillis()
         try {
             val cleanUrl = url.trim().trimEnd('/')
-            val format = apiFormat.lowercase().trim()
+            val format = apiFormat.lowercase(Locale.ROOT).trim()
 
             // 1. Google Gemini native REST test
             if (format == "gemini" || cleanUrl.contains("generativelanguage.googleapis.com")) {
@@ -1800,8 +1865,10 @@ class ProviderFallbackManager(
                         EmochiRepository.ProviderTestResult(
                             isSuccess = false,
                             supportsFunctionCalling = false,
-                            errorMessage = com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr),
-                            rawResponse = bodyStr,
+                            errorMessage = SecureApiKeyVault.redactSecrets(
+                                com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr)
+                            ),
+                            rawResponse = SecureApiKeyVault.redactSecrets(bodyStr).take(300),
                             latencyMs = latency
                         )
                     }
@@ -1850,8 +1917,10 @@ class ProviderFallbackManager(
                         EmochiRepository.ProviderTestResult(
                             isSuccess = false,
                             supportsFunctionCalling = false,
-                            errorMessage = com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr),
-                            rawResponse = bodyStr,
+                            errorMessage = SecureApiKeyVault.redactSecrets(
+                                com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr)
+                            ),
+                            rawResponse = SecureApiKeyVault.redactSecrets(bodyStr).take(300),
                             latencyMs = latency
                         )
                     }
@@ -1915,8 +1984,10 @@ class ProviderFallbackManager(
                     return@withContext EmochiRepository.ProviderTestResult(
                         isSuccess = false,
                         supportsFunctionCalling = false,
-                        errorMessage = com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr),
-                        rawResponse = bodyStr,
+                        errorMessage = SecureApiKeyVault.redactSecrets(
+                            com.example.util.ApiErrorFormatter.formatHttpError(resp.code, bodyStr)
+                        ),
+                        rawResponse = SecureApiKeyVault.redactSecrets(bodyStr).take(300),
                         latencyMs = latency
                     )
                 }
@@ -1927,15 +1998,19 @@ class ProviderFallbackManager(
                     isSuccess = true,
                     supportsFunctionCalling = testTools,
                     errorMessage = "",
-                    rawResponse = bodyStr.take(300),
+                    rawResponse = SecureApiKeyVault.redactSecrets(bodyStr).take(300),
                     latencyMs = latency
                 )
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (e: Exception) {
             EmochiRepository.ProviderTestResult(
                 isSuccess = false,
                 supportsFunctionCalling = false,
-                errorMessage = com.example.util.ApiErrorFormatter.formatException(e),
+                errorMessage = SecureApiKeyVault.redactSecrets(
+                    com.example.util.ApiErrorFormatter.formatException(e)
+                ),
                 latencyMs = System.currentTimeMillis() - startMs
             )
         }
@@ -2037,9 +2112,11 @@ class ProviderFallbackManager(
         return arr
     }
 
-    private fun inferKnownProviderKey(url: String): String? {
-        val lower = url.lowercase()
+    internal fun inferKnownProviderKey(url: String): String? {
+        val lower = url.trim().lowercase(Locale.ROOT)
         return when {
+            lower.contains("generativelanguage.googleapis.com") -> "gemini"
+            lower.contains("api.anthropic.com") -> "claude"
             lower.contains("api.groq.com") -> "groq"
             lower.contains("api.openai.com") -> "openai"
             lower.contains("openrouter.ai") -> "openrouter"
@@ -2077,6 +2154,8 @@ class ProviderFallbackManager(
                 val body = resp.body?.string().orEmpty().trim()
                 parseActiveChatModelsFromJson(body)
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptyList<String>()
         }
@@ -2104,11 +2183,7 @@ class ProviderFallbackManager(
             key == "ovh" -> fetchModelsFromOpenAiCompatibleEndpoint("https://oai.endpoints.kepler.ai.cloud.ovh.net/v1", "")
             key == "llm7" -> fetchModelsFromOpenAiCompatibleEndpoint("https://api.llm7.io/v1", "")
             customEntity != null -> {
-                val decrypted = try {
-                    com.example.util.KeystoreEncryptionManager.decrypt(customEntity.apiKeyEncrypted).trim()
-                } catch (_: Exception) {
-                    com.example.util.SecureApiKeyVault.decrypt(customEntity.apiKeyEncrypted).trim()
-                }
+                val decrypted = decryptCustomApiKey(customEntity.apiKeyEncrypted)
                 if (customEntity.apiFormat.equals("gemini", ignoreCase = true) ||
                     customEntity.baseUrl.contains("generativelanguage.googleapis.com", ignoreCase = true)
                 ) {
@@ -2159,6 +2234,8 @@ class ProviderFallbackManager(
                 }
                 list.sorted()
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptyList()
         }

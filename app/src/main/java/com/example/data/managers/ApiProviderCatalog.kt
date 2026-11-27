@@ -2,6 +2,7 @@ package com.example.data.managers
 
 import com.example.data.local.CustomProviderEntity
 import com.example.data.local.UserSettingsEntity
+import java.util.Locale
 
 enum class ApiCatalogCategory(val label: String) {
     ALL("Tümü"),
@@ -518,8 +519,71 @@ object ApiProviderCatalog {
         )
     )
 
-    fun findById(id: String): CatalogProviderSpec? =
-        catalogProviders.firstOrNull { it.id.equals(id, ignoreCase = true) || it.builtinSlot.equals(id, ignoreCase = true) }
+    fun findById(id: String): CatalogProviderSpec? {
+        val clean = id.trim().lowercase(Locale.ROOT)
+        if (clean.isEmpty()) return null
+        return catalogProviders.firstOrNull {
+            it.id.lowercase(Locale.ROOT) == clean || it.builtinSlot?.lowercase(Locale.ROOT) == clean
+        }
+    }
+
+    fun findFreeKeylessById(id: String): FreeKeylessProviderSpec? {
+        val clean = id.trim().lowercase(Locale.ROOT)
+        if (clean.isEmpty()) return null
+        return freeKeylessProviders.firstOrNull { it.id.lowercase(Locale.ROOT) == clean }
+    }
+
+    fun isReasoningOrThinkingModel(modelId: String): Boolean {
+        val lower = modelId.trim().lowercase(Locale.ROOT)
+        if (lower.isEmpty()) return false
+        return lower.contains("deepseek-r1") ||
+            lower.contains("reasoner") ||
+            lower.contains("thinking") ||
+            lower.contains("qwq") ||
+            lower.startsWith("o1") ||
+            lower.startsWith("o3") ||
+            lower.contains("/o1") ||
+            lower.contains("/o3")
+    }
+
+    fun estimateContextWindowTokens(modelId: String): Int {
+        val lower = modelId.trim().lowercase(Locale.ROOT)
+        if (lower.isEmpty()) return 32_768
+        return when {
+            lower.contains("gemini-2.") || lower.contains("gemini-1.5") || lower.contains("gpt-4.1") -> 1_000_000
+            lower.contains("claude-3") || lower.contains("claude-sonnet-4") || lower.contains("claude-opus-4") -> 200_000
+            lower.contains("moonshot-v1-8k") -> 8_192
+            lower.contains("moonshot-v1-32k") -> 32_768
+            lower.contains("gpt-4o") ||
+                lower.contains("o3") ||
+                lower.contains("llama-3.3") ||
+                lower.contains("llama-3.1") ||
+                lower.contains("deepseek") ||
+                lower.contains("qwen") ||
+                lower.contains("mistral") ||
+                lower.contains("grok-3") ||
+                lower.contains("command-a") ||
+                lower.contains("command-r") ||
+                lower.contains("kimi-k2") ||
+                lower.contains("glm-4") -> 128_000
+            else -> 32_768
+        }
+    }
+
+    fun pickPreferredUtilityModel(models: List<String>, fallbackDefault: String): String {
+        val cleaned = models.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        val safeFallback = fallbackDefault.trim()
+        if (cleaned.isEmpty()) return safeFallback
+        val nonReasoning = cleaned.filterNot { isReasoningOrThinkingModel(it) }
+        val pool = if (nonReasoning.isNotEmpty()) nonReasoning else cleaned
+
+        val preferredHints = listOf("flash-lite", "flash", "mini", "haiku", "small", "turbo", "8b", "9b", "20b", "12b", "14b", "32b")
+        for (hint in preferredHints) {
+            val match = pool.firstOrNull { it.lowercase(Locale.ROOT).contains(hint) }
+            if (match != null) return match
+        }
+        return pool.firstOrNull() ?: safeFallback
+    }
 }
 
 /**
@@ -541,7 +605,10 @@ object ApiPriorityCodec {
             trimmed.isBlank() -> false
             else -> {
                 // Backward compatibility with legacy chain string
-                val first = trimmed.split(",").firstOrNull { it.isNotBlank() }?.trim()?.lowercase()
+                val first = trimmed.split(",")
+                    .firstOrNull { it.isNotBlank() }
+                    ?.trim()
+                    ?.lowercase(Locale.ROOT)
                 first in ApiProviderCatalog.FREE_KEYLESS_IDS
             }
         }
@@ -555,7 +622,7 @@ object ApiPriorityCodec {
             else -> trimmed
         }
         return body.split(",")
-            .map { it.trim().lowercase() }
+            .map { it.trim().lowercase(Locale.ROOT) }
             .filter {
                 it.isNotBlank() &&
                     it != "main" &&
@@ -568,7 +635,7 @@ object ApiPriorityCodec {
     fun encode(freeFirst: Boolean, orderedApiKeys: List<String>): String {
         val prefix = if (freeFirst) PREFIX_FREE_ON else PREFIX_FREE_OFF
         val cleanList = orderedApiKeys
-            .map { it.trim().lowercase() }
+            .map { it.trim().lowercase(Locale.ROOT) }
             .filter {
                 it.isNotBlank() &&
                     it != "main" &&
@@ -579,7 +646,7 @@ object ApiPriorityCodec {
         return prefix + cleanList.joinToString(",")
     }
 
-    fun isBuiltinConfigured(slot: String, settings: UserSettingsEntity): Boolean = when (slot.lowercase()) {
+    fun isBuiltinConfigured(slot: String, settings: UserSettingsEntity): Boolean = when (slot.trim().lowercase(Locale.ROOT)) {
         "gemini" -> settings.customApiKey.isNotBlank()
         "groq" -> settings.groqApiKey.isNotBlank()
         "openai" -> settings.openaiApiKey.isNotBlank()
@@ -617,7 +684,7 @@ object ApiPriorityCodec {
         }
 
         // 2. If user had a selectedProvider that's configured and wasn't in savedOrder, place it next
-        val selected = settings.selectedProvider.lowercase().trim()
+        val selected = settings.selectedProvider.trim().lowercase(Locale.ROOT)
         if (selected in configuredSet && selected !in result) {
             result.add(selected)
         }

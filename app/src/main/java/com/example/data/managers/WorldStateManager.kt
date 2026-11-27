@@ -95,8 +95,8 @@ class WorldStateManager(
     private fun normalizeRoutineText(raw: String): String = raw
         .trim()
         .lowercase(turkishLocale)
-        .replace(Regex("""[^\p{L}\p{N}\s]"""), " ")
-        .replace(Regex("""\s+"""), " ")
+        .replace(NON_WORD_SPACE_REGEX, " ")
+        .replace(MULTI_SPACE_REGEX, " ")
         .trim()
 
     suspend fun getWorldState(botId: String): WorldState? = withContext(Dispatchers.IO) {
@@ -117,19 +117,12 @@ class WorldStateManager(
         val combinedText = "$personality\n$scenario".trim()
         if (combinedText.isBlank()) return@withContext emptyList()
 
-        val wbL = """(?<![\p{L}\p{N}])"""
-        val wbR = """(?![\p{L}\p{N}])"""
-        val routinePatterns = listOf(
-            Regex("""(?iu)([^\n.!?]*?${wbL}her\s+(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)${wbR}[^\n.!?]*[.!?]?)"""),
-            Regex("""(?iu)([^\n.!?]*?${wbL}(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\s+(?:günleri|sabahları|akşamları|geceleri)${wbR}[^\n.!?]*[.!?]?)"""),
-            Regex("""(?iu)([^\n.!?]*?${wbL}(?:her\s+sabah|sabahları|her\s+akşam|akşamları|her\s+gece|geceleri|her\s+gün|her\s+hafta|düzenli\s+olarak|alışkanlık\s+olarak)${wbR}[^\n.!?]*[.!?]?)""")
-        )
         val existingRoutines = routineDao.getRoutinesForBot(botId)
         val existingByNorm = existingRoutines.associateBy { normalizeRoutineText(it.routineDescription) }.toMutableMap()
         val extracted = mutableListOf<RoutineEntity>()
         val seenNorms = mutableSetOf<String>()
 
-        for (pattern in routinePatterns) {
+        for (pattern in ROUTINE_PATTERNS) {
             for (match in pattern.findAll(combinedText)) {
                 val sentence = match.groupValues[1].trim()
                 if (sentence.length < 10) continue
@@ -227,6 +220,47 @@ class WorldStateManager(
 
     companion object {
         const val MAX_GRAPH_DEPTH = 4
+
+        private const val WB_L = """(?<![\p{L}\p{N}])"""
+        private const val WB_R = """(?![\p{L}\p{N}])"""
+        private const val NAME_EXPR = """(?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})?"""
+
+        private val NON_WORD_SPACE_REGEX = Regex("""[^\p{L}\p{N}\s]""")
+        private val MULTI_SPACE_REGEX = Regex("""\s+""")
+        private val TRAILING_ENTITY_PUNCT_REGEX = Regex("""[?.!,;:"'()]+$""")
+        private val TRAILING_REL_PUNCT_REGEX = Regex("""[?.!,;:]+$""")
+        private val NICK_REGEX = Regex("""[("«]([\p{L}\s]{2,24})[)"»]""")
+
+        private val ROUTINE_PATTERNS = listOf(
+            Regex("""(?iu)([^\n.!?]*?${WB_L}her\s+(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)${WB_R}[^\n.!?]*[.!?]?)"""),
+            Regex("""(?iu)([^\n.!?]*?${WB_L}(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\s+(?:günleri|sabahları|akşamları|geceleri)${WB_R}[^\n.!?]*[.!?]?)"""),
+            Regex("""(?iu)([^\n.!?]*?${WB_L}(?:her\s+sabah|sabahları|her\s+akşam|akşamları|her\s+gece|geceleri|her\s+gün|her\s+hafta|düzenli\s+olarak|alışkanlık\s+olarak)${WB_R}[^\n.!?]*[.!?]?)""")
+        )
+
+        private val POSSESSIVE_REL_PATTERN = Regex(
+            """${WB_L}($NAME_EXPR)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+((?:en\s+yakın\s+|eski\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|arkadaşı|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|hocası|eşi|müttefiki|kılıcı))\s+($NAME_EXPR)(?:['’][a-zçğıöşü]+)?"""
+        )
+
+        private val APPOSITIVE_REL_PATTERN = Regex(
+            """${WB_L}($NAME_EXPR)(?:['’][a-zçğıöşü]+)?\s+($NAME_EXPR)\s+(?:adlı\s+)?((?:eski\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|müttefiki))${WB_R}"""
+        )
+
+        private val MUTUAL_REL_PATTERN = Regex(
+            """${WB_L}($NAME_EXPR)\s+ile\s+($NAME_EXPR)\s+(kardeş|ortak|dost|arkadaş|müttefik|evli|sevgili|düşman|rakip)${WB_R}"""
+        )
+
+        private val POSSESSIVE_START_REGEX = Regex(
+            """${WB_L}((?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[\p{L}]{2,24}(?:\s+[\p{L}]{2,24})?)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+(.+)""",
+            RegexOption.IGNORE_CASE
+        )
+
+        private val QUESTION_TAIL_REGEX = Regex(
+            """(?iu)${WB_L}(?:kimdir|kimdi|kim|nedir|neydi|ne|nerede|neredeydi|hangisi|var\s+mı|ilişkisi\s+var)${WB_R}.*$"""
+        )
+
+        private val STEP_REGEX = Regex(
+            """(?iu)(en\s+yakın\s+arkadaş[\p{L}]+|eski\s+(?:patron|sevgili|eş)[\p{L}]*|yaşadığı\s+yer[\p{L}]*|sahip\s+olduğu[\p{L}]*|[\p{L}]{3,})"""
+        )
     }
 
     /**
@@ -237,21 +271,21 @@ class WorldStateManager(
         var s = raw.trim()
             .replace("’", "'")
             .replace("`", "'")
-            .replace(Regex("""[?.!,;:"'()]+$"""), "")
+            .replace(TRAILING_ENTITY_PUNCT_REGEX, "")
             .trim()
         if (s.isBlank()) return ""
         val apostropheIdx = s.indexOf('\'')
         if (apostropheIdx >= 2) {
             s = s.substring(0, apostropheIdx).trim()
         }
-        return s.lowercase(turkishLocale).replace(Regex("""\s+"""), " ").trim()
+        return s.lowercase(turkishLocale).replace(MULTI_SPACE_REGEX, " ").trim()
     }
 
     private fun normalizeRelationStep(raw: String): String {
         var s = raw.trim().lowercase(turkishLocale)
             .replace("’", "'")
-            .replace(Regex("""[?.!,;:]+$"""), "")
-            .replace(Regex("""\s+"""), " ")
+            .replace(TRAILING_REL_PUNCT_REGEX, "")
+            .replace(MULTI_SPACE_REGEX, " ")
             .trim()
         // Strip Turkish genitive/possessive chain suffixes: "kardeşinin" -> "kardeşi", "ortağının" -> "ortağı"
         s = when {
@@ -405,26 +439,29 @@ class WorldStateManager(
             }
         }
 
-        // 3. Same source + same relationType conflict check (update target when newer/higher confidence)
-        val conflicting = existingRelations.firstOrNull {
-            normalizeGraphEntity(it.sourceEntityName) == normSource &&
-                normalizeRelationStep(it.relationType) == cleanRel
-        }
-        if (conflicting != null &&
-            (confidenceRank(confidence) > confidenceRank(conflicting.confidence) ||
-                (confidenceRank(confidence) == confidenceRank(conflicting.confidence) &&
-                    currentMessageIndex >= conflicting.createdAtMessageIndex)) &&
-            (isExclusiveRelation(cleanRel) || conflicting.createdAtMessageIndex <= currentMessageIndex)
-        ) {
-            val targetEntity = entityRegistryDao.findByName(botId, cleanTarget)
-            val updated = conflicting.copy(
-                targetEntityId = targetEntity?.id ?: conflicting.targetEntityId,
-                targetEntityName = cleanTarget,
-                confidence = confidence,
-                createdAtMessageIndex = currentMessageIndex
-            )
-            entityRelationDao.updateRelation(updated)
-            return@withContext updated
+        // 3. Exclusive single-target relation conflict check (e.g. sevgilisi, eşi, patronu, yaşadığı yer)
+        // Multi-valued relations (arkadaşı, kardeşi, müttefiki, düşmanı, ortağı) preserve multiple distinct targets
+        // while traverseRelationGraph still prefers the newest / highest-confidence edge first.
+        if (isExclusiveRelation(cleanRel)) {
+            val conflicting = existingRelations.firstOrNull {
+                normalizeGraphEntity(it.sourceEntityName) == normSource &&
+                    normalizeRelationStep(it.relationType) == cleanRel
+            }
+            if (conflicting != null &&
+                (confidenceRank(confidence) > confidenceRank(conflicting.confidence) ||
+                    (confidenceRank(confidence) == confidenceRank(conflicting.confidence) &&
+                        currentMessageIndex >= conflicting.createdAtMessageIndex))
+            ) {
+                val targetEntity = entityRegistryDao.findByName(botId, cleanTarget)
+                val updated = conflicting.copy(
+                    targetEntityId = targetEntity?.id ?: conflicting.targetEntityId,
+                    targetEntityName = cleanTarget,
+                    confidence = confidence,
+                    createdAtMessageIndex = currentMessageIndex
+                )
+                entityRelationDao.updateRelation(updated)
+                return@withContext updated
+            }
         }
 
         val sourceEntity = entityRegistryDao.findByName(botId, cleanSource)
@@ -464,14 +501,8 @@ class WorldStateManager(
             )?.let { saved.add(it) }
         }
 
-        // Supports single names ("Ahmet"), multi-word names ("Kerem Aydın"), and titled names ("Dr. Kerem")
-        val nameExpr = """(?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğıöşü]{1,22})?"""
-
         // Pattern 1: "Ahmet'in kardeşi Mehmet'tir." / "Dr. Kerem'in eski patronu Leyla Aydın'dır."
-        val possessivePattern = Regex(
-            """(?<![\p{L}\p{N}])($nameExpr)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+((?:en\s+yakın\s+|eski\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|arkadaşı|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|hocası|eşi|müttefiki|kılıcı))\s+($nameExpr)(?:['’][a-zçğıöşü]+)?"""
-        )
-        for (match in possessivePattern.findAll(text)) {
+        for (match in POSSESSIVE_REL_PATTERN.findAll(text)) {
             saveEdge(
                 sourceName = match.groupValues[1],
                 relType = match.groupValues[2],
@@ -481,10 +512,7 @@ class WorldStateManager(
         }
 
         // Pattern 2: "Ahmet'in Mehmet adlı kardeşi"
-        val appositivePattern = Regex(
-            """(?<![\p{L}\p{N}])($nameExpr)(?:['’][a-zçğıöşü]+)?\s+($nameExpr)\s+(?:adlı\s+)?((?:eski\s+)?(?:kardeşi|ablası|abisi|babası|annesi|ortağı|avukatı|doktoru|dostu|sevgilisi|düşmanı|rakibi|patronu|asistanı|müttefiki))(?![\p{L}\p{N}])"""
-        )
-        for (match in appositivePattern.findAll(text)) {
+        for (match in APPOSITIVE_REL_PATTERN.findAll(text)) {
             saveEdge(
                 sourceName = match.groupValues[1],
                 relType = match.groupValues[3],
@@ -505,10 +533,7 @@ class WorldStateManager(
             "düşman" to "düşmanı",
             "rakip" to "rakibi"
         )
-        val mutualPattern = Regex(
-            """(?<![\p{L}\p{N}])($nameExpr)\s+ile\s+($nameExpr)\s+(kardeş|ortak|dost|arkadaş|müttefik|evli|sevgili|düşman|rakip)(?![\p{L}\p{N}])"""
-        )
-        for (match in mutualPattern.findAll(text)) {
+        for (match in MUTUAL_REL_PATTERN.findAll(text)) {
             val left = match.groupValues[1]
             val right = match.groupValues[2]
             val canonicalRel = mutualCanonical[match.groupValues[3].lowercase(turkishLocale)] ?: match.groupValues[3]
@@ -692,12 +717,28 @@ class WorldStateManager(
                 return member.name
             }
             // Also check parenthesized/quoted nicknames inside member.description
-            val nickRegex = Regex("""[("«]([\p{L}\s]{2,24})[)"»]""")
-            val descAliasMatch = nickRegex.findAll(member.description)
+            val descAliasMatch = NICK_REGEX.findAll(member.description)
                 .any { normalizeGraphEntity(it.groupValues[1]) == norm }
             if (descAliasMatch) return member.name
         }
         return rawStart.trim()
+    }
+
+    private fun containsWholeEntityToken(haystackLower: String, entityNorm: String): Boolean {
+        if (entityNorm.length < 2) return false
+        var idx = haystackLower.indexOf(entityNorm)
+        while (idx >= 0) {
+            val leftOk = idx == 0 || !haystackLower[idx - 1].isLetterOrDigit()
+            val afterIdx = idx + entityNorm.length
+            val rightOk = if (entityNorm.length <= 3) {
+                afterIdx >= haystackLower.length || !haystackLower[afterIdx].isLetterOrDigit()
+            } else {
+                true
+            }
+            if (leftOk && rightOk) return true
+            idx = haystackLower.indexOf(entityNorm, idx + entityNorm.length)
+        }
+        return false
     }
 
     suspend fun detectAndResolveGraphQuery(
@@ -712,24 +753,17 @@ class WorldStateManager(
         if (allRelations.isEmpty()) return@withContext null
 
         // 1. Possessive chain query: "Aiden'ın kardeşinin eski patronu kimdi?" / "elif'in ablası kim?"
-        val possessiveStartRegex = Regex(
-            """(?<![\p{L}\p{N}])((?:(?:Dr\.|Prof\.|Bay|Bayan|Komiser|Kaptan)\s+)?[\p{L}]{2,24}(?:\s+[\p{L}]{2,24})?)['’](?:ın|in|un|ün|nın|nin|nun|nün)\s+(.+)""",
-            RegexOption.IGNORE_CASE
-        )
-        val startMatch = possessiveStartRegex.find(trimmed)
+        val startMatch = POSSESSIVE_START_REGEX.find(trimmed)
         if (startMatch != null) {
             val rawStart = startMatch.groupValues[1].trim()
             val startEntity = resolveAliasToCanonicalEntity(rawStart, castMembers)
             val remainder = startMatch.groupValues[2]
-                .replace(Regex("""(?i)\b(kimdir|kimdi|kim|nedir|neydi|ne|nerede|neredeydi|hangisi|var mı|ilişkisi var)\b.*$"""), "")
-                .replace(Regex("""[?.!,;:]+$"""), "")
+                .replace(QUESTION_TAIL_REGEX, "")
+                .replace(TRAILING_REL_PUNCT_REGEX, "")
                 .trim()
             if (remainder.isNotBlank()) {
                 val steps = mutableListOf<String>()
-                val stepRegex = Regex(
-                    """(?i)(en\s+yakın\s+arkadaş[\p{L}]+|eski\s+(?:patron|sevgili|eş)[\p{L}]*|yaşadığı\s+yer[\p{L}]*|sahip\s+olduğu[\p{L}]*|[\p{L}]{3,})"""
-                )
-                for (m in stepRegex.findAll(remainder)) {
+                for (m in STEP_REGEX.findAll(remainder)) {
                     val token = normalizeRelationStep(m.value)
                     if (token.isNotBlank() && token !in setOf("ve", "ile", "bir", "bu", "şu", "o", "mi", "mı", "mu", "mü", "hakkında", "acaba", "peki")) {
                         steps.add(token)
@@ -742,13 +776,31 @@ class WorldStateManager(
             }
         }
 
-        // 2. General two-entity relation query: "Aiden ile Vaelor'un ne ilişkisi var?"
+        // 2. General two-entity relation query: "Aiden ile Vaelor'un ne ilişkisi var?" (also supports stored cast aliases)
         val queryNorm = trimmed.lowercase(turkishLocale)
         val knownNodes = (allRelations.map { it.sourceEntityName } + allRelations.map { it.targetEntityName })
             .distinctBy { normalizeGraphEntity(it) }
-        val mentionedNodes = knownNodes.filter { node ->
+        val mentionedNodes = mutableListOf<String>()
+        val mentionedNorms = mutableSetOf<String>()
+        for (node in knownNodes) {
             val norm = normalizeGraphEntity(node)
-            norm.length >= 2 && queryNorm.contains(norm)
+            if (containsWholeEntityToken(queryNorm, norm) && mentionedNorms.add(norm)) {
+                mentionedNodes.add(node)
+            }
+        }
+        // Also resolve cast aliases mentioned in query (e.g. "Kızıl Ajan" -> "Natasha Romanoff")
+        if (mentionedNodes.size < 2 && castMembers.isNotEmpty()) {
+            val knownByNorm = knownNodes.associateBy { normalizeGraphEntity(it) }
+            for (member in castMembers) {
+                val canonNorm = normalizeGraphEntity(member.name)
+                val graphNode = knownByNorm[canonNorm] ?: continue
+                if (canonNorm in mentionedNorms) continue
+                val aliases = com.example.data.repository.CastDetectorEngine.extractStoredAliases(member.multiRoleJson)
+                if (aliases.any { containsWholeEntityToken(queryNorm, normalizeGraphEntity(it)) }) {
+                    mentionedNorms.add(canonNorm)
+                    mentionedNodes.add(graphNode)
+                }
+            }
         }
         if (mentionedNodes.size >= 2 &&
             (queryNorm.contains("ilişki") || queryNorm.contains("kim") || queryNorm.contains("bağ") || queryNorm.contains("ne"))
