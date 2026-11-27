@@ -8,9 +8,12 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -25,6 +28,35 @@ object AppUpdateManager {
 
     const val RELEASES_REPO = "ademelwlaaa-byte/Asroda-Releases"
     const val LATEST_RELEASE_API_URL = "https://api.github.com/repos/$RELEASES_REPO/releases/latest"
+    internal const val MAX_APK_DOWNLOAD_BYTES = 350L * 1024L * 1024L
+
+    /** Verifies HTTPS scheme for APK download & every redirect hop (prevents MITM HTTP downgrade). */
+    internal fun resolveAndValidateHttpsRedirect(currentUrl: String, locationHeader: String?): String {
+        val loc = locationHeader?.trim().orEmpty()
+        if (loc.isBlank()) throw IllegalStateException("Yönlendirme adresi boş.")
+        val resolved = URL(URL(currentUrl), loc).toString()
+        if (!resolved.startsWith("https://", ignoreCase = true)) {
+            throw SecurityException("Güvensiz HTTP yönlendirmesi engellendi.")
+        }
+        return resolved
+    }
+
+    /** Verifies ZIP/APK magic header (`PK\x03\x04`) so HTML error pages are never handed to the installer. */
+    internal fun hasValidApkZipHeader(file: File): Boolean {
+        if (!file.exists() || !file.isFile || file.length() < 4L) return false
+        return try {
+            val header = ByteArray(4)
+            FileInputStream(file).use { input ->
+                if (input.read(header) != 4) return false
+            }
+            header[0] == 0x50.toByte() &&
+                header[1] == 0x4B.toByte() &&
+                header[2] == 0x03.toByte() &&
+                header[3] == 0x04.toByte()
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     data class ReleaseInfo(
         val tagName: String,
@@ -145,25 +177,29 @@ object AppUpdateManager {
         // Clean older cached update APKs before downloading
         updatesDir.listFiles()?.forEach { old -> try { old.delete() } catch (_: Throwable) {} }
 
-        val safeTag = release.tagName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val safeTag = release.tagName.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "latest" }
         val targetFile = File(updatesDir, "Asroda-$safeTag.apk")
+        val tmpFile = File(updatesDir, "Asroda-$safeTag.${java.util.UUID.randomUUID().toString().take(8)}.tmp")
         var conn: HttpURLConnection? = null
         try {
-            var currentUrl = release.apkDownloadUrl
+            var currentUrl = release.apkDownloadUrl.trim()
+            if (!currentUrl.startsWith("https://", ignoreCase = true)) {
+                throw SecurityException("APK indirme bağlantısı HTTPS olmalıdır.")
+            }
             var redirects = 0
             while (redirects < 6) {
+                currentCoroutineContext().ensureActive()
                 val c = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15_000
                     readTimeout = 30_000
-                    instanceFollowRedirects = true
+                    instanceFollowRedirects = false // Handle redirects manually to enforce HTTPS on every hop
                     setRequestProperty("User-Agent", "Asroda-Updater/12.0")
                 }
                 val code = c.responseCode
                 if (code in 300..399) {
                     val loc = c.getHeaderField("Location")
                     c.disconnect()
-                    if (loc.isNullOrBlank()) throw IllegalStateException("Yönlendirme adresi boş.")
-                    currentUrl = loc
+                    currentUrl = resolveAndValidateHttpsRedirect(currentUrl, loc)
                     redirects++
                 } else if (code in 200..299) {
                     conn = c
@@ -175,31 +211,45 @@ object AppUpdateManager {
             }
             val activeConn = conn ?: throw IllegalStateException("APK indirme bağlantısı kurulamadı.")
             val total = activeConn.contentLengthLong.takeIf { it > 0L } ?: release.apkSizeBytes
+            if (total > MAX_APK_DOWNLOAD_BYTES) {
+                throw IllegalStateException("APK boyutu güvenlik sınırını aşıyor.")
+            }
 
             activeConn.inputStream.use { input ->
-                FileOutputStream(targetFile).use { output ->
+                FileOutputStream(tmpFile).use { output ->
                     val buf = ByteArray(16 * 1024)
                     var downloaded = 0L
                     var lastReport = 0L
                     while (true) {
+                        currentCoroutineContext().ensureActive()
                         val read = input.read(buf)
                         if (read <= 0) break
-                        output.write(buf, 0, read)
                         downloaded += read
+                        if (downloaded > MAX_APK_DOWNLOAD_BYTES) {
+                            throw IllegalStateException("APK indirme boyutu güvenlik sınırını aştı.")
+                        }
+                        output.write(buf, 0, read)
                         val now = System.currentTimeMillis()
                         if (now - lastReport >= 100L) {
                             lastReport = now
                             onProgress(downloaded, total)
                         }
                     }
+                    output.flush()
                     onProgress(downloaded, if (total > 0L) total else downloaded)
                 }
             }
-            if (!targetFile.exists() || targetFile.length() < 100_000L) {
+            if (!tmpFile.exists() || tmpFile.length() < 100_000L || !hasValidApkZipHeader(tmpFile)) {
                 throw IllegalStateException("İndirilen APK dosyası eksik veya bozuk.")
+            }
+            if (targetFile.exists()) targetFile.delete()
+            if (!tmpFile.renameTo(targetFile)) {
+                tmpFile.copyTo(targetFile, overwrite = true)
+                tmpFile.delete()
             }
             Result.success(targetFile)
         } catch (t: Throwable) {
+            try { if (tmpFile.exists()) tmpFile.delete() } catch (_: Throwable) {}
             try { if (targetFile.exists()) targetFile.delete() } catch (_: Throwable) {}
             if (t is CancellationException) throw t
             Result.failure(t)

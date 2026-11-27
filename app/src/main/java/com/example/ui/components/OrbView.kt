@@ -1,13 +1,14 @@
 package com.example.ui.components
 
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -18,28 +19,47 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.LocalCosmicMotionPolicy
+import com.example.ui.animation.rememberCosmicPhaseState
+import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.sin
 
+private val OrbSpecColors = listOf(
+    Color.White.copy(alpha = 0.70f),
+    Color.White.copy(alpha = 0.20f),
+    Color.Transparent
+)
+
+private val OrbTrLocale: Locale = Locale.forLanguageTag("tr-TR")
+
+internal fun normalizeOrbHue(hue: Float): Float {
+    if (!hue.isFinite()) return 200f
+    return ((hue % 360f) + 360f) % 360f
+}
+
 object MoodColors {
     fun getMoodHue(mood: String): Float {
-        return when (mood.lowercase()) {
-            "joy", "neşeli" -> 38f
-            "warm", "sıcak" -> 340f
-            "sad", "hüzünlü" -> 250f
+        val norm = mood.trim().lowercase(OrbTrLocale)
+        return when (norm) {
+            "joy", "neşeli", "neseli" -> 38f
+            "warm", "sıcak", "sicak" -> 340f
+            "sad", "hüzünlü", "huzunlu" -> 250f
             "tense", "gergin" -> 8f
-            "curious", "meraklı" -> 275f
+            "curious", "meraklı", "merakli" -> 275f
             else -> 200f
         }
     }
 
     fun getMoodLabel(mood: String): String {
-        return when (mood.lowercase()) {
-            "joy" -> "neşeli"
-            "warm" -> "sıcak"
-            "sad" -> "hüzünlü"
-            "tense" -> "gergin"
-            "curious" -> "meraklı"
+        val norm = mood.trim().lowercase(OrbTrLocale)
+        return when (norm) {
+            "joy", "neşeli", "neseli" -> "neşeli"
+            "warm", "sıcak", "sicak" -> "sıcak"
+            "sad", "hüzünlü", "huzunlu" -> "hüzünlü"
+            "tense", "gergin" -> "gergin"
+            "curious", "meraklı", "merakli" -> "meraklı"
             else -> "sakin"
         }
     }
@@ -51,26 +71,30 @@ fun OrbView(
     size: Dp = 48.dp,
     modifier: Modifier = Modifier
 ) {
-    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
-    val motionPolicy = com.example.ui.animation.LocalCosmicMotionPolicy.current
-    val animatedHue by androidx.compose.animation.core.animateFloatAsState(
-        targetValue = hue,
-        animationSpec = tween(if (motionPolicy.shouldUseQuickTransitions) 140 else 420, easing = FastOutSlowInEasing),
+    val motionConfig = LocalCosmicMotionConfig.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
+    val animatedHueState = animateFloatAsState(
+        targetValue = normalizeOrbHue(hue),
+        animationSpec = tween(
+            durationMillis = if (motionPolicy.shouldUseQuickTransitions) 140 else 420,
+            easing = FastOutSlowInEasing
+        ),
         label = "orbHueMorph"
     )
 
+    // Draw-phase-only State<Float> animation drivers -> 0 FPS root recomposition!
     val allowAmbient = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
-    val rotationAngle = com.example.ui.animation.rememberCosmicPhase(
+    val rotationAngleState = rememberCosmicPhaseState(
         durationMs = 8000,
         initialValue = 0f,
         targetValue = 360f,
         staticValue = 24f,
         repeatMode = RepeatMode.Restart,
-        easing = androidx.compose.animation.core.LinearEasing,
+        easing = LinearEasing,
         label = "orbRotation",
         enabled = allowAmbient
     )
-    val pulseAlpha = com.example.ui.animation.rememberCosmicPhase(
+    val pulseAlphaState = rememberCosmicPhaseState(
         durationMs = 1800,
         initialValue = 0.55f,
         targetValue = 0.95f,
@@ -80,7 +104,7 @@ fun OrbView(
         label = "orbPulse",
         enabled = allowAmbient
     )
-    val innerPulse = com.example.ui.animation.rememberCosmicPhase(
+    val innerPulseState = rememberCosmicPhaseState(
         durationMs = 2400,
         initialValue = 0.70f,
         targetValue = 1.0f,
@@ -91,42 +115,52 @@ fun OrbView(
         enabled = allowAmbient
     )
 
-    val safeHue = ((animatedHue % 360f) + 360f) % 360f
-    val coreColor      = Color.hsl(safeHue, 0.90f, 0.78f)
-    val midColor       = Color.hsl(safeHue, 0.80f, 0.55f)
-    val outerColor     = Color.hsl(safeHue, 0.70f, 0.35f)
-    val darkEdge       = Color.hsl(safeHue, 0.60f, 0.12f)
-    val complementHue  = (safeHue + 180f) % 360f
-    val nebulaColor    = Color.hsl(complementHue, 0.75f, 0.60f, alpha = 0.35f)
-    val analogHue      = (safeHue + 60f) % 360f
-    val swirl1         = Color.hsl(analogHue, 0.85f, 0.65f, alpha = 0.30f)
-    val ringColor      = Color.hsl(safeHue, 0.95f, 0.80f, alpha = 0.60f)
-    val ambientGlow    = Color.hsl(safeHue, 0.80f, 0.55f, alpha = 0.20f)
-    val ambientColors  = androidx.compose.runtime.remember(ambientGlow) { listOf(ambientGlow, Color.Transparent) }
-    val baseColors     = androidx.compose.runtime.remember(darkEdge, safeHue) { listOf(darkEdge, Color.hsl(safeHue, 0.50f, 0.06f)) }
-    val sphereColors   = androidx.compose.runtime.remember(coreColor, midColor, outerColor, darkEdge) { listOf(coreColor, midColor, outerColor, darkEdge) }
-    val specColors     = androidx.compose.runtime.remember { listOf(Color.White.copy(alpha = 0.70f), Color.White.copy(alpha = 0.20f), Color.Transparent) }
-
     Canvas(
         modifier = modifier
             .size(size)
             .clip(CircleShape)
     ) {
         val r = this.size.minDimension / 2f
+        if (r <= 0.5f) return@Canvas
         val cx = this.size.width / 2f
         val cy = this.size.height / 2f
         val center = Offset(cx, cy)
 
+        val safeHue = normalizeOrbHue(animatedHueState.value)
+        val rotationAngle = rotationAngleState.value
+        val pulseAlpha = pulseAlphaState.value.coerceIn(0f, 1f)
+        val innerPulse = innerPulseState.value.coerceIn(0f, 1f)
+
+        val coreColor = Color.hsl(safeHue, 0.90f, 0.78f)
+        val midColor = Color.hsl(safeHue, 0.80f, 0.55f)
+        val outerColor = Color.hsl(safeHue, 0.70f, 0.35f)
+        val darkEdge = Color.hsl(safeHue, 0.60f, 0.12f)
+        val deepEdge = Color.hsl(safeHue, 0.50f, 0.06f)
+        val complementHue = (safeHue + 180f) % 360f
+        val nebulaColor = Color.hsl(complementHue, 0.75f, 0.60f, alpha = 0.35f)
+        val analogHue = (safeHue + 60f) % 360f
+        val swirl1 = Color.hsl(analogHue, 0.85f, 0.65f, alpha = 0.30f)
+        val ringColor = Color.hsl(safeHue, 0.95f, 0.80f, alpha = 0.60f)
+        val ambientGlow = Color.hsl(safeHue, 0.80f, 0.55f, alpha = 0.20f)
+
         // Layer 1: Ambient outer glow (soft, large)
         drawCircle(
-            brush = Brush.radialGradient(colors = ambientColors, center = center, radius = r * 1.15f),
+            brush = Brush.radialGradient(
+                colors = listOf(ambientGlow, Color.Transparent),
+                center = center,
+                radius = r * 1.15f
+            ),
             radius = r * 1.15f,
             center = center
         )
 
         // Layer 2: Deep dark base
         drawCircle(
-            brush = Brush.radialGradient(colors = baseColors, center = center, radius = r),
+            brush = Brush.radialGradient(
+                colors = listOf(darkEdge, deepEdge),
+                center = center,
+                radius = r
+            ),
             radius = r,
             center = center
         )
@@ -134,7 +168,11 @@ fun OrbView(
         // Layer 3: Main sphere radial gradient (off-center highlight)
         val highlightOffset = Offset(cx - r * 0.30f, cy - r * 0.30f)
         drawCircle(
-            brush = Brush.radialGradient(colors = sphereColors, center = highlightOffset, radius = r * 1.40f),
+            brush = Brush.radialGradient(
+                colors = listOf(coreColor, midColor, outerColor, darkEdge),
+                center = highlightOffset,
+                radius = r * 1.40f
+            ),
             radius = r,
             center = center
         )
@@ -178,7 +216,7 @@ fun OrbView(
         val specOffset = Offset(cx - r * 0.28f, cy - r * 0.30f)
         drawCircle(
             brush = Brush.radialGradient(
-                colors = specColors,
+                colors = OrbSpecColors,
                 center = specOffset,
                 radius = r * 0.38f
             ),

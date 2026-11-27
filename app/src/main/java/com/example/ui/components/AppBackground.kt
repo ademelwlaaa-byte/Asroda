@@ -1,6 +1,5 @@
 package com.example.ui.components
 
-import com.example.ui.theme.AppColors
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -12,10 +11,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -27,6 +26,11 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.ImageRequest
 import com.example.R
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.LocalCosmicMotionPolicy
+import com.example.ui.animation.MotionIntensityMode
+import com.example.ui.animation.rememberCosmicPhaseState
+import com.example.ui.theme.AppColors
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -64,6 +68,20 @@ private data class FloatingCosmicDust(
 
 private val SeamlessBgEasing = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
 
+internal fun computeBackgroundLayerAlphas(templatesProgress: Float): Pair<Float, Float> {
+    val safeTemplates = if (templatesProgress.isFinite()) templatesProgress.coerceIn(0f, 1f) else 0f
+    return (1f - safeTemplates) to safeTemplates
+}
+
+internal fun computeDustEdgeFade(wrappedY: Float): Float {
+    val y = if (wrappedY.isFinite()) ((wrappedY % 1f) + 1f) % 1f else 0.5f
+    return when {
+        y < 0.08f -> (y / 0.08f).coerceIn(0f, 1f)
+        y > 0.92f -> ((1f - y) / 0.08f).coerceIn(0f, 1f)
+        else -> 1f
+    }
+}
+
 @Composable
 fun AppBackground(
     modifier: Modifier = Modifier,
@@ -71,10 +89,10 @@ fun AppBackground(
     activeTab: String = "chats"
 ) {
     // 600ms Silky Crossfade (150ms when Reduce Motion / quick transitions active)
-    val motionConfig = com.example.ui.animation.LocalCosmicMotionConfig.current
-    val motionPolicy = com.example.ui.animation.LocalCosmicMotionPolicy.current
+    val motionConfig = LocalCosmicMotionConfig.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
     val isTemplates = activeTab == "templates"
-    val templatesProgress by animateFloatAsState(
+    val templatesProgressState = animateFloatAsState(
         targetValue = if (isTemplates) 1f else 0f,
         animationSpec = tween(
             durationMillis = if (motionPolicy.shouldUseQuickTransitions) 150 else 600,
@@ -82,7 +100,9 @@ fun AppBackground(
         ),
         label = "templatesBgProgress"
     )
-    val cosmicProgress = 1f - templatesProgress
+    // Only toggle AsyncImage composition at 0/1 visibility thresholds (0 recompositions during crossfade)
+    val showCosmicLayer by remember { derivedStateOf { templatesProgressState.value < 0.999f } }
+    val showTemplatesLayer by remember { derivedStateOf { templatesProgressState.value > 0.001f } }
 
     // Build RGB_565 Coil requests (50% RAM reduction vs ARGB_8888, automatic viewport downsampling)
     val context = LocalContext.current
@@ -109,7 +129,7 @@ fun AppBackground(
 
     val stars = remember {
         val rand = Random(42)
-        val list = mutableListOf<StarParticle>()
+        val list = ArrayList<StarParticle>(91)
         val colors = listOf(
             AppColors.White,
             AppColors.PurpleSoft,
@@ -170,16 +190,17 @@ fun AppBackground(
 
     val auroraBlobs = remember {
         listOf(
-            AuroraBlob(0.25f, 0.14f, 0.62f, Color(0xFF7C3AED), 0f,   +0.06f, +0.04f),
+            AuroraBlob(0.25f, 0.14f, 0.62f, Color(0xFF7C3AED), 0f, +0.06f, +0.04f),
             AuroraBlob(0.74f, 0.24f, 0.50f, Color(0xFF4C1D95), 1.2f, -0.05f, +0.03f),
             AuroraBlob(0.50f, 0.60f, 0.72f, Color(0xFF1E1B4B), 2.4f, +0.03f, -0.05f),
             AuroraBlob(0.14f, 0.52f, 0.44f, Color(0xFF5B21B6), 3.6f, +0.05f, +0.03f),
-            AuroraBlob(0.84f, 0.76f, 0.48f, Color(0xFF6D28D9), 4.8f, -0.04f, -0.05f),
+            AuroraBlob(0.84f, 0.76f, 0.48f, Color(0xFF6D28D9), 4.8f, -0.04f, -0.05f)
         )
     }
 
+    // Draw-phase-only State<Float> drivers -> 0 FPS root recomposition across all screens!
     val allowAmbient = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
-    val auroraTime = com.example.ui.animation.rememberCosmicPhase(
+    val auroraTimeState = rememberCosmicPhaseState(
         durationMs = 18000,
         initialValue = 0f,
         targetValue = 2f * PI.toFloat(),
@@ -189,7 +210,7 @@ fun AppBackground(
         label = "auroraTime",
         enabled = allowAmbient
     )
-    val twinkleTime = com.example.ui.animation.rememberCosmicPhase(
+    val twinkleTimeState = rememberCosmicPhaseState(
         durationMs = 4200,
         initialValue = 0f,
         targetValue = 2f * PI.toFloat(),
@@ -199,7 +220,7 @@ fun AppBackground(
         label = "twinkleTime",
         enabled = allowAmbient
     )
-    val dustRiseProgress = com.example.ui.animation.rememberCosmicPhase(
+    val dustRiseProgressState = rememberCosmicPhaseState(
         durationMs = 22000,
         initialValue = 0f,
         targetValue = 1f,
@@ -209,7 +230,7 @@ fun AppBackground(
         label = "dustRiseProgress",
         enabled = allowAmbient
     )
-    val shootingStarPhase = com.example.ui.animation.rememberCosmicPhase(
+    val shootingStarPhaseState = rememberCosmicPhaseState(
         durationMs = 11500,
         initialValue = 0f,
         targetValue = 1f,
@@ -220,15 +241,25 @@ fun AppBackground(
         enabled = allowAmbient
     )
 
+    val starLimit = when (motionConfig.mode) {
+        MotionIntensityMode.FULL -> stars.size
+        MotionIntensityMode.BALANCED -> (stars.size * 0.78f).toInt()
+        MotionIntensityMode.REDUCED -> (stars.size * 0.45f).toInt()
+    }.coerceAtMost(stars.size)
+
+    val dustCount = when (motionConfig.mode) {
+        MotionIntensityMode.FULL -> floatingDust.size
+        MotionIntensityMode.BALANCED -> 9
+        MotionIntensityMode.REDUCED -> 0
+    }.coerceAtMost(floatingDust.size)
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(baseColor)
     ) {
         // Layer A: Cosmic Background (Chats / Discover / Books) — RGB_565 downsampled via Coil
-        if (cosmicProgress > 0.001f) {
-            val cosmicBlurDp = ((1f - cosmicProgress) * 6f).dp
-            val cosmicScale = 1f + (1f - cosmicProgress) * 0.04f
+        if (showCosmicLayer) {
             AsyncImage(
                 model = cosmicBgRequest,
                 contentDescription = null,
@@ -236,18 +267,17 @@ fun AppBackground(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        alpha = cosmicProgress
+                        val (cosmicAlpha, _) = computeBackgroundLayerAlphas(templatesProgressState.value)
+                        val cosmicScale = 1f + (1f - cosmicAlpha) * 0.04f
+                        alpha = cosmicAlpha
                         scaleX = cosmicScale
                         scaleY = cosmicScale
                     }
-                    .then(if (cosmicBlurDp > 0.2.dp && motionConfig.enableMicroSprings) Modifier.blur(cosmicBlurDp) else Modifier)
             )
         }
 
         // Layer B: Gothic Manor Background (Templates Tab) — RGB_565 downsampled via Coil
-        if (templatesProgress > 0.001f) {
-            val templatesBlurDp = ((1f - templatesProgress) * 6f).dp
-            val templatesScale = 1f + (1f - templatesProgress) * 0.04f
+        if (showTemplatesLayer) {
             AsyncImage(
                 model = gothicManorBgRequest,
                 contentDescription = null,
@@ -255,22 +285,30 @@ fun AppBackground(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        alpha = templatesProgress
+                        val (_, templatesAlpha) = computeBackgroundLayerAlphas(templatesProgressState.value)
+                        val templatesScale = 1f + (1f - templatesAlpha) * 0.04f
+                        alpha = templatesAlpha
                         scaleX = templatesScale
                         scaleY = templatesScale
                     }
-                    .then(if (templatesBlurDp > 0.2.dp && motionConfig.enableMicroSprings) Modifier.blur(templatesBlurDp) else Modifier)
             )
         }
 
-        // Layer C: Ambient Particles, Starfield & Delicate Shooting Stardust Glint
+        // Layer C: Ambient Particles, Starfield & Delicate Shooting Stardust Glint (draw-phase only)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
             if (w <= 0f || h <= 0f) return@Canvas
 
+            val (cosmicProgress, templatesProgress) = computeBackgroundLayerAlphas(templatesProgressState.value)
+            val auroraTime = auroraTimeState.value
+            val twinkleTime = twinkleTimeState.value
+            val dustRiseProgress = dustRiseProgressState.value
+            val shootingStarPhase = shootingStarPhaseState.value
+
             if (cosmicProgress > 0.01f) {
-                auroraBlobs.forEachIndexed { idx, blob ->
+                for (idx in auroraBlobs.indices) {
+                    val blob = auroraBlobs[idx]
                     val phase = auroraTime + blob.phaseOffset
                     val driftX = sin(phase * blob.driftX * 4f) * w * 0.05f
                     val driftY = cos(phase * blob.driftY * 4f) * h * 0.04f
@@ -282,8 +320,8 @@ fun AppBackground(
                     drawCircle(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                blob.color.copy(alpha = alpha * 1.4f),
-                                blob.color.copy(alpha = alpha * 0.45f),
+                                blob.color.copy(alpha = (alpha * 1.4f).coerceIn(0f, 1f)),
+                                blob.color.copy(alpha = (alpha * 0.45f).coerceIn(0f, 1f)),
                                 Color.Transparent
                             ),
                             center = Offset(cx, cy),
@@ -294,12 +332,7 @@ fun AppBackground(
                     )
                 }
 
-                val starLimit = when (motionConfig.mode) {
-                    com.example.ui.animation.MotionIntensityMode.FULL -> stars.size
-                    com.example.ui.animation.MotionIntensityMode.BALANCED -> (stars.size * 0.78f).toInt()
-                    com.example.ui.animation.MotionIntensityMode.REDUCED -> (stars.size * 0.45f).toInt()
-                }
-                for (si in 0 until starLimit.coerceAtMost(stars.size)) {
+                for (si in 0 until starLimit) {
                     val star = stars[si]
                     val sx = star.xRatio * w
                     val sy = star.yRatio * h
@@ -351,26 +384,17 @@ fun AppBackground(
             }
 
             // Rising Micro Purple/Lilac Cosmic Dust Particles
-            if (motionConfig.enableParticles) {
-                val dustCount = when (motionConfig.mode) {
-                    com.example.ui.animation.MotionIntensityMode.FULL -> floatingDust.size
-                    com.example.ui.animation.MotionIntensityMode.BALANCED -> 9
-                    com.example.ui.animation.MotionIntensityMode.REDUCED -> 0
-                }
+            if (motionConfig.enableParticles && dustCount > 0) {
                 val dustVisibility = (0.30f + 0.45f * templatesProgress) * motionConfig.particleScale.coerceAtMost(1.15f)
                 for (di in 0 until dustCount) {
                     val mote = floatingDust[di]
-                    val rawY = (mote.initialYRatio - dustRiseProgress * mote.riseSpeed * 3.5f)
+                    val rawY = mote.initialYRatio - dustRiseProgress * mote.riseSpeed * 3.5f
                     val wrappedY = ((rawY % 1f) + 1f) % 1f
                     val swayX = sin(twinkleTime * 0.8f + mote.phase) * mote.swayAmp
-                    val px = ((mote.xRatio + swayX).coerceIn(0.02f, 0.98f)) * w
+                    val px = (mote.xRatio + swayX).coerceIn(0.02f, 0.98f) * w
                     val py = wrappedY * h
 
-                    val edgeFade = when {
-                        wrappedY < 0.08f -> wrappedY / 0.08f
-                        wrappedY > 0.92f -> (1f - wrappedY) / 0.08f
-                        else -> 1f
-                    }
+                    val edgeFade = computeDustEdgeFade(wrappedY)
                     val pulse = 0.35f + 0.65f * (0.5f + 0.5f * sin(twinkleTime * 1.3f + mote.phase))
                     val moteAlpha = (pulse * edgeFade * dustVisibility * 0.34f).coerceIn(0f, 1f)
                     val rPx = mote.radiusDp.dp.toPx()

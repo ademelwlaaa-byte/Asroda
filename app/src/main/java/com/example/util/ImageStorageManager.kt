@@ -59,33 +59,54 @@ object ImageStorageManager {
                 )
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }
-            val sampled = BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
-                ?: return@withContext null
+            var sampled: Bitmap? = null
+            var rotated: Bitmap? = null
+            var square: Bitmap? = null
+            var finalBitmap: Bitmap? = null
+            try {
+                sampled = BitmapFactory.decodeFile(file.absolutePath, decodeOptions)
+                    ?: return@withContext null
 
-            val rotated = AvatarOptimizer.fixExifOrientation(context, Uri.fromFile(file), sampled)
-            if (rotated !== sampled) sampled.recycle()
+                rotated = AvatarOptimizer.fixExifOrientation(context, Uri.fromFile(file), sampled)
+                if (rotated !== sampled && !sampled.isRecycled) {
+                    sampled.recycle()
+                    sampled = null
+                }
 
-            val dimension = min(rotated.width, rotated.height)
-            val xOffset = (rotated.width - dimension) / 2
-            val yOffset = (rotated.height - dimension) / 2
-            val square = Bitmap.createBitmap(rotated, xOffset, yOffset, dimension, dimension)
-            if (square !== rotated) rotated.recycle()
+                val dimension = min(rotated.width, rotated.height)
+                val xOffset = (rotated.width - dimension) / 2
+                val yOffset = (rotated.height - dimension) / 2
+                square = Bitmap.createBitmap(rotated, xOffset, yOffset, dimension, dimension)
+                if (square !== rotated && !rotated.isRecycled) {
+                    rotated.recycle()
+                    rotated = null
+                }
 
-            val finalBitmap = Bitmap.createScaledBitmap(square, TARGET_AVATAR_SIZE, TARGET_AVATAR_SIZE, true)
-            if (finalBitmap !== square) square.recycle()
+                finalBitmap = Bitmap.createScaledBitmap(square, TARGET_AVATAR_SIZE, TARGET_AVATAR_SIZE, true)
+                if (finalBitmap !== square && !square.isRecycled) {
+                    square.recycle()
+                    square = null
+                }
 
-            val out = ByteArrayOutputStream()
-            val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                Bitmap.CompressFormat.WEBP_LOSSY
-            } else {
-                @Suppress("DEPRECATION")
-                Bitmap.CompressFormat.WEBP
+                val out = ByteArrayOutputStream()
+                val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Bitmap.CompressFormat.WEBP_LOSSY
+                } else {
+                    @Suppress("DEPRECATION")
+                    Bitmap.CompressFormat.WEBP
+                }
+                finalBitmap.compress(format, WEBP_QUALITY, out)
+                val bytes = out.toByteArray()
+                if (bytes.isEmpty()) return@withContext null
+                val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                "data:image/webp;base64,$base64"
+            } finally {
+                listOf(finalBitmap, square, rotated, sampled).distinct().forEach { bmp ->
+                    try {
+                        if (bmp != null && !bmp.isRecycled) bmp.recycle()
+                    } catch (_: Exception) {}
+                }
             }
-            finalBitmap.compress(format, WEBP_QUALITY, out)
-            finalBitmap.recycle()
-
-            val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-            "data:image/webp;base64,$base64"
         } catch (e: Exception) {
             Log.e(TAG, "toBase64DataUri failed", e)
             null

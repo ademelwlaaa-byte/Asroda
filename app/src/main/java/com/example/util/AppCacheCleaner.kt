@@ -48,6 +48,9 @@ object AppCacheCleaner {
             com.example.ui.screens.AetheriaRefGlassCache.evictAll()
         } catch (_: Exception) {}
         try {
+            com.example.ui.components.evictGlobalSettingsRefPlatesCache()
+        } catch (_: Exception) {}
+        try {
             Coil.imageLoader(context.applicationContext).memoryCache?.clear()
         } catch (_: Exception) {}
         try {
@@ -69,11 +72,11 @@ object AppCacheCleaner {
         }
     }
 
-    private fun directorySize(file: File): Long {
-        if (!file.exists()) return 0L
+    private fun directorySize(file: File, depth: Int = 0): Long {
+        if (depth > 12 || !file.exists()) return 0L
         if (file.isFile) return file.length()
         var total = 0L
-        file.listFiles()?.forEach { total += directorySize(it) }
+        file.listFiles()?.forEach { total += directorySize(it, depth + 1) }
         return total
     }
 }

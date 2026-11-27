@@ -181,11 +181,20 @@ object AvatarOptimizer {
             }
             val filename = "bg_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.webp"
             val outputFile = File(imagesDir, filename)
+            val tmpFile = File(imagesDir, "$filename.tmp")
 
             val bmpToSave = finalBitmap
                 ?: return@withContext Result.failure(IllegalStateException("Görsel işlenemedi."))
-            FileOutputStream(outputFile).use { out ->
+            val compressedOk = FileOutputStream(tmpFile).use { out ->
                 bmpToSave.compress(webpLossyFormat(), BG_WEBP_QUALITY, out)
+            }
+            if (!compressedOk || !tmpFile.exists() || tmpFile.length() == 0L) {
+                try { tmpFile.delete() } catch (_: Exception) {}
+                return@withContext Result.failure(IllegalStateException("Arka plan WebP sıkıştırması başarısız oldu."))
+            }
+            if (!tmpFile.renameTo(outputFile)) {
+                tmpFile.copyTo(outputFile, overwrite = true)
+                tmpFile.delete()
             }
 
             Result.success(Uri.fromFile(outputFile).toString())
@@ -242,17 +251,21 @@ object AvatarOptimizer {
                 )
             } ?: ExifInterface.ORIENTATION_NORMAL
 
-            val degrees = when (orientation) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
-                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
-                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
-                else -> 0f
+            val matrix = Matrix()
+            val needsTransform = when (orientation) {
+                ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> { matrix.setScale(-1f, 1f); true }
+                ExifInterface.ORIENTATION_ROTATE_180 -> { matrix.setRotate(180f); true }
+                ExifInterface.ORIENTATION_FLIP_VERTICAL -> { matrix.setRotate(180f); matrix.postScale(-1f, 1f); true }
+                ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f); true }
+                ExifInterface.ORIENTATION_ROTATE_90 -> { matrix.setRotate(90f); true }
+                ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f); true }
+                ExifInterface.ORIENTATION_ROTATE_270 -> { matrix.setRotate(270f); true }
+                else -> false
             }
 
-            if (degrees == 0f) {
+            if (!needsTransform) {
                 bitmap
             } else {
-                val matrix = Matrix().apply { postRotate(degrees) }
                 Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
             }
         } catch (_: Exception) {

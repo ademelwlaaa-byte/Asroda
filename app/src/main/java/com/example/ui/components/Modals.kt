@@ -1,139 +1,65 @@
 @file:OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 package com.example.ui.components
 
-import com.example.ui.theme.AppColors
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.widget.Toast
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.ui.draw.scale
-
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ColumnScope
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-
-import android.content.Intent
-import android.net.Uri
-import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ArrowDropDown
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.material.icons.filled.Key
-import androidx.compose.material.icons.filled.Memory
-import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Speed
-import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material.icons.filled.FlashOn
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Chat
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.TrackChanges
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Public
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Save
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.runtime.collectAsState
-import androidx.compose.material3.OutlinedButton
-import com.example.data.repository.EmochiRepository
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.LinearProgressIndicator
-import kotlinx.coroutines.delay
-import coil.compose.AsyncImage
-import com.example.ui.components.BotAvatarImage
-import com.example.ui.components.EmochiTextField
-import com.example.ui.components.GradientCard
-import com.example.ui.components.ActiveGradientCard
-import com.example.ui.components.WarningGradientCard
-import com.example.ui.components.SuccessGradientCard
-import com.example.ui.components.DangerGradientCard
-import com.example.ui.components.EmochiLoadingSpinner
-import androidx.compose.ui.window.DialogProperties
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.ExposedDropdownMenuDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.RadioButton
-import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -141,29 +67,66 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.BotEntity
-import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.KeyCharacter
-import com.example.ui.theme.EmochiBorder
-import com.example.ui.theme.EmochiCard
-import com.example.ui.theme.EmochiError
-import com.example.ui.theme.EmochiErrorContainer
 import com.example.ui.theme.EmochiPrimary
-import com.example.ui.theme.EmochiSurface
 import com.example.ui.theme.EmochiTextMuted
 import com.example.ui.theme.EmochiTextPrimary
 import com.example.ui.theme.EmochiTextSecondary
 import kotlinx.coroutines.launch
+import java.util.Locale
+
+internal object ModalInputValidators {
+    private val TR_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
+
+    fun parseClampedTemperature(raw: String, min: Float = 0.1f, max: Float = 1.2f): Float? {
+        val normalized = raw.trim().replace(',', '.')
+        if (normalized.isEmpty()) return null
+        val parsed = normalized.toFloatOrNull() ?: return null
+        if (!parsed.isFinite()) return null
+        return parsed.coerceIn(min, max)
+    }
+
+    fun sanitizePreviewText(raw: String, maxLength: Int = 260): String =
+        StoryOverlayTextSanitizer.sanitizePreview(raw, maxLength = maxLength)
+
+    fun extractAvatarInitial(displayName: String): String {
+        val trimmed = displayName.trim()
+        if (trimmed.isEmpty()) return "A"
+        return trimmed.substring(0, 1).uppercase(TR_LOCALE)
+    }
+}
+
+private val CollapsibleBgExpanded = Brush.linearGradient(listOf(Color(0xD91E0D3E), Color(0xD9110726)))
+private val CollapsibleBgCollapsed = Brush.linearGradient(listOf(Color(0xBF15092E), Color(0xBF0D0620)))
+private val CollapsibleBorderExpanded = Brush.linearGradient(
+    listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC))
+)
+private val CollapsibleBorderCollapsed = Brush.linearGradient(
+    listOf(Color(0x66C084FC), Color(0x3360A5FA), Color(0x557C3AED))
+)
+private val CollapsibleIconBgExpanded = Brush.radialGradient(listOf(Color(0xFF3B1070), Color(0xFF1C0848)))
+private val CollapsibleIconBgCollapsed = Brush.radialGradient(listOf(Color(0xFF1A0840), Color(0xFF0C0420)))
+private val CollapsibleIconBorderExpanded = Brush.linearGradient(listOf(Color(0xFFC084FC), Color(0xFF7C3AED)))
+private val CollapsibleIconBorderCollapsed = Brush.linearGradient(listOf(Color(0x40A855F7), Color(0x204C1D95)))
+private val CollapsibleSeparatorBrush = Brush.horizontalGradient(
+    listOf(Color.Transparent, Color(0x607C3AED), Color.Transparent)
+)
+private val ProfileAvatarFallbackBrush = Brush.radialGradient(listOf(Color(0x997C3AED), Color(0x662E1065)))
+private val UpdateSuccessBadgeBrush = Brush.radialGradient(listOf(Color(0x998B5CF6), Color(0x553B1470)))
+private val UpdateUpToDateBadgeBrush = Brush.radialGradient(listOf(Color(0x9934D399), Color(0x44065F46)))
+private val FallbackModalTabs = listOf("Deneme Logları" to 0, "Güvenilirlik" to 1)
 
 data class ModelSpec(
     val key: String,
@@ -222,31 +185,34 @@ fun CollapsibleSettingsOption(
     badgeColor: Color = EmochiPrimary,
     content: @Composable () -> Unit
 ) {
-    val rowInteraction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val rowInteraction = remember { MutableInteractionSource() }
     val rowPressed by rowInteraction.collectIsPressedAsState()
-    val rowScale by animateFloatAsState(
+    // Draw-phase State<Float> drivers -> 0 recompositions during press/chevron animations
+    val rowScaleState = animateFloatAsState(
         targetValue = if (rowPressed) 0.985f else 1f,
-        animationSpec = tween(80), label = "collScale"
+        animationSpec = tween(80),
+        label = "collScale"
+    )
+    val arrowRotationState = animateFloatAsState(
+        targetValue = if (isExpanded) 90f else 0f,
+        animationSpec = tween(250, easing = FastOutSlowInEasing),
+        label = "arrowRot"
     )
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .graphicsLayer { scaleX = rowScale; scaleY = rowScale }
+            .graphicsLayer {
+                val s = rowScaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clip(RoundedCornerShape(16.dp))
-            .background(
-                if (isExpanded)
-                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xD91E0D3E), Color(0xD9110726)))
-                else
-                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xBF15092E), Color(0xBF0D0620)))
-            )
+            .background(if (isExpanded) CollapsibleBgExpanded else CollapsibleBgCollapsed)
             .border(
-                androidx.compose.foundation.BorderStroke(
+                BorderStroke(
                     if (isExpanded) 1.3.dp else 1.dp,
-                    if (isExpanded)
-                        androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFFE9D5FF), Color(0xFF9333EA), Color(0xFF60A5FA), Color(0xFFC084FC)))
-                    else
-                        androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0x66C084FC), Color(0x3360A5FA), Color(0x557C3AED)))
+                    if (isExpanded) CollapsibleBorderExpanded else CollapsibleBorderCollapsed
                 ),
                 RoundedCornerShape(16.dp)
             )
@@ -268,23 +234,20 @@ fun CollapsibleSettingsOption(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(
-                                if (isExpanded)
-                                    androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color(0xFF3B1070), Color(0xFF1C0848)))
-                                else
-                                    androidx.compose.ui.graphics.Brush.radialGradient(listOf(Color(0xFF1A0840), Color(0xFF0C0420)))
-                            )
+                            .background(if (isExpanded) CollapsibleIconBgExpanded else CollapsibleIconBgCollapsed)
                             .border(
                                 if (isExpanded) 1.2.dp else 0.8.dp,
-                                if (isExpanded)
-                                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0xFFC084FC), Color(0xFF7C3AED)))
-                                else
-                                    androidx.compose.ui.graphics.Brush.linearGradient(listOf(Color(0x40A855F7), Color(0x204C1D95))),
+                                if (isExpanded) CollapsibleIconBorderExpanded else CollapsibleIconBorderCollapsed,
                                 RoundedCornerShape(12.dp)
                             ),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(icon, contentDescription = null, tint = if (isExpanded) Color(0xFFCDA8FF) else EmochiTextSecondary, modifier = Modifier.size(18.dp))
+                        Icon(
+                            icon,
+                            contentDescription = null,
+                            tint = if (isExpanded) Color(0xFFCDA8FF) else EmochiTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
@@ -303,36 +266,31 @@ fun CollapsibleSettingsOption(
                                 }
                             }
                         }
-                        Text(subtitle, color = EmochiTextMuted, fontSize = 11.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                        Text(
+                            subtitle,
+                            color = EmochiTextMuted,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
-                // Animated rotation chevron
-                val arrowRotation by animateFloatAsState(
-                    targetValue = if (isExpanded) 90f else 0f,
-                    animationSpec = tween(250, easing = FastOutSlowInEasing),
-                    label = "arrowRot"
-                )
                 Icon(
                     imageVector = Icons.Default.ChevronRight,
                     contentDescription = null,
                     modifier = Modifier
                         .size(22.dp)
-                        .graphicsLayer { rotationZ = arrowRotation },
+                        .graphicsLayer { rotationZ = arrowRotationState.value },
                     tint = if (isExpanded) Color(0xFFCDA8FF) else EmochiTextSecondary
                 )
             }
 
             if (isExpanded) {
-                // Gradient separator instead of flat Divider
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(1.dp)
-                        .background(
-                            androidx.compose.ui.graphics.Brush.horizontalGradient(
-                                listOf(Color.Transparent, Color(0x607C3AED), Color.Transparent)
-                            )
-                        )
+                        .background(CollapsibleSeparatorBrush)
                 )
                 Column(
                     modifier = Modifier
@@ -347,14 +305,15 @@ fun CollapsibleSettingsOption(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-
 @Composable
 fun FallbackLogModal(
     logs: List<com.example.data.repository.ProviderFallbackLogEntry>,
     onDismiss: () -> Unit
 ) {
-    var selectedTab by remember { mutableStateOf(0) } // 0 = Deneme Logları, 1 = Güvenilirlik
+    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Deneme Logları, 1 = Güvenilirlik
     val liveHealth by com.example.data.managers.ProviderHealthTracker.healthSnapshot.collectAsStateWithLifecycle()
+    val sortedHealth = remember(liveHealth) { liveHealth.values.sortedBy { it.providerKey } }
+    val modalContext = LocalContext.current
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
@@ -372,7 +331,7 @@ fun FallbackLogModal(
                 .padding(3.dp),
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
-            listOf("Deneme Logları" to 0, "Güvenilirlik" to 1).forEach { (title, idx) ->
+            FallbackModalTabs.forEach { (title, idx) ->
                 val isSelected = selectedTab == idx
                 Box(
                     modifier = Modifier
@@ -454,13 +413,16 @@ fun FallbackLogModal(
                     }
                 }
             } else {
-                androidx.compose.foundation.lazy.LazyColumn(
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 400.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(logs) { entry ->
+                    itemsIndexed(
+                        items = logs,
+                        key = { idx, entry -> "${entry.layer}_${entry.providerName}_${entry.status}_$idx" }
+                    ) { _, entry ->
                         val isSuccess = entry.status == "SUCCESS"
                         val isFailed = entry.status == "FAILED"
                         val isRefusal = entry.status == "OOC_REFUSAL_FALLBACK"
@@ -476,6 +438,9 @@ fun FallbackLogModal(
                             isFailed -> Color(0x55831843)
                             isRefusal || isCooldown -> Color(0x5578350F)
                             else -> Color(0x38581C87)
+                        }
+                        val cleanError = remember(entry.errorMessage) {
+                            entry.errorMessage?.let { ModalInputValidators.sanitizePreviewText(it, maxLength = 320) }.orEmpty()
                         }
                         MorCamGlassCard(
                             cornerRadius = 16.dp,
@@ -513,10 +478,10 @@ fun FallbackLogModal(
                                     )
                                 }
                             }
-                            if (!entry.errorMessage.isNullOrBlank()) {
+                            if (cleanError.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = if (isRefusal) "Koruma: ${entry.errorMessage}" else "Detay: ${entry.errorMessage}",
+                                    text = if (isRefusal) "Koruma: $cleanError" else "Detay: $cleanError",
                                     fontFamily = com.example.ui.theme.InterFontFamily,
                                     color = badgeColor.copy(alpha = 0.9f),
                                     fontSize = 11.5.sp,
@@ -535,8 +500,7 @@ fun FallbackLogModal(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (liveHealth.isNotEmpty()) {
-                    val modalCtx = androidx.compose.ui.platform.LocalContext.current
+                if (sortedHealth.isNotEmpty()) {
                     MorCamGlassCard(
                         cornerRadius = 16.dp,
                         highlighted = true,
@@ -562,10 +526,10 @@ fun FallbackLogModal(
                                     .border(0.8.dp, Color(0xAAE9D5FF), RoundedCornerShape(10.dp))
                                     .clickable {
                                         com.example.data.managers.ProviderHealthTracker.resetAll()
-                                        android.widget.Toast.makeText(
-                                            modalCtx,
+                                        Toast.makeText(
+                                            modalContext,
                                             "Tüm sağlayıcı devre kesicileri sıfırlandı",
-                                            android.widget.Toast.LENGTH_SHORT
+                                            Toast.LENGTH_SHORT
                                         ).show()
                                     }
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -581,43 +545,45 @@ fun FallbackLogModal(
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         val now = System.currentTimeMillis()
-                        liveHealth.values.sortedBy { it.providerKey }.forEach { st ->
-                            val inCd = st.cooldownUntilMs > now
-                            val rem = if (inCd) ((st.cooldownUntilMs - now) / 1000L).coerceAtLeast(1L) else 0L
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .then(
-                                        if (inCd) Modifier.clickable {
-                                            com.example.data.managers.ProviderHealthTracker.resetHealth(st.providerKey)
-                                            android.widget.Toast.makeText(
-                                                modalCtx,
-                                                "${st.providerKey} devre kesici sıfırlandı",
-                                                android.widget.Toast.LENGTH_SHORT
-                                            ).show()
-                                        } else Modifier
+                        sortedHealth.forEach { st ->
+                            key(st.providerKey) {
+                                val inCd = st.cooldownUntilMs > now
+                                val rem = if (inCd) ((st.cooldownUntilMs - now) / 1000L).coerceAtLeast(1L) else 0L
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (inCd) Modifier.clickable {
+                                                com.example.data.managers.ProviderHealthTracker.resetHealth(st.providerKey)
+                                                Toast.makeText(
+                                                    modalContext,
+                                                    "${st.providerKey} devre kesici sıfırlandı",
+                                                    Toast.LENGTH_SHORT
+                                                ).show()
+                                            } else Modifier
+                                        )
+                                        .padding(vertical = 3.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = st.providerKey,
+                                        fontFamily = com.example.ui.theme.InterFontFamily,
+                                        color = MorCamTokens.SilverLavenderBright,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold
                                     )
-                                    .padding(vertical = 3.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = st.providerKey,
-                                    fontFamily = com.example.ui.theme.InterFontFamily,
-                                    color = MorCamTokens.SilverLavenderBright,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = if (inCd) {
-                                        "⏳ ${st.lastFailureType?.name ?: "COOLDOWN"} (${rem}s) • Sıfırla"
-                                    } else {
-                                        "● Hazır • ${st.lastLatencyMs} ms • ${st.totalSuccessCount}✓/${st.totalFailureCount}✗"
-                                    },
-                                    fontFamily = com.example.ui.theme.InterFontFamily,
-                                    color = if (inCd) Color(0xFFFDE68A) else Color(0xFF6EE7B7),
-                                    fontSize = 10.5.sp
-                                )
+                                    Text(
+                                        text = if (inCd) {
+                                            "⏳ ${st.lastFailureType?.name ?: "COOLDOWN"} (${rem}s) • Sıfırla"
+                                        } else {
+                                            "● Hazır • ${st.lastLatencyMs} ms • ${st.totalSuccessCount}✓/${st.totalFailureCount}✗"
+                                        },
+                                        fontFamily = com.example.ui.theme.InterFontFamily,
+                                        color = if (inCd) Color(0xFFFDE68A) else Color(0xFF6EE7B7),
+                                        fontSize = 10.5.sp
+                                    )
+                                }
                             }
                         }
                     }
@@ -627,7 +593,6 @@ fun FallbackLogModal(
         }
 
         Spacer(modifier = Modifier.height(14.dp))
-        val footerCtx = androidx.compose.ui.platform.LocalContext.current
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -640,9 +605,9 @@ fun FallbackLogModal(
                         healthMap = liveHealth,
                         logs = logs
                     )
-                    val cm = footerCtx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
-                    cm?.setPrimaryClip(android.content.ClipData.newPlainText("Asroda API Raporu", report))
-                    android.widget.Toast.makeText(footerCtx, "API tanılama raporu kopyalandı", android.widget.Toast.LENGTH_SHORT).show()
+                    val cm = modalContext.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                    cm?.setPrimaryClip(ClipData.newPlainText("Asroda API Raporu", report))
+                    Toast.makeText(modalContext, "API tanılama raporu kopyalandı", Toast.LENGTH_SHORT).show()
                 },
                 variant = MorCamButtonVariant.Secondary,
                 modifier = Modifier.weight(1.25f)
@@ -656,7 +621,6 @@ fun FallbackLogModal(
         }
     }
 }
-
 
 @Composable
 fun customTextFieldColors() = OutlinedTextFieldDefaults.colors(
@@ -684,7 +648,6 @@ fun FilterToggleRow(
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-
 @Composable
 fun BotQuickProfileSheet(
     bot: BotEntity,
@@ -698,11 +661,16 @@ fun BotQuickProfileSheet(
     onResetChat: (Boolean) -> Unit,
     onExportChat: () -> Unit
 ) {
-    var pinnedMemoryText by remember { mutableStateOf(bot.pinnedMemory) }
-    var storyNotesText by remember { mutableStateOf(bot.storyNotes) }
-    var showResetOptions by remember { mutableStateOf(false) }
+    var pinnedMemoryText by remember(bot.id, bot.pinnedMemory) { mutableStateOf(bot.pinnedMemory) }
+    var storyNotesText by remember(bot.id, bot.storyNotes) { mutableStateOf(bot.storyNotes) }
+    var showResetOptions by remember(bot.id) { mutableStateOf(false) }
     val isUniverse = bot.mode == "universe"
     val displayName = if (isUniverse) bot.universeName.ifBlank { "Evren" } else bot.aiName.ifBlank { "Karakter" }
+    val avatarInitial = remember(displayName) { ModalInputValidators.extractAvatarInitial(displayName) }
+    val bioPreview = remember(isUniverse, bot.scenario, bot.aiPersonality) {
+        val raw = if (isUniverse) bot.scenario else bot.aiPersonality
+        ModalInputValidators.sanitizePreviewText(raw, maxLength = 260).ifBlank { "Tanım eklenmemiş." }
+    }
     val context = LocalContext.current
 
     MorCamDialogShell(
@@ -728,9 +696,7 @@ fun BotQuickProfileSheet(
                         modifier = Modifier
                             .size(54.dp)
                             .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(listOf(Color(0x997C3AED), Color(0x662E1065)))
-                            )
+                            .background(ProfileAvatarFallbackBrush)
                             .border(1.4.dp, MorCamTokens.RimGradient, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
@@ -740,7 +706,7 @@ fun BotQuickProfileSheet(
                             modifier = Modifier.fillMaxSize(),
                             fallback = {
                                 Text(
-                                    text = displayName.firstOrNull()?.uppercase() ?: "A",
+                                    text = avatarInitial,
                                     fontFamily = com.example.ui.theme.DisplaySerifFontFamily,
                                     color = MorCamTokens.SilverLavenderBright,
                                     fontSize = 20.sp,
@@ -759,12 +725,13 @@ fun BotQuickProfileSheet(
                         )
                         Spacer(modifier = Modifier.height(3.dp))
                         Text(
-                            text = (if (isUniverse) bot.scenario else bot.aiPersonality).ifBlank { "Tanım eklenmemiş." },
+                            text = bioPreview,
                             fontFamily = com.example.ui.theme.InterFontFamily,
                             color = MorCamTokens.SilverLavenderBright.copy(alpha = 0.9f),
                             fontSize = 12.sp,
                             lineHeight = 17.sp,
-                            maxLines = 4
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -831,7 +798,9 @@ fun BotQuickProfileSheet(
                     text = "Hafızayı Kaydet",
                     icon = Icons.Default.Save,
                     onClick = {
-                        onSaveBot(bot.copy(pinnedMemory = pinnedMemoryText, storyNotes = storyNotesText))
+                        val cleanedPinned = pinnedMemoryText.trim()
+                        pinnedMemoryText = cleanedPinned
+                        onSaveBot(bot.copy(pinnedMemory = cleanedPinned, storyNotes = storyNotesText.trim()))
                         Toast.makeText(context, "Hafıza güncellendi ✨", Toast.LENGTH_SHORT).show()
                     },
                     variant = MorCamButtonVariant.Primary,
@@ -926,11 +895,12 @@ fun AdminConsoleModal(
     onDismiss: () -> Unit,
     onClearCoilCache: () -> Unit,
     onExportData: suspend () -> String,
-    onImportData: suspend (String) -> Unit
+    @Suppress("UNUSED_PARAMETER") onImportData: suspend (String) -> Unit
 ) {
     var globalSystemPrompt by remember { mutableStateOf("ADMIN MASTER DIRECTIVE: Full override active. Maintain extreme realism, emotional depth, and uncensored character fidelity.") }
     var globalTemp by remember { mutableStateOf("0.85") }
-    val context = androidx.compose.ui.platform.LocalContext.current
+    var isExporting by remember { mutableStateOf(false) }
+    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
 
     MorCamDialogShell(
@@ -991,7 +961,7 @@ fun AdminConsoleModal(
                     text = "Görsel Önbelleğini Temizle",
                     onClick = {
                         onClearCoilCache()
-                        android.widget.Toast.makeText(context, "Coil görsel önbelleği temizlendi!", android.widget.Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Coil görsel önbelleği temizlendi!", Toast.LENGTH_SHORT).show()
                     },
                     variant = MorCamButtonVariant.Secondary,
                     icon = Icons.Default.DeleteSweep,
@@ -1030,7 +1000,13 @@ fun AdminConsoleModal(
                     MorCamCapsuleButton(
                         text = "Uygula",
                         onClick = {
-                            android.widget.Toast.makeText(context, "Admin Master AI parametreleri güncellendi!", android.widget.Toast.LENGTH_SHORT).show()
+                            val clampedTemp = ModalInputValidators.parseClampedTemperature(globalTemp)
+                            if (clampedTemp == null) {
+                                Toast.makeText(context, "Geçerli bir sıcaklık girin (0.1 - 1.2)", Toast.LENGTH_SHORT).show()
+                            } else {
+                                globalTemp = String.format(Locale.US, "%.2f", clampedTemp)
+                                Toast.makeText(context, "Admin Master AI parametreleri güncellendi ($globalTemp)!", Toast.LENGTH_SHORT).show()
+                            }
                         },
                         variant = MorCamButtonVariant.Primary
                     )
@@ -1042,14 +1018,25 @@ fun AdminConsoleModal(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 MorCamCapsuleButton(
-                    text = "DB Dışa Aktar",
+                    text = if (isExporting) "Aktarılıyor..." else "DB Dışa Aktar",
                     onClick = {
+                        if (isExporting) return@MorCamCapsuleButton
                         coroutineScope.launch {
-                            val json = onExportData()
-                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                            val clip = android.content.ClipData.newPlainText("Emochi_Full_DB", json)
-                            clipboard.setPrimaryClip(clip)
-                            android.widget.Toast.makeText(context, "Tüm DB JSON pano kopyalandı!", android.widget.Toast.LENGTH_SHORT).show()
+                            isExporting = true
+                            try {
+                                val json = onExportData()
+                                if (json.isBlank()) {
+                                    Toast.makeText(context, "Dışa aktarılacak veri bulunamadı", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                    clipboard?.setPrimaryClip(ClipData.newPlainText("Emochi_Full_DB", json))
+                                    Toast.makeText(context, "Tüm DB JSON pano kopyalandı!", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "Dışa aktarma hatası: ${e.message ?: "Bilinmeyen hata"}", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                isExporting = false
+                            }
                         }
                     },
                     variant = MorCamButtonVariant.Primary,
@@ -1070,7 +1057,7 @@ fun AdminConsoleModal(
 fun UpdateCheckerModal(
     onDismiss: () -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val currentVersion = com.example.BuildConfig.VERSION_NAME
     var checkTick by remember { mutableIntStateOf(0) }
     var isChecking by remember { mutableStateOf(true) }
@@ -1085,8 +1072,15 @@ fun UpdateCheckerModal(
     LaunchedEffect(checkTick) {
         isChecking = true
         statusMessage = null
-        checkResult = com.example.util.AppUpdateManager.checkForUpdate(currentVersion)
-        isChecking = false
+        try {
+            checkResult = com.example.util.AppUpdateManager.checkForUpdate(currentVersion)
+        } catch (e: Exception) {
+            checkResult = com.example.util.AppUpdateManager.CheckResult.Error(
+                e.message ?: "Sürüm kontrolü sırasında beklenmeyen bir hata oluştu."
+            )
+        } finally {
+            isChecking = false
+        }
     }
 
     MorCamDialogShell(
@@ -1108,7 +1102,7 @@ fun UpdateCheckerModal(
                     fontFamily = com.example.ui.theme.InterFontFamily,
                     color = MorCamTokens.LavenderMuted,
                     fontSize = 12.5.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             } else if (isDownloading) {
@@ -1156,7 +1150,7 @@ fun UpdateCheckerModal(
                     modifier = Modifier
                         .size(56.dp)
                         .clip(CircleShape)
-                        .background(Brush.radialGradient(listOf(Color(0x998B5CF6), Color(0x553B1470))))
+                        .background(UpdateSuccessBadgeBrush)
                         .border(1.2.dp, MorCamTokens.RimGradient, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1174,7 +1168,7 @@ fun UpdateCheckerModal(
                     color = MorCamTokens.SilverLavenderBright,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
@@ -1183,7 +1177,7 @@ fun UpdateCheckerModal(
                     color = MorCamTokens.LavenderMuted,
                     fontSize = 12.sp,
                     lineHeight = 17.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    textAlign = TextAlign.Center
                 )
                 Spacer(modifier = Modifier.height(16.dp))
                 MorCamCapsuleButton(
@@ -1204,6 +1198,9 @@ fun UpdateCheckerModal(
                 when (val res = checkResult) {
                     is com.example.util.AppUpdateManager.CheckResult.UpdateAvailable -> {
                         val rel = res.release
+                        val notesText = remember(rel.releaseNotes) {
+                            rel.releaseNotes.trim().ifBlank { "Yeni iyileştirmeler ve hata düzeltmeleri." }
+                        }
                         MorCamGlassCard(highlighted = true, cornerRadius = 18.dp) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -1236,7 +1233,7 @@ fun UpdateCheckerModal(
                             }
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
-                                text = rel.releaseNotes,
+                                text = notesText,
                                 fontFamily = com.example.ui.theme.InterFontFamily,
                                 color = MorCamTokens.LavenderMuted,
                                 fontSize = 12.sp,
@@ -1251,7 +1248,7 @@ fun UpdateCheckerModal(
                                 fontFamily = com.example.ui.theme.InterFontFamily,
                                 color = Color(0xFFFCA5A5),
                                 fontSize = 11.5.sp,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                textAlign = TextAlign.Center
                             )
                         }
 
@@ -1261,34 +1258,38 @@ fun UpdateCheckerModal(
                             text = "İndir ve Kur (v${rel.versionName})",
                             icon = Icons.Default.FlashOn,
                             onClick = {
+                                if (isDownloading) return@MorCamCapsuleButton
                                 coroutineScope.launch {
                                     isDownloading = true
                                     downloadedBytes = 0L
                                     totalBytes = rel.apkSizeBytes
                                     statusMessage = null
-                                    val dlRes = com.example.util.AppUpdateManager.downloadApk(
-                                        context = context,
-                                        release = rel,
-                                        onProgress = { dl, tot ->
-                                            downloadedBytes = dl
-                                            totalBytes = tot
-                                        }
-                                    )
-                                    isDownloading = false
-                                    dlRes.fold(
-                                        onSuccess = { file ->
-                                            downloadedApk = file
-                                            val launched = com.example.util.AppUpdateManager.launchApkInstaller(context, file)
-                                            statusMessage = if (launched) {
-                                                "Android kurulum ekranı açıldı. Tüm sohbet ve hikâye verileriniz korunur."
-                                            } else {
-                                                "Lütfen 'Bilinmeyen kaynaklardan kurulum' iznini verip geri dönün, ardından Kurulumu Başlat'a dokunun."
+                                    try {
+                                        val dlRes = com.example.util.AppUpdateManager.downloadApk(
+                                            context = context,
+                                            release = rel,
+                                            onProgress = { dl, tot ->
+                                                downloadedBytes = dl
+                                                totalBytes = tot
                                             }
-                                        },
-                                        onFailure = { e ->
-                                            statusMessage = e.message ?: "APK indirilemedi."
-                                        }
-                                    )
+                                        )
+                                        dlRes.fold(
+                                            onSuccess = { file ->
+                                                downloadedApk = file
+                                                val launched = com.example.util.AppUpdateManager.launchApkInstaller(context, file)
+                                                statusMessage = if (launched) {
+                                                    "Android kurulum ekranı açıldı. Tüm sohbet ve hikâye verileriniz korunur."
+                                                } else {
+                                                    "Lütfen 'Bilinmeyen kaynaklardan kurulum' iznini verip geri dönün, ardından Kurulumu Başlat'a dokunun."
+                                                }
+                                            },
+                                            onFailure = { e ->
+                                                statusMessage = e.message ?: "APK indirilemedi."
+                                            }
+                                        )
+                                    } finally {
+                                        isDownloading = false
+                                    }
                                 }
                             },
                             variant = MorCamButtonVariant.Primary,
@@ -1301,7 +1302,7 @@ fun UpdateCheckerModal(
                             modifier = Modifier
                                 .size(54.dp)
                                 .clip(CircleShape)
-                                .background(Brush.radialGradient(listOf(Color(0x9934D399), Color(0x44065F46))))
+                                .background(UpdateUpToDateBadgeBrush)
                                 .border(1.2.dp, Color(0xFF6EE7B7), CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
@@ -1326,7 +1327,7 @@ fun UpdateCheckerModal(
                             fontFamily = com.example.ui.theme.InterFontFamily,
                             color = MorCamTokens.LavenderMuted,
                             fontSize = 12.sp,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         MorCamCapsuleButton(
@@ -1344,7 +1345,7 @@ fun UpdateCheckerModal(
                             fontFamily = com.example.ui.theme.InterFontFamily,
                             color = Color(0xFFFCA5A5),
                             fontSize = 12.sp,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = TextAlign.Center
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         MorCamCapsuleButton(
@@ -1421,70 +1422,81 @@ fun ProviderReliabilityDashboardUI() {
         Spacer(modifier = Modifier.height(10.dp))
 
         statsList.forEach { stat ->
-            MorCamGlassCard(
-                cornerRadius = 14.dp,
-                paddingHorizontal = 11.dp,
-                paddingVertical = 9.dp,
-                modifier = Modifier.padding(vertical = 3.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+            key(stat.displayName) {
+                MorCamGlassCard(
+                    cornerRadius = 14.dp,
+                    paddingHorizontal = 11.dp,
+                    paddingVertical = 9.dp,
+                    modifier = Modifier.padding(vertical = 3.dp)
                 ) {
-                    Text(
-                        text = stat.displayName,
-                        fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
-                        color = MorCamTokens.SilverLavenderBright,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    val statusBg = if (stat.isLimitApproaching) Color(0x55831843) else Color(0x456D28D9)
-                    val statusTxt = if (stat.isLimitApproaching) MorCamTokens.DestructiveRimLight else MorCamTokens.LavenderLight
-                    val label = if (stat.isLimitApproaching) "Kısıt Yakın" else "Aktif"
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(50))
-                            .background(statusBg)
-                            .border(0.7.dp, statusTxt.copy(alpha = 0.6f), RoundedCornerShape(50))
-                            .padding(horizontal = 7.dp, vertical = 2.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = label,
-                            fontFamily = com.example.ui.theme.InterFontFamily,
-                            color = statusTxt,
-                            fontSize = 9.sp,
+                            text = stat.displayName,
+                            fontFamily = com.example.ui.theme.LiterarySerifFontFamily,
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
+                        val statusBg = if (stat.isLimitApproaching) Color(0x55831843) else Color(0x456D28D9)
+                        val statusTxt = if (stat.isLimitApproaching) MorCamTokens.DestructiveRimLight else MorCamTokens.LavenderLight
+                        val label = if (stat.isLimitApproaching) "Kısıt Yakın" else "Aktif"
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(50))
+                                .background(statusBg)
+                                .border(0.7.dp, statusTxt.copy(alpha = 0.6f), RoundedCornerShape(50))
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = label,
+                                fontFamily = com.example.ui.theme.InterFontFamily,
+                                color = statusTxt,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Dakika / Saat İstek:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
-                    Text("${stat.requestsLastMinute} req/dk • ${stat.requestsLastHour} req/saat", color = MorCamTokens.SilverLavenderBright, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                }
-
-                Spacer(modifier = Modifier.height(2.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Token / Kredi:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
-                    val tokenLabel = if (stat.quotaType == com.example.util.QuotaType.EXHAUSTIBLE) {
-                        "Kalan Kredi: ${stat.creditsRemaining}"
-                    } else {
-                        val headroom = com.example.util.ProviderRateLimitBudgetHelper.evaluate(stat.tokensUsed24h, stat.tokenLimit24h)
-                        "${stat.tokensUsed24h} / ${stat.tokenLimit24h} (${headroom.statusLabel} %${headroom.remainingPercent})"
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Dakika / Saat İstek:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
+                        Text(
+                            "${stat.requestsLastMinute} req/dk • ${stat.requestsLastHour} req/saat",
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
-                    Text(tokenLabel, color = MorCamTokens.LavenderSoft, fontSize = 10.sp, fontWeight = FontWeight.Medium)
-                }
 
-                Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(2.dp))
 
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Ort. Yanıt • Hata • Devir:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
-                    val speedBadge = com.example.util.ProviderLatencyBadgeFormatter.formatBadge(stat.averageResponseTimeMs)
-                    Text("$speedBadge • ${stat.malformedCount} hata • ${stat.fallbackCount} devir", color = MorCamTokens.SilverLavenderBright, fontSize = 10.sp)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Token / Kredi:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
+                        val tokenLabel = if (stat.quotaType == com.example.util.QuotaType.EXHAUSTIBLE) {
+                            "Kalan Kredi: ${stat.creditsRemaining}"
+                        } else {
+                            val headroom = com.example.util.ProviderRateLimitBudgetHelper.evaluate(stat.tokensUsed24h, stat.tokenLimit24h)
+                            "${stat.tokensUsed24h} / ${stat.tokenLimit24h} (${headroom.statusLabel} %${headroom.remainingPercent})"
+                        }
+                        Text(tokenLabel, color = MorCamTokens.LavenderSoft, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    }
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Ort. Yanıt • Hata • Devir:", color = MorCamTokens.LavenderMuted, fontSize = 10.sp)
+                        val speedBadge = com.example.util.ProviderLatencyBadgeFormatter.formatBadge(stat.averageResponseTimeMs)
+                        Text(
+                            "$speedBadge • ${stat.malformedCount} hata • ${stat.fallbackCount} devir",
+                            color = MorCamTokens.SilverLavenderBright,
+                            fontSize = 10.sp
+                        )
+                    }
                 }
             }
         }

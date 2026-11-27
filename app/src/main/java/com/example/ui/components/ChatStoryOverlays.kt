@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.local.MessageEntity
@@ -34,6 +36,85 @@ import com.example.util.StoryBookmarkStore
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+internal object StoryOverlayTextSanitizer {
+    private val THINK_BLOCK_REGEX = Regex("(?is)<(?:think|thinking|reasoning)>.*?</(?:think|thinking|reasoning)>")
+    private val UNCLOSED_THINK_REGEX = Regex("(?is)<(?:think|thinking|reasoning)>.*$")
+    private val STATE_BLOCK_REGEX = Regex("(?is)\\[\\[(?:STATE_JSON|MEMORY_JSON|CAST_JSON)]].*?\\[\\[/(?:STATE_JSON|MEMORY_JSON|CAST_JSON)]]")
+    private val UNCLOSED_STATE_REGEX = Regex("(?is)\\[\\[(?:STATE_JSON|MEMORY_JSON|CAST_JSON)]].*$")
+    private val MEDIA_TAG_REGEX = Regex("(?is)\\[\\[(?:ANIM|IMG|SFX|SCENE)\\|[^\\]]*]]")
+    private val OOC_META_REGEX = Regex("(?is)\\[OOC_META].*?\\[/OOC_META]")
+    private val MULTI_WHITESPACE_REGEX = Regex("\\s+")
+    private val TR_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
+
+    fun stripInternalTags(raw: String): String {
+        if (raw.isBlank()) return ""
+        return raw
+            .replace(THINK_BLOCK_REGEX, " ")
+            .replace(UNCLOSED_THINK_REGEX, " ")
+            .replace(STATE_BLOCK_REGEX, " ")
+            .replace(UNCLOSED_STATE_REGEX, " ")
+            .replace(MEDIA_TAG_REGEX, " ")
+            .replace(OOC_META_REGEX, " ")
+            .replace(MULTI_WHITESPACE_REGEX, " ")
+            .trim()
+    }
+
+    fun sanitizePreview(raw: String, maxLength: Int = 220): String {
+        val cleaned = stripInternalTags(raw)
+        val safeMax = maxLength.coerceAtLeast(16)
+        return if (cleaned.length <= safeMax) {
+            cleaned
+        } else {
+            cleaned.take(safeMax - 1).trimEnd() + "…"
+        }
+    }
+
+    fun validateNewMacro(
+        rawLabel: String,
+        rawText: String,
+        existingLabels: Collection<String>
+    ): Pair<String, String>? {
+        val label = rawLabel.trim()
+        val text = rawText.trim()
+        if (label.isEmpty() || text.isEmpty()) return null
+        val normLabel = label.lowercase(TR_LOCALE)
+        if (existingLabels.any { it.trim().lowercase(TR_LOCALE) == normLabel }) return null
+        return label.take(60) to text.take(400)
+    }
+
+    fun shouldSkipDuplicateBookmark(
+        existingBookmarks: List<StoryBookmarkStore.Bookmark>,
+        latestMessageId: String,
+        resolvedTitle: String
+    ): Boolean {
+        val normTitle = resolvedTitle.trim().lowercase(TR_LOCALE)
+        return existingBookmarks.any {
+            it.messageId == latestMessageId && it.title.trim().lowercase(TR_LOCALE) == normTitle
+        }
+    }
+}
+
+private val DirectorResponseLengths = listOf(
+    "short" to "Kısa",
+    "standard" to "Dengeli",
+    "detailed" to "Detaylı",
+    "novel" to "Roman"
+)
+
+private val DirectorTtsSpeeds = listOf(
+    0.85f to "0.85x",
+    1.0f to "1.0x",
+    1.15f to "1.15x",
+    1.3f to "1.3x"
+)
+
+private val DirectorFontScales = listOf(
+    0.92f to "Küçük",
+    1.0f to "Normal",
+    1.12f to "Rahat",
+    1.24f to "Büyük"
+)
 
 @Composable
 internal fun ChatStoryStatsDialog(
@@ -50,8 +131,9 @@ internal fun ChatStoryStatsDialog(
     val exprCounts = remember(validMessages) { com.example.util.StoryDialogueQuoteCounter.count(validMessages) }
     val dialogueRatio = remember(validMessages) { com.example.util.StoryDialogueToNarrationRatioHelper.analyze(validMessages) }
     val lastAiTone = remember(validMessages) {
-        val lastAi = validMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
-        com.example.util.CharacterDialogueToneDetector.detectTone(lastAi)
+        val lastAiRaw = validMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
+        val lastAiClean = StoryOverlayTextSanitizer.stripInternalTags(lastAiRaw)
+        com.example.util.CharacterDialogueToneDetector.detectTone(lastAiClean)
     }
     val proseMetrics = remember(validMessages) {
         com.example.util.StoryReadingLevelEstimator.estimate(validMessages)
@@ -79,6 +161,8 @@ internal fun ChatStoryStatsDialog(
     }
     val bestQuote = remember(validMessages, displayName) {
         com.example.util.StoryQuoteExtractor.extractBestQuote(validMessages, displayName)
+            ?.let { StoryOverlayTextSanitizer.sanitizePreview(it, maxLength = 260) }
+            ?.takeIf { it.isNotBlank() }
     }
     val topThemes = remember(validMessages) {
         com.example.util.CharacterWordCloudHelper.extractTopThemes(validMessages, maxThemes = 5)
@@ -92,6 +176,59 @@ internal fun ChatStoryStatsDialog(
         com.example.util.TtsSpeechEstimator.formatDurationTurkish(secs)
     }
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy", Locale.forLanguageTag("tr-TR")) }
+    val statRows = remember(
+        stats,
+        validMessages,
+        displayName,
+        genreTags,
+        atmosphere,
+        pacing,
+        exprCounts,
+        dialogueRatio,
+        lastAiTone,
+        proseMetrics,
+        readability,
+        vocabRichness,
+        cadence,
+        userParticipation,
+        promptBudget,
+        cardCompleteness,
+        estAudioText
+    ) {
+        val estTokens = com.example.util.TokenBudgetEstimator.estimateTokens(stats.totalWordCount)
+        val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
+        listOf(
+            "Hikaye Seviyesi" to com.example.util.StoryDepthTierClassifier.formatLabel(stats.totalWordCount),
+            "Açılış Tarzı" to com.example.util.StoryOpeningHookAnalyzer.classifyOpening(validMessages),
+            "Türler" to genreTags.joinToString(" • "),
+            "Baskın Atmosfer" to atmosphere,
+            "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
+            "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
+            "Diyalog / Betimleme" to com.example.util.StoryDialogueToNarrationRatioHelper.formatCompact(dialogueRatio),
+            "Son Sahne Tonu" to lastAiTone,
+            "Edebi Üslup" to com.example.util.StoryReadingLevelEstimator.formatCompact(proseMetrics),
+            "Okuma Akıcılığı" to readability.label,
+            "Kelime Zenginliği" to com.example.util.StoryVocabularyRichnessHelper.formatCompact(vocabRichness),
+            "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
+            "Yazım Tarzın" to com.example.util.StoryUserParticipationHelper.formatCompact(userParticipation),
+            "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
+            "Toplam Kelime" to "${stats.totalWordCount} kelime",
+            "Kelime Hedefi" to com.example.util.StoryWordMilestoneHelper.formatNextMilestone(stats.totalWordCount),
+            "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
+            "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
+            "Karakter Kartı Yükü" to com.example.util.BotPromptBudgetEstimator.formatCompact(promptBudget),
+            "Kart Hazırlığı" to "${cardCompleteness.label} (%${cardCompleteness.percent})",
+            "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
+            "Tahmini Okuma Süresi" to com.example.util.StoryReadingEstimateRangeHelper.formatRange(stats.totalWordCount),
+            "Tahmini Sesli Dinleme" to estAudioText,
+            "Önerilen Ses Tonu" to com.example.util.TtsProsodyStyleRecommender.recommendForAtmosphere(atmosphere).label,
+            "Son Aktivite" to com.example.util.StorySessionFreshnessHelper.formatFreshness(stats.lastTimestampMs),
+            "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
+                "${dateFmt.format(Date(stats.firstTimestampMs))} — ${dateFmt.format(Date(stats.lastTimestampMs))}"
+            } else "Henüz başlamadı"
+        )
+    }
+
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Hikaye İstatistikleri",
@@ -101,54 +238,25 @@ internal fun ChatStoryStatsDialog(
             modifier = Modifier.fillMaxWidth(),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            val estTokens = com.example.util.TokenBudgetEstimator.estimateTokens(stats.totalWordCount)
-            val fillPct = com.example.util.TokenBudgetEstimator.contextFillPercent(estTokens)
-            listOf(
-                "Hikaye Seviyesi" to com.example.util.StoryDepthTierClassifier.formatLabel(stats.totalWordCount),
-                "Açılış Tarzı" to com.example.util.StoryOpeningHookAnalyzer.classifyOpening(validMessages),
-                "Türler" to genreTags.joinToString(" • "),
-                "Baskın Atmosfer" to atmosphere,
-                "Anlatım Dengesi" to com.example.util.StoryPacingAnalyzer.formatCompact(pacing),
-                "Diyalog & Aksiyon" to com.example.util.StoryDialogueQuoteCounter.formatCompact(exprCounts),
-                "Diyalog / Betimleme" to com.example.util.StoryDialogueToNarrationRatioHelper.formatCompact(dialogueRatio),
-                "Son Sahne Tonu" to lastAiTone,
-                "Edebi Üslup" to com.example.util.StoryReadingLevelEstimator.formatCompact(proseMetrics),
-                "Okuma Akıcılığı" to readability.label,
-                "Kelime Zenginliği" to com.example.util.StoryVocabularyRichnessHelper.formatCompact(vocabRichness),
-                "Sahne Ritmi" to com.example.util.StoryTurnCadenceAnalyzer.formatCompact(cadence),
-                "Yazım Tarzın" to com.example.util.StoryUserParticipationHelper.formatCompact(userParticipation),
-                "Toplam Mesaj" to "${stats.totalMessages} (Sen: ${stats.userMessages} • $displayName: ${stats.assistantMessages})",
-                "Toplam Kelime" to "${stats.totalWordCount} kelime",
-                "Kelime Hedefi" to com.example.util.StoryWordMilestoneHelper.formatNextMilestone(stats.totalWordCount),
-                "Kelime Dengesi" to "Sen: ${stats.userWordCount} • $displayName: ${stats.assistantWordCount}",
-                "Tahmini Token" to "${com.example.util.TokenBudgetEstimator.formatTokenCount(estTokens)} (%$fillPct / 128K)",
-                "Karakter Kartı Yükü" to com.example.util.BotPromptBudgetEstimator.formatCompact(promptBudget),
-                "Kart Hazırlığı" to "${cardCompleteness.label} (%${cardCompleteness.percent})",
-                "Tahmini Roman Sayfası" to "~${stats.estimatedNovelPages} sayfa",
-                "Tahmini Okuma Süresi" to com.example.util.StoryReadingEstimateRangeHelper.formatRange(stats.totalWordCount),
-                "Tahmini Sesli Dinleme" to estAudioText,
-                "Önerilen Ses Tonu" to com.example.util.TtsProsodyStyleRecommender.recommendForAtmosphere(atmosphere).label,
-                "Son Aktivite" to com.example.util.StorySessionFreshnessHelper.formatFreshness(stats.lastTimestampMs),
-                "Hikaye Aralığı" to if (stats.firstTimestampMs > 0L) {
-                    "${dateFmt.format(Date(stats.firstTimestampMs))} — ${dateFmt.format(Date(stats.lastTimestampMs))}"
-                } else "Henüz başlamadı"
-            ).forEach { (label, value) ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = label,
-                        color = Color(0xFFC4B5FD),
-                        fontSize = 12.5.sp
-                    )
-                    Text(
-                        text = value,
-                        color = Color.White,
-                        fontSize = 12.5.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+            statRows.forEach { (label, value) ->
+                key(label) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = label,
+                            color = Color(0xFFC4B5FD),
+                            fontSize = 12.5.sp
+                        )
+                        Text(
+                            text = value,
+                            color = Color.White,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
             }
             if (emotionalArc.isNotBlank()) {
@@ -264,12 +372,12 @@ internal fun ChatStoryBookmarksDialog(
     onJumpToMessage: (String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var bookmarkTitle by remember { mutableStateOf("") }
-    var bookmarkSearch by remember { mutableStateOf("") }
+    var bookmarkTitle by remember(botId) { mutableStateOf("") }
+    var bookmarkSearch by remember(botId) { mutableStateOf("") }
     val filteredBookmarks = remember(storyBookmarks, bookmarkSearch) {
         com.example.util.StoryBookmarkSearchHelper.filter(storyBookmarks, bookmarkSearch)
     }
-    val latestMsg = validMessages.lastOrNull()
+    val latestMsg = remember(validMessages) { validMessages.lastOrNull() }
     MorCamDialogShell(
         onDismissRequest = onDismiss,
         title = "Hikaye Yer İmleri",
@@ -296,15 +404,20 @@ internal fun ChatStoryBookmarksDialog(
                 MorCamCapsuleButton(
                     text = "Son Sahneyi Yer İmi Olarak Kaydet",
                     onClick = {
+                        val cleanLatest = StoryOverlayTextSanitizer.sanitizePreview(latestMsg.text, maxLength = 220)
                         val label = bookmarkTitle.trim().ifBlank {
-                            com.example.util.StorySceneTitleGenerator.suggestTitle(latestMsg.text, validMessages.size)
+                            com.example.util.StorySceneTitleGenerator.suggestTitle(cleanLatest, validMessages.size)
+                        }
+                        if (StoryOverlayTextSanitizer.shouldSkipDuplicateBookmark(storyBookmarks, latestMsg.id, label)) {
+                            Toast.makeText(context, "Bu sahne zaten yer imlerinde kayıtlı", Toast.LENGTH_SHORT).show()
+                            return@MorCamCapsuleButton
                         }
                         val updated = StoryBookmarkStore.addBookmark(
                             context = context,
                             botId = botId,
                             messageId = latestMsg.id,
                             title = label,
-                            snippet = latestMsg.text
+                            snippet = cleanLatest
                         )
                         onBookmarksChanged(updated)
                         bookmarkTitle = ""
@@ -357,55 +470,64 @@ internal fun ChatStoryBookmarksDialog(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     filteredBookmarks.forEach { bm ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0x441B0D36))
-                                .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(12.dp))
-                                .clickable {
-                                    onDismiss()
-                                    onJumpToMessage(bm.messageId)
-                                }
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                val relTime = com.example.util.MessageTimestampFormatter.formatRelative(bm.createdAtMs)
-                                Text(
-                                    text = if (relTime.isNotBlank()) "🔖 ${bm.title} • $relTime" else "🔖 ${bm.title}",
-                                    color = Color.White,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                                if (bm.snippet.isNotBlank()) {
-                                    Text(
-                                        text = bm.snippet,
-                                        color = Color(0xFFC4B5FD),
-                                        fontSize = 11.sp,
-                                        maxLines = 2
-                                    )
-                                }
+                        key(bm.id) {
+                            val relTime = remember(bm.createdAtMs) {
+                                com.example.util.MessageTimestampFormatter.formatRelative(bm.createdAtMs)
                             }
-                            Text(
-                                text = "Sil",
-                                color = Color(0xFFFCA5A5),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
+                            val cleanSnippet = remember(bm.id, bm.snippet) {
+                                StoryOverlayTextSanitizer.sanitizePreview(bm.snippet, maxLength = 180)
+                            }
+                            Row(
                                 modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0x441B0D36))
+                                    .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(12.dp))
                                     .clickable {
-                                        onBookmarksChanged(
-                                            StoryBookmarkStore.removeBookmark(
-                                                context = context,
-                                                botId = botId,
-                                                bookmarkId = bm.id
-                                            )
+                                        onDismiss()
+                                        onJumpToMessage(bm.messageId)
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = if (relTime.isNotBlank()) "🔖 ${bm.title} • $relTime" else "🔖 ${bm.title}",
+                                        color = Color.White,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (cleanSnippet.isNotBlank()) {
+                                        Text(
+                                            text = cleanSnippet,
+                                            color = Color(0xFFC4B5FD),
+                                            fontSize = 11.sp,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
+                                }
+                                Text(
+                                    text = "Sil",
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier
+                                        .clickable {
+                                            onBookmarksChanged(
+                                                StoryBookmarkStore.removeBookmark(
+                                                    context = context,
+                                                    botId = botId,
+                                                    bookmarkId = bm.id
+                                                )
+                                            )
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -433,15 +555,30 @@ internal fun ChatStoryDirectorDialog(
     var directorRule by remember(botId) {
         mutableStateOf(com.example.util.BotDirectorNoteStore.loadRule(context, botId))
     }
-    MorCamDialogShell(
-        onDismissRequest = onDismiss,
-        title = "Hikaye Yönetmeni",
-        subtitle = com.example.util.StoryDirectorSummaryHelper.formatActiveConfig(
+    var newMacroLabel by remember(botId) { mutableStateOf("") }
+    var newMacroText by remember(botId) { mutableStateOf("") }
+
+    val quickSyntaxChips = remember {
+        listOf(
+            "*Aksiyon*" to com.example.util.ChatInputQuickSyntaxHelper.wrapAction("..."),
+            "\"Diyalog\"" to com.example.util.ChatInputQuickSyntaxHelper.wrapDialogue("..."),
+            "[OOC]" to com.example.util.ChatInputQuickSyntaxHelper.wrapOoc("...")
+        )
+    }
+
+    val directorSubtitle = remember(currentResponseLength, currentTtsSpeed, currentFontScale, directorRule) {
+        com.example.util.StoryDirectorSummaryHelper.formatActiveConfig(
             responseLength = currentResponseLength,
             ttsSpeed = currentTtsSpeed,
             fontScale = currentFontScale,
             hasDirectorRule = directorRule.isNotBlank()
         )
+    }
+
+    MorCamDialogShell(
+        onDismissRequest = onDismiss,
+        title = "Hikaye Yönetmeni",
+        subtitle = directorSubtitle
     ) {
         Column(
             modifier = Modifier
@@ -456,18 +593,12 @@ internal fun ChatStoryDirectorDialog(
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold
             )
-            val lengths = listOf(
-                "short" to "Kısa",
-                "standard" to "Dengeli",
-                "detailed" to "Detaylı",
-                "novel" to "Roman"
-            )
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                lengths.forEach { (key, label) ->
-                    val selected = currentResponseLength.equals(key, ignoreCase = true)
+                DirectorResponseLengths.forEach { (keyName, label) ->
+                    val selected = currentResponseLength.equals(keyName, ignoreCase = true)
                     Row(
                         modifier = Modifier
                             .weight(1f)
@@ -478,7 +609,7 @@ internal fun ChatStoryDirectorDialog(
                                 if (selected) Color(0xFFE9D5FF) else Color(0x55B794F4),
                                 RoundedCornerShape(10.dp)
                             )
-                            .clickable { onSelectResponseLength(key) }
+                            .clickable { onSelectResponseLength(keyName) }
                             .padding(vertical = 8.dp),
                         horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
@@ -499,12 +630,11 @@ internal fun ChatStoryDirectorDialog(
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.SemiBold
             )
-            val speeds = listOf(0.85f to "0.85x", 1.0f to "1.0x", 1.15f to "1.15x", 1.3f to "1.3x")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                speeds.forEach { (spd, label) ->
+                DirectorTtsSpeeds.forEach { (spd, label) ->
                     val selected = kotlin.math.abs(currentTtsSpeed - spd) < 0.05f
                     Row(
                         modifier = Modifier
@@ -537,12 +667,11 @@ internal fun ChatStoryDirectorDialog(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
-            val fontScales = listOf(0.92f to "Küçük", 1.0f to "Normal", 1.12f to "Rahat", 1.24f to "Büyük")
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                fontScales.forEach { (sc, label) ->
+                DirectorFontScales.forEach { (sc, label) ->
                     val selected = kotlin.math.abs(currentFontScale - sc) < 0.04f
                     Row(
                         modifier = Modifier
@@ -605,7 +734,8 @@ internal fun ChatStoryDirectorDialog(
                             color = Color.White,
                             fontSize = 10.sp,
                             fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                            maxLines = 1
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -627,10 +757,12 @@ internal fun ChatStoryDirectorDialog(
             MorCamCapsuleButton(
                 text = "Yönetmen Kuralını Kaydet",
                 onClick = {
-                    com.example.util.BotDirectorNoteStore.saveRule(context, botId, directorRule)
+                    val trimmedRule = directorRule.trim()
+                    directorRule = trimmedRule
+                    com.example.util.BotDirectorNoteStore.saveRule(context, botId, trimmedRule)
                     Toast.makeText(
                         context,
-                        if (directorRule.isBlank()) "Yönetmen kuralı temizlendi" else "Yönetmen kuralı kaydedildi",
+                        if (trimmedRule.isBlank()) "Yönetmen kuralı temizlendi" else "Yönetmen kuralı kaydedildi",
                         Toast.LENGTH_SHORT
                     ).show()
                 },
@@ -638,7 +770,8 @@ internal fun ChatStoryDirectorDialog(
             )
 
             val smartStarters = remember(lastAssistantText) {
-                com.example.util.QuickReplyChipsHelper.suggestStarters(lastAssistantText)
+                val cleanAssistant = StoryOverlayTextSanitizer.sanitizePreview(lastAssistantText, maxLength = 600)
+                com.example.util.QuickReplyChipsHelper.suggestStarters(cleanAssistant)
             }
             Text(
                 text = "Sahneye Göre Hızlı Başlangıçlar (Dokun & Ekle)",
@@ -664,7 +797,8 @@ internal fun ChatStoryDirectorDialog(
                             text = "✦ $starter",
                             color = Color.White,
                             fontSize = 11.5.sp,
-                            maxLines = 2
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
@@ -680,11 +814,7 @@ internal fun ChatStoryDirectorDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf(
-                    "*Aksiyon*" to com.example.util.ChatInputQuickSyntaxHelper.wrapAction("..."),
-                    "\"Diyalog\"" to com.example.util.ChatInputQuickSyntaxHelper.wrapDialogue("..."),
-                    "[OOC]" to com.example.util.ChatInputQuickSyntaxHelper.wrapOoc("...")
-                ).forEach { (chipLabel, snippet) ->
+                quickSyntaxChips.forEach { (chipLabel, snippet) ->
                     Row(
                         modifier = Modifier
                             .weight(1f)
@@ -715,8 +845,6 @@ internal fun ChatStoryDirectorDialog(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
             )
-            var newMacroLabel by remember { mutableStateOf("") }
-            var newMacroText by remember { mutableStateOf("") }
             OutlinedTextField(
                 value = newMacroLabel,
                 onValueChange = { newMacroLabel = it },
@@ -735,7 +863,16 @@ internal fun ChatStoryDirectorDialog(
                 MorCamCapsuleButton(
                     text = "+ Makro Ekle",
                     onClick = {
-                        macros = com.example.util.RoleplayMacroStore.addMacro(context, newMacroLabel, newMacroText)
+                        val validated = StoryOverlayTextSanitizer.validateNewMacro(
+                            rawLabel = newMacroLabel,
+                            rawText = newMacroText,
+                            existingLabels = macros.map { it.label }
+                        )
+                        if (validated == null) {
+                            Toast.makeText(context, "Bu makro adı zaten mevcut veya geçersiz", Toast.LENGTH_SHORT).show()
+                            return@MorCamCapsuleButton
+                        }
+                        macros = com.example.util.RoleplayMacroStore.addMacro(context, validated.first, validated.second)
                         newMacroLabel = ""
                         newMacroText = ""
                         Toast.makeText(context, "Özel makro kaydedildi", Toast.LENGTH_SHORT).show()
@@ -745,45 +882,50 @@ internal fun ChatStoryDirectorDialog(
             }
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 macros.forEach { macro ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(Color(0x441B0D36))
-                            .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
-                            .clickable {
-                                onInsertMacro(macro.text)
-                                onDismiss()
+                    key(macro.id) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0x441B0D36))
+                                .border(0.8.dp, Color(0x55C084FC), RoundedCornerShape(10.dp))
+                                .clickable {
+                                    onInsertMacro(macro.text)
+                                    onDismiss()
+                                }
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "⚡ ${macro.label}",
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    text = macro.text,
+                                    color = Color(0xFFC4B5FD),
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "⚡ ${macro.label}",
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = macro.text,
-                                color = Color(0xFFC4B5FD),
-                                fontSize = 10.5.sp,
-                                maxLines = 1
-                            )
-                        }
-                        if (!macro.id.startsWith("def_")) {
-                            Text(
-                                text = "Sil",
-                                color = Color(0xFFFCA5A5),
-                                fontSize = 10.5.sp,
-                                modifier = Modifier
-                                    .clickable {
-                                        macros = com.example.util.RoleplayMacroStore.removeMacro(context, macro.id)
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
+                            if (!macro.id.startsWith("def_")) {
+                                Text(
+                                    text = "Sil",
+                                    color = Color(0xFFFCA5A5),
+                                    fontSize = 10.5.sp,
+                                    modifier = Modifier
+                                        .clickable {
+                                            macros = com.example.util.RoleplayMacroStore.removeMacro(context, macro.id)
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -802,9 +944,15 @@ internal fun ChatScratchpadDialog(
     var noteText by remember(botId) {
         mutableStateOf(com.example.util.BotScratchpadStore.loadNote(context, botId))
     }
+    var hasExplicitlySaved by remember(botId) { mutableStateOf(false) }
+    val wordCountLabel = remember(noteText) {
+        com.example.util.TextWordCounter.formatCompact(noteText)
+    }
     MorCamDialogShell(
         onDismissRequest = {
-            com.example.util.BotScratchpadStore.saveNote(context, botId, noteText)
+            if (!hasExplicitlySaved) {
+                com.example.util.BotScratchpadStore.saveNote(context, botId, noteText)
+            }
             onDismiss()
         },
         title = "Hikaye Not Defteri",
@@ -816,7 +964,10 @@ internal fun ChatScratchpadDialog(
         ) {
             OutlinedTextField(
                 value = noteText,
-                onValueChange = { noteText = it },
+                onValueChange = {
+                    hasExplicitlySaved = false
+                    noteText = it
+                },
                 minLines = 5,
                 maxLines = 10,
                 placeholder = {
@@ -829,7 +980,7 @@ internal fun ChatScratchpadDialog(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                text = com.example.util.TextWordCounter.formatCompact(noteText),
+                text = wordCountLabel,
                 color = Color(0xFFC4B5FD),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Medium
@@ -856,6 +1007,7 @@ internal fun ChatScratchpadDialog(
                     variant = MorCamButtonVariant.Secondary,
                     onClick = {
                         noteText = ""
+                        hasExplicitlySaved = true
                         com.example.util.BotScratchpadStore.clearNote(context, botId)
                         Toast.makeText(context, "Not defteri temizlendi", Toast.LENGTH_SHORT).show()
                     },
@@ -864,6 +1016,7 @@ internal fun ChatScratchpadDialog(
                 MorCamCapsuleButton(
                     text = "Kaydet",
                     onClick = {
+                        hasExplicitlySaved = true
                         com.example.util.BotScratchpadStore.saveNote(context, botId, noteText)
                         Toast.makeText(context, "Notlar kaydedildi", Toast.LENGTH_SHORT).show()
                         onDismiss()

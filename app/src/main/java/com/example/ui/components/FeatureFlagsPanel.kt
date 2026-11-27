@@ -18,6 +18,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -26,9 +27,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
 import com.example.util.AppFeatureFlags
+
+internal fun partitionFeatureToggles(
+    toggles: List<AppFeatureFlags.ToggleSpec>
+): Pair<List<AppFeatureFlags.ToggleSpec>, List<AppFeatureFlags.ToggleSpec>> {
+    val deduped = toggles.distinctBy { it.key }
+    return deduped.partition { !it.isExperimental }
+}
 
 /**
  * Özellik toggle paneli — Mor Cam tasarım sistemiyle yenilendi.
@@ -38,9 +45,7 @@ import com.example.util.AppFeatureFlags
 fun FeatureFlagsPanel(
     onDismiss: () -> Unit
 ) {
-    val allToggles = remember { AppFeatureFlags.allToggles() }
-    val stable = remember(allToggles) { allToggles.filter { !it.isExperimental } }
-    val experimental = remember(allToggles) { allToggles.filter { it.isExperimental } }
+    val (stable, experimental) = remember { partitionFeatureToggles(AppFeatureFlags.allToggles()) }
 
     MorCamDialogShell(
         onDismissRequest = onDismiss,
@@ -64,7 +69,9 @@ fun FeatureFlagsPanel(
                     color = MorCamTokens.LavenderSoft
                 )
                 stable.forEach { spec ->
-                    FeatureToggleRow(spec = spec, isExperimental = false)
+                    key(spec.key) {
+                        FeatureToggleRow(spec = spec, isExperimental = false)
+                    }
                 }
             }
 
@@ -91,7 +98,9 @@ fun FeatureFlagsPanel(
                 }
 
                 experimental.forEach { spec ->
-                    FeatureToggleRow(spec = spec, isExperimental = true)
+                    key(spec.key) {
+                        FeatureToggleRow(spec = spec, isExperimental = true)
+                    }
                 }
             }
         }
@@ -113,7 +122,7 @@ private fun FeatureToggleRow(
     spec: AppFeatureFlags.ToggleSpec,
     isExperimental: Boolean = false
 ) {
-    var checked by remember { mutableStateOf(spec.getter()) }
+    var checked by remember(spec.key) { mutableStateOf(spec.getter()) }
 
     MorCamSwitchRow(
         title = spec.label,

@@ -7,11 +7,14 @@ package com.example.util
 object ApiKeyFormatValidator {
 
     private val bearerPrefixRegex = Regex("^bearer\\s+", RegexOption.IGNORE_CASE)
+    private val invisibleCharsRegex = Regex("[\\u200B-\\u200D\\uFEFF\\u00AD]")
 
     fun sanitizeKey(rawKey: String): String {
         var cleaned = rawKey
             .replace("\r", "")
             .replace("\n", "")
+            .replace("\u00A0", " ")
+            .replace(invisibleCharsRegex, "")
             .trim()
         if ((cleaned.startsWith("\"") && cleaned.endsWith("\"")) ||
             (cleaned.startsWith("'") && cleaned.endsWith("'"))

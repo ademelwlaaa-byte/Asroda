@@ -59,7 +59,8 @@ object ChatStoryStats {
         var maxTs = 0L
 
         for (m in valid) {
-            val w = countWords(m.text)
+            val cleanText = com.example.data.repository.EmochiRepository.cleanEmotionTags(m.text)
+            val w = countWords(cleanText)
             if (m.role == "user") {
                 userMsgs++
                 userWords += w
