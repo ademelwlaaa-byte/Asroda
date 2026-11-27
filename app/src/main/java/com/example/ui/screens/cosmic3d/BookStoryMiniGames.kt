@@ -368,10 +368,10 @@ internal fun Pure25DMotionCinemaBackdrop(
 
     // Draw-phase-only State<Float> drivers -> 0 FPS root recomposition!
     val zoomState = rememberCosmicPhaseState(
-        durationMs = 9000,
-        initialValue = 1.05f,
-        targetValue = 1.15f,
-        staticValue = 1.07f,
+        durationMs = 9500,
+        initialValue = 1.03f,
+        targetValue = 1.09f,
+        staticValue = 1.04f,
         repeatMode = RepeatMode.Reverse,
         easing = FastOutSlowInEasing,
         label = "cinema25dZoom",
@@ -379,8 +379,8 @@ internal fun Pure25DMotionCinemaBackdrop(
     )
     val panXState = rememberCosmicPhaseState(
         durationMs = 11500,
-        initialValue = -22f,
-        targetValue = 22f,
+        initialValue = -12f,
+        targetValue = 12f,
         staticValue = 0f,
         repeatMode = RepeatMode.Reverse,
         easing = FastOutSlowInEasing,
@@ -410,7 +410,12 @@ internal fun Pure25DMotionCinemaBackdrop(
 
     val safeShake = if (allowShake && shakeIntensity.isFinite()) shakeIntensity.coerceIn(0f, 2f) else 0f
 
-    Box(modifier = modifier.fillMaxSize().background(Color(0xFF05030D))) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF05030D))
+            .graphicsLayer { clip = true }
+    ) {
         AnimatedContent(
             targetState = imageRes,
             transitionSpec = {
@@ -433,14 +438,16 @@ internal fun Pure25DMotionCinemaBackdrop(
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        val z = zoomState.value
+                        val z = zoomState.value + if (safeShake > 0.01f) 0.03f else 0f
                         scaleX = z
                         scaleY = z
                         val pPhase = particlePhaseState.value
-                        val shakeX = if (safeShake > 0.01f) sin(pPhase * 90f) * 14f * safeShake else 0f
-                        val shakeY = if (safeShake > 0.01f) cos(pPhase * 75f) * 10f * safeShake else 0f
-                        translationX = panXState.value + shakeX
-                        translationY = shakeY
+                        val maxShiftX = (size.width * (z - 1f) * 0.48f).coerceAtLeast(0f)
+                        val maxShiftY = (size.height * (z - 1f) * 0.48f).coerceAtLeast(0f)
+                        val shakeX = if (safeShake > 0.01f) sin(pPhase * 90f) * 10f * safeShake else 0f
+                        val shakeY = if (safeShake > 0.01f) cos(pPhase * 75f) * 8f * safeShake else 0f
+                        translationX = (panXState.value + shakeX).coerceIn(-maxShiftX, maxShiftX)
+                        translationY = shakeY.coerceIn(-maxShiftY, maxShiftY)
                     }
             )
         }
@@ -717,6 +724,30 @@ private fun Interactive25DCinemaSceneDialog(
                 shakeIntensity = shakeTrigger
             )
 
+            // Edge-to-edge top & bottom vignette scrims so system bars blend seamlessly into the 2.5D scene
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(110.dp)
+                    .align(Alignment.TopCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xCC05030E), Color(0x6605030E), Color.Transparent)
+                        )
+                    )
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color(0x8805030E), Color(0xDE04020B))
+                        )
+                    )
+            )
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -727,24 +758,26 @@ private fun Interactive25DCinemaSceneDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xAA05030E))
+                        .background(Color(0x99060312))
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "🎬 ${gameId.badgeLabel}",
                             fontFamily = InterFontFamily,
-                            fontSize = 10.sp,
+                            fontSize = 9.5.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.1.sp,
-                            color = gameId.accentColor
+                            letterSpacing = 1.sp,
+                            color = gameId.accentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = title,
                             fontFamily = DisplaySerifFontFamily,
-                            fontSize = 17.sp,
+                            fontSize = 16.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             maxLines = 1,
@@ -752,7 +785,7 @@ private fun Interactive25DCinemaSceneDialog(
                         )
                     }
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         IconButton(
                             onClick = {
                                 isMuted = !isMuted
@@ -1247,14 +1280,16 @@ private fun Interactive25DCinemaSceneDialog(
                     }
                 }
 
-                // Bottom Cinema Subtitle Ribbon
+                // Bottom Cinema Subtitle Ribbon — floating rounded glass card safely above navigation bar
                 if (activeSubtitleText.isNotBlank()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xDD04020B))
-                            .border(0.7.dp, Color(0x44C4B5FD))
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .padding(start = 14.dp, end = 14.dp, bottom = 10.dp)
+                            .clip(MiniGamePanelShape)
+                            .background(Color(0xE2070414))
+                            .border(0.9.dp, Color(0x55C4B5FD), MiniGamePanelShape)
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -1271,7 +1306,9 @@ private fun Interactive25DCinemaSceneDialog(
                                     fontFamily = InterFontFamily,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = activeSubtitleSpeaker?.accentColor ?: Color(0xFFC4B5FD)
+                                    color = activeSubtitleSpeaker?.accentColor ?: Color(0xFFC4B5FD),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 if (isVoiceSpeaking) {
                                     Text(
@@ -1279,7 +1316,8 @@ private fun Interactive25DCinemaSceneDialog(
                                         fontFamily = InterFontFamily,
                                         fontSize = 9.5.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF6EE7B7)
+                                        color = Color(0xFF6EE7B7),
+                                        maxLines = 1
                                     )
                                 }
                             }

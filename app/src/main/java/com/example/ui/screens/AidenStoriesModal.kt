@@ -1083,39 +1083,15 @@ fun AidenStoriesModalContent(
                 Spacer(modifier = Modifier.height(9.dp))
             }
 
-            // 5. All 5 Aiden Story List Cards with Staggered 70ms Entrance, "✦ Daha Fazla Göster ↗" Pill,
-            //    Thematic Glowing Category Badges, and "● Devam Ediyor" / "▶ Devam Et" Smart State
+            // 5. All Aiden Story List Cards — render instantaneously while scrolling (no artificial delay lag)
             itemsIndexed(
                 items = AIDEN_CATALOG_SPECS,
                 key = { _, spec -> spec.presetId },
                 contentType = { _, _ -> "aiden_story_row" }
             ) { index, spec ->
-                var itemVisible by remember(spec.presetId) { mutableStateOf(false) }
-                LaunchedEffect(spec.presetId) {
-                    delay(index * 70L) // Section 3.4: 70ms staggered fade-up entrance
-                    itemVisible = true
-                }
-                val itemAlpha by animateFloatAsState(
-                    targetValue = if (itemVisible) 1f else 0f,
-                    animationSpec = tween(290, easing = FastOutSlowInEasing),
-                    label = "row_alpha_$index"
-                )
-                val itemOffsetY by animateFloatAsState(
-                    targetValue = if (itemVisible) 0f else 18f,
-                    animationSpec = spring(
-                        dampingRatio = 0.78f,
-                        stiffness = Spring.StiffnessMediumLow
-                    ),
-                    label = "row_offset_$index"
-                )
-
                 Box(
                     modifier = Modifier
                         .padding(horizontal = 14.dp, vertical = 5.5.dp)
-                        .graphicsLayer {
-                            alpha = itemAlpha
-                            translationY = itemOffsetY
-                        }
                 ) {
                     AidenWideStoryRowCard(
                         spec = spec,
@@ -2342,7 +2318,7 @@ private fun AidenHeroPeekingCarousel(
                 // Direct frame-accurate smoothstep curve synced 1:1 with pager scroll (zero rubber-band lag!)
                 val smoothSel = linearSelection * linearSelection * (3f - 2f * linearSelection)
 
-                val capsuleWidth = 8.dp + (8.dp * smoothSel) // Normal 8.dp dot -> sleek 16.dp active pill
+                val capsuleWidth = 11.dp // Equal uniform size across all pagination indicators
                 val capsuleHeight = 6.5.dp
 
                 val isTimerOwner = idx == ownerUniverseIndex

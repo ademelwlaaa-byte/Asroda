@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
@@ -24,25 +24,36 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -610,7 +621,14 @@ internal fun GlobalGlassInputField(
     onToggleSecret: (() -> Unit)? = null,
     leadingIcon: (@Composable () -> Unit)? = null
 ) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val focusScope = rememberCoroutineScope()
+    var isFocused by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = modifier.bringIntoViewRequester(bringIntoViewRequester),
+        verticalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
         if (!label.isNullOrBlank()) {
             Text(
                 text = label,
@@ -625,8 +643,12 @@ internal fun GlobalGlassInputField(
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color(0x780F0522))
-                .border(1.05.dp, GlobalMorCamColors.RimGradient, RoundedCornerShape(16.dp))
+                .background(if (isFocused) Color(0x99160830) else Color(0x780F0522))
+                .border(
+                    width = if (isFocused) 1.4.dp else 1.05.dp,
+                    brush = GlobalMorCamColors.RimGradient,
+                    shape = RoundedCornerShape(16.dp)
+                )
                 .padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -654,7 +676,17 @@ internal fun GlobalGlassInputField(
                         fontFamily = InterFontFamily
                     ),
                     cursorBrush = SolidColor(GlobalMorCamColors.BrightViolet),
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { state ->
+                            isFocused = state.isFocused
+                            if (state.isFocused) {
+                                focusScope.launch {
+                                    delay(180)
+                                    bringIntoViewRequester.bringIntoView()
+                                }
+                            }
+                        }
                 )
             }
             if (isSecret && onToggleSecret != null) {
@@ -878,8 +910,7 @@ internal fun ApiCatalogSearchDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -974,13 +1005,39 @@ internal fun ApiCatalogSearchDialog(
                 }
             }
 
-            // Provider catalog list
+            // Provider catalog list with smooth top & bottom fade transitions
+            val catalogListState = rememberLazyListState()
+            val showCatTopFade by remember(catalogListState) {
+                derivedStateOf {
+                    catalogListState.firstVisibleItemIndex > 0 || catalogListState.firstVisibleItemScrollOffset > 6
+                }
+            }
+            val showCatBottomFade by remember(catalogListState) {
+                derivedStateOf { catalogListState.canScrollForward }
+            }
+            val catTopFadeAlpha by animateFloatAsState(
+                targetValue = if (showCatTopFade) 1f else 0f,
+                animationSpec = tween(180),
+                label = "catalog_top_fade"
+            )
+            val catBottomFadeAlpha by animateFloatAsState(
+                targetValue = if (showCatBottomFade) 1f else 0f,
+                animationSpec = tween(180),
+                label = "catalog_bottom_fade"
+            )
             LazyColumn(
+                state = catalogListState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
+                    .weight(1f)
+                    .verticalFadingEdge(
+                        topFadeHeight = 20.dp,
+                        bottomFadeHeight = 26.dp,
+                        topFadeAlpha = catTopFadeAlpha,
+                        bottomFadeAlpha = catBottomFadeAlpha
+                    ),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 16.dp)
+                contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp)
             ) {
                 itemsIndexed(filteredProviders, key = { _, it -> it.id }) { index, spec ->
                     val isAlreadyAdded = (spec.builtinSlot != null && spec.builtinSlot in configuredBuiltinSlots) ||
@@ -1182,14 +1239,14 @@ internal fun ApiProviderConfigureDialog(
     }
 
     FullScreenMorCamSheetContainer(onDismiss = onDismiss) {
+        val isImeOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Sticky Header
             Row(
@@ -1231,12 +1288,30 @@ internal fun ApiProviderConfigureDialog(
                 }
             }
 
-            // Scrollable Form Body (edge-to-edge, never clipped by keyboard or screen size)
+            // Scrollable Form Body (edge-to-edge, smooth top/bottom fades, never clipped by keyboard)
+            val providerFormScroll = rememberScrollState()
+            val providerTopFade by animateFloatAsState(
+                targetValue = if (providerFormScroll.value > 6) 1f else 0f,
+                animationSpec = tween(180),
+                label = "provider_form_top_fade"
+            )
+            val providerBottomFade by animateFloatAsState(
+                targetValue = if (providerFormScroll.maxValue > 0 && providerFormScroll.value < providerFormScroll.maxValue - 6) 1f else 0f,
+                animationSpec = tween(180),
+                label = "provider_form_bottom_fade"
+            )
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalFadingEdge(
+                        topFadeHeight = 20.dp,
+                        bottomFadeHeight = 26.dp,
+                        topFadeAlpha = providerTopFade,
+                        bottomFadeAlpha = providerBottomFade
+                    )
+                    .verticalScroll(providerFormScroll)
+                    .padding(top = 4.dp, bottom = if (isImeOpen) 22.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // Key input
@@ -1525,14 +1600,14 @@ internal fun CustomApiEditorDialog(
     }
 
     FullScreenMorCamSheetContainer(onDismiss = onDismiss) {
+        val isImeOpen = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             // Sticky Header
             Row(
@@ -1573,12 +1648,30 @@ internal fun CustomApiEditorDialog(
                 }
             }
 
-            // Scrollable Form Body (full-screen edge-to-edge, never clipped by keyboard)
+            // Scrollable Form Body (full-screen edge-to-edge, smooth fades, never clipped by keyboard)
+            val customFormScroll = rememberScrollState()
+            val customTopFade by animateFloatAsState(
+                targetValue = if (customFormScroll.value > 6) 1f else 0f,
+                animationSpec = tween(180),
+                label = "custom_form_top_fade"
+            )
+            val customBottomFade by animateFloatAsState(
+                targetValue = if (customFormScroll.maxValue > 0 && customFormScroll.value < customFormScroll.maxValue - 6) 1f else 0f,
+                animationSpec = tween(180),
+                label = "custom_form_bottom_fade"
+            )
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalFadingEdge(
+                        topFadeHeight = 20.dp,
+                        bottomFadeHeight = 26.dp,
+                        topFadeAlpha = customTopFade,
+                        bottomFadeAlpha = customBottomFade
+                    )
+                    .verticalScroll(customFormScroll)
+                    .padding(top = 4.dp, bottom = if (isImeOpen) 22.dp else 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 if (!isEditing) {
@@ -2207,8 +2300,7 @@ internal fun FreeKeylessProvidersDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .padding(horizontal = 16.dp, vertical = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -2252,11 +2344,29 @@ internal fun FreeKeylessProvidersDialog(
                 }
             }
 
+            val freeScrollState = rememberScrollState()
+            val freeTopFade by animateFloatAsState(
+                targetValue = if (freeScrollState.value > 6) 1f else 0f,
+                animationSpec = tween(180),
+                label = "free_providers_top_fade"
+            )
+            val freeBottomFade by animateFloatAsState(
+                targetValue = if (freeScrollState.maxValue > 0 && freeScrollState.value < freeScrollState.maxValue - 6) 1f else 0f,
+                animationSpec = tween(180),
+                label = "free_providers_bottom_fade"
+            )
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalFadingEdge(
+                        topFadeHeight = 20.dp,
+                        bottomFadeHeight = 26.dp,
+                        topFadeAlpha = freeTopFade,
+                        bottomFadeAlpha = freeBottomFade
+                    )
+                    .verticalScroll(freeScrollState)
+                    .padding(top = 4.dp, bottom = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 ApiProviderCatalog.freeKeylessProviders.forEach { spec ->

@@ -11,6 +11,7 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -70,12 +71,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.example.ui.components.verticalFadingEdge
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -1343,10 +1346,28 @@ fun ChapterSummaryModal(
                                                 else -> "KADER SEÇİMİ"
                                             }
 
+                                            val slideScrollState = rememberScrollState()
+                                            val slideTopFade by animateFloatAsState(
+                                                targetValue = if (slideScrollState.value > 6) 1f else 0f,
+                                                animationSpec = tween(180),
+                                                label = "summary_slide_top_fade"
+                                            )
+                                            val slideBottomFade by animateFloatAsState(
+                                                targetValue = if (slideScrollState.maxValue > 0 && slideScrollState.value < slideScrollState.maxValue - 6) 1f else 0f,
+                                                animationSpec = tween(180),
+                                                label = "summary_slide_bottom_fade"
+                                            )
                                             Column(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
-                                                    .verticalScroll(rememberScrollState()),
+                                                    .verticalFadingEdge(
+                                                        topFadeHeight = 20.dp,
+                                                        bottomFadeHeight = 24.dp,
+                                                        topFadeAlpha = slideTopFade,
+                                                        bottomFadeAlpha = slideBottomFade
+                                                    )
+                                                    .verticalScroll(slideScrollState)
+                                                    .padding(top = 4.dp, bottom = 6.dp),
                                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                                             ) {
                                                 // Editorial Decision Header floating softly over the artwork
@@ -1674,10 +1695,28 @@ fun ChapterSummaryModal(
 
                         // ── PHASE 2: ALL CHOICES & MEANINGFUL CONSEQUENCES BOARD ──
                         SummaryViewMode.FINAL_GRID -> {
+                            val gridScrollState = rememberScrollState()
+                            val gridTopFade by animateFloatAsState(
+                                targetValue = if (gridScrollState.value > 6) 1f else 0f,
+                                animationSpec = tween(180),
+                                label = "summary_grid_top_fade"
+                            )
+                            val gridBottomFade by animateFloatAsState(
+                                targetValue = if (gridScrollState.maxValue > 0 && gridScrollState.value < gridScrollState.maxValue - 6) 1f else 0f,
+                                animationSpec = tween(180),
+                                label = "summary_grid_bottom_fade"
+                            )
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .verticalScroll(rememberScrollState()),
+                                    .verticalFadingEdge(
+                                        topFadeHeight = 24.dp,
+                                        bottomFadeHeight = 32.dp,
+                                        topFadeAlpha = gridTopFade,
+                                        bottomFadeAlpha = gridBottomFade
+                                    )
+                                    .verticalScroll(gridScrollState)
+                                    .padding(top = 6.dp, bottom = 10.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 // Narrative Chapter Reflection Banner with Aidem's Canonical Portrait
@@ -2276,11 +2315,29 @@ fun ChapterSummaryModal(
                         Spacer(modifier = Modifier.height(10.dp))
 
                         // Scrollable List of ONLY this character's (or story's) flags
+                        val flagSheetScrollState = rememberScrollState()
+                        val flagTopFade by animateFloatAsState(
+                            targetValue = if (flagSheetScrollState.value > 6) 1f else 0f,
+                            animationSpec = tween(180),
+                            label = "flag_sheet_top_fade"
+                        )
+                        val flagBottomFade by animateFloatAsState(
+                            targetValue = if (flagSheetScrollState.maxValue > 0 && flagSheetScrollState.value < flagSheetScrollState.maxValue - 6) 1f else 0f,
+                            animationSpec = tween(180),
+                            label = "flag_sheet_bottom_fade"
+                        )
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .weight(1f)
-                                .verticalScroll(rememberScrollState()),
+                                .verticalFadingEdge(
+                                    topFadeHeight = 18.dp,
+                                    bottomFadeHeight = 24.dp,
+                                    topFadeAlpha = flagTopFade,
+                                    bottomFadeAlpha = flagBottomFade
+                                )
+                                .verticalScroll(flagSheetScrollState)
+                                .padding(top = 2.dp, bottom = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(9.dp)
                         ) {
                             if (activeChar != null) {

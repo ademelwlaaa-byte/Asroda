@@ -898,6 +898,22 @@ fun BotListScreen(
                     android.widget.Toast.LENGTH_SHORT
                 ).show()
             }
+            val activeTabListState = when (activeTab) {
+                "templates" -> templatesListState
+                "discover" -> discoverListState
+                "books" -> booksListState
+                else -> chatsListState
+            }
+            val showTopScrollFade by remember(activeTabListState) {
+                androidx.compose.runtime.derivedStateOf {
+                    activeTabListState.firstVisibleItemIndex > 0 || activeTabListState.firstVisibleItemScrollOffset > 6
+                }
+            }
+            val topScrollFadeAlpha by animateFloatAsState(
+                targetValue = if (showTopScrollFade) 1f else 0f,
+                animationSpec = tween(durationMillis = 180),
+                label = "home_top_scroll_fade"
+            )
             AnimatedContent(
                 targetState = activeTab,
                 transitionSpec = {
@@ -914,10 +930,9 @@ fun BotListScreen(
                             }
                         }
                     )
-                    // Exact root-coordinate measured feathered DstIn vertical fade mask right above the bottom dock:
-                    // Scrolling cards dissolve smoothly over a ~30dp feather zone before reaching the top border
-                    // of the bottom dock, so there is NO hard horizontal scissor-cut line when scrolling AND
-                    // NO cards ever show through behind the see-through glass bottom bar!
+                    // Exact root-coordinate measured feathered DstIn vertical fade mask at BOTH top (below status bar)
+                    // and bottom (above the bottom dock) so scrolled cards dissolve smoothly at both edges without
+                    // hard scissor-cut lines!
                     .graphicsLayer {
                         compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.Offscreen
                     }
@@ -934,15 +949,27 @@ fun BotListScreen(
                             val fadeStartPx = (fadeEndPx - 30.dp.toPx()).coerceAtLeast(0f)
                             val s0 = (fadeStartPx / h).coerceIn(0f, 1f)
                             val s1 = (fadeEndPx / h).coerceIn(s0, 1f)
+                            val topAlpha = topScrollFadeAlpha.coerceIn(0f, 1f)
+                            val topEnd = if (topAlpha > 0.005f) {
+                                (34.dp.toPx() / h).coerceIn(0f, s0.coerceAtMost(0.18f))
+                            } else 0f
+                            val stops = buildList<Pair<Float, Color>> {
+                                if (topEnd > 0.001f) {
+                                    add(0.00f to Color.White.copy(alpha = 1f - topAlpha))
+                                    add((topEnd * 0.42f) to Color.White.copy(alpha = 1f - topAlpha * 0.56f))
+                                    add((topEnd * 0.78f) to Color.White.copy(alpha = 1f - topAlpha * 0.18f))
+                                    add(topEnd to Color.White)
+                                } else {
+                                    add(0.00f to Color.White)
+                                }
+                                add(s0 to Color.White)
+                                add((s0 + (s1 - s0) * 0.35f) to Color.White.copy(alpha = 0.72f))
+                                add((s0 + (s1 - s0) * 0.70f) to Color.White.copy(alpha = 0.28f))
+                                add(s1 to Color.Transparent)
+                                add(1.00f to Color.Transparent)
+                            }
                             drawRect(
-                                brush = Brush.verticalGradient(
-                                    0.00f to Color.White,
-                                    s0 to Color.White,
-                                    (s0 + (s1 - s0) * 0.35f) to Color.White.copy(alpha = 0.72f),
-                                    (s0 + (s1 - s0) * 0.70f) to Color.White.copy(alpha = 0.28f),
-                                    s1 to Color.Transparent,
-                                    1.00f to Color.Transparent
-                                ),
+                                brush = Brush.verticalGradient(*stops.toTypedArray()),
                                 blendMode = BlendMode.DstIn
                             )
                         }
@@ -2180,7 +2207,11 @@ fun DiscoverTabContent(
     val filteredPublicBots = remember(botList, searchQuery, favoriteBotIds) {
         botList.filter { bot ->
             com.example.util.BotSearchFilterHelper.matches(bot, searchQuery)
-        }.sortedByDescending { if (favoriteBotIds.contains(it.id)) 1 else 0 }
+        }.sortedWith(
+            compareByDescending<BotEntity> { favoriteBotIds.contains(it.id) }
+                .thenByDescending { it.lastMessageTimestamp }
+                .thenByDescending { maxOf(it.lastMessageTimestamp, it.updatedAt) }
+        )
     }
 
     val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()

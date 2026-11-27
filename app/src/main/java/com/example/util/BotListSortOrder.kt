@@ -29,6 +29,9 @@ object BotListSorter {
         return if (cmp != 0) cmp else a.id.compareTo(b.id)
     }
 
+    private fun recencyTimestampOf(bot: BotEntity): Long =
+        maxOf(bot.lastMessageTimestamp, bot.updatedAt)
+
     fun sortBots(
         bots: List<BotEntity>,
         order: BotListSortOrder,
@@ -37,15 +40,24 @@ object BotListSorter {
     ): List<BotEntity> {
         if (bots.size <= 1) return bots.toList()
         return when (order) {
-            BotListSortOrder.RECENT -> bots.toList()
+            BotListSortOrder.RECENT -> bots.sortedWith(
+                compareByDescending<BotEntity> { it.id in favoriteIds }
+                    .thenByDescending { it.lastMessageTimestamp }
+                    .thenByDescending { recencyTimestampOf(it) }
+                    .thenComparator(::compareTurkishNames)
+            )
             BotListSortOrder.NAME_AZ -> bots.sortedWith(::compareTurkishNames)
             BotListSortOrder.FAVORITES_FIRST -> bots.sortedWith(
                 compareByDescending<BotEntity> { it.id in favoriteIds }
+                    .thenByDescending { it.lastMessageTimestamp }
+                    .thenByDescending { recencyTimestampOf(it) }
                     .thenComparator(::compareTurkishNames)
             )
             BotListSortOrder.DRAFTS_FIRST -> bots.sortedWith(
                 compareByDescending<BotEntity> { it.id in draftBotIds }
                     .thenByDescending { it.id in favoriteIds }
+                    .thenByDescending { it.lastMessageTimestamp }
+                    .thenByDescending { recencyTimestampOf(it) }
                     .thenComparator(::compareTurkishNames)
             )
         }

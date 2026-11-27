@@ -544,6 +544,30 @@ fun CosmicRooftopBossDuelDialog(
                 shakeIntensity = shakeIntensity
             )
 
+            // Edge-to-edge top & bottom vignette scrims so system bars blend seamlessly into the 2.5D cinema scene
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(110.dp)
+                    .align(Alignment.TopCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color(0xCC05030E), Color(0x6605030E), Color.Transparent)
+                        )
+                    )
+            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color(0x8805030E), Color(0xDE04020B))
+                        )
+                    )
+            )
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -554,10 +578,10 @@ fun CosmicRooftopBossDuelDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xAA05030E))
+                        .background(Color(0x99060312))
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
@@ -565,20 +589,22 @@ fun CosmicRooftopBossDuelDialog(
                             fontFamily = InterFontFamily,
                             fontSize = 9.5.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 1.1.sp,
-                            color = spec.accent
+                            letterSpacing = 1.sp,
+                            color = spec.accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = title.ifBlank { spec.displayTitle },
                             fontFamily = DisplaySerifFontFamily,
-                            fontSize = 17.sp,
+                            fontSize = 16.5.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         IconButton(
                             onClick = {
                                 isMuted = !isMuted
@@ -973,14 +999,16 @@ fun CosmicRooftopBossDuelDialog(
                     }
                 }
 
-                // Bottom Cinema Subtitle Ribbon
+                // Bottom Cinema Subtitle Ribbon — floating rounded glass card safely above navigation bar
                 if (activeSubtitle.isNotBlank()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xDD04020B))
-                            .border(0.7.dp, Color(0x44C4B5FD))
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                            .padding(start = 14.dp, end = 14.dp, bottom = 10.dp)
+                            .clip(BossPanelShape)
+                            .background(Color(0xE2070414))
+                            .border(0.9.dp, Color(0x55C4B5FD), BossPanelShape)
+                            .padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
@@ -997,7 +1025,9 @@ fun CosmicRooftopBossDuelDialog(
                                     fontFamily = InterFontFamily,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = activeSpeaker?.accentColor ?: Color(0xFFC4B5FD)
+                                    color = activeSpeaker?.accentColor ?: Color(0xFFC4B5FD),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 if (isVoiceSpeaking) {
                                     Text(
@@ -1005,7 +1035,8 @@ fun CosmicRooftopBossDuelDialog(
                                         fontFamily = InterFontFamily,
                                         fontSize = 9.5.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color(0xFF6EE7B7)
+                                        color = Color(0xFF6EE7B7),
+                                        maxLines = 1
                                     )
                                 }
                             }

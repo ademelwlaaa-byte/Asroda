@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
+@file:OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
@@ -32,18 +32,25 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -62,17 +69,23 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.SolidColor
@@ -290,6 +303,54 @@ fun MorCamDivider(modifier: Modifier = Modifier) {
     )
 }
 
+/**
+ * Smooth cosmic top/bottom vertical scroll fade using offscreen DstIn masking so scrollable cards
+ * dissolve organically into any underlying backdrop without hard horizontal scissor edges.
+ */
+fun Modifier.verticalFadingEdge(
+    topFadeHeight: Dp = 24.dp,
+    bottomFadeHeight: Dp = 28.dp,
+    topFadeAlpha: Float = 1f,
+    bottomFadeAlpha: Float = 1f
+): Modifier = this
+    .graphicsLayer {
+        compositingStrategy = CompositingStrategy.Offscreen
+    }
+    .drawWithContent {
+        drawContent()
+        val h = size.height
+        if (h > 1f) {
+            val tAlpha = topFadeAlpha.coerceIn(0f, 1f)
+            val bAlpha = bottomFadeAlpha.coerceIn(0f, 1f)
+            val topPx = if (tAlpha > 0.005f) topFadeHeight.toPx().coerceIn(0f, h * 0.35f) else 0f
+            val bottomPx = if (bAlpha > 0.005f) bottomFadeHeight.toPx().coerceIn(0f, h * 0.35f) else 0f
+            if (topPx > 0.5f || bottomPx > 0.5f) {
+                val tEnd = (topPx / h).coerceIn(0f, 0.45f)
+                val bStart = ((h - bottomPx) / h).coerceIn(tEnd, 1f)
+                val stops = buildList<Pair<Float, Color>> {
+                    if (topPx > 0.5f) {
+                        add(0f to Color.White.copy(alpha = 1f - tAlpha))
+                        add((tEnd * 0.45f) to Color.White.copy(alpha = 1f - tAlpha * 0.48f))
+                        add(tEnd to Color.White)
+                    } else {
+                        add(0f to Color.White)
+                    }
+                    if (bottomPx > 0.5f) {
+                        add(bStart to Color.White)
+                        add((bStart + (1f - bStart) * 0.55f) to Color.White.copy(alpha = 1f - bAlpha * 0.52f))
+                        add(1f to Color.White.copy(alpha = 1f - bAlpha))
+                    } else {
+                        add(1f to Color.White)
+                    }
+                }
+                drawRect(
+                    brush = Brush.verticalGradient(*stops.toTypedArray()),
+                    blendMode = BlendMode.DstIn
+                )
+            }
+        }
+    }
+
 @Composable
 fun ConfigureEdgeToEdgeDialogWindow() {
     val dialogView = androidx.compose.ui.platform.LocalView.current
@@ -301,6 +362,9 @@ fun ConfigureEdgeToEdgeDialogWindow() {
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT
             )
             window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            @Suppress("DEPRECATION")
+            window.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
                 val attrs = window.attributes
                 attrs.layoutInDisplayCutoutMode =
@@ -334,8 +398,7 @@ fun MorCamDialogShell(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -569,8 +632,7 @@ fun MorCamBottomSheetShell(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
                 .padding(horizontal = 18.dp, vertical = 6.dp)
         ) {
             Row(
@@ -841,6 +903,8 @@ fun MorCamGlassTextField(
     testTag: String? = null
 ) {
     var focused by remember { mutableStateOf(false) }
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val focusScope = rememberCoroutineScope()
     val motionConfig = LocalCosmicMotionConfig.current
     val shape = RoundedCornerShape(if (singleLine) 24.dp else 18.dp)
     val borderWidth by animateDpAsState(
@@ -862,6 +926,7 @@ fun MorCamGlassTextField(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .bringIntoViewRequester(bringIntoViewRequester)
             .heightIn(min = minHeight)
             .then(
                 if (focusGlowAlpha > 0.01f) {
@@ -930,7 +995,15 @@ fun MorCamGlassTextField(
                     cursorBrush = SolidColor(MorCamTokens.LavenderSoft),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .onFocusChanged { focused = it.isFocused }
+                        .onFocusChanged { state ->
+                            focused = state.isFocused
+                            if (state.isFocused) {
+                                focusScope.launch {
+                                    delay(180)
+                                    bringIntoViewRequester.bringIntoView()
+                                }
+                            }
+                        }
                         .then(if (testTag != null) Modifier.testTag(testTag) else Modifier)
                 )
             }

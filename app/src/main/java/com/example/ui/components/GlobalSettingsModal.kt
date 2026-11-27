@@ -43,16 +43,21 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -620,12 +625,14 @@ fun GlobalSettingsModal(
             modifier = Modifier.fillMaxSize()
         )
 
+        val imeDensity = androidx.compose.ui.platform.LocalDensity.current
+        val isImeVisible = WindowInsets.ime.getBottom(imeDensity) > 0
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .navigationBarsPadding()
-                .imePadding()
+                .windowInsetsPadding(WindowInsets.navigationBars.union(WindowInsets.ime))
         ) {
                 // ── 1. SYMMETRICAL MOR NEON HEADER (EXACT REFERENCE PLATES) ──
                 Row(
@@ -802,12 +809,14 @@ fun GlobalSettingsModal(
                 val nowMs = System.currentTimeMillis()
                 val cooledCount = providerHealthMap.values.count { it.cooldownUntilMs > nowMs }
 
+                if (!isImeVisible || showQuickSearchBar) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    if (!isImeVisible) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -877,6 +886,7 @@ fun GlobalSettingsModal(
                             }
                         }
                     }
+                    } // end if (!isImeVisible)
 
                     if (showQuickSearchBar) {
                         val quickEntries = remember {
@@ -952,8 +962,9 @@ fun GlobalSettingsModal(
                         }
                     }
                 }
+                } // end if (!isImeVisible || showQuickSearchBar)
 
-                // ── 3. TAB CONTENT AREA (DIRECTIONAL COSMIC TAB GLIDE) ──
+                // ── 3. TAB CONTENT AREA (DIRECTIONAL COSMIC TAB GLIDE + TOP/BOTTOM SCROLL FADE) ──
                 AnimatedContent(
                     targetState = activeTab,
                     modifier = Modifier
@@ -967,11 +978,28 @@ fun GlobalSettingsModal(
                     },
                     label = "globalSettingsTabContent"
                 ) { tabIdx ->
+                val tabScrollState = rememberScrollState()
+                val tabTopFade by animateFloatAsState(
+                    targetValue = if (tabScrollState.value > 6) 1f else 0f,
+                    animationSpec = tween(180),
+                    label = "settings_tab_top_fade_$tabIdx"
+                )
+                val tabBottomFade by animateFloatAsState(
+                    targetValue = if (tabScrollState.maxValue > 0 && tabScrollState.value < tabScrollState.maxValue - 6) 1f else 0f,
+                    animationSpec = tween(180),
+                    label = "settings_tab_bottom_fade_$tabIdx"
+                )
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                        .verticalFadingEdge(
+                            topFadeHeight = 24.dp,
+                            bottomFadeHeight = 30.dp,
+                            topFadeAlpha = tabTopFade,
+                            bottomFadeAlpha = tabBottomFade
+                        )
+                        .verticalScroll(tabScrollState)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     when (tabIdx) {
@@ -2696,11 +2724,12 @@ fun GlobalSettingsModal(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
+                    Spacer(modifier = Modifier.height(if (isImeVisible) 24.dp else 10.dp))
                 }
                 } // end AnimatedContent
 
-                // ── 4. FLOATING MOR NEON FOOTER (EXACT REFERENCE PLATES) ──
+                // ── 4. FLOATING MOR NEON FOOTER (HIDES WHILE KEYBOARD IS OPEN FOR FULL INPUT SPACE) ──
+                if (!isImeVisible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2788,6 +2817,7 @@ fun GlobalSettingsModal(
                         )
                     }
                 }
+                } // end if (!isImeVisible)
             }
 
         // ── Mor Cam Voice Picker Dialog ──
