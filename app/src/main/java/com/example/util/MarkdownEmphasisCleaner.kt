@@ -11,18 +11,24 @@ object MarkdownEmphasisCleaner {
 
     fun clean(text: String): String {
         if (text.isBlank()) return text
-        var out = doubleQuoteGlitchRegex.replace(text, "\"$1\"")
-        out = paddedItalicRegex.replace(out, "*$1*")
-        // Strip a dangling unclosed single asterisk at the very end of a paragraph
-        out = out.lines().joinToString("\n") { line ->
-            val trimmed = line.trimEnd()
-            val singleStars = trimmed.count { it == '*' }
-            if (singleStars % 2 == 1 && trimmed.endsWith("*") && !trimmed.endsWith("**")) {
-                trimmed.dropLast(1).trimEnd()
+        var inCodeFence = false
+        return text.lines().joinToString("\n") { line ->
+            val trimmedStart = line.trimStart()
+            if (trimmedStart.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                return@joinToString line
+            }
+            if (inCodeFence) return@joinToString line
+
+            var cleaned = doubleQuoteGlitchRegex.replace(line, "\"$1\"")
+            cleaned = paddedItalicRegex.replace(cleaned, "*$1*")
+            val trimmedEnd = cleaned.trimEnd()
+            val singleStars = trimmedEnd.count { it == '*' }
+            if (singleStars % 2 == 1 && trimmedEnd.endsWith("*") && !trimmedEnd.endsWith("**")) {
+                trimmedEnd.dropLast(1).trimEnd()
             } else {
-                line
+                cleaned
             }
         }
-        return out
     }
 }

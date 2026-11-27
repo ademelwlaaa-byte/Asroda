@@ -18,7 +18,9 @@ object StoryCompletionCertificateHelper {
     ): String {
         val progress = BookProgressSummaryFormatter.compute(state, totalChapters)
         val bond = BookBondSummaryHelper.compute(state)
-        val dateText = SimpleDateFormat("dd MMMM yyyy", trLocale).format(Date(nowMs))
+        val dateText = SimpleDateFormat("dd MMMM yyyy", trLocale).apply {
+            timeZone = java.util.TimeZone.getDefault()
+        }.format(Date(nowMs))
         return buildString {
             append("✦ KOZMİK SÜRÜKLENİŞ — OKUR KRONİK BELGESİ ✦\n")
             append("Tarih: ").append(dateText).append("\n")

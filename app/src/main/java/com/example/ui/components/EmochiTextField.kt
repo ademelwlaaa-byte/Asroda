@@ -3,7 +3,6 @@ package com.example.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,13 +29,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.ui.theme.AppColors
+import com.example.ui.animation.LocalCosmicMotionPolicy
 import com.example.ui.theme.EmochiTextSecondary
+
+private val FieldShape = RoundedCornerShape(12.dp)
+private val UnfocusedFieldBorderColor = Color(0x507C3AED)
+private val FocusedFieldBorderBrush = Brush.linearGradient(
+    colors = listOf(Color(0xFFBE185D), Color(0xFF9333EA), Color(0xFF6366F1))
+)
+private val UnfocusedFieldBorderBrush = Brush.linearGradient(
+    colors = listOf(UnfocusedFieldBorderColor, UnfocusedFieldBorderColor)
+)
+private val ErrorFieldBorderBrush = Brush.linearGradient(
+    colors = listOf(Color(0xFFFF6B6B), Color(0xFFBE123C))
+)
+private val FieldTextStyle = TextStyle(color = Color.White, fontSize = 13.5.sp)
 
 /**
  * Unified premium text field for Emochi.
- * - Animated gradient border on focus
- * - Subtle background shift on focus
+ * - Animated gradient border on focus (respecting Reduce Motion)
+ * - Cached brushes & shapes -> zero per-recomposition allocations
  * - Consistent label/hint style
  */
 @Composable
@@ -58,42 +70,37 @@ fun EmochiTextField(
     readOnly: Boolean = false,
     isError: Boolean = false
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
+    val animDuration = if (quick) 60 else 200
     var isFocused by remember { mutableStateOf(false) }
 
-    // Animate border width on focus
     val borderWidth by animateDpAsState(
-        targetValue = if (isFocused) 1.5.dp else 1.dp,
-        animationSpec = tween(200),
+        targetValue = if (isFocused || isError) 1.5.dp else 1.dp,
+        animationSpec = tween(animDuration),
         label = "borderWidth"
     )
 
-    // Gradient border: unfocused = static purple, focused = 3-color gradient
-    val unfocusedBorderColor = Color(0x507C3AED)
-    val gradientBrush = if (isFocused) {
-        Brush.linearGradient(
-            colors = listOf(
-                Color(0xFFBE185D),
-                Color(0xFF9333EA),
-                Color(0xFF6366F1)
-            )
-        )
-    } else {
-        Brush.linearGradient(colors = listOf(unfocusedBorderColor, unfocusedBorderColor))
+    val gradientBrush = when {
+        isError -> ErrorFieldBorderBrush
+        isFocused -> FocusedFieldBorderBrush
+        else -> UnfocusedFieldBorderBrush
     }
 
     val containerColor by animateColorAsState(
         targetValue = if (isFocused) Color(0x950E0622) else Color(0x800E0620),
-        animationSpec = tween(200),
+        animationSpec = tween(animDuration),
         label = "containerColor"
     )
-
-    val shape = RoundedCornerShape(12.dp)
 
     Column(modifier = modifier) {
         if (label != null) {
             Text(
                 text = label,
-                color = if (isFocused) Color(0xFFCDA8FF) else EmochiTextSecondary,
+                color = when {
+                    isError -> Color(0xFFFF6B6B)
+                    isFocused -> Color(0xFFCDA8FF)
+                    else -> EmochiTextSecondary
+                },
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
                 modifier = Modifier.padding(bottom = 4.dp)
@@ -103,8 +110,8 @@ fun EmochiTextField(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(shape)
-                .border(brush = gradientBrush, width = borderWidth, shape = shape)
+                .clip(FieldShape)
+                .border(brush = gradientBrush, width = borderWidth, shape = FieldShape)
         ) {
             OutlinedTextField(
                 value = value,
@@ -126,11 +133,8 @@ fun EmochiTextField(
                 enabled = enabled,
                 readOnly = readOnly,
                 isError = isError,
-                textStyle = TextStyle(
-                    color = Color.White,
-                    fontSize = 13.5.sp
-                ),
-                shape = shape,
+                textStyle = FieldTextStyle,
+                shape = FieldShape,
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = containerColor,
                     unfocusedContainerColor = Color(0x800E0620),

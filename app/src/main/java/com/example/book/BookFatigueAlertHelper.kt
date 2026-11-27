@@ -6,17 +6,23 @@ package com.example.book
  */
 object BookFatigueAlertHelper {
 
-    fun fatigueBadge(fatigue: Int): String = when {
-        fatigue >= 80 -> "🚨 Kritik Yorgunluk ($fatigue)"
-        fatigue >= 55 -> "😮‍💨 Yorgun ($fatigue)"
-        fatigue >= 25 -> "🧭 Dengeli ($fatigue)"
-        else -> "⚡ Dinç ($fatigue)"
+    fun fatigueBadge(fatigue: Int): String {
+        val safe = fatigue.coerceIn(0, 100)
+        return when {
+            safe >= 80 -> "🚨 Kritik Yorgunluk ($safe)"
+            safe >= 55 -> "😮‍💨 Yorgun ($safe)"
+            safe >= 25 -> "🧭 Dengeli ($safe)"
+            else -> "⚡ Dinç ($safe)"
+        }
     }
 
-    fun mysteryBadge(mystery: Int): String = when {
-        mystery >= 70 -> "🌌 Yüksek Gizem ($mystery)"
-        mystery >= 35 -> "🕯️ Derinleşen Sır ($mystery)"
-        else -> "🔍 Sakin İz ($mystery)"
+    fun mysteryBadge(mystery: Int): String {
+        val safe = mystery.coerceIn(0, 100)
+        return when {
+            safe >= 70 -> "🌌 Yüksek Gizem ($safe)"
+            safe >= 35 -> "🕯️ Derinleşen Sır ($safe)"
+            else -> "🔍 Sakin İz ($safe)"
+        }
     }
 
     fun formatStatusRibbon(state: BookReadState): String {

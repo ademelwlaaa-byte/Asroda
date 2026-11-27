@@ -10,9 +10,12 @@ object StoryMoodAnalytics {
 
     private val trLocale = Locale.forLanguageTag("tr-TR")
 
-    private val actionKeywords = listOf("saldır", "silah", "savaş", "patlama", "tehlike", "alarm", "kaç", "kılıç", "dövüş", "kan")
-    private val romanceKeywords = listOf("öp", "kalp", "aşk", "fısılda", "sarıl", "gözlerinin", "tutku", "sevgili", "elini", "dokun")
-    private val mysteryKeywords = listOf("gizem", "sır", "ipucu", "gölge", "karanlık", "şifre", "kayıp", "dosya", "ihanet", "gizli")
+    private val actionKeywords = listOf("saldır", "silah", "savaş", "patlama", "tehlike", "alarm", "kılıç", "dövüş")
+    private val actionWordPrefixRegex = Regex("""(?<!\p{L})(?:kaç(?:ıyor|tı|ar|ın|mak|ış|sın)?|kan(?:lı|lar|ım|ın|ı|a|dan)?)(?!\p{L})""")
+    private val romanceKeywords = listOf("kalp", "fısılda", "sarıl", "gözlerinin", "tutku", "sevgili", "elini", "dokun")
+    private val romanceWordPrefixRegex = Regex("""(?<!\p{L})(?:öp(?:üyor|tü|er|üş|mek|sün|eyim|ücük)?|aşk(?:ım|ın|ı|la|ta|tan|ımız|lar|a|ımsın)?)(?!\p{L})""")
+    private val mysteryKeywords = listOf("gizem", "ipucu", "gölge", "karanlık", "şifre", "kayıp", "dosya", "ihanet", "gizli")
+    private val mysteryWordPrefixRegex = Regex("""(?<!\p{L})sır(?:lar|rın|rı|ra|dan)?(?!\p{L})""")
 
     fun detectDominantAtmosphere(messages: List<MessageEntity>): String {
         val valid = messages.filter {
@@ -25,10 +28,15 @@ object StoryMoodAnalytics {
         var mysteryScore = 0
 
         for (m in valid.takeLast(60)) {
-            val lower = m.text.lowercase(trLocale)
+            val visible = com.example.data.repository.EmochiRepository.cleanEmotionTags(m.text)
+            if (visible.isBlank()) continue
+            val lower = visible.lowercase(trLocale)
             actionScore += actionKeywords.count { lower.contains(it) }
+            if (actionWordPrefixRegex.containsMatchIn(lower)) actionScore++
             romanceScore += romanceKeywords.count { lower.contains(it) }
+            if (romanceWordPrefixRegex.containsMatchIn(lower)) romanceScore++
             mysteryScore += mysteryKeywords.count { lower.contains(it) }
+            if (mysteryWordPrefixRegex.containsMatchIn(lower)) mysteryScore++
         }
 
         val maxScore = maxOf(actionScore, romanceScore, mysteryScore)

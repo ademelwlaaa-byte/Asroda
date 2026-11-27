@@ -13,12 +13,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,21 +25,38 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.ui.animation.LocalCosmicMotionPolicy
 import com.example.ui.theme.AppColors
 import com.example.ui.theme.EmochiGradients
 
-private val ShapeDefault  = RoundedCornerShape(14.dp)
-private val ShapePill     = RoundedCornerShape(50.dp)
-private val ShapeSmall    = RoundedCornerShape(10.dp)
+private val PrimaryEnabledBgBrush = Brush.linearGradient(
+    listOf(Color(0xFFB06CF4), Color(0xFF8B33F0), Color(0xFF5B21B6))
+)
+private val PrimaryDisabledBgBrush = Brush.linearGradient(
+    listOf(Color(0xFF2A1550), Color(0xFF1A0A35))
+)
+private val PrimaryEnabledBorderBrush = Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
+private val PrimaryDisabledBorderBrush = Brush.linearGradient(
+    listOf(Color(0x303B0764), Color(0x151E1035))
+)
+private val SecondaryBgBrush = Brush.linearGradient(
+    listOf(Color(0x1A7C3AED), Color(0x0A4C1D95))
+)
+private val DangerBgBrush = Brush.linearGradient(
+    listOf(Color(0xFFBE123C), Color(0xFF9F1239), Color(0xFF7F1D1D))
+)
+private val DangerBorderBrush = Brush.linearGradient(
+    listOf(Color(0xFFFB7185), Color(0xFFBE123C))
+)
 
 // Primary — vivid purple gradient, white text
 @Composable
@@ -56,36 +71,30 @@ fun EmochiPrimaryButton(
     cornerRadius: Dp = 14.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 22.dp, vertical = 12.dp)
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
+    val scaleState = animateFloatAsState(
         targetValue = if (isPressed || !enabled) 0.95f else 1f,
-        animationSpec = tween(120),
+        animationSpec = tween(if (quick) 40 else 120),
         label = "btnScale"
     )
-    val shape = RoundedCornerShape(cornerRadius)
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
     val alpha = if (enabled) 1f else 0.45f
 
     Box(
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer {
+                val s = scaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clip(shape)
-            .background(
-                brush = if (enabled) {
-                    Brush.linearGradient(
-                        listOf(Color(0xFFB06CF4), Color(0xFF8B33F0), Color(0xFF5B21B6))
-                    )
-                } else {
-                    Brush.linearGradient(
-                        listOf(Color(0xFF2A1550), Color(0xFF1A0A35))
-                    )
-                }
-            )
+            .background(brush = if (enabled) PrimaryEnabledBgBrush else PrimaryDisabledBgBrush)
             .border(
                 BorderStroke(
                     1.5.dp,
-                    if (enabled) Brush.sweepGradient(EmochiGradients.avatarBorderSweep)
-                    else Brush.linearGradient(listOf(Color(0x303B0764), Color(0x151E1035)))
+                    if (enabled) PrimaryEnabledBorderBrush else PrimaryDisabledBorderBrush
                 ),
                 shape
             )
@@ -137,22 +146,25 @@ fun EmochiSecondaryButton(
     cornerRadius: Dp = 12.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
+    val scaleState = animateFloatAsState(
         targetValue = if (isPressed || !enabled) 0.96f else 1f,
-        animationSpec = tween(120),
+        animationSpec = tween(if (quick) 40 else 120),
         label = "secBtnScale"
     )
-    val shape = RoundedCornerShape(cornerRadius)
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
 
     Box(
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer {
+                val s = scaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clip(shape)
-            .background(
-                Brush.linearGradient(listOf(Color(0x1A7C3AED), Color(0x0A4C1D95)))
-            )
+            .background(SecondaryBgBrush)
             .border(
                 BorderStroke(1.dp, EmochiGradients.inputBarBorder),
                 shape
@@ -201,29 +213,27 @@ fun EmochiDangerButton(
     cornerRadius: Dp = 12.dp,
     contentPadding: PaddingValues = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
+    val scaleState = animateFloatAsState(
         targetValue = if (isPressed || !enabled) 0.96f else 1f,
-        animationSpec = tween(120),
+        animationSpec = tween(if (quick) 40 else 120),
         label = "dangerBtnScale"
     )
-    val shape = RoundedCornerShape(cornerRadius)
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
 
     Box(
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer {
+                val s = scaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clip(shape)
-            .background(
-                Brush.linearGradient(
-                    listOf(Color(0xFFBE123C), Color(0xFF9F1239), Color(0xFF7F1D1D))
-                )
-            )
+            .background(DangerBgBrush)
             .border(
-                BorderStroke(
-                    1.dp,
-                    Brush.linearGradient(listOf(Color(0xFFFB7185), Color(0xFFBE123C)))
-                ),
+                BorderStroke(1.dp, DangerBorderBrush),
                 shape
             )
             .clickable(
@@ -268,11 +278,12 @@ fun EmochiGhostButton(
     fontSize: TextUnit = 13.sp,
     enabled: Boolean = true
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val scale by animateFloatAsState(
+    val scaleState = animateFloatAsState(
         targetValue = if (isPressed) 0.97f else 1f,
-        animationSpec = tween(100),
+        animationSpec = tween(if (quick) 35 else 100),
         label = "ghostScale"
     )
 
@@ -282,7 +293,11 @@ fun EmochiGhostButton(
         fontSize = fontSize,
         fontWeight = FontWeight.Medium,
         modifier = modifier
-            .scale(scale)
+            .graphicsLayer {
+                val s = scaleState.value
+                scaleX = s
+                scaleY = s
+            }
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,

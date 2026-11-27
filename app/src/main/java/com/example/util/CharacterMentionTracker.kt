@@ -38,7 +38,12 @@ object CharacterMentionTracker {
         if (castNames.isEmpty() || messages.isEmpty()) return emptyList()
         val combinedFolded = messages
             .filter { it.role == "user" || it.role == "assistant" }
-            .joinToString("\n") { ChatSearchHelper.foldTurkish(it.text) }
+            .mapNotNull { msg ->
+                com.example.data.repository.EmochiRepository.cleanEmotionTags(msg.text)
+                    .takeIf { it.isNotBlank() }
+                    ?.let { ChatSearchHelper.foldTurkish(it) }
+            }
+            .joinToString("\n")
         if (combinedFolded.isBlank()) return emptyList()
 
         return castNames.mapNotNull { originalName ->
@@ -47,7 +52,17 @@ object CharacterMentionTracker {
             var idx = combinedFolded.indexOf(needle)
             var count = 0
             while (idx >= 0) {
-                count++
+                val leftOk = idx == 0 || !combinedFolded[idx - 1].isLetterOrDigit()
+                val afterIdx = idx + needle.length
+                val rightOk = if (needle.length <= 3) {
+                    // For short names (e.g. "Ali", "Ada"), require a non-letter or Turkish apostrophe after the name
+                    afterIdx >= combinedFolded.length || !combinedFolded[afterIdx].isLetterOrDigit()
+                } else {
+                    true
+                }
+                if (leftOk && rightOk) {
+                    count++
+                }
                 idx = combinedFolded.indexOf(needle, idx + needle.length)
             }
             if (count > 0) CharacterMention(originalName, count) else null

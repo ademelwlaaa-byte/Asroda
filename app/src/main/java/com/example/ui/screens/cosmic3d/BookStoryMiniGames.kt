@@ -5,15 +5,11 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,7 +18,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,10 +26,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -52,6 +45,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -70,7 +64,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,8 +74,12 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
-import com.example.ui.components.MorCamTokens
+import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.LocalCosmicMotionPolicy
+import com.example.ui.animation.rememberCosmicPhaseState
 import com.example.ui.components.morCamCosmicGlow
 import com.example.ui.screens.CharacterPortraitKey
 import com.example.ui.screens.CinematicCharacterAvatar
@@ -90,9 +87,26 @@ import com.example.ui.screens.ConfigureTrueFullscreenDialogWindow
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
+
+private val MiniGameCardShape = RoundedCornerShape(22.dp)
+private val MiniGamePillShape = RoundedCornerShape(50)
+private val MiniGameOptionShape = RoundedCornerShape(14.dp)
+private val MiniGamePanelShape = RoundedCornerShape(20.dp)
+private val MiniGameBarShape = RoundedCornerShape(4.dp)
+private val CinemaDepthVignetteBrush = Brush.verticalGradient(
+    colors = listOf(
+        Color(0xCC04020B),
+        Color(0x28060312),
+        Color(0x55060312),
+        Color(0xEE04020B)
+    )
+)
+private val MiniGameVictoryBtnBrush = Brush.horizontalGradient(listOf(Color(0xFF059669), Color(0xFF2563EB)))
+private val MiniGameSealBtnBrush = Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF7C3AED)))
 
 /**
  * 2.5D Interactive Cinematic Story Scenes embedded inside "Kozmik Sürükleniş"
@@ -133,7 +147,7 @@ enum class StoryMiniGameId(
     );
 
     companion object {
-        fun fromTag(raw: String): StoryMiniGameId = when (raw.trim().uppercase()) {
+        fun fromTag(raw: String): StoryMiniGameId = when (raw.trim().uppercase(Locale.ROOT)) {
             "BOSPHORUS_CORE_BALANCE", "BOSPHORUS_CORE", "CORE_BALANCE" -> BOSPHORUS_CORE_BALANCE
             "RED_EYE_WILLPOWER", "RED_EYE_CONTROL", "WILLPOWER" -> RED_EYE_WILLPOWER
             else -> WHITE_EYE_RESONANCE
@@ -142,17 +156,26 @@ enum class StoryMiniGameId(
 }
 
 /**
- * Pure deterministic S/A/B rank calculator (covered by unit tests).
+ * Pure deterministic S/A/B rank & progression calculator (covered by unit tests).
  */
 object StoryMiniGameScorer {
     fun computeRank(score: Int, maxPossible: Int): String {
-        val ratio = if (maxPossible <= 0) 0f else score.toFloat() / maxPossible.toFloat()
+        if (maxPossible <= 0) return "B"
+        val ratio = (score.coerceAtLeast(0).toFloat() / maxPossible.toFloat()).coerceIn(0f, 1.5f)
         return when {
             ratio >= 0.82f -> "S"
             ratio >= 0.56f -> "A"
             else -> "B"
         }
     }
+
+    internal fun computeTimerFraction(timeLeftMs: Int, totalMs: Int = 8000): Float {
+        if (totalMs <= 0) return 0f
+        return (timeLeftMs.toFloat() / totalMs.toFloat()).coerceIn(0f, 1f)
+    }
+
+    internal fun computeWillpowerAfterChoice(current: Int, delta: Int): Int =
+        (current + delta).coerceIn(0, 100)
 
     fun rankSummaryTr(gameId: StoryMiniGameId, rank: String): String = when (gameId) {
         StoryMiniGameId.WHITE_EYE_RESONANCE -> when (rank) {
@@ -189,15 +212,18 @@ fun InStoryMiniGameCard(
     var localBestRank by remember(savedBestRank) { mutableStateOf(savedBestRank) }
     val hasCompleted = !localBestRank.isNullOrBlank()
     val accent = if (hasCompleted) Color(0xFF34D399) else gameId.accentColor
+    val launchBrush = remember(accent) {
+        Brush.horizontalGradient(listOf(accent.copy(alpha = 0.30f), Color(0xFF4C1D95)))
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 12.dp)
             .morCamCosmicGlow(cornerRadius = 22.dp, glowColor = accent, alpha = 0.44f, blurDp = 18.dp)
-            .clip(RoundedCornerShape(22.dp))
+            .clip(MiniGameCardShape)
             .background(Color(0xF5080619))
-            .border(1.3.dp, accent.copy(alpha = 0.78f), RoundedCornerShape(22.dp))
+            .border(1.3.dp, accent.copy(alpha = 0.78f), MiniGameCardShape)
             .padding(16.dp)
             .testTag("story_minigame_card_${gameId.key}"),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -209,9 +235,9 @@ fun InStoryMiniGameCard(
         ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
+                    .clip(MiniGamePillShape)
                     .background(accent.copy(alpha = 0.20f))
-                    .border(0.9.dp, accent.copy(alpha = 0.72f), RoundedCornerShape(50))
+                    .border(0.9.dp, accent.copy(alpha = 0.72f), MiniGamePillShape)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
@@ -227,13 +253,13 @@ fun InStoryMiniGameCard(
             if (hasCompleted) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
+                        .clip(MiniGamePillShape)
                         .background(Color(0x3310B981))
-                        .border(1.dp, Color(0xFF34D399), RoundedCornerShape(50))
+                        .border(1.dp, Color(0xFF34D399), MiniGamePillShape)
                         .padding(horizontal = 10.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = "✓ İZLENDİ · DERECE ${localBestRank}",
+                        text = "✓ İZLENDİ · DERECE $localBestRank",
                         fontFamily = InterFontFamily,
                         color = Color(0xFF6EE7B7),
                         fontSize = 9.5.sp,
@@ -261,9 +287,9 @@ fun InStoryMiniGameCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(14.dp))
-                .background(Brush.horizontalGradient(listOf(accent.copy(alpha = 0.30f), Color(0xFF4C1D95))))
-                .border(1.dp, accent.copy(alpha = 0.75f), RoundedCornerShape(14.dp))
+                .clip(MiniGameOptionShape)
+                .background(launchBrush)
+                .border(1.dp, accent.copy(alpha = 0.75f), MiniGameOptionShape)
                 .clickable { isOpen = true }
                 .padding(vertical = 12.dp, horizontal = 14.dp)
                 .testTag("story_minigame_launch_${gameId.key}"),
@@ -323,8 +349,8 @@ private data class HologramNode(
 
 /**
  * Reusable pure Motion-Cinema 2.5D backdrop (ZERO face/mouth/eye layer hacks!):
- * Combines smooth Ken Burns zoom, horizontal camera drift, impact screen-shake,
- * cinematic 2.39:1 letterbox bars, and atmospheric GPU particles.
+ * Reads all camera/particle phases strictly in graphicsLayer/Canvas (0 FPS root recomposition),
+ * uses async RGB_565 Coil decoding, guards zero-size canvas modulo, and respects Reduce Motion.
  */
 @Composable
 internal fun Pure25DMotionCinemaBackdrop(
@@ -334,89 +360,124 @@ internal fun Pure25DMotionCinemaBackdrop(
     shakeIntensity: Float = 0f,
     modifier: Modifier = Modifier
 ) {
-    val inf = rememberInfiniteTransition(label = "cinema_25d_cam")
-    val zoom by inf.animateFloat(
+    val context = LocalContext.current
+    val motionConfig = LocalCosmicMotionConfig.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
+    val allowMotion = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
+    val allowShake = !motionPolicy.shouldUseQuickTransitions
+
+    // Draw-phase-only State<Float> drivers -> 0 FPS root recomposition!
+    val zoomState = rememberCosmicPhaseState(
+        durationMs = 9000,
         initialValue = 1.05f,
         targetValue = 1.15f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "cam_zoom"
+        staticValue = 1.07f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cinema25dZoom",
+        enabled = allowMotion
     )
-    val panX by inf.animateFloat(
+    val panXState = rememberCosmicPhaseState(
+        durationMs = 11500,
         initialValue = -22f,
         targetValue = 22f,
-        animationSpec = infiniteRepeatable(tween(11500, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "cam_pan"
+        staticValue = 0f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cinema25dPanX",
+        enabled = allowMotion
     )
-    val particlePhase by inf.animateFloat(
+    val particlePhaseState = rememberCosmicPhaseState(
+        durationMs = 6000,
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(6000, easing = LinearEasing), RepeatMode.Restart),
-        label = "particles"
+        staticValue = 0.35f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "cinema25dParticles",
+        enabled = allowMotion
     )
-    val pulse by inf.animateFloat(
+    val pulseState = rememberCosmicPhaseState(
+        durationMs = 2400,
         initialValue = 0.25f,
         targetValue = 0.72f,
-        animationSpec = infiniteRepeatable(tween(2400, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "glow_pulse"
+        staticValue = 0.48f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cinema25dPulse",
+        enabled = allowMotion
     )
+
+    val safeShake = if (allowShake && shakeIntensity.isFinite()) shakeIntensity.coerceIn(0f, 2f) else 0f
 
     Box(modifier = modifier.fillMaxSize().background(Color(0xFF05030D))) {
         AnimatedContent(
             targetState = imageRes,
-            transitionSpec = { fadeIn(tween(650)) togetherWith fadeOut(tween(650)) },
+            transitionSpec = {
+                val ms = if (motionPolicy.shouldUseQuickTransitions) 180 else 650
+                fadeIn(tween(ms)) togetherWith fadeOut(tween(ms))
+            },
             label = "scene_cut_crossfade"
         ) { res ->
-            Image(
-                painter = painterResource(id = res),
+            val request = remember(context, res) {
+                ImageRequest.Builder(context)
+                    .data(res)
+                    .allowRgb565(true)
+                    .crossfade(false)
+                    .build()
+            }
+            AsyncImage(
+                model = request,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .fillMaxSize()
                     .graphicsLayer {
-                        scaleX = zoom
-                        scaleY = zoom
-                        val shakeX = if (shakeIntensity > 0.01f) sin(particlePhase * 90f) * 14f * shakeIntensity else 0f
-                        val shakeY = if (shakeIntensity > 0.01f) cos(particlePhase * 75f) * 10f * shakeIntensity else 0f
-                        translationX = panX + shakeX
+                        val z = zoomState.value
+                        scaleX = z
+                        scaleY = z
+                        val pPhase = particlePhaseState.value
+                        val shakeX = if (safeShake > 0.01f) sin(pPhase * 90f) * 14f * safeShake else 0f
+                        val shakeY = if (safeShake > 0.01f) cos(pPhase * 75f) * 10f * safeShake else 0f
+                        translationX = panXState.value + shakeX
                         translationY = shakeY
                     }
             )
         }
 
-        // Cinema lighting vignette + GPU atmosphere particles
+        // Cinema lighting vignette + GPU atmosphere particles (draw-phase only)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val w = size.width
             val h = size.height
+            if (w <= 1f || h <= 1f) return@Canvas
+
+            val pulse = pulseState.value.coerceIn(0f, 1f)
+            val particlePhase = particlePhaseState.value
 
             // Soft cinema depth vignette
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xCC04020B),
-                        Color(0x28060312),
-                        Color(0x55060312),
-                        Color(0xEE04020B)
-                    )
-                )
-            )
+            drawRect(brush = CinemaDepthVignetteBrush)
 
             // Ambient color aura
+            val auraCenter = Offset(w * 0.5f, h * 0.42f)
+            val auraRadius = (w * 0.65f).coerceAtLeast(1f)
             drawCircle(
                 brush = Brush.radialGradient(
                     colors = listOf(accent.copy(alpha = 0.22f * pulse), Color.Transparent),
-                    center = Offset(w * 0.5f, h * 0.42f),
-                    radius = w * 0.65f
+                    center = auraCenter,
+                    radius = auraRadius
                 ),
-                center = Offset(w * 0.5f, h * 0.42f),
-                radius = w * 0.65f
+                center = auraCenter,
+                radius = auraRadius
             )
+
+            if (!motionConfig.enableParticles) return@Canvas
 
             when (particleMode) {
                 "STORM" -> {
                     for (i in 0 until 42) {
                         val seed = i * 37.3f
-                        val x = ((seed * 19f) % w + particlePhase * w * 0.15f) % w
-                        val y = ((seed * 41f) + particlePhase * h * 1.8f) % h
+                        val x = (((seed * 19f) % w + particlePhase * w * 0.15f) % w + w) % w
+                        val y = (((seed * 41f) + particlePhase * h * 1.8f) % h + h) % h
                         drawLine(
                             color = Color(0x55BAE6FD),
                             start = Offset(x, y),
@@ -427,13 +488,14 @@ internal fun Pure25DMotionCinemaBackdrop(
                 }
                 "EMBER" -> {
                     for (i in 0 until 32) {
-                        val x = ((i * 67f) + sin(particlePhase * 2f * PI.toFloat() + i) * 28f) % w
-                        val y = (h - ((i * 53f + particlePhase * h * 1.1f) % h))
+                        val rawX = ((i * 67f) + sin(particlePhase * 2f * PI.toFloat() + i) * 28f) % w
+                        val x = if (rawX < 0f) rawX + w else rawX
+                        val y = h - (((i * 53f + particlePhase * h * 1.1f) % h + h) % h)
                         val r = 2.5f + (i % 4) * 1.4f
                         drawCircle(
                             color = if (i % 3 == 0) Color(0xBBFDE047) else Color(0xAAF43F5E),
                             radius = r,
-                            center = Offset(if (x < 0f) x + w else x, y)
+                            center = Offset(x, y)
                         )
                     }
                 }
@@ -444,17 +506,16 @@ internal fun Pure25DMotionCinemaBackdrop(
                         val px = w * 0.5f + cos(angle) * rad
                         val py = h * 0.42f + sin(angle) * rad * 0.65f
                         drawCircle(
-                            color = accent.copy(alpha = 0.45f * pulse + 0.15f),
+                            color = accent.copy(alpha = (0.45f * pulse + 0.15f).coerceIn(0f, 1f)),
                             radius = 2.2f + (i % 3) * 1.5f,
                             center = Offset(px, py)
                         )
                     }
                 }
                 else -> {
-                    // RED_EYE energy sparks
                     for (i in 0 until 28) {
-                        val x = ((i * 71f) % w)
-                        val y = (h - ((i * 43f + particlePhase * h) % h))
+                        val x = ((i * 71f) % w + w) % w
+                        val y = h - (((i * 43f + particlePhase * h) % h + h) % h)
                         drawCircle(
                             color = Color(0xAAF43F5E),
                             radius = 2.5f + (i % 4),
@@ -477,6 +538,7 @@ private fun Interactive25DCinemaSceneDialog(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptic = LocalHapticFeedback.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
 
     val ambientId = when (gameId) {
         StoryMiniGameId.WHITE_EYE_RESONANCE -> "BALCONY_CITY"
@@ -493,6 +555,7 @@ private fun Interactive25DCinemaSceneDialog(
     }
 
     var isMuted by remember { mutableStateOf(false) }
+    var isLifecycleResumed by remember { mutableStateOf(true) }
     var actIndex by remember { mutableIntStateOf(0) } // 0..2 interactive acts, 3 = VICTORY CINEMATIC
     var totalScore by remember { mutableIntStateOf(0) }
     var shakeTrigger by remember { mutableFloatStateOf(0f) }
@@ -535,7 +598,7 @@ private fun Interactive25DCinemaSceneDialog(
     fun speakCinematic(speakerKey: String, line: String) {
         activeSubtitleSpeaker = CharacterPortraitKey.resolveFromLabel(speakerKey)
         activeSubtitleText = line
-        if (!isMuted && line.isNotBlank()) {
+        if (!isMuted && isLifecycleResumed && line.isNotBlank()) {
             voiceEngine.speak(speakerKey, line)
         }
     }
@@ -544,11 +607,14 @@ private fun Interactive25DCinemaSceneDialog(
         sfxEngine.start(ambientSceneId = ambientId, ambientVolume = 0.36f)
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    isLifecycleResumed = false
                     sfxEngine.setMuted(true)
                     voiceEngine.setMuted(true)
+                    voiceEngine.stopCurrentLine()
                 }
                 Lifecycle.Event.ON_RESUME -> {
+                    isLifecycleResumed = true
                     sfxEngine.setMuted(isMuted)
                     voiceEngine.setMuted(isMuted)
                 }
@@ -571,7 +637,7 @@ private fun Interactive25DCinemaSceneDialog(
         }
     }
 
-    // Scene opening audio & Telltale timer for WHITE_EYE_RESONANCE
+    // Scene opening audio & lifecycle-pausable Telltale timer for WHITE_EYE_RESONANCE
     LaunchedEffect(actIndex, gameId) {
         if (gameId == StoryMiniGameId.WHITE_EYE_RESONANCE && actIndex in 0..1) {
             timeLeftMs = 8000
@@ -589,10 +655,11 @@ private fun Interactive25DCinemaSceneDialog(
             }
             while (timeLeftMs > 0 && actIndex in 0..1) {
                 delay(100L)
-                timeLeftMs = (timeLeftMs - 100).coerceAtLeast(0)
+                if (isLifecycleResumed) {
+                    timeLeftMs = (timeLeftMs - 100).coerceAtLeast(0)
+                }
             }
             if (timeLeftMs == 0 && actIndex in 0..1) {
-                // Auto-advance gracefully if timer expires (conservative choice)
                 totalScore += 250
                 actIndex = if (actIndex == 0) 1 else 3
             }
@@ -607,7 +674,6 @@ private fun Interactive25DCinemaSceneDialog(
                 "Kırmızı Göz eskiden beni yakardı Aiden. Şimdi onu senin öğrettiğin gibi kalkan yapmayı öğreniyorum."
             )
         } else if (actIndex >= 3) {
-            // VICTORY CINEMATIC ACT — NEVER interrupts voice!
             sfxEngine.play(CosmicSfx.VICTORY_FANFARE, volume = 0.72f)
             val finalRank = StoryMiniGameScorer.computeRank(totalScore, 1000)
             if (!completedReported) {
@@ -651,7 +717,6 @@ private fun Interactive25DCinemaSceneDialog(
                 shakeIntensity = shakeTrigger
             )
 
-            // Cinematic top/bottom 2.39:1 letterbox tint + HUD
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -733,14 +798,13 @@ private fun Interactive25DCinemaSceneDialog(
                 ) {
                     when {
                         actIndex >= 3 -> {
-                            // VICTORY / RESOLUTION CINEMATIC PANEL (stays open until user taps Continue!)
                             val finalRank = StoryMiniGameScorer.computeRank(totalScore, 1000)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(22.dp))
+                                    .clip(MiniGameCardShape)
                                     .background(Color(0xDD0A061C))
-                                    .border(1.3.dp, Color(0xFF34D399).copy(alpha = 0.8f), RoundedCornerShape(22.dp))
+                                    .border(1.3.dp, Color(0xFF34D399).copy(alpha = 0.8f), MiniGameCardShape)
                                     .padding(18.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -772,8 +836,8 @@ private fun Interactive25DCinemaSceneDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Brush.horizontalGradient(listOf(Color(0xFF059669), Color(0xFF2563EB))))
+                                        .clip(MiniGameOptionShape)
+                                        .background(MiniGameVictoryBtnBrush)
                                         .clickable { onDismiss() }
                                         .padding(vertical = 13.dp),
                                     horizontalArrangement = Arrangement.Center,
@@ -791,52 +855,54 @@ private fun Interactive25DCinemaSceneDialog(
                         }
 
                         gameId == StoryMiniGameId.WHITE_EYE_RESONANCE -> {
-                            val options = if (actIndex == 0) {
-                                listOf(
-                                    CinemaDecisionOption(
-                                        label = "Beyaz Göz'le Zihinleri Kalkanla",
-                                        subtext = "Beş Avenger'a tek bir zarar vermeden dalgayı sönümle",
-                                        points = 500,
-                                        outcomeText = "Altın-mavi dalga zihinleri incitmeden mühürledi!",
-                                        speakerKey = "WANDA",
-                                        speakerLine = "Bana böyle baktığında avuçlarımdaki kızıl ışık bile ısınmayı bırakıp yumuşuyor."
-                                    ),
-                                    CinemaDecisionOption(
-                                        label = "Şok Dalgasını Kendi Göğsünde Em",
-                                        subtext = "Riskli ama ekibi anında özgür bırakır",
-                                        points = 380,
-                                        outcomeText = "Tüm yükü üstlendin — zaman akışı sarsılarak normale döndü.",
-                                        speakerKey = "NATASHA",
-                                        speakerLine = "Elin sıcak... yirmi yıl boyunca kimsenin elini bu kadar güvenle tutmamıştım."
+                            val options = remember(actIndex) {
+                                if (actIndex == 0) {
+                                    listOf(
+                                        CinemaDecisionOption(
+                                            label = "Beyaz Göz'le Zihinleri Kalkanla",
+                                            subtext = "Beş Avenger'a tek bir zarar vermeden dalgayı sönümle",
+                                            points = 500,
+                                            outcomeText = "Altın-mavi dalga zihinleri incitmeden mühürledi!",
+                                            speakerKey = "WANDA",
+                                            speakerLine = "Bana böyle baktığında avuçlarımdaki kızıl ışık bile ısınmayı bırakıp yumuşuyor."
+                                        ),
+                                        CinemaDecisionOption(
+                                            label = "Şok Dalgasını Kendi Göğsünde Em",
+                                            subtext = "Riskli ama ekibi anında özgür bırakır",
+                                            points = 380,
+                                            outcomeText = "Tüm yükü üstlendin — zaman akışı sarsılarak normale döndü.",
+                                            speakerKey = "NATASHA",
+                                            speakerLine = "Elin sıcak... yirmi yıl boyunca kimsenin elini bu kadar güvenle tutmamıştım."
+                                        )
                                     )
-                                )
-                            } else {
-                                listOf(
-                                    CinemaDecisionOption(
-                                        label = "Zaman Akışını Yavaşça Bırak",
-                                        subtext = "Kusursuz kontrolle Beyaz Göz'ü mühürle",
-                                        points = 500,
-                                        outcomeText = "Yağmur damlaları usulca yere indi — tam kontrol sağlandı!",
-                                        speakerKey = "NATASHA",
-                                        speakerLine = "Eskiden birinin gözlerinin içine üç saniyeden fazla bakmazdım. Seninle zaman duruyor."
-                                    ),
-                                    CinemaDecisionOption(
-                                        label = "Ani Parlama ile Enerjiyi Dağıt",
-                                        subtext = "Hızlı ama yüksek enerji boşalımı",
-                                        points = 360,
-                                        outcomeText = "Mavi bir şimşek odayı aydınlattı ve bağlantı kesildi.",
-                                        speakerKey = "WANDA",
-                                        speakerLine = "Yıldızlar bu gece çok yakın görünüyor Aiden... Zihnindeki o gürültü ilk kez tamamen susmuş."
+                                } else {
+                                    listOf(
+                                        CinemaDecisionOption(
+                                            label = "Zaman Akışını Yavaşça Bırak",
+                                            subtext = "Kusursuz kontrolle Beyaz Göz'ü mühürle",
+                                            points = 500,
+                                            outcomeText = "Yağmur damlaları usulca yere indi — tam kontrol sağlandı!",
+                                            speakerKey = "NATASHA",
+                                            speakerLine = "Eskiden birinin gözlerinin içine üç saniyeden fazla bakmazdım. Seninle zaman duruyor."
+                                        ),
+                                        CinemaDecisionOption(
+                                            label = "Ani Parlama ile Enerjiyi Dağıt",
+                                            subtext = "Hızlı ama yüksek enerji boşalımı",
+                                            points = 360,
+                                            outcomeText = "Mavi bir şimşek odayı aydınlattı ve bağlantı kesildi.",
+                                            speakerKey = "WANDA",
+                                            speakerLine = "Yıldızlar bu gece çok yakın görünüyor Aiden... Zihnindeki o gürültü ilk kez tamamen susmuş."
+                                        )
                                     )
-                                )
+                                }
                             }
 
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(MiniGamePanelShape)
                                     .background(Color(0xCC070414))
-                                    .border(1.dp, gameId.accentColor.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                                    .border(1.dp, gameId.accentColor.copy(alpha = 0.6f), MiniGamePanelShape)
                                     .padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -862,7 +928,7 @@ private fun Interactive25DCinemaSceneDialog(
                                         )
                                     }
                                     Text(
-                                        text = "${(timeLeftMs / 1000f).let { String.format(java.util.Locale.US, "%.1fs", it) }}",
+                                        text = String.format(Locale.US, "%.1fs", timeLeftMs / 1000f),
                                         fontFamily = InterFontFamily,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold,
@@ -870,41 +936,43 @@ private fun Interactive25DCinemaSceneDialog(
                                     )
                                 }
                                 LinearProgressIndicator(
-                                    progress = { (timeLeftMs / 8000f).coerceIn(0f, 1f) },
-                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp)),
+                                    progress = { StoryMiniGameScorer.computeTimerFraction(timeLeftMs, 8000) },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(MiniGameBarShape),
                                     color = if (timeLeftMs < 2500) Color(0xFFF43F5E) else Color(0xFF38BDF8),
                                     trackColor = Color(0x33FFFFFF)
                                 )
                                 options.forEach { opt ->
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Color(0x552E1065))
-                                            .border(1.dp, Color(0x88C4B5FD), RoundedCornerShape(14.dp))
-                                            .clickable {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                sfxEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.7f)
-                                                shakeTrigger = 1f
-                                                totalScore += opt.points
-                                                speakCinematic(opt.speakerKey, opt.speakerLine)
-                                                actIndex = if (actIndex == 0) 1 else 3
-                                            }
-                                            .padding(12.dp)
-                                    ) {
-                                        Text(
-                                            text = opt.label,
-                                            fontFamily = InterFontFamily,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            text = opt.subtext,
-                                            fontFamily = InterFontFamily,
-                                            fontSize = 11.sp,
-                                            color = Color(0xFFD8B4FE)
-                                        )
+                                    key(opt.label) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(MiniGameOptionShape)
+                                                .background(Color(0x552E1065))
+                                                .border(1.dp, Color(0x88C4B5FD), MiniGameOptionShape)
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    sfxEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.7f)
+                                                    if (!motionPolicy.shouldUseQuickTransitions) shakeTrigger = 1f
+                                                    totalScore += opt.points
+                                                    speakCinematic(opt.speakerKey, opt.speakerLine)
+                                                    actIndex = if (actIndex == 0) 1 else 3
+                                                }
+                                                .padding(12.dp)
+                                        ) {
+                                            Text(
+                                                text = opt.label,
+                                                fontFamily = InterFontFamily,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
+                                            Text(
+                                                text = opt.subtext,
+                                                fontFamily = InterFontFamily,
+                                                fontSize = 11.sp,
+                                                color = Color(0xFFD8B4FE)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -949,9 +1017,9 @@ private fun Interactive25DCinemaSceneDialog(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(MiniGamePanelShape)
                                     .background(Color(0xCC06091B))
-                                    .border(1.dp, Color(0x8838BDF8), RoundedCornerShape(20.dp))
+                                    .border(1.dp, Color(0x8838BDF8), MiniGamePanelShape)
                                     .padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -979,53 +1047,55 @@ private fun Interactive25DCinemaSceneDialog(
                                 }
 
                                 nodes.forEach { node ->
-                                    val done = node.id in inspectedHolograms
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(if (done) Color(0x3310B981) else Color(0x441E3A8A))
-                                            .border(
-                                                1.dp,
-                                                if (done) Color(0xFF34D399) else Color(0x8838BDF8),
-                                                RoundedCornerShape(14.dp)
-                                            )
-                                            .clickable {
-                                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                                sfxEngine.play(CosmicSfx.SPARK_COLLECT, volume = 0.7f)
-                                                if (!done) {
-                                                    inspectedHolograms.add(node.id)
-                                                    totalScore += 300
-                                                    if (inspectedHolograms.size >= 2) actIndex = 1
+                                    key(node.id) {
+                                        val done = node.id in inspectedHolograms
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(MiniGameOptionShape)
+                                                .background(if (done) Color(0x3310B981) else Color(0x441E3A8A))
+                                                .border(
+                                                    1.dp,
+                                                    if (done) Color(0xFF34D399) else Color(0x8838BDF8),
+                                                    MiniGameOptionShape
+                                                )
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    sfxEngine.play(CosmicSfx.SPARK_COLLECT, volume = 0.7f)
+                                                    if (!done) {
+                                                        inspectedHolograms.add(node.id)
+                                                        totalScore += 300
+                                                        if (inspectedHolograms.size >= 2) actIndex = 1
+                                                    }
+                                                    activeHologramNote = node.secretText
+                                                    speakCinematic(node.speakerKey, node.voiceLine)
                                                 }
-                                                activeHologramNote = node.secretText
-                                                speakCinematic(node.speakerKey, node.voiceLine)
+                                                .padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = node.badge,
+                                                    fontFamily = InterFontFamily,
+                                                    fontSize = 9.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (done) Color(0xFF6EE7B7) else Color(0xFF7DD3FC)
+                                                )
+                                                Text(
+                                                    text = node.title,
+                                                    fontFamily = InterFontFamily,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
                                             }
-                                            .padding(12.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = node.badge,
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = if (done) Color(0xFF6EE7B7) else Color(0xFF7DD3FC)
-                                            )
-                                            Text(
-                                                text = node.title,
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
+                                            Icon(
+                                                imageVector = if (done) Icons.Default.CheckCircle else Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = if (done) Color(0xFF34D399) else Color.White
                                             )
                                         }
-                                        Icon(
-                                            imageVector = if (done) Icons.Default.CheckCircle else Icons.Default.PlayArrow,
-                                            contentDescription = null,
-                                            tint = if (done) Color(0xFF34D399) else Color.White
-                                        )
                                     }
                                 }
 
@@ -1043,11 +1113,11 @@ private fun Interactive25DCinemaSceneDialog(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Brush.horizontalGradient(listOf(Color(0xFF0284C7), Color(0xFF7C3AED))))
+                                            .clip(MiniGameOptionShape)
+                                            .background(MiniGameSealBtnBrush)
                                             .clickable {
                                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                shakeTrigger = 0.8f
+                                                if (!motionPolicy.shouldUseQuickTransitions) shakeTrigger = 0.8f
                                                 totalScore += 150
                                                 actIndex = 3
                                             }
@@ -1067,7 +1137,6 @@ private fun Interactive25DCinemaSceneDialog(
                         }
 
                         else -> {
-                            // RED_EYE_WILLPOWER -> 3-Stage Psychological Willpower Cinema
                             val stages = remember {
                                 listOf(
                                     Triple(
@@ -1101,9 +1170,9 @@ private fun Interactive25DCinemaSceneDialog(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(MiniGamePanelShape)
                                     .background(Color(0xCC160512))
-                                    .border(1.dp, Color(0x99F43F5E), RoundedCornerShape(20.dp))
+                                    .border(1.dp, Color(0x99F43F5E), MiniGamePanelShape)
                                     .padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -1128,7 +1197,7 @@ private fun Interactive25DCinemaSceneDialog(
                                 }
                                 LinearProgressIndicator(
                                     progress = { (willpowerMeter / 100f).coerceIn(0f, 1f) },
-                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp)),
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(MiniGameBarShape),
                                     color = Color(0xFF38BDF8),
                                     trackColor = Color(0x44F43F5E)
                                 )
@@ -1139,36 +1208,38 @@ private fun Interactive25DCinemaSceneDialog(
                                     color = Color.White
                                 )
                                 st.third.forEach { opt ->
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Color(0x553B0726))
-                                            .border(1.dp, Color(0x88FDA4AF), RoundedCornerShape(14.dp))
-                                            .clickable {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                sfxEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.65f)
-                                                shakeTrigger = 0.9f
-                                                totalScore += opt.points
-                                                willpowerMeter = (willpowerMeter + 24).coerceAtMost(100)
-                                                speakCinematic(opt.speakerKey, opt.speakerLine)
-                                                actIndex = if (actIndex < 2) actIndex + 1 else 3
-                                            }
-                                            .padding(12.dp)
-                                    ) {
-                                        Text(
-                                            text = opt.label,
-                                            fontFamily = InterFontFamily,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color.White
-                                        )
-                                        Text(
-                                            text = opt.subtext,
-                                            fontFamily = InterFontFamily,
-                                            fontSize = 11.sp,
-                                            color = Color(0xFFFBCFE8)
-                                        )
+                                    key(opt.label) {
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(MiniGameOptionShape)
+                                                .background(Color(0x553B0726))
+                                                .border(1.dp, Color(0x88FDA4AF), MiniGameOptionShape)
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    sfxEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.65f)
+                                                    if (!motionPolicy.shouldUseQuickTransitions) shakeTrigger = 0.9f
+                                                    totalScore += opt.points
+                                                    willpowerMeter = StoryMiniGameScorer.computeWillpowerAfterChoice(willpowerMeter, 24)
+                                                    speakCinematic(opt.speakerKey, opt.speakerLine)
+                                                    actIndex = if (actIndex < 2) actIndex + 1 else 3
+                                                }
+                                                .padding(12.dp)
+                                        ) {
+                                            Text(
+                                                text = opt.label,
+                                                fontFamily = InterFontFamily,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color.White
+                                            )
+                                            Text(
+                                                text = opt.subtext,
+                                                fontFamily = InterFontFamily,
+                                                fontSize = 11.sp,
+                                                color = Color(0xFFFBCFE8)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1176,7 +1247,7 @@ private fun Interactive25DCinemaSceneDialog(
                     }
                 }
 
-                // Bottom Cinema Subtitle Ribbon (live speaker portrait + unbroken ElevenLabs subtitle!)
+                // Bottom Cinema Subtitle Ribbon
                 if (activeSubtitleText.isNotBlank()) {
                     Row(
                         modifier = Modifier
@@ -1187,8 +1258,8 @@ private fun Interactive25DCinemaSceneDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        activeSubtitleSpeaker?.let { key ->
-                            CinematicCharacterAvatar(key = key, size = 40.dp)
+                        activeSubtitleSpeaker?.let { speakerKey ->
+                            CinematicCharacterAvatar(key = speakerKey, size = 40.dp)
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Row(

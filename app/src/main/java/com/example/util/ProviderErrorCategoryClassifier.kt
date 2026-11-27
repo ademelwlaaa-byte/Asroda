@@ -23,19 +23,33 @@ object ProviderErrorCategoryClassifier {
     fun classify(statusCode: Int?, errorMessage: String?): Category {
         val msg = errorMessage.orEmpty().lowercase(Locale.ROOT)
         return when {
-            statusCode == 401 || statusCode == 403 || msg.contains("unauthorized") || msg.contains("invalid api key") || msg.contains("forbidden") ->
+            statusCode == 401 || statusCode == 403 ||
+                msg.contains("unauthorized") || msg.contains("invalid api key") ||
+                msg.contains("invalid_api_key") || msg.contains("authentication") ||
+                msg.contains("forbidden") || msg.contains("yetkisiz") || msg.contains("kimlik") ->
                 Category.AUTH
-            statusCode == 402 || msg.contains("quota") || msg.contains("insufficient") || msg.contains("billing") || msg.contains("credit") ->
+            statusCode == 402 ||
+                msg.contains("quota") || msg.contains("insufficient") ||
+                msg.contains("billing") || msg.contains("credit") ||
+                msg.contains("resource_exhausted") ->
                 Category.QUOTA
-            statusCode == 429 || msg.contains("rate limit") || msg.contains("too many requests") ->
+            statusCode == 429 ||
+                msg.contains("rate limit") || msg.contains("rate_limit") ||
+                msg.contains("too many requests") ->
                 Category.RATE_LIMIT
             statusCode == 404 || msg.contains("model_not_found") || msg.contains("not found") ->
                 Category.MODEL_NOT_FOUND
-            statusCode == 408 || statusCode == 504 || msg.contains("timeout") || msg.contains("timed out") ->
+            statusCode == 408 || statusCode == 504 ||
+                msg.contains("timeout") || msg.contains("timed out") ||
+                msg.contains("zaman aşımı") || msg.contains("zaman asimi") ->
                 Category.TIMEOUT
-            statusCode != null && statusCode in 500..599 ->
+            (statusCode != null && statusCode in 500..599) || msg.contains("overloaded") ->
                 Category.SERVER
-            msg.contains("unable to resolve host") || msg.contains("connect") || msg.contains("network") || msg.contains("socket") ->
+            msg.contains("unable to resolve host") || msg.contains("connect") ||
+                msg.contains("network") || msg.contains("socket") ||
+                msg.contains("ssl") || msg.contains("handshake") ||
+                msg.contains("eof") || msg.contains("dns") ||
+                msg.contains("bağlantı") || msg.contains("baglanti") ->
                 Category.NETWORK
             else -> Category.UNKNOWN
         }

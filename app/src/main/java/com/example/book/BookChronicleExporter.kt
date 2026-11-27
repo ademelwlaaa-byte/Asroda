@@ -11,13 +11,15 @@ object BookChronicleExporter {
         val allDecisions = state.chapterDecisions.entries
             .sortedBy { it.key }
             .flatMap { it.value }
+        val totalPlayable = CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS
+        val completedCount = state.completedChapters.count { it in 1..totalPlayable }
         return buildString {
             append("# Kozmik Sürükleniş — Aiden'ın Kronik Dosyası\n\n")
-            append("- **Aktif Bölüm:** Bölüm ").append(state.activeChapter).append("\n")
-            append("- **Tamamlanan Bölümler:** ").append(state.completedChapters.size)
-                .append(" / ").append(CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS).append("\n")
+            append("- **Aktif Bölüm:** Bölüm ").append(state.activeChapter.coerceIn(1, totalPlayable)).append("\n")
+            append("- **Tamamlanan Bölümler:** ").append(completedCount)
+                .append(" / ").append(totalPlayable).append("\n")
             append("- **Açılan Karakterler (").append(unlocked.size).append("):** ")
-                .append(unlocked.joinToString(", ") { it.displayName }).append("\n")
+                .append(if (unlocked.isEmpty()) "Henüz yok" else unlocked.joinToString(", ") { it.displayName }).append("\n")
             val bondHighlight = BookBondSummaryHelper.compute(state)
             append("- **İlişki Özeti:** ").append(BookBondSummaryHelper.formatCompact(bondHighlight)).append("\n")
             append("- **Keşfedilen Sırlar:** ").append(state.discoveredSecrets.size).append("\n\n")

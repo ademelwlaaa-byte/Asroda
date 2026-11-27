@@ -36,6 +36,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -61,12 +62,38 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.ui.animation.LocalCosmicMotionPolicy
 import com.example.ui.screens.CharacterPortraitKey
 import com.example.ui.screens.CinematicCharacterAvatar
 import com.example.ui.screens.ConfigureTrueFullscreenDialogWindow
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import kotlinx.coroutines.delay
+import java.util.Locale
+
+private val BossPanelShape = RoundedCornerShape(20.dp)
+private val BossVictoryPanelShape = RoundedCornerShape(22.dp)
+private val BossActionShape = RoundedCornerShape(14.dp)
+private val BossBarShape = RoundedCornerShape(4.dp)
+private val BossIntroCtaBrush = Brush.horizontalGradient(listOf(Color(0xFF2563EB), Color(0xFF7C3AED)))
+private val BossBreakCtaBrush = Brush.horizontalGradient(listOf(Color(0xFFDC2626), Color(0xFF7C3AED)))
+private val BossVictoryCtaBrush = Brush.horizontalGradient(listOf(Color(0xFF059669), Color(0xFF2563EB)))
+
+internal object CosmicBossDuelCalculator {
+    fun computeShieldAfterOrder(currentShieldPct: Int, requiredOrdersCount: Int): Int {
+        val stepDrop = 70 / requiredOrdersCount.coerceAtLeast(1)
+        return (currentShieldPct.coerceIn(0, 100) - stepDrop).coerceIn(25, 100)
+    }
+
+    fun computeDuelRank(totalScore: Int): String = when {
+        totalScore >= 1400 -> "S"
+        totalScore >= 1000 -> "A"
+        else -> "B"
+    }
+
+    fun shieldProgressFraction(shieldPct: Int): Float =
+        (shieldPct.toFloat() / 100f).coerceIn(0f, 1f)
+}
 
 enum class CosmicDuelBossId {
     VAELOR_ROOFTOP,
@@ -74,7 +101,7 @@ enum class CosmicDuelBossId {
     ULTRON_PRIME;
 
     companion object {
-        fun fromTag(raw: String): CosmicDuelBossId = when (raw.trim().uppercase()) {
+        fun fromTag(raw: String): CosmicDuelBossId = when (raw.trim().uppercase(Locale.ROOT)) {
             "MIRROR_ZERO", "ZERO_DUEL", "AYNA_DUELLOSU" -> MIRROR_ZERO
             "ULTRON_PRIME", "SOKOVIA_ULTRON", "ULTRON_BOSS" -> ULTRON_PRIME
             else -> VAELOR_ROOFTOP
@@ -392,6 +419,7 @@ fun CosmicRooftopBossDuelDialog(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptic = LocalHapticFeedback.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
 
     val soundEngine = remember { Cosmic3DSoundEngine(context, enableOrchestralMusic = true) }
     var isVoiceSpeaking by remember { mutableStateOf(false) }
@@ -403,6 +431,7 @@ fun CosmicRooftopBossDuelDialog(
     }
 
     var isMuted by remember { mutableStateOf(false) }
+    var isLifecycleResumed by remember { mutableStateOf(true) }
     var actIndex by remember { mutableIntStateOf(0) } // 0: Intro, 1: Avengers Comms, 2: Ultimate Final, 3: Victory Cinematic
     var bossShieldPct by remember { mutableIntStateOf(100) }
     var totalScore by remember { mutableIntStateOf(0) }
@@ -416,7 +445,7 @@ fun CosmicRooftopBossDuelDialog(
     fun speakLine(speakerKey: String, text: String, lineId: String? = null) {
         activeSpeaker = CharacterPortraitKey.resolveFromLabel(speakerKey)
         activeSubtitle = text
-        if (!isMuted && text.isNotBlank()) {
+        if (!isMuted && isLifecycleResumed && text.isNotBlank()) {
             voiceEngine.speak(speakerKey, text, lineId)
         }
     }
@@ -436,11 +465,14 @@ fun CosmicRooftopBossDuelDialog(
 
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    isLifecycleResumed = false
                     soundEngine.setMuted(true)
                     voiceEngine.setMuted(true)
+                    voiceEngine.stopCurrentLine()
                 }
                 Lifecycle.Event.ON_RESUME -> {
+                    isLifecycleResumed = true
                     soundEngine.setMuted(isMuted)
                     voiceEngine.setMuted(isMuted)
                 }
@@ -462,7 +494,6 @@ fun CosmicRooftopBossDuelDialog(
         }
     }
 
-    // Play each Act's dramatic ElevenLabs line cleanly without ever cutting off!
     LaunchedEffect(actIndex) {
         when (actIndex) {
             0 -> {
@@ -475,11 +506,10 @@ fun CosmicRooftopBossDuelDialog(
             }
             2 -> {
                 soundEngine.play(CosmicSfx.LASER_WARNING, volume = 0.72f)
-                shakeIntensity = 0.85f
+                if (!motionPolicy.shouldUseQuickTransitions) shakeIntensity = 0.85f
                 speakLine(spec.act2Speaker, spec.act2Line, spec.act2LineId)
             }
             3 -> {
-                // VICTORY CINEMATIC — plays full fanfare & full character victory line, NEVER auto-closes!
                 soundEngine.play(CosmicSfx.VICTORY_FANFARE, volume = 0.85f)
                 bossShieldPct = 0
                 speakLine(spec.victorySpeaker, spec.victoryLine, spec.victoryLineId)
@@ -607,8 +637,8 @@ fun CosmicRooftopBossDuelDialog(
                             )
                         }
                         LinearProgressIndicator(
-                            progress = { (bossShieldPct / 100f).coerceIn(0f, 1f) },
-                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(4.dp)),
+                            progress = { CosmicBossDuelCalculator.shieldProgressFraction(bossShieldPct) },
+                            modifier = Modifier.fillMaxWidth().height(6.dp).clip(BossBarShape),
                             color = spec.accent,
                             trackColor = Color(0x33FFFFFF)
                         )
@@ -628,9 +658,9 @@ fun CosmicRooftopBossDuelDialog(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(BossPanelShape)
                                     .background(Color(0xCC090418))
-                                    .border(1.dp, spec.accent.copy(alpha = 0.65f), RoundedCornerShape(20.dp))
+                                    .border(1.dp, spec.accent.copy(alpha = 0.65f), BossPanelShape)
                                     .padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -650,8 +680,8 @@ fun CosmicRooftopBossDuelDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Brush.horizontalGradient(listOf(Color(0xFF2563EB), Color(0xFF7C3AED))))
+                                        .clip(BossActionShape)
+                                        .background(BossIntroCtaBrush)
                                         .clickable {
                                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                             actIndex = 1
@@ -675,9 +705,9 @@ fun CosmicRooftopBossDuelDialog(
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(BossPanelShape)
                                     .background(Color(0xCC090418))
-                                    .border(1.dp, spec.accent.copy(alpha = 0.65f), RoundedCornerShape(20.dp))
+                                    .border(1.dp, spec.accent.copy(alpha = 0.65f), BossPanelShape)
                                     .padding(14.dp)
                                     .verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -690,54 +720,58 @@ fun CosmicRooftopBossDuelDialog(
                                     color = Color(0xFFFDE047)
                                 )
                                 spec.commsOrders.forEach { order ->
-                                    val used = order.id in issuedOrderIds
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(if (used) Color(0x3310B981) else Color(0x442E1065))
-                                            .border(
-                                                1.dp,
-                                                if (used) Color(0xFF34D399) else order.portraitKey.accentColor.copy(alpha = 0.65f),
-                                                RoundedCornerShape(14.dp)
-                                            )
-                                            .clickable {
-                                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                soundEngine.play(order.sfx, volume = 0.85f)
-                                                shakeIntensity = 1.0f
-                                                speakLine(order.speakerKey, order.voiceLine, order.lineId)
-                                                if (!used) {
-                                                    issuedOrderIds.add(order.id)
-                                                    totalScore += 450
-                                                    val stepDrop = (70 / spec.requiredOrdersCount.coerceAtLeast(1))
-                                                    bossShieldPct = (bossShieldPct - stepDrop).coerceAtLeast(25)
+                                    key(order.id) {
+                                        val used = order.id in issuedOrderIds
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(BossActionShape)
+                                                .background(if (used) Color(0x3310B981) else Color(0x442E1065))
+                                                .border(
+                                                    1.dp,
+                                                    if (used) Color(0xFF34D399) else order.portraitKey.accentColor.copy(alpha = 0.65f),
+                                                    BossActionShape
+                                                )
+                                                .clickable {
+                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    soundEngine.play(order.sfx, volume = 0.85f)
+                                                    if (!motionPolicy.shouldUseQuickTransitions) shakeIntensity = 1.0f
+                                                    speakLine(order.speakerKey, order.voiceLine, order.lineId)
+                                                    if (!used) {
+                                                        issuedOrderIds.add(order.id)
+                                                        totalScore += 450
+                                                        bossShieldPct = CosmicBossDuelCalculator.computeShieldAfterOrder(
+                                                            currentShieldPct = bossShieldPct,
+                                                            requiredOrdersCount = spec.requiredOrdersCount
+                                                        )
+                                                    }
                                                 }
+                                                .padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            CinematicCharacterAvatar(key = order.portraitKey, size = 38.dp)
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = order.title,
+                                                    fontFamily = InterFontFamily,
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = Color.White
+                                                )
+                                                Text(
+                                                    text = order.tacticalDesc,
+                                                    fontFamily = InterFontFamily,
+                                                    fontSize = 10.8.sp,
+                                                    color = Color(0xFFD8B4FE)
+                                                )
                                             }
-                                            .padding(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        CinematicCharacterAvatar(key = order.portraitKey, size = 38.dp)
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = order.title,
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = Color.White
-                                            )
-                                            Text(
-                                                text = order.tacticalDesc,
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 10.8.sp,
-                                                color = Color(0xFFD8B4FE)
+                                            Icon(
+                                                imageVector = if (used) Icons.Default.CheckCircle else Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = if (used) Color(0xFF34D399) else Color.White
                                             )
                                         }
-                                        Icon(
-                                            imageVector = if (used) Icons.Default.CheckCircle else Icons.Default.PlayArrow,
-                                            contentDescription = null,
-                                            tint = if (used) Color(0xFF34D399) else Color.White
-                                        )
                                     }
                                 }
 
@@ -745,8 +779,8 @@ fun CosmicRooftopBossDuelDialog(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Brush.horizontalGradient(listOf(Color(0xFFDC2626), Color(0xFF7C3AED))))
+                                            .clip(BossActionShape)
+                                            .background(BossBreakCtaBrush)
                                             .clickable {
                                                 haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                                 actIndex = 2
@@ -775,13 +809,19 @@ fun CosmicRooftopBossDuelDialog(
                         }
 
                         2 -> {
-                            var finalMoveChosen by remember { mutableStateOf(false) }
+                            var finalMoveChosen by remember(bossId, actIndex) { mutableStateOf(false) }
+                            val finalMoves = remember(spec) {
+                                listOf(
+                                    Triple(spec.whiteEyeTitle, spec.whiteEyeLine, Color(0xFF38BDF8)),
+                                    Triple(spec.redEyeTitle, spec.redEyeLine, Color(0xFFF43F5E))
+                                )
+                            }
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(20.dp))
+                                    .clip(BossPanelShape)
                                     .background(Color(0xDD0A041A))
-                                    .border(1.2.dp, Color(0xFFFDE047).copy(alpha = 0.75f), RoundedCornerShape(20.dp))
+                                    .border(1.2.dp, Color(0xFFFDE047).copy(alpha = 0.75f), BossPanelShape)
                                     .padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
@@ -793,40 +833,39 @@ fun CosmicRooftopBossDuelDialog(
                                     color = Color(0xFFFDE047)
                                 )
                                 if (!finalMoveChosen) {
-                                    listOf(
-                                        Triple(spec.whiteEyeTitle, spec.whiteEyeLine, Color(0xFF38BDF8)),
-                                        Triple(spec.redEyeTitle, spec.redEyeLine, Color(0xFFF43F5E))
-                                    ).forEach { (btnTitle, aidenLine, clr) ->
-                                        Column(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .clip(RoundedCornerShape(14.dp))
-                                                .background(clr.copy(alpha = 0.24f))
-                                                .border(1.1.dp, clr.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
-                                                .clickable {
-                                                    finalMoveChosen = true
-                                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                                    soundEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.95f)
-                                                    shakeIntensity = 1.3f
-                                                    bossShieldPct = 0
-                                                    totalScore += 600
-                                                    speakLine("AIDEN", aidenLine)
-                                                }
-                                                .padding(13.dp)
-                                        ) {
-                                            Text(
-                                                text = btnTitle,
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 12.5.sp,
-                                                fontWeight = FontWeight.ExtraBold,
-                                                color = Color.White
-                                            )
-                                            Text(
-                                                text = "\"$aidenLine\"",
-                                                fontFamily = InterFontFamily,
-                                                fontSize = 11.5.sp,
-                                                color = Color(0xFFE9D5FF)
-                                            )
+                                    finalMoves.forEach { (btnTitle, aidenLine, clr) ->
+                                        key(btnTitle) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clip(BossActionShape)
+                                                    .background(clr.copy(alpha = 0.24f))
+                                                    .border(1.1.dp, clr.copy(alpha = 0.85f), BossActionShape)
+                                                    .clickable {
+                                                        finalMoveChosen = true
+                                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                        soundEngine.play(CosmicSfx.WHITE_EYE_NOVA, volume = 0.95f)
+                                                        if (!motionPolicy.shouldUseQuickTransitions) shakeIntensity = 1.3f
+                                                        bossShieldPct = 0
+                                                        totalScore += 600
+                                                        speakLine("AIDEN", aidenLine)
+                                                    }
+                                                    .padding(13.dp)
+                                            ) {
+                                                Text(
+                                                    text = btnTitle,
+                                                    fontFamily = InterFontFamily,
+                                                    fontSize = 12.5.sp,
+                                                    fontWeight = FontWeight.ExtraBold,
+                                                    color = Color.White
+                                                )
+                                                Text(
+                                                    text = "\"$aidenLine\"",
+                                                    fontFamily = InterFontFamily,
+                                                    fontSize = 11.5.sp,
+                                                    color = Color(0xFFE9D5FF)
+                                                )
+                                            }
                                         }
                                     }
                                 } else {
@@ -843,8 +882,8 @@ fun CosmicRooftopBossDuelDialog(
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Brush.horizontalGradient(listOf(Color(0xFF059669), Color(0xFF2563EB))))
+                                            .clip(BossActionShape)
+                                            .background(BossVictoryCtaBrush)
                                             .clickable { actIndex = 3 }
                                             .padding(vertical = 13.dp),
                                         horizontalArrangement = Arrangement.Center
@@ -862,14 +901,13 @@ fun CosmicRooftopBossDuelDialog(
                         }
 
                         else -> {
-                            // ACT 3: UNBROKEN VICTORY CINEMATIC — waits for user tap, NEVER cuts voice!
-                            val rank = if (totalScore >= 1400) "S" else if (totalScore >= 1000) "A" else "B"
+                            val rank = CosmicBossDuelCalculator.computeDuelRank(totalScore)
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(22.dp))
+                                    .clip(BossVictoryPanelShape)
                                     .background(Color(0xDD061314))
-                                    .border(1.4.dp, Color(0xFF34D399), RoundedCornerShape(22.dp))
+                                    .border(1.4.dp, Color(0xFF34D399), BossVictoryPanelShape)
                                     .padding(18.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -909,8 +947,8 @@ fun CosmicRooftopBossDuelDialog(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Brush.horizontalGradient(listOf(Color(0xFF059669), Color(0xFF2563EB))))
+                                        .clip(BossActionShape)
+                                        .background(BossVictoryCtaBrush)
                                         .clickable {
                                             if (!victoryReported) {
                                                 victoryReported = true
@@ -935,7 +973,7 @@ fun CosmicRooftopBossDuelDialog(
                     }
                 }
 
-                // Bottom Cinema Subtitle Ribbon (unbroken speaker portrait + ElevenLabs subtitle)
+                // Bottom Cinema Subtitle Ribbon
                 if (activeSubtitle.isNotBlank()) {
                     Row(
                         modifier = Modifier
@@ -946,8 +984,8 @@ fun CosmicRooftopBossDuelDialog(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        activeSpeaker?.let { key ->
-                            CinematicCharacterAvatar(key = key, size = 40.dp)
+                        activeSpeaker?.let { speakerKey ->
+                            CinematicCharacterAvatar(key = speakerKey, size = 40.dp)
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Row(

@@ -28,7 +28,7 @@ object StoryPacingAnalyzer {
         var assistantCount = 0
 
         for (m in storyMsgs) {
-            val text = m.text.trim()
+            val text = com.example.data.repository.EmochiRepository.cleanEmotionTags(m.text).trim()
             if (text.isEmpty()) continue
             totalChars += text.length
             dialogueRegex.findAll(text).forEach { match ->

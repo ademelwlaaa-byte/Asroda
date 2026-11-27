@@ -27,44 +27,61 @@ object StorySessionGoalStore {
     )
 
     private fun todayKey(nowMs: Long): String {
-        return SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(nowMs))
+        val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = java.util.TimeZone.getDefault()
+        }
+        return fmt.format(Date(nowMs))
     }
 
     fun getTodayProgress(context: Context, nowMs: Long = System.currentTimeMillis()): DailyGoalProgress {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val today = todayKey(nowMs)
-        val savedDay = prefs.getString(KEY_DAY, "") ?: ""
-        val count = if (savedDay == today) prefs.getInt(KEY_COUNT, 0).coerceAtLeast(0) else 0
-        val goal = prefs.getInt(KEY_TARGET, DEFAULT_GOAL).coerceIn(5, 200)
-        val pct = ((count * 100f) / goal).toInt().coerceIn(0, 100)
-        return DailyGoalProgress(
-            sentToday = count,
-            dailyGoal = goal,
-            percentComplete = pct,
-            goalReached = count >= goal
-        )
+        return try {
+            val ctx = context.applicationContext ?: context
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val today = todayKey(nowMs)
+            val savedDay = prefs.getString(KEY_DAY, "") ?: ""
+            val count = if (savedDay == today) prefs.getInt(KEY_COUNT, 0).coerceAtLeast(0) else 0
+            val goal = prefs.getInt(KEY_TARGET, DEFAULT_GOAL).coerceIn(5, 200)
+            val pct = ((count * 100f) / goal).toInt().coerceIn(0, 100)
+            DailyGoalProgress(
+                sentToday = count,
+                dailyGoal = goal,
+                percentComplete = pct,
+                goalReached = count >= goal
+            )
+        } catch (_: Exception) {
+            DailyGoalProgress(0, DEFAULT_GOAL, 0, false)
+        }
     }
 
     fun recordTurn(context: Context, nowMs: Long = System.currentTimeMillis()): DailyGoalProgress {
-        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val today = todayKey(nowMs)
-        val savedDay = prefs.getString(KEY_DAY, "") ?: ""
-        val nextCount = if (savedDay == today) prefs.getInt(KEY_COUNT, 0) + 1 else 1
-        prefs.edit()
-            .putString(KEY_DAY, today)
-            .putInt(KEY_COUNT, nextCount)
-            .apply()
-        return getTodayProgress(context, nowMs)
+        return try {
+            val ctx = context.applicationContext ?: context
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val today = todayKey(nowMs)
+            val savedDay = prefs.getString(KEY_DAY, "") ?: ""
+            val nextCount = if (savedDay == today) prefs.getInt(KEY_COUNT, 0).coerceAtLeast(0) + 1 else 1
+            prefs.edit()
+                .putString(KEY_DAY, today)
+                .putInt(KEY_COUNT, nextCount)
+                .apply()
+            getTodayProgress(ctx, nowMs)
+        } catch (_: Exception) {
+            DailyGoalProgress(1, DEFAULT_GOAL, ((100f / DEFAULT_GOAL).toInt()).coerceIn(0, 100), false)
+        }
     }
 
     fun setDailyGoal(context: Context, target: Int, nowMs: Long = System.currentTimeMillis()): DailyGoalProgress {
         val safe = target.coerceIn(5, 200)
-        context.applicationContext
-            .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putInt(KEY_TARGET, safe)
-            .apply()
-        return getTodayProgress(context, nowMs)
+        return try {
+            val ctx = context.applicationContext ?: context
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_TARGET, safe)
+                .apply()
+            getTodayProgress(ctx, nowMs)
+        } catch (_: Exception) {
+            DailyGoalProgress(0, safe, 0, false)
+        }
     }
 
     fun nextGoalPreset(currentGoal: Int): Int {

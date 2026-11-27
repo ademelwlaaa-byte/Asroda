@@ -45,10 +45,15 @@ object ChapterSummaryExporter {
                 append("\n## Son Sahneler\n")
                 recent.forEach { msg ->
                     val speaker = if (msg.role == "user") userName.ifBlank { "Sen" } else title.ifBlank { "Karakter" }
-                    val clean = msg.text.replace(Regex("\\s+"), " ").trim().take(220)
-                    append("- **").append(speaker).append(":** ").append(clean)
-                    if (msg.text.trim().length > 220) append("…")
-                    append("\n")
+                    val visible = com.example.data.repository.EmochiRepository.cleanEmotionTags(msg.text)
+                        .replace(Regex("\\s+"), " ")
+                        .trim()
+                    if (visible.isNotBlank()) {
+                        val clean = visible.take(220)
+                        append("- **").append(speaker).append(":** ").append(clean)
+                        if (visible.length > 220) append("…")
+                        append("\n")
+                    }
                 }
             }
         }.trim()

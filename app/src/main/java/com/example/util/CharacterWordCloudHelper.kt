@@ -31,7 +31,9 @@ object CharacterWordCloudHelper {
         val counts = HashMap<String, Int>()
         for (m in messages) {
             if (m.role != "user" && m.role != "assistant") continue
-            wordRegex.findAll(m.text).forEach { match ->
+            val visible = com.example.data.repository.EmochiRepository.cleanEmotionTags(m.text)
+            if (visible.isBlank()) continue
+            wordRegex.findAll(visible).forEach { match ->
                 val w = match.value.lowercase(trLocale)
                 if (w !in turkishStopWords) {
                     counts[w] = (counts[w] ?: 0) + 1

@@ -14,20 +14,20 @@ object BookAudioPreferences {
 
     fun loadMusicVolume(context: Context): Float {
         return try {
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ctx = context.applicationContext ?: context
+            val raw = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getFloat(KEY_MUSIC_VOLUME, 0.85f)
-                .coerceIn(MIN_VOLUME, MAX_VOLUME)
+            if (raw.isFinite()) raw.coerceIn(MIN_VOLUME, MAX_VOLUME) else 0.85f
         } catch (_: Exception) {
             0.85f
         }
     }
 
     fun saveMusicVolume(context: Context, volume: Float): Float {
-        val clamped = volume.coerceIn(MIN_VOLUME, MAX_VOLUME)
+        val clamped = if (volume.isFinite()) volume.coerceIn(MIN_VOLUME, MAX_VOLUME) else 0.85f
         try {
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ctx = context.applicationContext ?: context
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putFloat(KEY_MUSIC_VOLUME, clamped)
                 .apply()

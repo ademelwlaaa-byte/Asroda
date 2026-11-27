@@ -10,10 +10,13 @@ object StoryQuoteExtractor {
     private val quoteRegex = Regex("[\"“«]([^\"”»]{16,180})[\"”»]")
 
     fun extractBestQuote(messages: List<MessageEntity>, botDisplayName: String = ""): String? {
-        val candidates = mutableListOf<Pair<Int, String>>()
+        data class Candidate(val score: Int, val quote: String, val isAssistant: Boolean)
+        val candidates = mutableListOf<Candidate>()
         for (m in messages) {
             if (m.role != "assistant" && m.role != "user") continue
-            quoteRegex.findAll(m.text).forEach { match ->
+            val visible = com.example.data.repository.EmochiRepository.cleanEmotionTags(m.text)
+            if (visible.isBlank()) continue
+            quoteRegex.findAll(visible).forEach { match ->
                 val raw = match.groupValues[1].replace(Regex("\\s+"), " ").trim()
                 if (raw.length in 16..180) {
                     var score = raw.length.coerceAtMost(120)
@@ -21,15 +24,15 @@ object StoryQuoteExtractor {
                     if (raw.contains('!') || raw.contains('?') || raw.contains("…") || raw.contains("...")) {
                         score += 20
                     }
-                    candidates.add(score to raw)
+                    candidates.add(Candidate(score, raw, m.role == "assistant"))
                 }
             }
         }
-        val best = candidates.maxByOrNull { it.first }?.second ?: return null
-        return if (botDisplayName.isNotBlank()) {
-            "“$best” — $botDisplayName"
+        val best = candidates.maxByOrNull { it.score } ?: return null
+        return if (best.isAssistant && botDisplayName.isNotBlank()) {
+            "“${best.quote}” — $botDisplayName"
         } else {
-            "“$best”"
+            "“${best.quote}”"
         }
     }
 }

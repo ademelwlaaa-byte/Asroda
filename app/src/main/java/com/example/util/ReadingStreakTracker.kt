@@ -2,6 +2,7 @@ package com.example.util
 
 import android.content.Context
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -32,15 +33,29 @@ object ReadingStreakTracker {
         return fmt.format(Date(epochMs))
     }
 
+    private fun previousCalendarDayKey(epochMs: Long): String {
+        val cal = Calendar.getInstance(TimeZone.getDefault()).apply {
+            timeInMillis = epochMs
+            add(Calendar.DAY_OF_YEAR, -1)
+        }
+        return dayKeyForEpochMs(cal.timeInMillis)
+    }
+
     fun recordActivity(context: Context, nowMs: Long = System.currentTimeMillis()): StreakState {
         val today = dayKeyForEpochMs(nowMs)
-        val yesterday = dayKeyForEpochMs(nowMs - 86_400_000L)
+        val yesterday = previousCalendarDayKey(nowMs)
         return try {
-            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ctx = context.applicationContext ?: context
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val lastDay = prefs.getString(KEY_LAST_DAY, "").orEmpty()
-            var current = prefs.getInt(KEY_CURRENT_STREAK, 0)
-            var longest = prefs.getInt(KEY_LONGEST_STREAK, 0)
-            var total = prefs.getInt(KEY_TOTAL_DAYS, 0)
+            var current = prefs.getInt(KEY_CURRENT_STREAK, 0).coerceAtLeast(0)
+            var longest = prefs.getInt(KEY_LONGEST_STREAK, 0).coerceAtLeast(0)
+            var total = prefs.getInt(KEY_TOTAL_DAYS, 0).coerceAtLeast(0)
+
+            // Guard against backwards device clock drift so a rolled-back clock never destroys an active streak
+            if (lastDay.isNotBlank() && lastDay > today) {
+                return StreakState(current, longest, total, lastDay)
+            }
 
             if (lastDay != today) {
                 current = if (lastDay == yesterday) current + 1 else 1
@@ -61,11 +76,12 @@ object ReadingStreakTracker {
 
     fun getState(context: Context): StreakState {
         return try {
-            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ctx = context.applicationContext ?: context
+            val prefs = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             StreakState(
-                currentStreakDays = prefs.getInt(KEY_CURRENT_STREAK, 0),
-                longestStreakDays = prefs.getInt(KEY_LONGEST_STREAK, 0),
-                totalActiveDays = prefs.getInt(KEY_TOTAL_DAYS, 0),
+                currentStreakDays = prefs.getInt(KEY_CURRENT_STREAK, 0).coerceAtLeast(0),
+                longestStreakDays = prefs.getInt(KEY_LONGEST_STREAK, 0).coerceAtLeast(0),
+                totalActiveDays = prefs.getInt(KEY_TOTAL_DAYS, 0).coerceAtLeast(0),
                 lastActiveDayKey = prefs.getString(KEY_LAST_DAY, "").orEmpty()
             )
         } catch (_: Exception) {

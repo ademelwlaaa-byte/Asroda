@@ -64,30 +64,73 @@ object UserSentimentAnalyzer {
     private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
 
     private val positiveWords = setOf(
-        "mutlu", "harika", "süper", "güzel", "seviyorum", "mükemmel", "iyi", "güldüm",
-        "teşekkür", "sevdim", "eğlendim", "keyifli", "memnun", "sevinçli", "sevindim", "harikaydı", "bayıldım",
+        "mutlu", "harika", "süper", "güzel", "seviyorum", "mükemmel", "iyi", "iyiyim", "iyiyiz", "iyidir", "güldüm",
+        "teşekkür", "sevdim", "eğlendim", "keyifli", "memnun", "sevinçli", "sevindim", "harikaydı", "harikasın", "bayıldım",
         "sıcak", "samimi", "tatlı", "şahane", "huzurlu", "haklısın"
     )
 
     private val positiveEmojis = setOf("😊", "😄", "🥰", "❤️", "💕", "✨", "🎉", "👍")
 
     private val negativeWords = setOf(
-        "üzgün", "kötü", "sinirli", "sıkıldım", "yoruldum", "bıktım", "nefret",
-        "berbat", "korkunç", "rezalet", "mutsuz", "bunaldım", "yorucu", "sıkıcı",
-        "kızgın", "bozuldum", "kırıldım", "kırgın", "hayal kırıklığı", "öfkeli", "pişman"
+        "üzgün", "üzgünüm", "kötü", "kötüyüm", "sinirli", "sinirliyim", "sıkıldım", "yoruldum", "bıktım", "nefret",
+        "berbat", "korkunç", "rezalet", "mutsuz", "mutsuzum", "bunaldım", "yorucu", "sıkıcı",
+        "kızgın", "kızgınım", "bozuldum", "kırıldım", "kırgın", "kırgınım", "hayal kırıklığı", "öfkeli", "öfkeliyim",
+        "pişman", "pişmanım", "endişeli", "endişeliyim"
     )
 
     private val negativeEmojis = setOf("😢", "😭", "😡", "😤", "💔")
 
-    private val excitedWords = setOf("wow", "aman", "inanılmaz", "şaşırdım", "beklemiyordum", "oley", "yaşasın")
+    private val excitedWords = setOf("wow", "aman", "inanılmaz", "şaşırdım", "beklemiyordum", "oley", "yaşasın", "heyecanlı", "heyecanlıyım")
 
     private val intensifierWords = setOf("çok", "aşırı", "fazlasıyla", "gerçekten", "cidden", "delicesine", "son derece")
     private val mitigatorWords = setOf("biraz", "hafif", "sanki", "azıcık", "kısmen", "eh")
 
-    private val negationTokens = setOf(
-        "değil", "değilim", "değilsin", "değildi", "değiliz", "degil", "degilim",
-        "hiç", "asla", "yok", "olmadı", "olmaz", "istemiyorum", "istemem", "etmiyorum", "sanma", "sanmıyorum"
+    private val preNegationTokens = setOf(
+        "hiç", "hic", "asla"
     )
+
+    private val postNegationTokens = setOf(
+        "değil", "değilim", "değilsin", "değildi", "değiliz", "degil", "degilim", "degilsin", "degildi", "degiliz",
+        "yok", "olmadı", "olmadi", "olmaz", "istemiyorum", "istemem", "etmiyorum", "sanma", "sanmıyorum", "sanmiyorum"
+    )
+
+    private val clauseBreakConjunctions = setOf("ama", "fakat", "ancak", "lakin", "oysa", "çünkü", "cunku")
+
+    // Folded ASCII shadow sets so users typing without Turkish diacritics ("cok mutluyum", "uzgunum", "kizgin degilim")
+    // are analyzed with identical accuracy to full diacritic Turkish.
+    private val positiveWordsFolded: Set<String> by lazy {
+        positiveWords.filter { !it.contains(" ") }.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+    private val negativeWordsFolded: Set<String> by lazy {
+        negativeWords.filter { !it.contains(" ") }.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+    private val excitedWordsFolded: Set<String> by lazy {
+        excitedWords.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+    private val intensifierWordsFolded: Set<String> by lazy {
+        intensifierWords.filter { !it.contains(" ") }.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+    private val mitigatorWordsFolded: Set<String> by lazy {
+        mitigatorWords.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+    private val preNegationFolded: Set<String> by lazy {
+        preNegationTokens.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+    private val postNegationFolded: Set<String> by lazy {
+        postNegationTokens.map { ChatSearchHelper.foldTurkish(it) }.toSet()
+    }
+
+    private val ALLOWED_TONES = setOf("hurt", "warm", "tense", "playful", "distant", "sarcastic", "neutral")
+    private val TONE_ALIASES = mapOf(
+        "kırgın" to "hurt", "kirgin" to "hurt", "üzgün" to "hurt", "uzgun" to "hurt", "sad" to "hurt",
+        "sıcak" to "warm", "sicak" to "warm", "samimi" to "warm", "positive" to "warm", "happy" to "warm",
+        "gergin" to "tense", "sinirli" to "tense", "öfkeli" to "tense", "ofkeli" to "tense", "angry" to "tense",
+        "neşeli" to "playful", "neseli" to "playful", "oyuncu" to "playful", "excited" to "playful", "heyecanlı" to "playful",
+        "mesafeli" to "distant", "soğuk" to "distant", "soguk" to "distant", "withdrawn" to "distant",
+        "alaycı" to "sarcastic", "alayci" to "sarcastic", "ironik" to "sarcastic", "ironic" to "sarcastic",
+        "nötr" to "neutral", "notr" to "neutral"
+    )
+    private val CLAUSE_SPLIT_REGEX = Regex("""[.!?;:\n,]+""")
 
     private val ironyMarkers = listOf(
         "(!)",
@@ -225,7 +268,6 @@ object UserSentimentAnalyzer {
 
         val lowerRaw = directRaw.lowercase(TR_LOCALE)
         val norm = TurkishTextAnalyzer.normalize(directRaw)
-        val tokens = tokenizeWords(norm)
 
         // Check irony / sarcasm / passive-aggressive cues
         val hasIronyMarker = ironyMarkers.any { lowerRaw.contains(it) } ||
@@ -236,45 +278,52 @@ object UserSentimentAnalyzer {
         var excitedWeight = 0f
         var negatedNegativeHit = false
 
-        // Score token-by-token with 1-3 word left/right negation window & intensifier/mitigator modifiers
-        for (i in tokens.indices) {
-            val tok = tokens[i]
-            val modifier = resolveWindowModifier(tokens, i, directRaw)
-            val negated = isTokenNegatedInWindow(tokens, i)
+        // Score clause-by-clause so negation in one clause ("Sorun değil, çok mutluyum!") never leaks across punctuation or conjunctions
+        val rawClauses = CLAUSE_SPLIT_REGEX.split(directRaw).filter { it.isNotBlank() }
+        for (rawClause in rawClauses) {
+            val clauseTokens = tokenizeWords(ChatSearchHelper.foldTurkish(rawClause))
+            val subClauses = splitByConjunctions(clauseTokens)
+            for (tokens in subClauses) {
+                for (i in tokens.indices) {
+                    val tok = tokens[i]
+                    val modifier = resolveWindowModifier(tokens, i, directRaw)
+                    val negated = isTokenNegatedInWindow(tokens, i)
 
-            val isPos = positiveWords.any { kw ->
-                !kw.contains(" ") && (tok == kw || (kw.length >= 4 && tok.startsWith(kw)))
-            }
-            val isNeg = negativeWords.any { kw ->
-                !kw.contains(" ") && (tok == kw || (kw.length >= 4 && tok.startsWith(kw)))
-            }
-            val isExc = excitedWords.any { kw -> tok == kw || (kw.length >= 4 && tok.startsWith(kw)) }
+                    val isPos = positiveWordsFolded.any { kw ->
+                        tok == kw || (kw.length >= 4 && tok.startsWith(kw))
+                    }
+                    val isNeg = negativeWordsFolded.any { kw ->
+                        tok == kw || (kw.length >= 4 && tok.startsWith(kw))
+                    }
+                    val isExc = excitedWordsFolded.any { kw -> tok == kw || (kw.length >= 4 && tok.startsWith(kw)) }
 
-            when {
-                isPos -> {
-                    if (negated) {
-                        negWeight += 1.0f * modifier
-                    } else if (hasIronyMarker) {
-                        // Irony dampens & flips superficial positive words ("güya çok sevindim (!)")
-                        negWeight += 0.55f * modifier
-                    } else {
-                        posWeight += 1.0f * modifier
-                    }
-                }
-                isNeg -> {
-                    if (negated) {
-                        // "kızgın değilim, merak etme" -> neutral/softened, NEVER triggers anger/negative
-                        negatedNegativeHit = true
-                        posWeight += 0.15f
-                    } else {
-                        negWeight += 1.0f * modifier
-                    }
-                }
-                isExc -> {
-                    if (hasIronyMarker) {
-                        negWeight += 0.35f
-                    } else {
-                        excitedWeight += 1.0f * modifier
+                    when {
+                        isPos -> {
+                            if (negated) {
+                                negWeight += 1.0f * modifier
+                            } else if (hasIronyMarker) {
+                                // Irony dampens & flips superficial positive words ("güya çok sevindim (!)")
+                                negWeight += 0.55f * modifier
+                            } else {
+                                posWeight += 1.0f * modifier
+                            }
+                        }
+                        isNeg -> {
+                            if (negated) {
+                                // "kızgın değilim, merak etme" -> neutral/softened, NEVER triggers anger/negative
+                                negatedNegativeHit = true
+                                posWeight += 0.15f
+                            } else {
+                                negWeight += 1.0f * modifier
+                            }
+                        }
+                        isExc -> {
+                            if (hasIronyMarker) {
+                                negWeight += 0.35f
+                            } else {
+                                excitedWeight += 1.0f * modifier
+                            }
+                        }
                     }
                 }
             }
@@ -482,12 +531,17 @@ JSON ŞEMASI:
         if (start < 0 || end <= start) return null
         return try {
             val obj = JSONObject(cleaned.substring(start, end + 1))
-            val tone = obj.optString("tone", "neutral").trim().lowercase(Locale.US).ifBlank { "neutral" }
-            val valence = obj.optDouble("valence", 0.0).toFloat().coerceIn(-1f, 1f)
-            val intensity = obj.optDouble("intensity", 0.3).toFloat().coerceIn(0f, 1f)
+            val rawTone = obj.optString("tone", "neutral").trim().lowercase(TR_LOCALE)
+            val normalizedTone = TONE_ALIASES[rawTone] ?: rawTone
+            val tone = if (normalizedTone in ALLOWED_TONES) normalizedTone else "neutral"
+            val rawValence = obj.optDouble("valence", 0.0).toFloat()
+            val valence = if (rawValence.isFinite()) rawValence.coerceIn(-1f, 1f) else 0f
+            val rawIntensity = obj.optDouble("intensity", 0.3).toFloat()
+            val intensity = if (rawIntensity.isFinite()) rawIntensity.coerceIn(0f, 1f) else 0.3f
             val isOoc = obj.optBoolean("is_ooc_meta", false)
             val subtext = obj.optString("subtext", "").trim().take(180)
-            val delta = obj.optDouble("resistance_delta", 0.0).toFloat().coerceIn(-0.15f, 0.15f)
+            val rawDelta = obj.optDouble("resistance_delta", 0.0).toFloat()
+            val delta = if (rawDelta.isFinite()) rawDelta.coerceIn(-0.15f, 0.15f) else 0f
             MicroAiSentimentDto(
                 tone = tone,
                 valence = valence,
@@ -556,23 +610,48 @@ JSON ŞEMASI:
         return if (parts.isEmpty()) "" else "\n" + parts.joinToString("\n")
     }
 
+    private val WORD_SPLIT_REGEX = Regex("""[^\p{L}\p{N}]+""")
+    private val TURKISH_NEG_VERB_SUFFIX_FOLDED = Regex("""(?:miyorum|muyorum|madim|medim|miyor|muyor|mam|mem|maz|mez)$""")
+
     private fun tokenizeWords(normText: String): List<String> =
-        normText.split(Regex("""[^\p{L}\p{N}]+""")).filter { it.isNotBlank() }
+        normText.split(WORD_SPLIT_REGEX).filter { it.isNotBlank() }
+
+    private fun splitByConjunctions(tokens: List<String>): List<List<String>> {
+        if (tokens.isEmpty()) return emptyList()
+        val out = mutableListOf<List<String>>()
+        val current = mutableListOf<String>()
+        for (tok in tokens) {
+            if (tok in clauseBreakConjunctions) {
+                if (current.isNotEmpty()) {
+                    out.add(current.toList())
+                    current.clear()
+                }
+            } else {
+                current.add(tok)
+            }
+        }
+        if (current.isNotEmpty()) out.add(current)
+        return out
+    }
 
     /**
-     * 1-3 word left/right Turkish negation window around index [idx].
+     * Clause-scoped Turkish negation window around index [idx].
+     * Pre-positive negators ("hiç", "asla") apply to tokens to their right;
+     * post-positive negators ("değil", "yok", "olmaz", ...) apply to tokens to their left.
      */
     private fun isTokenNegatedInWindow(tokens: List<String>, idx: Int): Boolean {
         val token = tokens[idx]
-        if (TURKISH_NEG_VERB_SUFFIX.containsMatchIn(token)) return true
+        if (TURKISH_NEG_VERB_SUFFIX.containsMatchIn(token) || TURKISH_NEG_VERB_SUFFIX_FOLDED.containsMatchIn(token)) {
+            return true
+        }
 
         val leftStart = (idx - 3).coerceAtLeast(0)
         for (j in leftStart until idx) {
-            if (tokens[j] in negationTokens) return true
+            if (tokens[j] in preNegationFolded) return true
         }
         val rightEnd = (idx + 3).coerceAtMost(tokens.lastIndex)
         for (j in (idx + 1)..rightEnd) {
-            if (tokens[j] in negationTokens) return true
+            if (tokens[j] in postNegationFolded) return true
         }
         return false
     }
@@ -585,8 +664,8 @@ JSON ŞEMASI:
         val leftStart = (idx - 2).coerceAtLeast(0)
         for (j in leftStart until idx) {
             val prev = tokens[j]
-            if (prev in intensifierWords) mult = maxOf(mult, 1.35f)
-            if (prev in mitigatorWords) mult = minOf(mult, 0.60f)
+            if (prev in intensifierWordsFolded) mult = maxOf(mult, 1.35f)
+            if (prev in mitigatorWordsFolded) mult = minOf(mult, 0.60f)
         }
         if (TRIPLE_EXCL_REGEX.containsMatchIn(rawText)) {
             mult = maxOf(mult, 1.35f)

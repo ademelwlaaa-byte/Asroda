@@ -5,6 +5,7 @@ import android.content.SharedPreferences
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 
@@ -63,9 +64,11 @@ object AppFeatureFlags {
         KEY_MICRO_AI_CAST_SENTIMENT   to true,
     )
 
+    @Volatile
     private var prefs: SharedPreferences? = null
     @Volatile
     private var appContext: Context? = null
+    private val templateOriginLock = Any()
     // In-memory override backing stores so unit tests and pre-init calls behave deterministically
     private val memoryOverrides = ConcurrentHashMap<String, Boolean>()
     private val memoryStringOverrides = ConcurrentHashMap<String, String>()
@@ -111,10 +114,15 @@ object AppFeatureFlags {
     fun init(context: Context) {
         val ctx = context.applicationContext ?: context
         appContext = ctx
-        prefs = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val newPrefs = ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs = newPrefs
         memoryOverrides.clear()
         memoryStringOverrides.clear()
-        templateOriginBotIdsMem.clear()
+        synchronized(templateOriginLock) {
+            val savedOriginIds = newPrefs.getStringSet(KEY_TEMPLATE_ORIGIN_BOTS, emptySet()).orEmpty()
+            templateOriginBotIdsMem.clear()
+            templateOriginBotIdsMem.addAll(savedOriginIds)
+        }
         syncFromPrefs()
     }
 
@@ -202,9 +210,11 @@ object AppFeatureFlags {
         if (norm.isBlank()) return
         setString("$KEY_AI_UTIL_MODEL_PREFIX$norm", cleanModel)
         setString("$KEY_AI_UTIL_SOURCE_PREFIX$norm", source)
-        val updated = _aiUtilityModels.value.toMutableMap()
-        if (cleanModel.isBlank()) updated.remove(norm) else updated[norm] = cleanModel
-        _aiUtilityModels.value = updated
+        _aiUtilityModels.update { current ->
+            val updated = current.toMutableMap()
+            if (cleanModel.isBlank()) updated.remove(norm) else updated[norm] = cleanModel
+            updated
+        }
     }
 
     fun clearAiUtilityModel(providerKey: String) {
@@ -219,9 +229,9 @@ object AppFeatureFlags {
         }
         memoryStringOverrides.remove("$KEY_AI_UTIL_MODEL_PREFIX$norm")
         memoryStringOverrides.remove("$KEY_AI_UTIL_SOURCE_PREFIX$norm")
-        val updated = _aiUtilityModels.value.toMutableMap()
-        updated.remove(norm)
-        _aiUtilityModels.value = updated
+        _aiUtilityModels.update { current ->
+            if (norm !in current) current else current.toMutableMap().apply { remove(norm) }
+        }
     }
 
     fun clearAiUtilityModels() {
@@ -243,11 +253,13 @@ object AppFeatureFlags {
     fun markTemplateOriginBot(botId: String) {
         val clean = botId.trim()
         if (clean.isBlank()) return
-        templateOriginBotIdsMem.add(clean)
-        val sp = prefs ?: return
-        val existing = sp.getStringSet(KEY_TEMPLATE_ORIGIN_BOTS, emptySet())?.toMutableSet() ?: mutableSetOf()
-        if (existing.add(clean)) {
-            sp.edit().putStringSet(KEY_TEMPLATE_ORIGIN_BOTS, existing).apply()
+        synchronized(templateOriginLock) {
+            templateOriginBotIdsMem.add(clean)
+            val sp = prefs ?: return
+            val existing = sp.getStringSet(KEY_TEMPLATE_ORIGIN_BOTS, emptySet())?.toMutableSet() ?: mutableSetOf()
+            if (existing.add(clean)) {
+                sp.edit().putStringSet(KEY_TEMPLATE_ORIGIN_BOTS, existing).apply()
+            }
         }
     }
 

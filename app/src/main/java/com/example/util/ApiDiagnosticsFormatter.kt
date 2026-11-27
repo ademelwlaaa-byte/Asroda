@@ -51,8 +51,14 @@ object ApiDiagnosticsFormatter {
                         .append(" [L").append(entry.layer).append("]: ")
                         .append(entry.status)
                     entry.statusCode?.let { append(" (HTTP ").append(it).append(")") }
-                    entry.errorMessage?.takeIf { it.isNotBlank() }?.let {
-                        append(" • ").append(it.take(120))
+                    entry.errorMessage?.takeIf { it.isNotBlank() }?.let { rawErr ->
+                        val safeErr = SecureApiKeyVault.redactSecrets(rawErr)
+                            .replace(Regex("[\\r\\n]+"), " ")
+                            .trim()
+                            .take(120)
+                        if (safeErr.isNotBlank()) {
+                            append(" • ").append(safeErr)
+                        }
                     }
                     append("\n")
                 }

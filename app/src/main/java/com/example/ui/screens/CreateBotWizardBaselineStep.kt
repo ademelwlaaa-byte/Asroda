@@ -32,7 +32,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,6 +60,7 @@ import com.example.ui.components.MorCamGlassSlider
 import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
+import kotlin.math.roundToInt
 
 internal val WIZARD_REL_TYPE_LABELS = mapOf(
     "parent" to "Ebeveyn",
@@ -74,6 +77,34 @@ internal val WIZARD_REL_TYPE_LABELS = mapOf(
     "subordinate" to "Ast",
     "companion_creature" to "Yaratık/Evcil",
     "other" to "Diğer"
+)
+
+private val WizardPillShape = RoundedCornerShape(50)
+private val WizardBadgeBoxShape = RoundedCornerShape(10.dp)
+private val WizardAtmosphereShape = RoundedCornerShape(12.dp)
+private val WizardRowEdgeFadeBrush = Brush.horizontalGradient(
+    0.00f to Color.Transparent,
+    0.05f to Color.White,
+    0.95f to Color.White,
+    1.00f to Color.Transparent
+)
+private val WizardReanalyzePillBgBrush = Brush.horizontalGradient(
+    listOf(Color(0x5E5B21B6), Color(0x4C3B1470))
+)
+private val WizardAxisConfigs = listOf(
+    Triple("affection", "Yakınlık (Sevgi)", Color(0xFFF472B6)),
+    Triple("respect", "Saygı", Color(0xFFA78BFA)),
+    Triple("comfort", "Rahatlık", Color(0xFF38BDF8)),
+    Triple("resentment", "Kırgınlık", Color(0xFFFB7185))
+)
+private val WizardAttachRow1 = listOf("secure" to "Güvenli", "anxious" to "Kaygılı")
+private val WizardAttachRow2 = listOf("avoidant" to "Kaçınan", "fearful_avoidant" to "Korkulu-Kaçınan")
+private val WizardBigFiveLabels = listOf(
+    "openness" to "Açıklık",
+    "conscientiousness" to "Sorumluluk",
+    "extraversion" to "Dışadönüklük",
+    "agreeableness" to "Uyumluluk",
+    "neuroticism" to "Nevrotiklik"
 )
 
 @Composable
@@ -165,7 +196,7 @@ internal fun WizardBaselineReviewStep(
 
     val res = analysisResult ?: return
 
-    // 1. Top Psychological Summary Card (Source badge + confidence + relationshipNote + universe atmosphere)
+    // 1. Top Psychological Summary Card
     val isAiAnalyzed = res.source == BaselineEmotionEngine.BaselineSource.AI_ANALYZED
     val isUserEdited = userEditedFields.isNotEmpty()
     val (sourceBadge, sourceColor, showQuickRefresh) = when {
@@ -186,9 +217,9 @@ internal fun WizardBaselineReviewStep(
         ) {
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(50))
+                    .clip(WizardPillShape)
                     .background(if (showQuickRefresh) Color(0x52451A03) else Color(0x5C3B1A74))
-                    .border(1.dp, sourceColor.copy(alpha = 0.78f), RoundedCornerShape(50))
+                    .border(1.dp, sourceColor.copy(alpha = 0.78f), WizardPillShape)
                     .then(
                         if (showQuickRefresh) Modifier.clickable { onReanalyzeClick() } else Modifier
                     )
@@ -206,9 +237,9 @@ internal fun WizardBaselineReviewStep(
             if (res.confidence < 60) {
                 Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(50))
+                        .clip(WizardPillShape)
                         .background(Color(0x52451A03))
-                        .border(1.dp, Color(0xAAFB923C), RoundedCornerShape(50))
+                        .border(1.dp, Color(0xAAFB923C), WizardPillShape)
                         .padding(horizontal = 10.dp, vertical = 5.dp)
                 ) {
                     Text(
@@ -235,11 +266,13 @@ internal fun WizardBaselineReviewStep(
 
         if (mode == "universe" && res.universeAtmosphere != null) {
             val ua = res.universeAtmosphere
-            val summaryLine = listOfNotNull(
-                ua.currentLocation.takeIf { it.isNotBlank() },
-                ua.timeOfDay.takeIf { it.isNotBlank() },
-                ua.sceneMood.takeIf { it.isNotBlank() }
-            ).joinToString(" • ")
+            val summaryLine = remember(ua) {
+                listOfNotNull(
+                    ua.currentLocation.takeIf { it.isNotBlank() },
+                    ua.timeOfDay.takeIf { it.isNotBlank() },
+                    ua.sceneMood.takeIf { it.isNotBlank() }
+                ).joinToString(" • ")
+            }
             if (summaryLine.isNotBlank()) {
                 Spacer(Modifier.height(10.dp))
                 Row(
@@ -247,9 +280,9 @@ internal fun WizardBaselineReviewStep(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
+                        .clip(WizardAtmosphereShape)
                         .background(Color(0x402C1258))
-                        .border(0.8.dp, Color(0x77C084FC), RoundedCornerShape(12.dp))
+                        .border(0.8.dp, Color(0x77C084FC), WizardAtmosphereShape)
                         .padding(horizontal = 10.dp, vertical = 7.dp)
                 ) {
                     Icon(
@@ -279,7 +312,7 @@ internal fun WizardBaselineReviewStep(
         frostedBackdrop = frostedBackdrop,
         scrollSync = scrollSync
     ) {
-        val relTypes = BaselineEmotionEngine.VALID_REL_TYPES.toList()
+        val relTypes = remember { BaselineEmotionEngine.VALID_REL_TYPES.toList() }
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(horizontal = 4.dp),
@@ -288,18 +321,10 @@ internal fun WizardBaselineReviewStep(
                 .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
                 .drawWithContent {
                     drawContent()
-                    drawRect(
-                        brush = Brush.horizontalGradient(
-                            0.00f to Color.Transparent,
-                            0.05f to Color.White,
-                            0.95f to Color.White,
-                            1.00f to Color.Transparent
-                        ),
-                        blendMode = BlendMode.DstIn
-                    )
+                    drawRect(brush = WizardRowEdgeFadeBrush, blendMode = BlendMode.DstIn)
                 }
         ) {
-            items(relTypes) { rt ->
+            items(items = relTypes, key = { it }) { rt ->
                 WizardMorCamPillChip(
                     label = WIZARD_REL_TYPE_LABELS[rt] ?: rt,
                     selected = reviewRelType == rt,
@@ -319,20 +344,16 @@ internal fun WizardBaselineReviewStep(
         scrollSync = scrollSync,
         modifier = Modifier.testTag("wizard_relationship_axes_card")
     ) {
-        val axisConfigs = listOf(
-            Triple("affection", "Yakınlık (Sevgi)", Color(0xFFF472B6)),
-            Triple("respect", "Saygı", Color(0xFFA78BFA)),
-            Triple("comfort", "Rahatlık", Color(0xFF38BDF8)),
-            Triple("resentment", "Kırgınlık", Color(0xFFFB7185))
-        )
-        axisConfigs.forEach { (key, label, accent) ->
-            val value = reviewAxes[key] ?: 50
-            WizardMetricSliderRow(
-                label = label,
-                value = value,
-                accentColor = accent,
-                onValueChange = { onAxisChange(key, it) }
-            )
+        WizardAxisConfigs.forEach { (axisKey, label, accent) ->
+            key(axisKey) {
+                val value = (reviewAxes[axisKey] ?: 50).coerceIn(0, 100)
+                WizardMetricSliderRow(
+                    label = label,
+                    value = value,
+                    accentColor = accent,
+                    onValueChange = { onAxisChange(axisKey, it) }
+                )
+            }
         }
     }
 
@@ -345,27 +366,19 @@ internal fun WizardBaselineReviewStep(
         frostedBackdrop = frostedBackdrop,
         scrollSync = scrollSync
     ) {
-        val attachRow1 = listOf(
-            "secure" to "Güvenli",
-            "anxious" to "Kaygılı"
-        )
-        val attachRow2 = listOf(
-            "avoidant" to "Kaçınan",
-            "fearful_avoidant" to "Korkulu-Kaçınan"
-        )
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                attachRow1.forEach { (key, label) ->
+                WizardAttachRow1.forEach { (attachKey, label) ->
                     WizardMorCamPillChip(
                         label = label,
-                        selected = reviewAttachment == key,
-                        onClick = { onAttachmentChange(key) },
+                        selected = reviewAttachment == attachKey,
+                        onClick = { onAttachmentChange(attachKey) },
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("wizard_attach_$key")
+                            .testTag("wizard_attach_$attachKey")
                     )
                 }
             }
@@ -373,14 +386,14 @@ internal fun WizardBaselineReviewStep(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                attachRow2.forEach { (key, label) ->
+                WizardAttachRow2.forEach { (attachKey, label) ->
                     WizardMorCamPillChip(
                         label = label,
-                        selected = reviewAttachment == key,
-                        onClick = { onAttachmentChange(key) },
+                        selected = reviewAttachment == attachKey,
+                        onClick = { onAttachmentChange(attachKey) },
                         modifier = Modifier
                             .weight(1f)
-                            .testTag("wizard_attach_$key")
+                            .testTag("wizard_attach_$attachKey")
                     )
                 }
             }
@@ -446,11 +459,13 @@ internal fun WizardBaselineReviewStep(
                 WizardMorCamTextField(
                     value = trig.triggerTopic,
                     onValueChange = { v ->
-                        onTriggersChange(
-                            reviewTriggers.toMutableList().also {
-                                it[idx] = trig.copy(botId = draftBotId, triggerTopic = v)
-                            }
-                        )
+                        if (idx in reviewTriggers.indices) {
+                            onTriggersChange(
+                                reviewTriggers.toMutableList().also {
+                                    it[idx] = trig.copy(botId = draftBotId, triggerTopic = v)
+                                }
+                            )
+                        }
                     },
                     placeholder = "Hassas konu...",
                     singleLine = true,
@@ -466,7 +481,7 @@ internal fun WizardBaselineReviewStep(
                     icon = Icons.Default.Close,
                     contentDescription = "Sil",
                     onClick = {
-                        if (reviewTriggers.size > 1) {
+                        if (reviewTriggers.size > 1 && idx in reviewTriggers.indices) {
                             onTriggersChange(reviewTriggers.toMutableList().also { it.removeAt(idx) })
                         }
                     },
@@ -540,21 +555,16 @@ internal fun WizardBaselineReviewStep(
             exit = fadeOut() + shrinkVertically()
         ) {
             Column(modifier = Modifier.padding(top = 14.dp)) {
-                val bigFiveLabels = listOf(
-                    "openness" to "Açıklık",
-                    "conscientiousness" to "Sorumluluk",
-                    "extraversion" to "Dışadönüklük",
-                    "agreeableness" to "Uyumluluk",
-                    "neuroticism" to "Nevrotiklik"
-                )
-                bigFiveLabels.forEach { (key, label) ->
-                    val value = reviewBigFive[key] ?: 50
-                    WizardMetricSliderRow(
-                        label = label,
-                        value = value,
-                        accentColor = Color(0xFFC084FC),
-                        onValueChange = { onBigFiveChange(key, it) }
-                    )
+                WizardBigFiveLabels.forEach { (traitKey, label) ->
+                    key(traitKey) {
+                        val value = (reviewBigFive[traitKey] ?: 50).coerceIn(0, 100)
+                        WizardMetricSliderRow(
+                            label = label,
+                            value = value,
+                            accentColor = Color(0xFFC084FC),
+                            onValueChange = { onBigFiveChange(traitKey, it) }
+                        )
+                    }
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -568,7 +578,7 @@ internal fun WizardBaselineReviewStep(
 
                 WizardMetricSliderRow(
                     label = "Duygu Direnci",
-                    value = reviewRegulationCapacity,
+                    value = reviewRegulationCapacity.coerceIn(10, 100),
                     valueRange = 10f..100f,
                     accentColor = Color(0xFF34D399),
                     onValueChange = onRegulationCapacityChange
@@ -596,12 +606,10 @@ internal fun WizardBaselineReviewStep(
             modifier = Modifier
                 .weight(1f)
                 .height(46.dp)
-                .clip(RoundedCornerShape(50))
+                .clip(WizardPillShape)
                 .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.74f, scrollSync = scrollSync)
-                .background(
-                    Brush.horizontalGradient(listOf(Color(0x5E5B21B6), Color(0x4C3B1470)))
-                )
-                .border(1.15.dp, Color(0xCCE9D5FF), RoundedCornerShape(50))
+                .background(WizardReanalyzePillBgBrush)
+                .border(1.15.dp, Color(0xCCE9D5FF), WizardPillShape)
                 .clickable { onReanalyzeClick() }
                 .testTag("wizard_reanalyze_button"),
             contentAlignment = Alignment.Center
@@ -630,10 +638,10 @@ internal fun WizardBaselineReviewStep(
             modifier = Modifier
                 .weight(1f)
                 .height(46.dp)
-                .clip(RoundedCornerShape(50))
+                .clip(WizardPillShape)
                 .templatesBackdropBlur(blurredBitmap = frostedBackdrop, alpha = 0.72f, scrollSync = scrollSync)
                 .background(Color(0x441B0B36))
-                .border(1.dp, Color(0x77C4B5FD), RoundedCornerShape(50))
+                .border(1.dp, Color(0x77C4B5FD), WizardPillShape)
                 .clickable { onResetToDefaultClick() }
                 .testTag("wizard_reset_analysis_button"),
             contentAlignment = Alignment.Center
@@ -670,8 +678,13 @@ private fun WizardMetricSliderRow(
             modifier = Modifier.width(104.dp)
         )
         MorCamGlassSlider(
-            value = value.toFloat(),
-            onValueChange = { onValueChange(it.toInt()) },
+            value = value.toFloat().coerceIn(valueRange.start, valueRange.endInclusive),
+            onValueChange = { raw ->
+                val rounded = raw.roundToInt().coerceIn(valueRange.start.roundToInt(), valueRange.endInclusive.roundToInt())
+                if (rounded != value) {
+                    onValueChange(rounded)
+                }
+            },
             valueRange = valueRange,
             accentColor = accentColor,
             modifier = Modifier.weight(1f)
@@ -679,9 +692,9 @@ private fun WizardMetricSliderRow(
         Box(
             modifier = Modifier
                 .width(40.dp)
-                .clip(RoundedCornerShape(10.dp))
+                .clip(WizardBadgeBoxShape)
                 .background(Color(0x553B1A70))
-                .border(0.9.dp, Color(0x99D8B4FE), RoundedCornerShape(10.dp))
+                .border(0.9.dp, Color(0x99D8B4FE), WizardBadgeBoxShape)
                 .padding(vertical = 3.dp),
             contentAlignment = Alignment.Center
         ) {

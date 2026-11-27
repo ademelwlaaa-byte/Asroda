@@ -1,154 +1,84 @@
-
 package com.example.ui.screens
-import com.example.ui.theme.AppColors
-import com.example.ui.theme.EmochiGradients
-import com.example.ui.theme.EmochiBackground
-import com.example.ui.theme.InterFontFamily
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.material.icons.filled.ChevronLeft
-import kotlinx.coroutines.delay
-import androidx.compose.foundation.Canvas
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.isImeVisible
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.platform.testTag
+
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.runtime.collectAsState
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutLinearInEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.only
-import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Face
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Wallpaper
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.zIndex
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.local.BotEntity
-import com.example.data.local.MessageEntity
-import com.example.data.local.UserSettingsEntity
-import com.example.data.repository.KeyCharacter
-import com.example.ui.components.BotQuickProfileSheet
-import com.example.ui.components.BotSettingsModal
-import com.example.ui.components.MoodColors
-import com.example.ui.components.OrbView
-import com.example.ui.components.TypingDots
-import com.example.ui.components.customTextFieldColors
 import com.example.ui.animation.LocalCosmicMotionConfig
-import com.example.ui.theme.EmochiError
-import com.example.ui.theme.EmochiSurface
+import com.example.ui.animation.LocalCosmicMotionPolicy
+import com.example.ui.animation.rememberCosmicPhaseState
+import com.example.ui.theme.AppColors
+import kotlinx.coroutines.delay
+import java.util.Locale
+import kotlin.math.sin
+import kotlin.random.Random
+
+private val ChatComponentsTrLocale: Locale = Locale.forLanguageTag("tr-TR")
+private val TopVignetteBrush = Brush.verticalGradient(colors = listOf(Color(0xEE070814), Color.Transparent))
+private val BottomVignetteBrush = Brush.verticalGradient(colors = listOf(Color.Transparent, Color(0xEE070814)))
+private val LoadingBarFillBrush = Brush.horizontalGradient(listOf(AppColors.DeepPurple, AppColors.PurpleSoft))
+private val MemoryThreadLineBrush = Brush.verticalGradient(
+    listOf(AppColors.DeepPurple, AppColors.PrimaryViolet, Color(0x308B5CF6))
+)
+private val ImpactBadgeShape = RoundedCornerShape(6.dp)
+private val TimelineBadgeShape = RoundedCornerShape(5.dp)
+private val SpoilerBoxShape = RoundedCornerShape(8.dp)
+private val SummaryCardShape = RoundedCornerShape(14.dp)
 
 private data class ChatCosmicParticle(
     val xRatio: Float,
@@ -164,67 +94,66 @@ fun CosmicParticleBackground(
     modifier: Modifier = Modifier
 ) {
     val motionConfig = LocalCosmicMotionConfig.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
+    val allowAmbient = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
 
-    val glowScale: Float
-    val animProgress: Float
-    if (motionConfig.enableAmbientLoops) {
-        val infiniteTransition = rememberInfiniteTransition(label = "CosmicParticleDrift")
-        val gScale by infiniteTransition.animateFloat(
-            initialValue = 0.92f,
-            targetValue = 1.06f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(4200, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "GlowPulse"
+    // Draw-phase-only State<Float> drivers -> 0 FPS root recomposition!
+    val glowScaleState = rememberCosmicPhaseState(
+        durationMs = 4200,
+        initialValue = 0.92f,
+        targetValue = 1.06f,
+        staticValue = 1.0f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "chatCosmicGlow",
+        enabled = allowAmbient
+    )
+    val animProgressState = rememberCosmicPhaseState(
+        durationMs = 45000,
+        initialValue = 0f,
+        targetValue = 1f,
+        staticValue = 0f,
+        repeatMode = RepeatMode.Restart,
+        easing = LinearEasing,
+        label = "chatCosmicDrift",
+        enabled = allowAmbient && motionConfig.enableParticles
+    )
+
+    val radialGlowBrush = remember(accentColor) {
+        Brush.radialGradient(
+            colors = listOf(
+                accentColor.copy(alpha = 0.35f),
+                Color(0x208B5CF6),
+                Color(0x080F172A),
+                Color.Transparent
+            )
         )
-        val drift by infiniteTransition.animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(45000, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
-            ),
-            label = "DriftAnim"
-        )
-        glowScale = gScale
-        animProgress = drift
-    } else {
-        glowScale = 1.0f
-        animProgress = 0f
     }
 
     val particles = remember {
+        val rng = Random(35)
         List(35) {
             ChatCosmicParticle(
-                xRatio = (0..100).random() / 100f,
-                yRatio = (0..100).random() / 100f,
-                radius = (15..45).random() / 10f,
-                baseAlpha = (12..28).random() / 100f,
-                speed = 0.4f + (0..100).random() / 100f
+                xRatio = rng.nextFloat(),
+                yRatio = rng.nextFloat(),
+                radius = 1.5f + rng.nextFloat() * 3.0f,
+                baseAlpha = 0.12f + rng.nextFloat() * 0.16f,
+                speed = 0.4f + rng.nextFloat()
             )
         }
     }
 
     Box(modifier = modifier.fillMaxSize()) {
-        // 1. Broad Center Radial Glow with Character Accent Color & Breathing Scale (Rule 2)
+        // 1. Broad Center Radial Glow with Character Accent Color & Breathing Scale
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    scaleX = glowScale
-                    scaleY = glowScale
+                    val s = glowScaleState.value
+                    scaleX = s
+                    scaleY = s
                 }
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            accentColor.copy(alpha = 0.35f),
-                            Color(0x208B5CF6),
-                            Color(0x080F172A),
-                            Color.Transparent
-                        )
-                    )
-                )
+                .background(radialGlowBrush)
         )
 
         // 2. Drifting Star Dust / Cosmic Energy Particles Canvas
@@ -233,11 +162,14 @@ fun CosmicParticleBackground(
             Canvas(modifier = Modifier.fillMaxSize()) {
                 val width = size.width
                 val height = size.height
+                if (width <= 0f || height <= 0f) return@Canvas
+                val animProgress = animProgressState.value
 
                 for (i in 0 until activeCount) {
                     val p = particles[i]
                     val currentY = ((p.yRatio - animProgress * p.speed * 0.35f) % 1f + 1f) % 1f
-                    val currentX = (p.xRatio + kotlin.math.sin((animProgress * 6.28318f + p.yRatio * 12f).toDouble()).toFloat() * 0.04f) % 1f
+                    val rawX = p.xRatio + sin(animProgress * 6.28318f + p.yRatio * 12f) * 0.04f
+                    val currentX = ((rawX % 1f) + 1f) % 1f
 
                     drawCircle(
                         color = accentColor.copy(alpha = p.baseAlpha),
@@ -254,11 +186,7 @@ fun CosmicParticleBackground(
                 .fillMaxWidth()
                 .height(140.dp)
                 .align(Alignment.TopCenter)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color(0xEE070814), Color.Transparent)
-                    )
-                )
+                .background(TopVignetteBrush)
         )
 
         // 4. Bottom Vignette Overlay
@@ -267,11 +195,7 @@ fun CosmicParticleBackground(
                 .fillMaxWidth()
                 .height(140.dp)
                 .align(Alignment.BottomCenter)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color(0xEE070814))
-                    )
-                )
+                .background(BottomVignetteBrush)
         )
     }
 }
@@ -280,26 +204,30 @@ fun CosmicParticleBackground(
 fun PulsingLoadingText(
     modifier: Modifier = Modifier
 ) {
-    // Rule 3: 2px fine progress line filling from left to right over 1.5s + shimmer text
-    val infiniteTransition = rememberInfiniteTransition(label = "ShimmerLine")
-    val lineProgress by infiniteTransition.animateFloat(
+    val motionConfig = LocalCosmicMotionConfig.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
+    val allowMotion = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
+
+    // Draw-phase-only State<Float> drivers -> 0 FPS root recomposition!
+    val lineProgressState = rememberCosmicPhaseState(
+        durationMs = 1500,
         initialValue = 0f,
         targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = androidx.compose.animation.core.FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "LineFill"
+        staticValue = 0.62f,
+        repeatMode = RepeatMode.Restart,
+        easing = FastOutSlowInEasing,
+        label = "shimmerLineFill",
+        enabled = allowMotion
     )
-
-    val shimmerAlpha by infiniteTransition.animateFloat(
+    val shimmerAlphaState = rememberCosmicPhaseState(
+        durationMs = 750,
         initialValue = 0.4f,
         targetValue = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(750, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "ShimmerAlpha"
+        staticValue = 0.85f,
+        repeatMode = RepeatMode.Reverse,
+        easing = LinearEasing,
+        label = "shimmerTextAlpha",
+        enabled = allowMotion
     )
 
     Column(
@@ -308,45 +236,42 @@ fun PulsingLoadingText(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier.graphicsLayer { alpha = shimmerAlphaState.value.coerceIn(0f, 1f) }
         ) {
             Box(
                 modifier = Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(AppColors.PurpleSoft.copy(alpha = shimmerAlpha))
+                    .background(AppColors.PurpleSoft)
             )
             Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = "Sonuçlar dokunuyor...",
-                color = AppColors.PurpleLight.copy(alpha = shimmerAlpha),
+                color = AppColors.PurpleLight,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold,
-                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                fontStyle = FontStyle.Italic,
                 letterSpacing = 0.9.sp
             )
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // 2px sleek progress fill bar (Rule 3)
-        Box(
+        Canvas(
             modifier = Modifier
                 .width(160.dp)
                 .height(2.dp)
                 .clip(RoundedCornerShape(1.dp))
-                .background(Color(0x308B5CF6))
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(lineProgress)
-                    .background(
-                        Brush.horizontalGradient(
-                            listOf(AppColors.DeepPurple, AppColors.PurpleSoft)
-                        )
-                    )
-            )
+            drawRect(color = Color(0x308B5CF6))
+            val progress = lineProgressState.value.coerceIn(0f, 1f)
+            if (progress > 0f) {
+                drawRect(
+                    brush = LoadingBarFillBrush,
+                    size = Size(size.width * progress, size.height)
+                )
+            }
         }
     }
 }
@@ -356,58 +281,66 @@ fun CinematicSequentialReveal(
     choice: ChapterChoiceItem,
     phase: StepPhase
 ) {
-    // Screen Shake effect for Branching choices
-    val shakeAnim = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(phase) {
-        if (phase == StepPhase.RESULT_REVEALED && choice.isBranching) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
+
+    // Screen Shake effect for Branching choices (skipped when Reduce Motion is active)
+    val shakeAnim = remember { Animatable(0f) }
+    LaunchedEffect(phase, quick) {
+        if (phase == StepPhase.RESULT_REVEALED && choice.isBranching && !quick) {
             repeat(3) {
-                shakeAnim.animateTo(4f, androidx.compose.animation.core.tween(30))
-                shakeAnim.animateTo(-4f, androidx.compose.animation.core.tween(30))
+                shakeAnim.animateTo(4f, tween(30))
+                shakeAnim.animateTo(-4f, tween(30))
             }
-            shakeAnim.animateTo(0f, androidx.compose.animation.core.tween(30))
+            shakeAnim.animateTo(0f, tween(30))
+        } else {
+            shakeAnim.snapTo(0f)
         }
     }
 
-    // Rule 4: Overshoot Elastic Icon Reveal (scale 0 -> 1.35 -> 1.0)
-    val iconScaleAnim = remember { androidx.compose.animation.core.Animatable(0f) }
-    LaunchedEffect(phase) {
+    // Overshoot Elastic Icon Reveal (scale 0 -> 1.35 -> 1.0)
+    val iconScaleAnim = remember { Animatable(0f) }
+    LaunchedEffect(phase, quick) {
         if (phase == StepPhase.RESULT_REVEALED) {
-            iconScaleAnim.snapTo(0f)
-            iconScaleAnim.animateTo(
-                targetValue = 1.35f,
-                animationSpec = tween(280, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-            )
-            iconScaleAnim.animateTo(
-                targetValue = 1.0f,
-                animationSpec = tween(160, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-            )
+            if (quick) {
+                iconScaleAnim.snapTo(1f)
+            } else {
+                iconScaleAnim.snapTo(0f)
+                iconScaleAnim.animateTo(
+                    targetValue = 1.35f,
+                    animationSpec = tween(280, easing = FastOutSlowInEasing)
+                )
+                iconScaleAnim.animateTo(
+                    targetValue = 1.0f,
+                    animationSpec = tween(160, easing = FastOutSlowInEasing)
+                )
+            }
         }
     }
 
     val impactColor = when {
-        choice.isBranching -> AppColors.WarningAmber // Gold / Amber
-        choice.isRelationship -> AppColors.PinkLight // Pink / Magenta
-        else -> AppColors.TextSecondary // Slate / Neutral
+        choice.isBranching -> AppColors.WarningAmber
+        choice.isRelationship -> AppColors.PinkLight
+        else -> AppColors.TextSecondary
     }
 
-    // Rule 5: Mood Shift Smooth Color Accent (800ms transition)
-    val animatedImpactColor by androidx.compose.animation.animateColorAsState(
+    val animatedImpactColor by animateColorAsState(
         targetValue = if (phase == StepPhase.RESULT_REVEALED) impactColor else AppColors.DeepPurple,
-        animationSpec = tween(800, easing = androidx.compose.animation.core.FastOutSlowInEasing),
+        animationSpec = tween(if (quick) 180 else 800, easing = FastOutSlowInEasing),
         label = "MoodShiftColor"
     )
+
+    val uppercaseTitle = remember(choice.title) { choice.title.uppercase(ChatComponentsTrLocale) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .offset(x = shakeAnim.value.dp),
+            .graphicsLayer { translationX = shakeAnim.value.dp.toPx() },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
-        // 1. ADIM A: Small, subtle top title (e.g., "4. BAKIŞ ODAK NOKTASI")
         Text(
-            text = choice.title.uppercase(),
+            text = uppercaseTitle,
             color = AppColors.PrimaryPurple,
             fontSize = 11.5.sp,
             fontWeight = FontWeight.ExtraBold,
@@ -417,19 +350,20 @@ fun CinematicSequentialReveal(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // 2. ADIM A (Rule 1 & 8): Selected Option (opacity 0->1, y: +25px->0, 600ms ease-out, 150ms delay)
-        // Rule 8: Exit with scale 1->0.95 + fade out
-        androidx.compose.animation.AnimatedContent(
+        AnimatedContent(
             targetState = choice.selectedOption,
             transitionSpec = {
-                (androidx.compose.animation.fadeIn(animationSpec = tween(600, delayMillis = 150, easing = androidx.compose.animation.core.FastOutSlowInEasing)) +
-                        androidx.compose.animation.slideInVertically(
-                            initialOffsetY = { 25 },
-                            animationSpec = tween(600, delayMillis = 150, easing = androidx.compose.animation.core.FastOutSlowInEasing)
-                        ) +
-                        androidx.compose.animation.scaleIn(initialScale = 0.96f, animationSpec = tween(600, delayMillis = 150))) togetherWith
-                        (androidx.compose.animation.fadeOut(animationSpec = tween(300, easing = androidx.compose.animation.core.FastOutLinearInEasing)) +
-                                androidx.compose.animation.scaleOut(targetScale = 0.95f, animationSpec = tween(300)))
+                val enterMs = if (quick) 150 else 600
+                val delayMs = if (quick) 0 else 150
+                val exitMs = if (quick) 120 else 300
+                (fadeIn(animationSpec = tween(enterMs, delayMillis = delayMs, easing = FastOutSlowInEasing)) +
+                    slideInVertically(
+                        initialOffsetY = { 25 },
+                        animationSpec = tween(enterMs, delayMillis = delayMs, easing = FastOutSlowInEasing)
+                    ) +
+                    scaleIn(initialScale = 0.96f, animationSpec = tween(enterMs, delayMillis = delayMs))) togetherWith
+                    (fadeOut(animationSpec = tween(exitMs, easing = FastOutLinearInEasing)) +
+                        scaleOut(targetScale = 0.95f, animationSpec = tween(exitMs)))
             },
             label = "ActionTextAnim"
         ) { text ->
@@ -447,34 +381,29 @@ fun CinematicSequentialReveal(
         Spacer(modifier = Modifier.height(28.dp))
 
         if (phase == StepPhase.CARD_ONLY) {
-            // 3. ADIM A: Vivid Pulsing Loading Indicator Text
             PulsingLoadingText()
         } else {
-            // GEÇİŞ & ADIM B: Light Thread + Impact Reveal
-            androidx.compose.animation.AnimatedVisibility(
+            val revealMs = if (quick) 180 else 600
+            AnimatedVisibility(
                 visible = true,
-                enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(600)) +
-                        androidx.compose.animation.expandVertically(animationSpec = androidx.compose.animation.core.tween(600))
+                enter = fadeIn(animationSpec = tween(revealMs)) +
+                    expandVertically(animationSpec = tween(revealMs))
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Dikey Işık Huzmesi (Connecting Light Thread)
                     Box(
                         modifier = Modifier
                             .width(2.dp)
                             .height(44.dp)
                             .background(
-                                Brush.verticalGradient(
-                                    listOf(AppColors.DeepPurple, animatedImpactColor)
-                                )
+                                Brush.verticalGradient(listOf(AppColors.DeepPurple, animatedImpactColor))
                             )
                     )
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Pulse Icon & Impact Tag & Consequence Text (Floating freely in space)
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
@@ -489,8 +418,9 @@ fun CinematicSequentialReveal(
                                 text = choice.icon,
                                 fontSize = 23.sp,
                                 modifier = Modifier.graphicsLayer {
-                                    scaleX = iconScaleAnim.value
-                                    scaleY = iconScaleAnim.value
+                                    val s = iconScaleAnim.value
+                                    scaleX = s
+                                    scaleY = s
                                 }
                             )
                             Spacer(modifier = Modifier.width(8.dp))
@@ -509,21 +439,16 @@ fun CinematicSequentialReveal(
 
                         Spacer(modifier = Modifier.height(8.dp))
 
-                        // ── ETKİ SEVİYESİ ROZETİ ──────────────────────────────
                         val (levelLabel, levelColor, levelBg) = when (choice.impactLevel) {
-                            "kritik" -> Triple("⚡ KRİTİK ETKİ", androidx.compose.ui.graphics.Color(0xFFFDE047), androidx.compose.ui.graphics.Color(0xFF451A03))
-                            "dusuk"  -> Triple("· DÜŞÜK ETKİ",   androidx.compose.ui.graphics.Color(0xFF94A3B8), androidx.compose.ui.graphics.Color(0xFF1E293B))
-                            else     -> Triple("◉ ORTA ETKİ",    androidx.compose.ui.graphics.Color(0xFFC084FC), androidx.compose.ui.graphics.Color(0xFF2E1065))
+                            "kritik" -> Triple("⚡ KRİTİK ETKİ", Color(0xFFFDE047), Color(0xFF451A03))
+                            "dusuk" -> Triple("· DÜŞÜK ETKİ", Color(0xFF94A3B8), Color(0xFF1E293B))
+                            else -> Triple("◉ ORTA ETKİ", Color(0xFFC084FC), Color(0xFF2E1065))
                         }
                         Box(
-                            modifier = androidx.compose.ui.Modifier
-                                .clip(androidx.compose.foundation.shape.RoundedCornerShape(6.dp))
+                            modifier = Modifier
+                                .clip(ImpactBadgeShape)
                                 .background(levelBg)
-                                .border(
-                                    0.8.dp,
-                                    levelColor.copy(alpha = 0.4f),
-                                    androidx.compose.foundation.shape.RoundedCornerShape(6.dp)
-                                )
+                                .border(0.8.dp, levelColor.copy(alpha = 0.4f), ImpactBadgeShape)
                                 .padding(horizontal = 10.dp, vertical = 3.dp)
                         ) {
                             Text(
@@ -558,22 +483,18 @@ fun MemoryThreadTimeline(
     choices: List<ChapterChoiceItem>,
     relationshipTease: String?
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 4.dp)
     ) {
-        // Continuous Vertical Thread Line
         Box(
             modifier = Modifier
                 .padding(start = 11.dp, top = 12.dp, bottom = 12.dp)
                 .width(2.dp)
                 .fillMaxHeight()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(AppColors.DeepPurple, AppColors.PrimaryViolet, Color(0x308B5CF6))
-                    )
-                )
+                .background(MemoryThreadLineBrush)
         )
 
         Column(
@@ -581,147 +502,156 @@ fun MemoryThreadTimeline(
             modifier = Modifier.fillMaxWidth()
         ) {
             choices.forEachIndexed { idx, choice ->
-                // Staggered animated appearance
-                var isVisible by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) {
-                    delay(idx * 90L)
-                    isVisible = true
-                }
+                key(choice.id) {
+                    var isVisible by remember(choice.id) { mutableStateOf(quick) }
+                    LaunchedEffect(choice.id, quick) {
+                        if (!quick) {
+                            delay(idx * 90L)
+                            isVisible = true
+                        }
+                    }
 
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = isVisible,
-                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(400)) +
-                            androidx.compose.animation.slideInVertically(animationSpec = androidx.compose.animation.core.tween(400)) { 20 }
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top
+                    AnimatedVisibility(
+                        visible = isVisible,
+                        enter = fadeIn(animationSpec = tween(if (quick) 120 else 400)) +
+                            slideInVertically(animationSpec = tween(if (quick) 120 else 400)) { 20 }
                     ) {
-                        // Node Dot on Timeline
-                        val nodeColor = when {
-                            choice.isBranching -> AppColors.WarningAmber
-                            choice.isRelationship -> AppColors.PinkLight
-                            else -> AppColors.PrimaryPurple
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .padding(top = 4.dp)
-                                .size(24.dp),
-                            contentAlignment = Alignment.Center
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Top
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(nodeColor)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(12.dp))
-
-                        // Timeline Item Content (Clean, unboxed composition)
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(end = 8.dp)
-                        ) {
-                            Text(
-                                text = choice.title,
-                                color = AppColors.PrimaryPurple,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 0.5.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(2.dp))
-
-                            Text(
-                                text = choice.selectedOption,
-                                color = Color.White,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.Bold,
-                                lineHeight = 20.sp
-                            )
-
-                            Spacer(modifier = Modifier.height(5.dp))
-
-                            // Etki seviyesi rozeti
-                            val (lvlLabel, lvlColor) = when (choice.impactLevel) {
-                                "kritik" -> Pair("⚡ KRİTİK", androidx.compose.ui.graphics.Color(0xFFFDE047))
-                                "dusuk"  -> Pair("· DÜŞÜK",  androidx.compose.ui.graphics.Color(0xFF94A3B8))
-                                else     -> Pair("◉ ORTA",   androidx.compose.ui.graphics.Color(0xFFC084FC))
+                            val nodeColor = when {
+                                choice.isBranching -> AppColors.WarningAmber
+                                choice.isRelationship -> AppColors.PinkLight
+                                else -> AppColors.PrimaryPurple
                             }
+
                             Box(
                                 modifier = Modifier
-                                    .clip(androidx.compose.foundation.shape.RoundedCornerShape(5.dp))
-                                    .background(lvlColor.copy(alpha = 0.12f))
-                                    .border(0.5.dp, lvlColor.copy(alpha = 0.35f), androidx.compose.foundation.shape.RoundedCornerShape(5.dp))
-                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                                    .padding(top = 4.dp)
+                                    .size(24.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(lvlLabel, color = lvlColor, fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(choice.icon, fontSize = 13.sp)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = choice.impactText,
-                                    color = AppColors.TextSecondary,
-                                    fontSize = 12.5.sp,
-                                    lineHeight = 17.sp,
-                                    fontWeight = FontWeight.Normal
+                                Box(
+                                    modifier = Modifier
+                                        .size(12.dp)
+                                        .clip(CircleShape)
+                                        .background(nodeColor)
                                 )
                             }
 
-                            // Dal spoiler toggle — sadece dallanma noktalarında
-                            if (choice.isBranching) {
-                                var spoilerOpen by remember(choice.id) { mutableStateOf(false) }
-                                Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 8.dp)
+                            ) {
+                                Text(
+                                    text = choice.title,
+                                    color = AppColors.PrimaryPurple,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(2.dp))
+
+                                Text(
+                                    text = choice.selectedOption,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 20.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(5.dp))
+
+                                val (lvlLabel, lvlColor) = when (choice.impactLevel) {
+                                    "kritik" -> Pair("⚡ KRİTİK", Color(0xFFFDE047))
+                                    "dusuk" -> Pair("· DÜŞÜK", Color(0xFF94A3B8))
+                                    else -> Pair("◉ ORTA", Color(0xFFC084FC))
+                                }
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(androidx.compose.foundation.shape.RoundedCornerShape(8.dp))
-                                        .background(androidx.compose.ui.graphics.Color(0xFF1A0D35))
-                                        .border(
-                                            0.8.dp,
-                                            AppColors.WarningAmber.copy(alpha = if (spoilerOpen) 0.5f else 0.2f),
-                                            androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
-                                        )
-                                        .clickable { spoilerOpen = !spoilerOpen }
-                                        .padding(horizontal = 10.dp, vertical = 7.dp)
+                                        .clip(TimelineBadgeShape)
+                                        .background(lvlColor.copy(alpha = 0.12f))
+                                        .border(0.5.dp, lvlColor.copy(alpha = 0.35f), TimelineBadgeShape)
+                                        .padding(horizontal = 7.dp, vertical = 2.dp)
                                 ) {
-                                    Column {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            Text(if (spoilerOpen) "▲" else "▼", color = AppColors.WarningAmber, fontSize = 9.sp)
-                                            Text(
-                                                if (spoilerOpen) "Alternatif yolu gizle" else "🔀 Diğer yolu merak ediyorum...",
-                                                color = AppColors.WarningAmber,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.SemiBold
+                                    Text(
+                                        lvlLabel,
+                                        color = lvlColor,
+                                        fontSize = 8.5.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 0.8.sp
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(choice.icon, fontSize = 13.sp)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = choice.impactText,
+                                        color = AppColors.TextSecondary,
+                                        fontSize = 12.5.sp,
+                                        lineHeight = 17.sp,
+                                        fontWeight = FontWeight.Normal
+                                    )
+                                }
+
+                                if (choice.isBranching) {
+                                    var spoilerOpen by remember(choice.id) { mutableStateOf(false) }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(SpoilerBoxShape)
+                                            .background(Color(0xFF1A0D35))
+                                            .border(
+                                                0.8.dp,
+                                                AppColors.WarningAmber.copy(alpha = if (spoilerOpen) 0.5f else 0.2f),
+                                                SpoilerBoxShape
                                             )
-                                        }
-                                        androidx.compose.animation.AnimatedVisibility(
-                                            visible = spoilerOpen,
-                                            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(300)) +
-                                                    androidx.compose.animation.expandVertically(androidx.compose.animation.core.tween(300))
-                                        ) {
-                                            Column {
-                                                Spacer(modifier = Modifier.height(8.dp))
-                                                Box(modifier = Modifier.fillMaxWidth().height(1.dp)
-                                                    .background(AppColors.WarningAmber.copy(alpha = 0.2f)))
-                                                Spacer(modifier = Modifier.height(8.dp))
+                                            .clickable { spoilerOpen = !spoilerOpen }
+                                            .padding(horizontal = 10.dp, vertical = 7.dp)
+                                    ) {
+                                        Column {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(if (spoilerOpen) "▲" else "▼", color = AppColors.WarningAmber, fontSize = 9.sp)
                                                 Text(
-                                                    "Bu noktada farklı bir seçim yapsaydın hikaye dallanırdı. Her seçim kalıcı — ancak sonraki bölümde farklı yolu deneyebilirsin.",
-                                                    color = AppColors.TextMuted,
-                                                    fontSize = 11.5.sp,
-                                                    lineHeight = 16.sp
+                                                    if (spoilerOpen) "Alternatif yolu gizle" else "🔀 Diğer yolu merak ediyorum...",
+                                                    color = AppColors.WarningAmber,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.SemiBold
                                                 )
+                                            }
+                                            AnimatedVisibility(
+                                                visible = spoilerOpen,
+                                                enter = fadeIn(tween(if (quick) 100 else 300)) +
+                                                    expandVertically(tween(if (quick) 100 else 300))
+                                            ) {
+                                                Column {
+                                                    Spacer(modifier = Modifier.height(8.dp))
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .height(1.dp)
+                                                            .background(AppColors.WarningAmber.copy(alpha = 0.2f))
+                                                    )
+                                                    Spacer(modifier = Modifier.height(8.dp))
+                                                    Text(
+                                                        "Bu noktada farklı bir seçim yapsaydın hikaye dallanırdı. Her seçim kalıcı — ancak sonraki bölümde farklı yolu deneyebilirsin.",
+                                                        color = AppColors.TextMuted,
+                                                        fontSize = 11.5.sp,
+                                                        lineHeight = 16.sp
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -733,16 +663,18 @@ fun MemoryThreadTimeline(
             }
 
             if (relationshipTease != null) {
-                var isVisible by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) {
-                    delay(choices.size * 90L + 100L)
-                    isVisible = true
+                var isVisible by remember(relationshipTease) { mutableStateOf(quick) }
+                LaunchedEffect(relationshipTease, quick) {
+                    if (!quick) {
+                        delay(choices.size * 90L + 100L)
+                        isVisible = true
+                    }
                 }
 
-                androidx.compose.animation.AnimatedVisibility(
+                AnimatedVisibility(
                     visible = isVisible,
-                    enter = androidx.compose.animation.fadeIn(animationSpec = androidx.compose.animation.core.tween(400)) +
-                            androidx.compose.animation.slideInVertically(animationSpec = androidx.compose.animation.core.tween(400)) { 20 }
+                    enter = fadeIn(animationSpec = tween(if (quick) 120 else 400)) +
+                        slideInVertically(animationSpec = tween(if (quick) 120 else 400)) { 20 }
                 ) {
                     Row(
                         modifier = Modifier
@@ -800,11 +732,11 @@ fun SummaryChoiceCard(
 ) {
     Card(
         colors = CardDefaults.cardColors(containerColor = if (isBranching) AppColors.Hex_2C192E else AppColors.Hex_181728),
-        border = androidx.compose.foundation.BorderStroke(
+        border = BorderStroke(
             1.dp,
             if (isBranching) AppColors.RoseSoft else AppColors.Hex_382F58
         ),
-        shape = RoundedCornerShape(14.dp),
+        shape = SummaryCardShape,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
@@ -832,8 +764,10 @@ fun SummaryChoiceCard(
 
             Surface(
                 color = if (isBranching) AppColors.Hex_3B1220 else AppColors.Hex_121220,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                shape = SpoilerBoxShape,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp)
             ) {
                 Text(
                     text = impact,

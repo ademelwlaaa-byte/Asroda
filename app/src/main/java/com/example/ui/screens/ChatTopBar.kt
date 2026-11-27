@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -10,17 +11,25 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -34,45 +43,76 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.local.BotEntity
+import com.example.ui.animation.CosmicFloatingDeltaPop
 import com.example.ui.animation.CosmicVoiceEqualizer
+import com.example.ui.animation.LocalCosmicMotionPolicy
+import com.example.ui.components.BotAvatarImage
 import com.example.ui.components.MorCamChipPill
 import com.example.ui.components.MorCamCircleIconButton
 import com.example.ui.components.MorCamGlassTextField
 import com.example.ui.components.MorCamTokens
+import com.example.ui.theme.DisplaySerifFontFamily
 import com.example.ui.theme.InterFontFamily
 import com.example.ui.theme.LiterarySerifFontFamily
-import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.runtime.remember
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.FilterQuality
-import androidx.compose.ui.graphics.Shadow
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import com.example.data.local.BotEntity
-import com.example.ui.animation.CosmicFloatingDeltaPop
-import com.example.ui.theme.DisplaySerifFontFamily
 import kotlinx.coroutines.flow.StateFlow
+import kotlin.math.round
+
+private val TopBarPillShape = RoundedCornerShape(50)
+private val HeaderInitialTextStyle = TextStyle(
+    brush = Brush.verticalGradient(
+        colors = listOf(Color.White, Color(0xFFF3E8FF), Color(0xFFD8B4FE))
+    ),
+    shadow = Shadow(
+        color = Color(0xCCA855F7),
+        offset = Offset(0f, 0f),
+        blurRadius = 10f
+    )
+)
+private val HeaderTitleTextStyle = TextStyle(
+    shadow = Shadow(
+        color = Color(0xCC120524),
+        offset = Offset(0f, 1.5f),
+        blurRadius = 6f
+    )
+)
+private val StarredPillBgBrush = Brush.horizontalGradient(
+    listOf(Color(0x883B1470), Color(0x99240C4A))
+)
+private val StarredPillBorderBrush = Brush.linearGradient(
+    listOf(Color(0xFFFDE68A), Color(0xFFA855F7))
+)
+private val SpeakingBannerBgBrush = Brush.horizontalGradient(
+    listOf(Color(0xA6200D44), Color(0xB814082C), Color(0xA6200D44))
+)
+
+internal fun formatSearchMatchCounter(activeMatchIndex: Int, matchCount: Int): String =
+    if (matchCount > 0) {
+        "${(activeMatchIndex + 1).coerceIn(1, matchCount)} / $matchCount eşleşme"
+    } else {
+        "Eşleşme bulunamadı"
+    }
 
 /**
  * Modular 1:1 Mor Cam Chat Top Bar combining the translucent glass header plate,
@@ -110,13 +150,16 @@ internal fun ChatHeaderTopBar(
     onOpenStarredSheet: () -> Unit,
     onStopSpeaking: () -> Unit
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
+    val safePulse = if (pulseGlowAlpha.isFinite()) pulseGlowAlpha.coerceIn(0f, 1f) else 0.5f
+
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
                 .padding(top = 4.dp, bottom = 6.dp)
-                .animateContentSize(animationSpec = tween(220, easing = FastOutSlowInEasing)),
+                .animateContentSize(animationSpec = tween(if (quick) 90 else 220, easing = FastOutSlowInEasing)),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             BoxWithConstraints(
@@ -131,10 +174,10 @@ internal fun ChatHeaderTopBar(
                     if (refGlassBitmaps.headerNoLetter.width > 1) {
                         drawImage(
                             image = refGlassBitmaps.headerNoLetter,
-                            dstOffset = androidx.compose.ui.unit.IntOffset.Zero,
+                            dstOffset = IntOffset.Zero,
                             dstSize = IntSize(
-                                kotlin.math.round(size.width).toInt().coerceAtLeast(1),
-                                kotlin.math.round(size.height).toInt().coerceAtLeast(1)
+                                round(size.width).toInt().coerceAtLeast(1),
+                                round(size.height).toInt().coerceAtLeast(1)
                             ),
                             filterQuality = FilterQuality.High
                         )
@@ -159,33 +202,20 @@ internal fun ChatHeaderTopBar(
                             fontSize = 23.sp,
                             fontFamily = DisplaySerifFontFamily,
                             fontWeight = FontWeight.Normal,
-                            style = TextStyle(
-                                brush = Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.White,
-                                        Color(0xFFF3E8FF),
-                                        Color(0xFFD8B4FE)
-                                    )
-                                ),
-                                shadow = Shadow(
-                                    color = Color(0xCCA855F7),
-                                    offset = Offset(0f, 0f),
-                                    blurRadius = 10f
-                                )
-                            )
+                            style = HeaderInitialTextStyle
                         )
                     }
                     if (bot.avatarUrl.isNotBlank()) {
-                        com.example.ui.components.BotAvatarImage(
+                        BotAvatarImage(
                             avatarUrl = bot.avatarUrl,
                             contentDescription = headerTitle,
-                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(headerW * (54f / 841f))
                                 .clip(CircleShape)
                                 .border(
                                     1.35.dp,
-                                    emotionAuraColor.copy(alpha = 0.45f + 0.35f * pulseGlowAlpha),
+                                    emotionAuraColor.copy(alpha = (0.45f + 0.35f * safePulse).coerceIn(0f, 1f)),
                                     CircleShape
                                 ),
                             fallback = fallbackInitial
@@ -225,13 +255,7 @@ internal fun ChatHeaderTopBar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         textAlign = TextAlign.Center,
-                        style = TextStyle(
-                            shadow = Shadow(
-                                color = Color(0xCC120524),
-                                offset = Offset(0f, 1.5f),
-                                blurRadius = 6f
-                            )
-                        )
+                        style = HeaderTitleTextStyle
                     )
                 }
 
@@ -332,10 +356,15 @@ internal fun ChatSearchBarAndNavigation(
     onNextMatch: () -> Unit,
     onOpenStarredSheet: () -> Unit
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
+    val enterMs = if (quick) 80 else 220
+    val exitMs = if (quick) 60 else 180
+    val safeStarred = starredCount.coerceAtLeast(0)
+
     AnimatedVisibility(
         visible = visible,
-        enter = slideInVertically(tween(220, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(220)),
-        exit = slideOutVertically(tween(180)) { -it } + fadeOut(tween(180))
+        enter = slideInVertically(tween(enterMs, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(enterMs)),
+        exit = slideOutVertically(tween(exitMs)) { -it } + fadeOut(tween(exitMs))
     ) {
         Column(
             modifier = Modifier
@@ -371,21 +400,13 @@ internal fun ChatSearchBarAndNavigation(
                     } else null
                 )
 
-                // Direct Mor Cam ⭐ Yıldızlananlar shortcut pill
                 Row(
                     modifier = Modifier
                         .height(44.dp)
-                        .clip(RoundedCornerShape(50))
+                        .clip(TopBarPillShape)
                         .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.62f)
-                        .background(
-                            Brush.horizontalGradient(
-                                listOf(Color(0x883B1470), Color(0x99240C4A))
-                            )
-                        )
-                        .border(
-                            BorderStroke(1.dp, Brush.linearGradient(listOf(Color(0xFFFDE68A), Color(0xFFA855F7)))),
-                            RoundedCornerShape(50)
-                        )
+                        .background(StarredPillBgBrush)
+                        .border(BorderStroke(1.dp, StarredPillBorderBrush), TopBarPillShape)
                         .clickable(onClick = onOpenStarredSheet)
                         .padding(horizontal = 12.dp)
                         .testTag("chat_search_starred_button"),
@@ -399,7 +420,7 @@ internal fun ChatSearchBarAndNavigation(
                         modifier = Modifier.size(15.dp)
                     )
                     Text(
-                        text = if (starredCount > 0) "Yıldızlı ($starredCount)" else "Yıldızlı",
+                        text = if (safeStarred > 0) "Yıldızlı ($safeStarred)" else "Yıldızlı",
                         color = Color(0xFFFAF5FF),
                         fontSize = 11.5.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -408,29 +429,24 @@ internal fun ChatSearchBarAndNavigation(
                 }
             }
 
-            // Live search navigation bar (1 / N + ↑ ↓)
             AnimatedVisibility(
                 visible = localSearchQuery.isNotBlank(),
-                enter = fadeIn(tween(180)) + expandVertically(tween(180)),
-                exit = fadeOut(tween(140)) + shrinkVertically(tween(140))
+                enter = fadeIn(tween(if (quick) 60 else 180)) + expandVertically(tween(if (quick) 60 else 180)),
+                exit = fadeOut(tween(if (quick) 60 else 140)) + shrinkVertically(tween(if (quick) 60 else 140))
             ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(50))
+                        .clip(TopBarPillShape)
                         .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.58f)
                         .background(Color(0x881A0A36))
-                        .border(BorderStroke(0.85.dp, MorCamTokens.RimGradient), RoundedCornerShape(50))
+                        .border(BorderStroke(0.85.dp, MorCamTokens.RimGradient), TopBarPillShape)
                         .padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (matchCount > 0) {
-                            "${(activeMatchIndex + 1).coerceIn(1, matchCount)} / $matchCount eşleşme"
-                        } else {
-                            "Eşleşme bulunamadı"
-                        },
+                        text = formatSearchMatchCounter(activeMatchIndex, matchCount),
                         color = if (matchCount > 0) MorCamTokens.SilverLavenderBright else MorCamTokens.LavenderMuted,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
@@ -497,26 +513,23 @@ internal fun ChatSpeakingStatusBanner(
     blurredBgBitmap: ImageBitmap,
     onStopSpeaking: () -> Unit
 ) {
+    val quick = LocalCosmicMotionPolicy.current.shouldUseQuickTransitions
     val speakingMessageId by speakingMessageIdFlow.collectAsStateWithLifecycle()
     val isSpeaking = speakingMessageId != null
 
     AnimatedVisibility(
         visible = isSpeaking && !isImeVisible,
-        enter = fadeIn(tween(200)) + expandVertically(tween(200)),
-        exit = fadeOut(tween(160)) + shrinkVertically(tween(160))
+        enter = fadeIn(tween(if (quick) 70 else 200)) + expandVertically(tween(if (quick) 70 else 200)),
+        exit = fadeOut(tween(if (quick) 60 else 160)) + shrinkVertically(tween(if (quick) 60 else 160))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 4.dp)
-                .clip(RoundedCornerShape(50))
+                .clip(TopBarPillShape)
                 .aetheriaBackdropBlur(rootSize, blurredBgBitmap, alpha = 0.62f)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(Color(0xA6200D44), Color(0xB814082C), Color(0xA6200D44))
-                    )
-                )
-                .border(BorderStroke(1.dp, MorCamTokens.RimGradient), RoundedCornerShape(50))
+                .background(SpeakingBannerBgBrush)
+                .border(BorderStroke(1.dp, MorCamTokens.RimGradient), TopBarPillShape)
                 .padding(start = 14.dp, end = 6.dp, top = 5.dp, bottom = 5.dp)
         ) {
             Row(

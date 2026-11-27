@@ -15,20 +15,20 @@ object ChatTypographyStore {
 
     fun loadFontScale(context: Context): Float {
         return try {
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ctx = context.applicationContext ?: context
+            val raw = ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .getFloat(KEY_FONT_SCALE, 1.0f)
-                .coerceIn(MIN_SCALE, MAX_SCALE)
+            if (raw.isFinite()) raw.coerceIn(MIN_SCALE, MAX_SCALE) else 1.0f
         } catch (_: Exception) {
             1.0f
         }
     }
 
     fun saveFontScale(context: Context, scale: Float): Float {
-        val clamped = scale.coerceIn(MIN_SCALE, MAX_SCALE)
+        val clamped = if (scale.isFinite()) scale.coerceIn(MIN_SCALE, MAX_SCALE) else 1.0f
         try {
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ctx = context.applicationContext ?: context
+            ctx.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
                 .putFloat(KEY_FONT_SCALE, clamped)
                 .apply()

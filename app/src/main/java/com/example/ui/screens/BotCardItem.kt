@@ -1,16 +1,10 @@
 package com.example.ui.screens
 
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,36 +28,28 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import com.example.ui.components.MorCamButtonVariant
-import com.example.ui.components.MorCamCapsuleButton
-import com.example.ui.components.MorCamDialogShell
-import com.example.ui.components.MorCamDivider
-import com.example.ui.components.MorCamPopupMenu
-import com.example.ui.components.MorCamPopupMenuItem
-import com.example.ui.components.MorCamTokens
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -80,33 +66,144 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.data.local.BotEntity
-import com.example.ui.components.BotAvatarImage
-import com.example.ui.components.MoodColors
-import com.example.ui.components.OrbView
 import com.example.ui.animation.CosmicMotionSpecs
 import com.example.ui.animation.CosmicSparkleBurst
 import com.example.ui.animation.LocalCosmicMotionConfig
+import com.example.ui.animation.LocalCosmicMotionPolicy
 import com.example.ui.animation.cosmicStaggeredEnter
-import com.example.ui.theme.EmochiError
-import com.example.ui.theme.InterFontFamily
+import com.example.ui.animation.rememberCosmicPhaseState
+import com.example.ui.components.BotAvatarImage
+import com.example.ui.components.MoodColors
+import com.example.ui.components.MorCamButtonVariant
+import com.example.ui.components.MorCamCapsuleButton
+import com.example.ui.components.MorCamDialogShell
+import com.example.ui.components.MorCamDivider
+import com.example.ui.components.MorCamPopupMenu
+import com.example.ui.components.MorCamPopupMenuItem
+import com.example.ui.components.MorCamTokens
+import com.example.ui.components.OrbView
+import com.example.ui.components.StoryOverlayTextSanitizer
 import com.example.ui.theme.LiterarySerifFontFamily
+
+private val BotCardShape = RoundedCornerShape(24.dp)
+private val BotCardAvatarShape = RoundedCornerShape(18.dp)
+private val BotCardPillShape = RoundedCornerShape(50)
+
+private val BotCardBgBrush = Brush.linearGradient(
+    colors = listOf(Color(0x5C220F40), Color(0x4C130827), Color(0x561E0D3A)),
+    start = Offset(0f, 0f),
+    end = Offset(900f, 450f)
+)
+private val BotCardBorderBrush = Brush.linearGradient(
+    listOf(Color(0xDCE9D5FF), Color(0x889F7AEA), Color(0x665B21B6), Color(0xCCD8B4FE))
+)
+private val BotCardGlassRefractionBrush = Brush.verticalGradient(
+    0.00f to Color(0x28E9D5FF),
+    0.16f to Color.Transparent,
+    0.84f to Color.Transparent,
+    1.00f to Color(0x207C3AED)
+)
+private val BotCardLeftBarBrush = Brush.verticalGradient(
+    listOf(Color.Transparent, Color(0xCCE9D5FF), Color(0xFFE9D5FF), Color(0xCCE9D5FF), Color.Transparent)
+)
+private val BotAvatarBorderBrush = Brush.linearGradient(
+    listOf(Color(0xEAF3E8FF), Color(0xA8C084FC), Color(0x887C3AED), Color(0xDCE9D5FF))
+)
+private val BotStatusBadgeBorderBrush = Brush.linearGradient(
+    listOf(Color(0xCCE9D5FF), Color(0x887C3AED))
+)
+private val BotOnlineDotBrush = Brush.radialGradient(
+    listOf(Color(0xFFA7F3D0), Color(0xFF34D399), Color(0xFF10B981))
+)
+private val BotMoreExpandedBgBrush = Brush.radialGradient(
+    listOf(Color(0xA67C3AED), Color(0x883B1470))
+)
+private val BotMoreCollapsedBgBrush = Brush.verticalGradient(
+    listOf(Color(0x5231175A), Color(0x46190B33))
+)
+private val BotMoreCollapsedBorderBrush = Brush.linearGradient(
+    listOf(Color(0xCCE9D5FF), Color(0x668B5CF6))
+)
+private val BotPlayOrbBgBrush = Brush.radialGradient(
+    colors = listOf(Color(0x9C9F55F7), Color(0x887C3AED), Color(0x7C4C1D95), Color(0x882E1065)),
+    center = Offset(38f, 28f),
+    radius = 74f
+)
+private val BotPlayOrbBorderBrush = Brush.verticalGradient(
+    listOf(Color(0xFFF5F0FF), Color(0xFFD8B4FE), Color(0xFF9333EA), Color(0xFFE9D5FF))
+)
+private val BotTagPillBgBrush = Brush.verticalGradient(
+    listOf(Color(0x5C2C1554), Color(0x4C16092E))
+)
+private val BotTagPillBorderBrush = Brush.linearGradient(
+    listOf(Color(0xBBE9D5FF), Color(0x668B5CF6))
+)
+private val BotTitleShadowStyle = TextStyle(
+    shadow = Shadow(
+        color = Color(0xAA120524),
+        offset = Offset(0f, 1.5f),
+        blurRadius = 6f
+    )
+)
+
+internal fun resolveBotCardDisplayName(
+    botId: String,
+    mode: String,
+    universeName: String,
+    aiName: String
+): String {
+    val isUniverse = mode == "universe"
+    return when {
+        botId == "starter_aetheria" || universeName.trim().startsWith("Aetheria: Neon", ignoreCase = true) -> "Aetheria"
+        isUniverse -> universeName.trim().ifBlank { aiName.trim().ifBlank { "Evren" } }
+        else -> aiName.trim().ifBlank { "Karakter" }
+    }
+}
+
+internal fun resolveBotCardDescription(
+    botId: String,
+    scenario: String,
+    openingMessage: String
+): String = when (botId) {
+    "starter_ayla" -> "Lise/üniversiteden beri en yakın dostun. Akşam saatlerinde hep yanında."
+    "starter_aetheria" -> "Neon ışıklarıyla aydınlatılmış Aetheria şehrinin yüksek kulelerinde geçen macera."
+    else -> StoryOverlayTextSanitizer.sanitizePreview(
+        scenario.ifBlank { openingMessage },
+        maxLength = 220
+    )
+}
+
+@DrawableRes
+private fun resolveBuiltInBotAvatarRes(bot: BotEntity): Int? = when {
+    bot.id == "starter_ayla" || bot.aiName.equals("Ayla", ignoreCase = true) ->
+        R.drawable.img_ayla_avatar
+    bot.id == "starter_aetheria" || bot.universeName.contains("Aetheria", ignoreCase = true) ->
+        R.drawable.img_aetheria_universe
+    bot.id == "preset_aiden_mcu_cosmic" ||
+        bot.aiName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
+        bot.aiName.contains("Cosmic Drift", ignoreCase = true) ->
+        R.drawable.img_aiden_blackwood_avatar
+    bot.id == "preset_aria" || bot.aiName.startsWith("Aria", ignoreCase = true) ->
+        R.drawable.img_template_aria_left
+    bot.id == "preset_eldoria" || bot.universeName.contains("Eldoria", ignoreCase = true) ->
+        R.drawable.img_template_eldoria_left
+    else -> null
+}
 
 @Composable
 fun BotCardItem(
     bot: BotEntity,
-    confirmDeleteId: String?,
-    onConfirmDeleteChange: (String?) -> Unit,
+    @Suppress("UNUSED_PARAMETER") confirmDeleteId: String?,
+    @Suppress("UNUSED_PARAMETER") onConfirmDeleteChange: (String?) -> Unit,
     onOpenBot: (String) -> Unit,
     onDeleteBot: ((String) -> Unit)? = null,
     onTogglePrivacy: ((BotEntity) -> Unit)? = null,
@@ -118,55 +215,50 @@ fun BotCardItem(
     staggerIndex: Int = 0
 ) {
     val motionConfig = LocalCosmicMotionConfig.current
+    val motionPolicy = LocalCosmicMotionPolicy.current
     val isUniverse = bot.mode == "universe"
-    val displayName = when {
-        bot.id == "starter_aetheria" || bot.universeName.startsWith("Aetheria: Neon", ignoreCase = true) -> "Aetheria"
-        isUniverse -> bot.universeName.ifBlank { bot.aiName.ifBlank { "Evren" } }
-        else -> bot.aiName.ifBlank { "Karakter" }
+    val displayName = remember(bot.id, bot.mode, bot.universeName, bot.aiName) {
+        resolveBotCardDisplayName(bot.id, bot.mode, bot.universeName, bot.aiName)
     }
-    val hue = MoodColors.getMoodHue(if (isUniverse) "curious" else "calm")
-    val isTemplate = !com.example.data.repository.EmochiRepository.isBotPublishable(bot)
+    val hue = remember(isUniverse) { MoodColors.getMoodHue(if (isUniverse) "curious" else "calm") }
+    val isTemplate = remember(bot) { !com.example.data.repository.EmochiRepository.isBotPublishable(bot) }
 
-    var isMenuExpanded by remember { mutableStateOf(false) }
-    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
-    var favoriteBurstTrigger by remember { mutableStateOf(0) }
+    var isMenuExpanded by remember(bot.id) { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember(bot.id) { mutableStateOf(false) }
+    var favoriteBurstTrigger by remember(bot.id) { mutableIntStateOf(0) }
 
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
-    val cardScale by animateFloatAsState(
+    val cardScaleState = animateFloatAsState(
         targetValue = if (isPressed && motionConfig.enableMicroSprings) 0.972f else 1f,
         animationSpec = CosmicMotionSpecs.snappyOrb(),
         label = "cardPressScale"
     )
 
-    val starScale by animateFloatAsState(
+    val starScaleState = animateFloatAsState(
         targetValue = if (isFavorite) 1.15f else 1f,
         animationSpec = CosmicMotionSpecs.playfulSpark(),
         label = "favoriteStarScale"
     )
 
+    // Draw-phase-only State<Float> glow driver -> 0 FPS root recomposition per card in LazyColumn!
     val animOffset = remember(bot.id) { (bot.id.hashCode().and(0xFF)) / 255f }
-    val cardGlowAlpha = if (motionConfig.enableAmbientLoops) {
-        val infiniteTransition = rememberInfiniteTransition(label = "cardAnim_${bot.id}")
-        val animatedAlpha by infiniteTransition.animateFloat(
-            initialValue = 0.72f,
-            targetValue = 1.0f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(2600 + (animOffset * 600).toInt(), easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "cardGlowAlpha"
-        )
-        animatedAlpha
-    } else {
-        0.88f
-    }
+    val allowAmbient = motionPolicy.shouldAnimateContinuously && motionConfig.enableAmbientLoops
+    val cardGlowAlphaState = rememberCosmicPhaseState(
+        durationMs = 2600 + (animOffset * 600).toInt(),
+        initialValue = 0.72f,
+        targetValue = 1.0f,
+        staticValue = 0.88f,
+        repeatMode = RepeatMode.Reverse,
+        easing = FastOutSlowInEasing,
+        label = "cardGlow_${bot.id}",
+        enabled = allowAmbient
+    )
 
     val context = LocalContext.current
     val resolvedBackdrop = frostedBackdrop ?: remember(context) {
         createFrostedGothicManorBitmap(context, R.drawable.img_botlist_gothic_wisteria_bg)
     }
-    val cardShape = RoundedCornerShape(24.dp)
 
     // Determine meaningful tags from bot metadata
     val primaryTag: Pair<ImageVector, String> = remember(bot.id, bot.mode, bot.writingStyle, bot.userCharName) {
@@ -188,17 +280,14 @@ fun BotCardItem(
         }
     }
 
-    // Active emerald dot vs quiet crescent moon badge
     val isOnlineActive = !isUniverse && (
         bot.proactiveEnabled ||
-        bot.id == "starter_ayla" ||
-        bot.lastMessageTimestamp > 0L
-    )
+            bot.id == "starter_ayla" ||
+            bot.lastMessageTimestamp > 0L
+        )
 
-    val cardDescription = when {
-        bot.id == "starter_ayla" -> "Lise/üniversiteden beri en yakın dostun. Akşam saatlerinde hep yanında."
-        bot.id == "starter_aetheria" -> "Neon ışıklarıyla aydınlatılmış Aetheria şehrinin yüksek kulelerinde geçen macera."
-        else -> bot.scenario.ifBlank { bot.openingMessage }
+    val cardDescription = remember(bot.id, bot.scenario, bot.openingMessage) {
+        resolveBotCardDescription(bot.id, bot.scenario, bot.openingMessage)
     }
 
     Box(
@@ -206,173 +295,136 @@ fun BotCardItem(
             .fillMaxWidth()
             .cosmicStaggeredEnter(index = staggerIndex, key = bot.id)
             .graphicsLayer {
-                scaleX = cardScale
-                scaleY = cardScale
+                val s = cardScaleState.value
+                scaleX = s
+                scaleY = s
             }
-            .drawBehind {
-                drawIntoCanvas { canvas ->
-                    // Soft royal-violet Mor Cam outer rim halo
-                    val baseGlow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 1.6.dp.toPx()
-                        color = Color(0xFF9333EA).copy(alpha = 0.24f * cardGlowAlpha).toArgb()
-                        maskFilter = android.graphics.BlurMaskFilter(
-                            7.dp.toPx(),
-                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                        )
+            .drawWithCache {
+                val cr = 24.dp.toPx()
+                val baseGlow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 1.6.dp.toPx()
+                    maskFilter = android.graphics.BlurMaskFilter(
+                        7.dp.toPx(),
+                        android.graphics.BlurMaskFilter.Blur.NORMAL
+                    )
+                }
+                val glintPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 1.15.dp.toPx()
+                    maskFilter = android.graphics.BlurMaskFilter(
+                        4.dp.toPx(),
+                        android.graphics.BlurMaskFilter.Blur.NORMAL
+                    )
+                }
+                val glintStart = 24.dp.toPx()
+                val glintTopEnd = size.width * 0.36f
+                val glintBotStart = size.width * 0.62f
+                val glintBotEnd = size.width - 24.dp.toPx()
+                onDrawBehind {
+                    val glowAlpha = cardGlowAlphaState.value.coerceIn(0f, 1f)
+                    baseGlow.color = Color(0xFF9333EA).copy(alpha = 0.24f * glowAlpha).toArgb()
+                    glintPaint.color = Color(0xFFE9D5FF).copy(alpha = 0.28f * glowAlpha).toArgb()
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, baseGlow)
+                        canvas.nativeCanvas.drawLine(glintStart, 0f, glintTopEnd, 0f, glintPaint)
+                        canvas.nativeCanvas.drawLine(glintBotStart, size.height, glintBotEnd, size.height, glintPaint)
                     }
-                    val cr = 24.dp.toPx()
-                    canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, baseGlow)
-
-                    // Subtle top-left & bottom-right lavender specular rim glints
-                    val glintPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 1.15.dp.toPx()
-                        color = Color(0xFFE9D5FF).copy(alpha = 0.28f * cardGlowAlpha).toArgb()
-                        maskFilter = android.graphics.BlurMaskFilter(
-                            4.dp.toPx(),
-                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                        )
-                    }
-                    canvas.nativeCanvas.drawLine(24.dp.toPx(), 0f, size.width * 0.36f, 0f, glintPaint)
-                    canvas.nativeCanvas.drawLine(size.width * 0.62f, size.height, size.width - 24.dp.toPx(), size.height, glintPaint)
                 }
             }
-            .clip(cardShape)
+            .clip(BotCardShape)
             .templatesBackdropBlur(
                 blurredBitmap = resolvedBackdrop,
                 alpha = 0.78f,
                 scrollSync = scrollSync
             )
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        Color(0x5C220F40),
-                        Color(0x4C130827),
-                        Color(0x561E0D3A)
-                    ),
-                    start = Offset(0f, 0f),
-                    end = Offset(900f, 450f)
-                )
-            )
-            .drawBehind {
+            .background(BotCardBgBrush)
+            .drawWithCache {
                 val cr = 24.dp.toPx()
-                // Top and bottom inner glass refraction shelves
-                drawRect(
-                    brush = Brush.verticalGradient(
-                        0.00f to Color(0x28E9D5FF),
-                        0.16f to Color.Transparent,
-                        0.84f to Color.Transparent,
-                        1.00f to Color(0x207C3AED)
+                val edgeFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 4.5.dp.toPx()
+                    color = android.graphics.Color.argb(34, 232, 214, 255)
+                    maskFilter = android.graphics.BlurMaskFilter(
+                        4.dp.toPx(),
+                        android.graphics.BlurMaskFilter.Blur.NORMAL
                     )
-                )
-                // Gentle inner frosted perimeter bevel
-                drawIntoCanvas { canvas ->
-                    val edgeFrost = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                        style = android.graphics.Paint.Style.STROKE
-                        strokeWidth = 4.5.dp.toPx()
-                        color = android.graphics.Color.argb(34, 232, 214, 255)
-                        maskFilter = android.graphics.BlurMaskFilter(4.dp.toPx(), android.graphics.BlurMaskFilter.Blur.NORMAL)
-                    }
-                    canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, edgeFrost)
                 }
-                // Delicate left-edge vertical specular glass highlight bar (signature reference detail)
                 val barW = 2.6.dp.toPx()
                 val barH = (size.height * 0.36f).coerceIn(30.dp.toPx(), 52.dp.toPx())
-                drawRoundRect(
-                    brush = Brush.verticalGradient(
-                        listOf(
-                            Color.Transparent,
-                            Color(0xCCE9D5FF),
-                            Color(0xFFE9D5FF),
-                            Color(0xCCE9D5FF),
-                            Color.Transparent
-                        )
-                    ),
-                    topLeft = Offset(1.dp.toPx(), (size.height - barH) * 0.5f),
-                    size = Size(barW, barH),
-                    cornerRadius = CornerRadius(barW, barW)
+                val barTopLeft = Offset(1.dp.toPx(), (size.height - barH) * 0.5f)
+                val barSize = Size(barW, barH)
+                val barCorner = CornerRadius(barW, barW)
+                val poolCenter = Offset(size.width - 36.dp.toPx(), size.height - 28.dp.toPx())
+                val poolRadius = 78.dp.toPx()
+                val poolBrush = Brush.radialGradient(
+                    colors = listOf(Color(0x229333EA), Color(0x0C6D28D9), Color.Transparent),
+                    center = poolCenter,
+                    radius = poolRadius
                 )
-                // Ambient violet light pool near bottom-right play orb
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x229333EA),
-                            Color(0x0C6D28D9),
-                            Color.Transparent
-                        ),
-                        center = Offset(size.width - 36.dp.toPx(), size.height - 28.dp.toPx()),
-                        radius = 78.dp.toPx()
-                    ),
-                    center = Offset(size.width - 36.dp.toPx(), size.height - 28.dp.toPx()),
-                    radius = 78.dp.toPx()
-                )
-            }
-            .border(
-                BorderStroke(
-                    width = 1.15.dp,
-                    brush = Brush.linearGradient(
-                        listOf(
-                            Color(0xDCE9D5FF),
-                            Color(0x889F7AEA),
-                            Color(0x665B21B6),
-                            Color(0xCCD8B4FE)
-                        )
+                onDrawBehind {
+                    drawRect(brush = BotCardGlassRefractionBrush)
+                    drawIntoCanvas { canvas ->
+                        canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, cr, cr, edgeFrost)
+                    }
+                    drawRoundRect(
+                        brush = BotCardLeftBarBrush,
+                        topLeft = barTopLeft,
+                        size = barSize,
+                        cornerRadius = barCorner
                     )
-                ),
-                cardShape
-            )
+                    drawCircle(
+                        brush = poolBrush,
+                        center = poolCenter,
+                        radius = poolRadius
+                    )
+                }
+            }
+            .border(BorderStroke(width = 1.15.dp, brush = BotCardBorderBrush), BotCardShape)
             .clickable(interactionSource = interactionSource, indication = null) { onOpenBot(bot.id) }
             .testTag("bot_card_${bot.id}")
-            .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 12.dp)
+            .padding(12.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // ── Left: 1:1 Rounded-Square Portrait Thumbnail with Status Orb ──
-            val avatarShape = RoundedCornerShape(18.dp)
+            // Left: 1:1 Rounded-Square Portrait Thumbnail with Status Orb
             Box(
                 modifier = Modifier
                     .size(106.dp)
                     .aspectRatio(1f)
-                    .drawBehind {
-                        drawIntoCanvas { canvas ->
-                            val avatarHalo = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                style = android.graphics.Paint.Style.STROKE
-                                strokeWidth = 1.8.dp.toPx()
-                                color = Color(0xFF9333EA).copy(alpha = 0.36f * cardGlowAlpha).toArgb()
-                                maskFilter = android.graphics.BlurMaskFilter(
-                                    6.dp.toPx(),
-                                    android.graphics.BlurMaskFilter.Blur.NORMAL
-                                )
+                    .drawWithCache {
+                        val r = 18.dp.toPx()
+                        val avatarHalo = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                            style = android.graphics.Paint.Style.STROKE
+                            strokeWidth = 1.8.dp.toPx()
+                            maskFilter = android.graphics.BlurMaskFilter(
+                                6.dp.toPx(),
+                                android.graphics.BlurMaskFilter.Blur.NORMAL
+                            )
+                        }
+                        onDrawBehind {
+                            avatarHalo.color = Color(0xFF9333EA)
+                                .copy(alpha = 0.36f * cardGlowAlphaState.value.coerceIn(0f, 1f))
+                                .toArgb()
+                            drawIntoCanvas { canvas ->
+                                canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, avatarHalo)
                             }
-                            val r = 18.dp.toPx()
-                            canvas.nativeCanvas.drawRoundRect(0f, 0f, size.width, size.height, r, r, avatarHalo)
                         }
                     }
             ) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .clip(avatarShape)
+                        .clip(BotCardAvatarShape)
                         .background(Color(0xFF160A2C))
-                        .border(
-                            BorderStroke(
-                                1.25.dp,
-                                Brush.linearGradient(
-                                    listOf(
-                                        Color(0xEAF3E8FF),
-                                        Color(0xA8C084FC),
-                                        Color(0x887C3AED),
-                                        Color(0xDCE9D5FF)
-                                    )
-                                )
-                            ),
-                            avatarShape
-                        ),
+                        .border(BorderStroke(1.25.dp, BotAvatarBorderBrush), BotCardAvatarShape),
                     contentAlignment = Alignment.Center
                 ) {
+                    val builtInAvatarRes = remember(bot.id, bot.aiName, bot.universeName) {
+                        resolveBuiltInBotAvatarRes(bot)
+                    }
                     when {
                         bot.avatarUrl.isNotBlank() -> {
                             BotAvatarImage(
@@ -381,60 +433,25 @@ fun BotCardItem(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .clip(avatarShape),
+                                    .clip(BotCardAvatarShape),
                                 fallback = { OrbView(hue = hue, size = 84.dp) }
                             )
                         }
-                        bot.id == "starter_ayla" || bot.aiName.equals("Ayla", ignoreCase = true) -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_ayla_avatar),
+                        builtInAvatarRes != null -> {
+                            val builtInRequest = remember(context, builtInAvatarRes) {
+                                ImageRequest.Builder(context)
+                                    .data(builtInAvatarRes)
+                                    .allowRgb565(true)
+                                    .crossfade(false)
+                                    .build()
+                            }
+                            AsyncImage(
+                                model = builtInRequest,
                                 contentDescription = displayName,
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .clip(avatarShape)
-                            )
-                        }
-                        bot.id == "starter_aetheria" || bot.universeName.contains("Aetheria", ignoreCase = true) -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_aetheria_universe),
-                                contentDescription = displayName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(avatarShape)
-                            )
-                        }
-                        bot.id == "preset_aiden_mcu_cosmic" ||
-                            bot.aiName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
-                            bot.aiName.contains("Cosmic Drift", ignoreCase = true) -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_aiden_blackwood_avatar),
-                                contentDescription = displayName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(avatarShape)
-                            )
-                        }
-                        bot.id == "preset_aria" || bot.aiName.startsWith("Aria", ignoreCase = true) -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_template_aria_left),
-                                contentDescription = displayName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(avatarShape)
-                            )
-                        }
-                        bot.id == "preset_eldoria" || bot.universeName.contains("Eldoria", ignoreCase = true) -> {
-                            Image(
-                                painter = painterResource(id = R.drawable.img_template_eldoria_left),
-                                contentDescription = displayName,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .clip(avatarShape)
+                                    .clip(BotCardAvatarShape)
                             )
                         }
                         else -> {
@@ -451,15 +468,7 @@ fun BotCardItem(
                         .size(23.dp)
                         .clip(CircleShape)
                         .background(Color(0xDD130728))
-                        .border(
-                            BorderStroke(
-                                1.dp,
-                                Brush.linearGradient(
-                                    listOf(Color(0xCCE9D5FF), Color(0x887C3AED))
-                                )
-                            ),
-                            CircleShape
-                        ),
+                        .border(BorderStroke(1.dp, BotStatusBadgeBorderBrush), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     if (isOnlineActive) {
@@ -467,58 +476,52 @@ fun BotCardItem(
                             modifier = Modifier
                                 .size(11.dp)
                                 .clip(CircleShape)
-                                .background(
-                                    Brush.radialGradient(
-                                        listOf(
-                                            Color(0xFFA7F3D0),
-                                            Color(0xFF34D399),
-                                            Color(0xFF10B981)
-                                        )
-                                    )
-                                )
+                                .background(BotOnlineDotBrush)
                         )
                     } else {
-                        // Delicate vector crescent moon in soft luminous lavender
-                        Canvas(modifier = Modifier.size(12.dp)) {
-                            val cx = size.width * 0.52f
-                            val cy = size.height * 0.50f
-                            val r = size.minDimension * 0.42f
-                            val moonPath = Path().apply {
-                                moveTo(cx + r * 0.15f, cy - r * 0.92f)
-                                cubicTo(
-                                    cx - r * 0.95f, cy - r * 0.65f,
-                                    cx - r * 0.95f, cy + r * 0.72f,
-                                    cx + r * 0.25f, cy + r * 0.92f
-                                )
-                                cubicTo(
-                                    cx + r * 0.75f, cy + r * 0.85f,
-                                    cx + r * 0.95f, cy + r * 0.42f,
-                                    cx + r * 0.82f, cy + r * 0.22f
-                                )
-                                cubicTo(
-                                    cx + r * 0.18f, cy + r * 0.45f,
-                                    cx - r * 0.35f, cy + r * 0.02f,
-                                    cx - r * 0.12f, cy - r * 0.45f
-                                )
-                                cubicTo(
-                                    cx + r * 0.02f, cy - r * 0.70f,
-                                    cx + r * 0.25f, cy - r * 0.82f,
-                                    cx + r * 0.15f, cy - r * 0.92f
-                                )
-                                close()
-                            }
-                            drawPath(
-                                path = moonPath,
-                                color = Color(0xFFE9D5FF)
-                            )
-                        }
+                        Spacer(
+                            modifier = Modifier
+                                .size(12.dp)
+                                .drawWithCache {
+                                    val cx = size.width * 0.52f
+                                    val cy = size.height * 0.50f
+                                    val r = size.minDimension * 0.42f
+                                    val moonPath = Path().apply {
+                                        moveTo(cx + r * 0.15f, cy - r * 0.92f)
+                                        cubicTo(
+                                            cx - r * 0.95f, cy - r * 0.65f,
+                                            cx - r * 0.95f, cy + r * 0.72f,
+                                            cx + r * 0.25f, cy + r * 0.92f
+                                        )
+                                        cubicTo(
+                                            cx + r * 0.75f, cy + r * 0.85f,
+                                            cx + r * 0.95f, cy + r * 0.42f,
+                                            cx + r * 0.82f, cy + r * 0.22f
+                                        )
+                                        cubicTo(
+                                            cx + r * 0.18f, cy + r * 0.45f,
+                                            cx - r * 0.35f, cy + r * 0.02f,
+                                            cx - r * 0.12f, cy - r * 0.45f
+                                        )
+                                        cubicTo(
+                                            cx + r * 0.02f, cy - r * 0.70f,
+                                            cx + r * 0.25f, cy - r * 0.82f,
+                                            cx + r * 0.15f, cy - r * 0.92f
+                                        )
+                                        close()
+                                    }
+                                    onDrawBehind {
+                                        drawPath(path = moonPath, color = Color(0xFFE9D5FF))
+                                    }
+                                }
+                        )
                     }
                 }
             }
 
             Spacer(modifier = Modifier.width(13.dp))
 
-            // ── Right Content Column ──
+            // Right Content Column
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.SpaceBetween
@@ -541,19 +544,12 @@ fun BotCardItem(
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            style = TextStyle(
-                                shadow = Shadow(
-                                    color = Color(0xAA120524),
-                                    offset = Offset(0f, 1.5f),
-                                    blurRadius = 6f
-                                )
-                            ),
+                            style = BotTitleShadowStyle,
                             modifier = Modifier.weight(1f, fill = false)
                         )
 
                         Spacer(modifier = Modifier.width(6.dp))
 
-                        // Interactive Favorite Star (Harmonized Luminous Amethyst-Lavender + Sparkle Burst)
                         Box(
                             modifier = Modifier
                                 .size(28.dp)
@@ -583,8 +579,9 @@ fun BotCardItem(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .graphicsLayer {
-                                        scaleX = starScale
-                                        scaleY = starScale
+                                        val s = starScaleState.value
+                                        scaleX = s
+                                        scaleY = s
                                     }
                             )
                         }
@@ -596,27 +593,11 @@ fun BotCardItem(
                             modifier = Modifier
                                 .size(32.dp)
                                 .clip(CircleShape)
-                                .background(
-                                    if (isMenuExpanded) {
-                                        Brush.radialGradient(
-                                            listOf(Color(0xA67C3AED), Color(0x883B1470))
-                                        )
-                                    } else {
-                                        Brush.verticalGradient(
-                                            listOf(Color(0x5231175A), Color(0x46190B33))
-                                        )
-                                    }
-                                )
+                                .background(if (isMenuExpanded) BotMoreExpandedBgBrush else BotMoreCollapsedBgBrush)
                                 .border(
                                     BorderStroke(
                                         width = if (isMenuExpanded) 1.2.dp else 0.95.dp,
-                                        brush = if (isMenuExpanded) {
-                                            MorCamTokens.RimGradient
-                                        } else {
-                                            Brush.linearGradient(
-                                                listOf(Color(0xCCE9D5FF), Color(0x668B5CF6))
-                                            )
-                                        }
+                                        brush = if (isMenuExpanded) MorCamTokens.RimGradient else BotMoreCollapsedBorderBrush
                                     ),
                                     CircleShape
                                 )
@@ -730,10 +711,9 @@ fun BotCardItem(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
-                    // Circular Crystal Amethyst Play Orb (Matches Reference + Harmonized App Palette)
                     val playInteraction = remember { MutableInteractionSource() }
                     val playPressed by playInteraction.collectIsPressedAsState()
-                    val playScale by animateFloatAsState(
+                    val playScaleState = animateFloatAsState(
                         targetValue = if (playPressed && motionConfig.enableMicroSprings) 0.88f else 1f,
                         animationSpec = CosmicMotionSpecs.snappyOrb(),
                         label = "playOrbScale"
@@ -743,71 +723,50 @@ fun BotCardItem(
                         modifier = Modifier
                             .size(40.dp)
                             .graphicsLayer {
-                                scaleX = playScale
-                                scaleY = playScale
+                                val s = playScaleState.value
+                                scaleX = s
+                                scaleY = s
                             }
-                            .drawBehind {
-                                drawIntoCanvas { canvas ->
-                                    val orbGlow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                        style = android.graphics.Paint.Style.STROKE
-                                        strokeWidth = 2.dp.toPx()
-                                        color = Color(0xFFA855F7).copy(alpha = 0.50f * cardGlowAlpha).toArgb()
-                                        maskFilter = android.graphics.BlurMaskFilter(
-                                            7.dp.toPx(),
-                                            android.graphics.BlurMaskFilter.Blur.NORMAL
-                                        )
-                                    }
-                                    canvas.nativeCanvas.drawCircle(
-                                        size.width * 0.5f,
-                                        size.height * 0.5f,
-                                        size.minDimension * 0.5f,
-                                        orbGlow
+                            .drawWithCache {
+                                val orbGlow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                                    style = android.graphics.Paint.Style.STROKE
+                                    strokeWidth = 2.dp.toPx()
+                                    maskFilter = android.graphics.BlurMaskFilter(
+                                        7.dp.toPx(),
+                                        android.graphics.BlurMaskFilter.Blur.NORMAL
                                     )
+                                }
+                                val cx = size.width * 0.5f
+                                val cy = size.height * 0.5f
+                                val rad = size.minDimension * 0.5f
+                                onDrawBehind {
+                                    orbGlow.color = Color(0xFFA855F7)
+                                        .copy(alpha = 0.50f * cardGlowAlphaState.value.coerceIn(0f, 1f))
+                                        .toArgb()
+                                    drawIntoCanvas { canvas ->
+                                        canvas.nativeCanvas.drawCircle(cx, cy, rad, orbGlow)
+                                    }
                                 }
                             }
                             .clip(CircleShape)
-                            .background(
-                                Brush.radialGradient(
+                            .background(BotPlayOrbBgBrush)
+                            .drawWithCache {
+                                val sheenCenter = Offset(size.width * 0.38f, size.height * 0.14f)
+                                val sheenRadius = size.width * 0.42f
+                                val sheenBrush = Brush.radialGradient(
                                     colors = listOf(
-                                        Color(0x9C9F55F7),
-                                        Color(0x887C3AED),
-                                        Color(0x7C4C1D95),
-                                        Color(0x882E1065)
+                                        Color.White.copy(alpha = 0.34f),
+                                        Color(0xFFE9D5FF).copy(alpha = 0.12f),
+                                        Color.Transparent
                                     ),
-                                    center = Offset(38f, 28f),
-                                    radius = 74f
+                                    center = sheenCenter,
+                                    radius = sheenRadius
                                 )
-                            )
-                            .drawBehind {
-                                // Top specular crystal sheen
-                                drawCircle(
-                                    brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.34f),
-                                            Color(0xFFE9D5FF).copy(alpha = 0.12f),
-                                            Color.Transparent
-                                        ),
-                                        center = Offset(size.width * 0.38f, size.height * 0.14f),
-                                        radius = size.width * 0.42f
-                                    ),
-                                    center = Offset(size.width * 0.38f, size.height * 0.14f),
-                                    radius = size.width * 0.42f
-                                )
+                                onDrawBehind {
+                                    drawCircle(brush = sheenBrush, center = sheenCenter, radius = sheenRadius)
+                                }
                             }
-                            .border(
-                                BorderStroke(
-                                    1.25.dp,
-                                    Brush.verticalGradient(
-                                        listOf(
-                                            Color(0xFFF5F0FF),
-                                            Color(0xFFD8B4FE),
-                                            Color(0xFF9333EA),
-                                            Color(0xFFE9D5FF)
-                                        )
-                                    )
-                                ),
-                                CircleShape
-                            )
+                            .border(BorderStroke(1.25.dp, BotPlayOrbBorderBrush), CircleShape)
                             .clickable(
                                 interactionSource = playInteraction,
                                 indication = null
@@ -827,7 +786,6 @@ fun BotCardItem(
         }
     }
 
-    // Harmonized Mor Cam Delete Confirmation Dialog
     if (showDeleteConfirmDialog) {
         MorCamDialogShell(
             onDismissRequest = { showDeleteConfirmDialog = false },
@@ -877,24 +835,11 @@ private fun BotCardGlassTagPill(
     icon: ImageVector,
     label: String
 ) {
-    val pillShape = RoundedCornerShape(50)
     Row(
         modifier = Modifier
-            .clip(pillShape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0x5C2C1554), Color(0x4C16092E))
-                )
-            )
-            .border(
-                BorderStroke(
-                    0.9.dp,
-                    Brush.linearGradient(
-                        listOf(Color(0xBBE9D5FF), Color(0x668B5CF6))
-                    )
-                ),
-                pillShape
-            )
+            .clip(BotCardPillShape)
+            .background(BotTagPillBgBrush)
+            .border(BorderStroke(0.9.dp, BotTagPillBorderBrush), BotCardPillShape)
             .padding(horizontal = 9.dp, vertical = 4.5.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp)
