@@ -5,6 +5,7 @@ import com.example.data.local.LorebookDao
 import com.example.data.local.LorebookEntity
 import com.example.data.local.LorebookEntryEntity
 import com.example.data.repository.SystemPromptBuilder
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -42,6 +43,9 @@ class LorebookManager(
     companion object {
         private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
         private val PUNCT_REGEX = Regex("""[^\p{L}\p{N}\s'-]""")
+        private val MULTI_SPACE_REGEX = Regex("""\s+""")
+        internal const val MAX_IMPORT_JSON_CHARS = 2 * 1024 * 1024
+        internal const val MAX_IMPORT_ENTRIES = 500
 
         val CATEGORIES = listOf(
             "genel" to "Genel",
@@ -59,7 +63,7 @@ class LorebookManager(
                 .lowercase(TR_LOCALE)
                 .replace('\u0307', ' ') // stray combining dot after İ lowercasing
                 .replace(PUNCT_REGEX, " ")
-                .replace(Regex("\\s+"), " ")
+                .replace(MULTI_SPACE_REGEX, " ")
                 .trim()
         }
 
@@ -165,9 +169,8 @@ class LorebookManager(
                 val windowText = normalizedMessages.takeLast(depth).joinToString(" ")
                 val matchedKws = keywords.filter { kw -> matchesKeyword(windowText, kw) }
                 if (matchedKws.isNotEmpty()) {
-                    // If an exclusion keyword is present AND no other non-excluded context overrides it, skip!
-                    val excluded = exclusions.isNotEmpty() && exclusions.any { ex -> matchesKeyword(windowText, ex) } &&
-                        matchedKws.all { kw -> exclusions.any { ex -> ex.contains(kw) || kw.contains(ex) } }
+                    // Block entry whenever any negative exclusion keyword (`-kelime` / `!kelime`) matches the scan window
+                    val excluded = exclusions.isNotEmpty() && exclusions.any { ex -> matchesKeyword(windowText, ex) }
                     if (excluded) continue
 
                     val inLatestBonus = if (matchedKws.any { kw -> matchesKeyword(latestNormalizedMsg, kw) }) 20 else 0
@@ -178,19 +181,26 @@ class LorebookManager(
                 }
             }
 
-            // Step 3: 1-step chained triggering (strictly 1 hop — no infinite loops)
+            // Step 3: 1-step chained triggering (strictly 1 hop — no infinite loops, respecting negative exclusions)
             if (allowChainedTriggering && directMatches.isNotEmpty()) {
                 val chainCorpus = normalizeTr(
                     directMatches.joinToString(" ") { "${it.title} ${it.content}" }
                 )
-                for (entry in activeEntries) {
-                    if (triggeredById.containsKey(entry.id)) continue
-                    val (keywords, _) = parsePositiveAndNegativeKeywords(entry.keywords)
-                    if (keywords.isEmpty()) continue
-                    val hit = keywords.firstOrNull { kw -> matchesKeyword(chainCorpus, kw) }
-                    if (hit != null) {
-                        triggeredById[entry.id] = TriggeredEntry(entry, "zincir:$hit")
-                        matchRelevanceScore[entry.id] = 5
+                if (chainCorpus.isNotBlank()) {
+                    val allRecentNormalized = normalizedMessages.joinToString(" ")
+                    for (entry in activeEntries) {
+                        if (triggeredById.containsKey(entry.id)) continue
+                        val (keywords, exclusions) = parsePositiveAndNegativeKeywords(entry.keywords)
+                        if (keywords.isEmpty()) continue
+                        val hit = keywords.firstOrNull { kw -> matchesKeyword(chainCorpus, kw) }
+                        if (hit != null) {
+                            val excluded = exclusions.isNotEmpty() && exclusions.any { ex ->
+                                matchesKeyword(chainCorpus, ex) || matchesKeyword(allRecentNormalized, ex)
+                            }
+                            if (excluded) continue
+                            triggeredById[entry.id] = TriggeredEntry(entry, "zincir:$hit")
+                            matchRelevanceScore[entry.id] = 5
+                        }
                     }
                 }
             }
@@ -207,28 +217,30 @@ class LorebookManager(
                     .thenBy { it.entry.title.lowercase(TR_LOCALE) }
             )
 
-            // Step 5: Smart token budget enforcement
+            // Step 5: Smart token budget enforcement (never exceeds safeBudget; trims constant/first entry instead of silently dropping)
             val chosen = mutableListOf<TriggeredEntry>()
             val sb = StringBuilder()
             val header = "\n[EVREN ANSİKLOPEDİSİ — AKTİF LOREBOOK BİLGİLERİ]\n" +
                 "(Aşağıdaki kanonik bilgiler sahnedeki mevcut bağlam için otomatik açılmıştır; çelişmeden doğal biçimde kullan.)\n"
-            var usedTokens = SystemPromptBuilder.estimateTokens(header)
+            var usedTokens = SystemPromptBuilder.estimateTokens(header).coerceAtMost(safeBudget)
             sb.append(header)
 
             for (item in ordered) {
                 val catLabel = item.entry.category.uppercase(TR_LOCALE)
                 val formattedLine = "• [${item.entry.title} | $catLabel]: ${item.entry.content.trim()}\n"
                 val lineTokens = SystemPromptBuilder.estimateTokens(formattedLine)
-                if (usedTokens + lineTokens > safeBudget && chosen.isNotEmpty()) {
+                if (usedTokens + lineTokens > safeBudget) {
+                    val remainingTokens = safeBudget - usedTokens
+                    if (chosen.isEmpty() || (item.entry.isConstant && remainingTokens >= 25)) {
+                        val remainChars = (remainingTokens.coerceAtLeast(16) * 3).coerceAtMost(formattedLine.length)
+                        val trimmedLine = formattedLine.take(remainChars).trimEnd() + "…\n"
+                        val trimmedTokens = SystemPromptBuilder.estimateTokens(trimmedLine)
+                        sb.append(trimmedLine)
+                        usedTokens = (usedTokens + trimmedTokens).coerceAtMost(safeBudget)
+                        chosen.add(item)
+                        if (safeBudget - usedTokens < 25) break
+                    }
                     continue
-                }
-                if (usedTokens + lineTokens > safeBudget && chosen.isEmpty()) {
-                    // Always fit at least the highest-priority matched entry trimmed safely
-                    val remainChars = ((safeBudget - usedTokens).coerceAtLeast(40) * 3.5).toInt()
-                    sb.append(formattedLine.take(remainChars).trimEnd()).append("…\n")
-                    usedTokens = safeBudget
-                    chosen.add(item)
-                    break
                 }
                 sb.append(formattedLine)
                 usedTokens += lineTokens
@@ -271,24 +283,39 @@ class LorebookManager(
 
         /**
          * Imports Velora JSON or SillyTavern/CharacterAI-style Lorebook JSON (`entries` as JSONArray OR JSONObject map).
+         * Enforces size/entry limits and deduplicates identical entries safely.
          */
         fun importLorebookJson(rawJson: String): ImportedLorebookBundle {
-            val root = JSONObject(rawJson.trim())
+            if (rawJson.length > MAX_IMPORT_JSON_CHARS) {
+                throw IllegalArgumentException("Lorebook JSON boyutu izin verilen sınırı aşıyor (${MAX_IMPORT_JSON_CHARS / (1024 * 1024)} MB).")
+            }
+            val trimmed = rawJson.trim()
+            if (trimmed.isEmpty()) {
+                throw IllegalArgumentException("Lorebook JSON içeriği boş.")
+            }
+            val root = JSONObject(trimmed)
             val lorebookId = UUID.randomUUID().toString()
             val name = root.optString("name", "").ifBlank {
                 root.optString("title", "İçe Aktarılan Ansiklopedi")
-            }.trim()
-            val description = root.optString("description", "").trim()
+            }.trim().take(120)
+            val description = root.optString("description", "").trim().take(1_000)
             val tokenBudget = root.optInt("tokenBudget", root.optInt("token_budget", 750)).coerceIn(150, 3_000)
             val now = System.currentTimeMillis()
 
             val entries = mutableListOf<LorebookEntryEntity>()
+            val seenSignatures = HashSet<String>()
             val rawEntries = root.opt("entries")
 
             fun parseSingleEntry(obj: JSONObject, fallbackIdx: Int): LorebookEntryEntity? {
-                val content = obj.optString("content", obj.optString("entry", "")).trim()
+                val content = obj.optString("content", obj.optString("entry", "")).trim().take(8_000)
                 if (content.isBlank()) return null
-                val title = obj.optString("title", obj.optString("comment", obj.optString("name", "Madde ${fallbackIdx + 1}"))).trim()
+                val title = obj.optString("title", obj.optString("comment", obj.optString("name", "Madde ${fallbackIdx + 1}")))
+                    .trim()
+                    .ifBlank { "Madde ${fallbackIdx + 1}" }
+                    .take(120)
+                val sig = "${normalizeTr(title)}||${normalizeTr(content)}"
+                if (!seenSignatures.add(sig)) return null
+
                 val keywordsStr = when {
                     obj.optString("keywords", "").isNotBlank() -> obj.optString("keywords")
                     obj.optJSONArray("keys") != null -> {
@@ -300,11 +327,15 @@ class LorebookManager(
                         (0 until a.length()).mapNotNull { idx -> a.optString(idx).takeIf { it.isNotBlank() } }.joinToString(", ")
                     }
                     else -> ""
-                }
+                }.trim().take(1_000)
                 val priority = obj.optInt("priority", obj.optInt("order", 5)).coerceIn(1, 10)
                 val isConstant = obj.optBoolean("constant", obj.optBoolean("isConstant", false))
                 val isEnabled = if (obj.has("disable")) !obj.optBoolean("disable", false) else obj.optBoolean("enabled", true)
-                val category = obj.optString("category", "genel").trim().ifBlank { "genel" }
+                val category = obj.optString("category", "genel")
+                    .trim()
+                    .lowercase(Locale.ROOT)
+                    .ifBlank { "genel" }
+                    .take(32)
                 val scanDepth = obj.optInt("scanDepth", obj.optInt("depth", 4)).coerceIn(1, 12)
                 return LorebookEntryEntity(
                     id = UUID.randomUUID().toString(),
@@ -324,6 +355,7 @@ class LorebookManager(
             when (rawEntries) {
                 is JSONArray -> {
                     for (i in 0 until rawEntries.length()) {
+                        if (entries.size >= MAX_IMPORT_ENTRIES) break
                         rawEntries.optJSONObject(i)?.let { obj ->
                             parseSingleEntry(obj, i)?.let { entries.add(it) }
                         }
@@ -332,7 +364,7 @@ class LorebookManager(
                 is JSONObject -> {
                     val keysIter = rawEntries.keys()
                     var idx = 0
-                    while (keysIter.hasNext()) {
+                    while (keysIter.hasNext() && entries.size < MAX_IMPORT_ENTRIES) {
                         val k = keysIter.next()
                         rawEntries.optJSONObject(k)?.let { obj ->
                             parseSingleEntry(obj, idx++)?.let { entries.add(it) }
@@ -352,6 +384,12 @@ class LorebookManager(
             )
             return ImportedLorebookBundle(lorebook, entries)
         }
+
+        /**
+         * Non-throwing wrapper around [importLorebookJson] for defensive callers.
+         */
+        fun safeImportLorebookJson(rawJson: String): Result<ImportedLorebookBundle> =
+            runCatching { importLorebookJson(rawJson) }
 
         /**
          * Built-in rich starter Lorebook for the new Nevermore Academy — Aiden Blackwood universe.
@@ -446,6 +484,8 @@ class LorebookManager(
         val localDao = dao ?: return SelectionResult(emptyList(), 0, "")
         val linkedLorebooks = try {
             localDao.getEnabledLorebooksForBot(botId)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptyList()
         }
@@ -453,12 +493,16 @@ class LorebookManager(
             return SelectionResult(emptyList(), 0, "")
         }
 
-        val allEntries = mutableListOf<LorebookEntryEntity>()
+        val deduplicatedEntries = LinkedHashMap<String, LorebookEntryEntity>()
         var combinedBudget = 0
         for (lb in linkedLorebooks) {
             combinedBudget += lb.tokenBudget.coerceIn(120, 2_000)
             try {
-                allEntries.addAll(localDao.getEntriesForLorebook(lb.id))
+                localDao.getEntriesForLorebook(lb.id).forEach { entry ->
+                    deduplicatedEntries.putIfAbsent(entry.id, entry)
+                }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {}
         }
         val effectiveBudget = if (compactMode) {
@@ -467,7 +511,7 @@ class LorebookManager(
             combinedBudget.coerceAtMost(1_500)
         }
         return selectEntriesForContext(
-            entries = allEntries,
+            entries = deduplicatedEntries.values.toList(),
             recentMessageTexts = recentMessages,
             tokenBudget = effectiveBudget,
             allowChainedTriggering = true

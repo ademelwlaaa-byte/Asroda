@@ -370,7 +370,10 @@ object SystemPromptBuilder {
             sb.appendLine("\n[YILDIZLI ÖNEMLİ ANLAR — KULLANICI İŞARETLEDİ (UNUTMA)]")
             input.starredAnchorMessages.takeLast(starredLimit).forEach { starred ->
                 val speaker = if (starred.role == "user") userTitle else aiTitle
-                val snippet = starred.text.replace(Regex("\\s+"), " ").trim().take(210)
+                val snippet = EmochiRepository.cleanEmotionTags(starred.text)
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                    .take(210)
                 if (snippet.isNotBlank()) {
                     val line = "- ★ [$speaker]: $snippet"
                     if (hasBudgetFor(line)) sb.appendLine(line)
@@ -387,15 +390,21 @@ object SystemPromptBuilder {
         if (input.recentCheckpoints.isNotEmpty()) {
             sb.appendLine("\n[GEÇMİŞ SAHNE ZİNCİRİ (UZUN DÖNEM HAFIZA)]")
             input.recentCheckpoints.take(checkpointLimit).forEach { cp ->
-                val line = "- ${cp.summaryText}"
-                if (hasBudgetFor(line)) sb.appendLine(line)
+                val cleanCp = EmochiRepository.cleanEmotionTags(cp.summaryText).replace(Regex("\\s+"), " ").trim()
+                if (cleanCp.isNotBlank()) {
+                    val line = "- $cleanCp"
+                    if (hasBudgetFor(line)) sb.appendLine(line)
+                }
             }
         }
         if (input.relevantFragments.isNotEmpty()) {
             sb.appendLine("\n[İLGİLİ GEÇMİŞ HAFIZA KESİTLERİ]")
             input.relevantFragments.take(fragmentLimit).forEach { frag ->
-                val line = "- ${frag.content}"
-                if (hasBudgetFor(line)) sb.appendLine(line)
+                val cleanFrag = EmochiRepository.cleanEmotionTags(frag.content).replace(Regex("\\s+"), " ").trim()
+                if (cleanFrag.isNotBlank()) {
+                    val line = "- $cleanFrag"
+                    if (hasBudgetFor(line)) sb.appendLine(line)
+                }
             }
         }
         if (input.registeredEntities.isNotEmpty()) {
@@ -466,9 +475,10 @@ object SystemPromptBuilder {
         } else {
             bot.customLength
         }
-        val lengthInstruction = when (effectiveLength.lowercase(java.util.Locale.ROOT)) {
-            "short", "kisa" -> "Yanıtlarını 1 kısa ve vurucu paragraf (2-4 cümle) uzunluğunda, temposu yüksek ve öz olarak yaz."
-            "long", "uzun" -> "Yanıtlarını 3 ila 5 paragraf uzunluğunda, atmosferi, mikro ifadeleri, duyusal detayları ve iç dünyayı derinlemesine işleyen sinematik bir roman sahnesi olarak yaz."
+        val lengthInstruction = when (effectiveLength.trim().lowercase(java.util.Locale.ROOT)) {
+            "short", "kisa", "kısa" -> "Yanıtlarını 1 kısa ve vurucu paragraf (2-4 cümle) uzunluğunda, temposu yüksek ve öz olarak yaz."
+            "detailed", "detayli", "detaylı", "long", "uzun" -> "Yanıtlarını 3 ila 5 paragraf uzunluğunda, atmosferi, mikro ifadeleri, duyusal detayları ve iç dünyayı derinlemesine işleyen sinematik bir roman sahnesi olarak yaz."
+            "novel", "roman" -> "Yanıtlarını 5 ila 7 akıcı paragraf uzunluğunda, zengin ortam betimlemeleri, katmanlı diyaloglar ve derin psikolojik iç sesle tam bir edebi roman bölümü olarak yaz."
             else -> "Yanıtlarını 2 ila 4 dengeli paragraf uzunluğunda, edebi kalitesi yüksek ve akıcı bir sahne olarak yaz."
         }
         val styleInstruction = if (bot.writingStyle.equals("chat", ignoreCase = true)) {

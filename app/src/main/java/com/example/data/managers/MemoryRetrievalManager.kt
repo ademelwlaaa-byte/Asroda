@@ -1,6 +1,5 @@
 package com.example.data.managers
 
-import android.util.LruCache
 import com.example.data.api.GeminiContent
 import com.example.data.api.GeminiEmbedContentRequest
 import com.example.data.api.GeminiPart
@@ -22,6 +21,7 @@ import com.example.data.repository.MemoryTier
 import com.example.data.repository.RelativeTimeCueResolver
 import com.example.data.repository.TemporalTarget
 import com.example.data.repository.TurkishTextAnalyzer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,9 +30,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.exp
 import kotlin.math.ln
+import kotlin.math.sqrt
 
 data class RagRetrievalBundle(
     val facts: List<MemoryFactEntity> = emptyList(),
@@ -105,19 +107,24 @@ data class BotMemoryIndex(
 )
 
 /**
- * Zero-redundant-parse RAM LRU cache for up to 5 active bots.
+ * Zero-redundant-parse RAM LRU cache for up to [maxBots] active bots (pure JVM access-order LRU).
  * Precomputes FloatArray vectors and Turkish morphological stem sets once per mutation,
  * cutting per-turn Hybrid RAG execution down to <12 ms.
  */
 class MemoryVectorCache(maxBots: Int = 5) {
-    private val lru = object : LruCache<String, BotMemoryIndex>(maxBots) {}
+    private val safeMaxBots = maxBots.coerceAtLeast(1)
+    private val lru = object : LinkedHashMap<String, BotMemoryIndex>(safeMaxBots + 1, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, BotMemoryIndex>?): Boolean {
+            return size > safeMaxBots
+        }
+    }
 
     @Synchronized
-    fun get(botId: String): BotMemoryIndex? = lru.get(botId)
+    fun get(botId: String): BotMemoryIndex? = lru[botId]
 
     @Synchronized
     fun put(botId: String, index: BotMemoryIndex) {
-        lru.put(botId, index)
+        lru[botId] = index
     }
 
     @Synchronized
@@ -127,8 +134,11 @@ class MemoryVectorCache(maxBots: Int = 5) {
 
     @Synchronized
     fun clearAll() {
-        lru.evictAll()
+        lru.clear()
     }
+
+    @Synchronized
+    fun size(): Int = lru.size
 }
 
 class MemoryRetrievalManager(
@@ -137,6 +147,161 @@ class MemoryRetrievalManager(
     private val memoryEventDao: MemoryEventDao,
     private val memoryCheckpointDao: MemoryCheckpointDao
 ) {
+    companion object {
+        private const val MAX_TRACKED_BOT_ROUTE_MODES = 64
+        internal const val NEAR_DUPLICATE_JACCARD_THRESHOLD = 0.82f
+        private val JSON_FENCE_REGEX = Regex("""```json\s*""", RegexOption.IGNORE_CASE)
+
+        /**
+         * NaN-, Infinity-, zero-norm-, and dimension-mismatch-safe cosine similarity in [-1f, 1f].
+         * Guarantees finite scores so downstream TimSort ranking never throws on NaN comparisons.
+         */
+        fun safeCosineSimilarity(v1: FloatArray, v2: FloatArray): Float {
+            if (v1.isEmpty() || v2.isEmpty() || v1.size != v2.size) return 0f
+            var dot = 0.0
+            var norm1 = 0.0
+            var norm2 = 0.0
+            for (i in v1.indices) {
+                val a = v1[i]
+                val b = v2[i]
+                if (!a.isFinite() || !b.isFinite()) return 0f
+                val da = a.toDouble()
+                val db = b.toDouble()
+                dot += da * db
+                norm1 += da * da
+                norm2 += db * db
+            }
+            if (norm1 <= 0.0 || norm2 <= 0.0) return 0f
+            val denom = sqrt(norm1) * sqrt(norm2)
+            if (!denom.isFinite() || denom <= 0.0) return 0f
+            val sim = dot / denom
+            return if (sim.isFinite()) sim.toFloat().coerceIn(-1f, 1f) else 0f
+        }
+
+        internal fun jaccardStemSimilarity(a: Set<String>, b: Set<String>): Float {
+            if (a.isEmpty() || b.isEmpty()) return 0f
+            var inter = 0
+            val smaller = if (a.size <= b.size) a else b
+            val larger = if (a.size <= b.size) b else a
+            for (tok in smaller) {
+                if (tok in larger) inter++
+            }
+            val union = a.size + b.size - inter
+            return if (union > 0) inter.toFloat() / union.toFloat() else 0f
+        }
+
+        /**
+         * Removes near-duplicate auto-extracted facts while always preserving order and user-locked facts.
+         * Never collapses facts belonging to different subjects.
+         */
+        internal fun deduplicateFacts(
+            facts: List<MemoryFactEntity>,
+            threshold: Float = NEAR_DUPLICATE_JACCARD_THRESHOLD
+        ): List<MemoryFactEntity> {
+            if (facts.size <= 1) return facts
+            val kept = ArrayList<MemoryFactEntity>(facts.size)
+            val keptMeta = ArrayList<Triple<String, String, Set<String>>>(facts.size)
+            for (fact in facts) {
+                val raw = "${fact.subject} ${fact.key} ${fact.value}"
+                val normSubj = TurkishTextAnalyzer.normalize(fact.subject)
+                val normFull = TurkishTextAnalyzer.normalize(raw)
+                val stems = TurkishTextAnalyzer.extractStems(raw).toSet()
+                val isDup = !fact.userCorrected && keptMeta.any { (prevSubj, prevFull, prevStems) ->
+                    prevSubj == normSubj && (
+                        prevFull == normFull ||
+                            (stems.size >= 3 && prevStems.size >= 3 && jaccardStemSimilarity(stems, prevStems) >= minOf(threshold, 0.70f))
+                        )
+                }
+                if (!isDup) {
+                    kept.add(fact)
+                    keptMeta.add(Triple(normSubj, normFull, stems))
+                }
+            }
+            return kept
+        }
+
+        internal fun deduplicateEvents(
+            events: List<MemoryEventEntity>,
+            threshold: Float = NEAR_DUPLICATE_JACCARD_THRESHOLD
+        ): List<MemoryEventEntity> {
+            if (events.size <= 1) return events
+            val kept = ArrayList<MemoryEventEntity>(events.size)
+            val keptMeta = ArrayList<Pair<String, Set<String>>>(events.size)
+            for (ev in events) {
+                val searchable = LivingMemoryCodec.toSearchableText(ev.description)
+                val norm = TurkishTextAnalyzer.normalize(searchable)
+                val stems = TurkishTextAnalyzer.extractStems(searchable).toSet()
+                val isDup = keptMeta.any { (prevNorm, prevStems) ->
+                    prevNorm == norm ||
+                        (stems.size >= 3 && prevStems.size >= 3 && jaccardStemSimilarity(stems, prevStems) >= threshold)
+                }
+                if (!isDup) {
+                    kept.add(ev)
+                    keptMeta.add(Pair(norm, stems))
+                }
+            }
+            return kept
+        }
+
+        internal fun deduplicateFragments(
+            fragments: List<MemoryFragmentEntity>,
+            threshold: Float = NEAR_DUPLICATE_JACCARD_THRESHOLD
+        ): List<MemoryFragmentEntity> {
+            if (fragments.size <= 1) return fragments
+            val kept = ArrayList<MemoryFragmentEntity>(fragments.size)
+            val keptMeta = ArrayList<Pair<String, Set<String>>>(fragments.size)
+            for (frag in fragments) {
+                val norm = TurkishTextAnalyzer.normalize(frag.content)
+                val stems = TurkishTextAnalyzer.extractStems(frag.content).toSet()
+                val isDup = keptMeta.any { (prevNorm, prevStems) ->
+                    prevNorm == norm ||
+                        (stems.size >= 3 && prevStems.size >= 3 && jaccardStemSimilarity(stems, prevStems) >= threshold)
+                }
+                if (!isDup) {
+                    kept.add(frag)
+                    keptMeta.add(Pair(norm, stems))
+                }
+            }
+            return kept
+        }
+
+        internal fun parseAiRagDecision(raw: String): Pair<List<String>, List<String>>? {
+            val cleaned = raw
+                .replace(JSON_FENCE_REGEX, "")
+                .replace("```", "")
+                .trim()
+            val start = cleaned.indexOf('{')
+            val end = cleaned.lastIndexOf('}')
+            if (start < 0 || end <= start) return null
+            return try {
+                val obj = JSONObject(cleaned.substring(start, end + 1))
+                val pickArr = obj.optJSONArray("pick")
+                val picks = LinkedHashSet<String>()
+                if (pickArr != null) {
+                    for (i in 0 until pickArr.length()) {
+                        val id = pickArr.optString(i).trim().uppercase(Locale.ROOT)
+                        if (id.isNotBlank()) picks.add(id)
+                    }
+                }
+                val missArr = obj.optJSONArray("miss_queries")
+                val misses = mutableListOf<String>()
+                val seenMissNorms = HashSet<String>()
+                if (missArr != null) {
+                    for (i in 0 until missArr.length()) {
+                        val q = missArr.optString(i).trim()
+                        val normQ = TurkishTextAnalyzer.normalize(q)
+                        if (q.length >= 2 && normQ.isNotBlank() && seenMissNorms.add(normQ)) {
+                            misses.add(q)
+                        }
+                    }
+                }
+                Pair(picks.toList(), misses)
+            } catch (_: Exception) {
+                null
+            }
+        }
+    }
+
     val vectorCache = MemoryVectorCache(maxBots = 5)
 
     private val _lastRouteMode = MutableStateFlow(MemoryEngine.RagRouteMode.HYBRID_FAST)
@@ -154,6 +319,7 @@ class MemoryRetrievalManager(
 
     fun clearAllCaches() {
         vectorCache.clearAll()
+        botRouteModes.clear()
     }
 
     fun floatArrayToJson(arr: FloatArray): String =
@@ -163,7 +329,7 @@ class MemoryRetrievalManager(
         MemoryEngine.parseEmbeddingFromJson(str) ?: FloatArray(0)
 
     fun cosineSimilarity(v1: FloatArray, v2: FloatArray): Float =
-        MemoryEngine.cosineSimilarity(v1, v2)
+        safeCosineSimilarity(v1, v2)
 
     suspend fun computeEmbedding(text: String, apiKey: String? = null): FloatArray = withContext(Dispatchers.IO) {
         val cleanText = text.trim()
@@ -183,9 +349,11 @@ class MemoryRetrievalManager(
                     request = req
                 )
                 val values = resp.embedding?.values
-                if (values != null && values.isNotEmpty()) {
+                if (values != null && values.isNotEmpty() && values.all { it.isFinite() }) {
                     return@withContext values.toFloatArray()
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 // Seamless fallback to 256-dim Turkish signed feature hashing
             }
@@ -210,6 +378,8 @@ class MemoryRetrievalManager(
                         vectorCache.invalidate(botId)
                     }
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {}
         }
     }
@@ -224,6 +394,8 @@ class MemoryRetrievalManager(
                     memoryEventDao.updateEvent(active.copy(embedding = floatArrayToJson(remoteVec)))
                     vectorCache.invalidate(botId)
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {}
         }
     }
@@ -242,10 +414,34 @@ class MemoryRetrievalManager(
     suspend fun getOrBuildBotIndex(botId: String): BotMemoryIndex = withContext(Dispatchers.IO) {
         vectorCache.get(botId)?.let { return@withContext it }
 
-        val allFacts = try { memoryFactDao.getActiveFacts(botId) } catch (_: Exception) { emptyList() }
-        val allEvents = try { memoryEventDao.getActiveEvents(botId) } catch (_: Exception) { emptyList() }
-        val allCheckpoints = try { memoryCheckpointDao.getCheckpointsForBot(botId) } catch (_: Exception) { emptyList() }
-        val allFragments = try { fragmentDao.getRecentFragments(botId, 400) } catch (_: Exception) { emptyList() }
+        val allFacts = try {
+            memoryFactDao.getActiveFacts(botId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val allEvents = try {
+            memoryEventDao.getActiveEvents(botId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val allCheckpoints = try {
+            memoryCheckpointDao.getCheckpointsForBot(botId)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            emptyList()
+        }
+        val allFragments = try {
+            fragmentDao.getRecentFragments(botId, 400)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            emptyList()
+        }
 
         val indexedFacts = allFacts.map { fact ->
             val raw = "${fact.subject} ${fact.key} ${fact.value}"
@@ -424,8 +620,10 @@ class MemoryRetrievalManager(
 
     private fun recencyBoost(timestampMs: Long, nowMs: Long, halfLifeHours: Double = 96.0): Float {
         if (timestampMs <= 0L || nowMs <= timestampMs) return 1.0f
+        val safeHalfLife = if (halfLifeHours > 0.0 && halfLifeHours.isFinite()) halfLifeHours else 96.0
         val ageHours = (nowMs - timestampMs).toDouble() / 3_600_000.0
-        return exp(-ageHours / halfLifeHours).toFloat().coerceIn(0.05f, 1.0f)
+        val decayed = exp(-ageHours / safeHalfLife).toFloat()
+        return if (decayed.isFinite()) decayed.coerceIn(0.05f, 1.0f) else 0.05f
     }
 
     private sealed class HybridCandidate(
@@ -756,6 +954,8 @@ class MemoryRetrievalManager(
         val resolvedGraphNote: String? = if (graphResolver != null && lastUserMsg.isNotBlank()) {
             try {
                 graphResolver(lastUserMsg)?.trim()?.takeIf { it.isNotBlank() }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 null
             }
@@ -817,7 +1017,13 @@ class MemoryRetrievalManager(
                 index.checkpoints.any { it.remoteVector != null }
             )
         val queryRemoteVec = if (needsRemoteVec && expandedQuery.isNotBlank()) {
-            try { computeEmbedding(expandedQuery, apiKey) } catch (_: Exception) { null }
+            try {
+                computeEmbedding(expandedQuery, apiKey)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                null
+            }
         } else null
 
         // ── STEP 1: 10/10 Local Hybrid RRF Pre-Scan (<12 ms, 0 AI tokens) ────────
@@ -906,6 +1112,8 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
                 withTimeoutOrNull(2500L) {
                     aiSelector(aiSystemPrompt, aiUserPrompt)
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 null
             }
@@ -1011,11 +1219,15 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
         latestTwoCheckpoints.forEach { selectedCheckpoints.putIfAbsent(it.checkpointNumber, it) }
         val orderedCheckpoints = selectedCheckpoints.values.sortedBy { it.checkpointNumber }
 
+        val dedupedFacts = deduplicateFacts(selectedFacts.values.toList())
+        val dedupedEvents = deduplicateEvents(selectedEvents.values.toList())
+        val dedupedFragments = deduplicateFragments(selectedFragments.values.toList())
+
         val packed = MemoryEngine.buildBoundedMemoryBlock(
-            facts = selectedFacts.values.toList(),
-            events = selectedEvents.values.toList(),
+            facts = dedupedFacts,
+            events = dedupedEvents,
             checkpoints = orderedCheckpoints,
-            fragments = selectedFragments.values.toList(),
+            fragments = dedupedFragments,
             maxTokens = dynamicBudget,
             graphResolutionNote = resolvedGraphNote
         )
@@ -1107,39 +1319,10 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
         return combined.values.toList()
     }
 
-    private fun parseAiRagDecision(raw: String): Pair<List<String>, List<String>>? {
-        val cleaned = raw
-            .replace(Regex("""```json\s*""", RegexOption.IGNORE_CASE), "")
-            .replace("```", "")
-            .trim()
-        val start = cleaned.indexOf('{')
-        val end = cleaned.lastIndexOf('}')
-        if (start < 0 || end <= start) return null
-        return try {
-            val obj = JSONObject(cleaned.substring(start, end + 1))
-            val pickArr = obj.optJSONArray("pick")
-            val picks = mutableListOf<String>()
-            if (pickArr != null) {
-                for (i in 0 until pickArr.length()) {
-                    val id = pickArr.optString(i).trim().uppercase(java.util.Locale.ROOT)
-                    if (id.isNotBlank()) picks.add(id)
-                }
-            }
-            val missArr = obj.optJSONArray("miss_queries")
-            val misses = mutableListOf<String>()
-            if (missArr != null) {
-                for (i in 0 until missArr.length()) {
-                    val q = missArr.optString(i).trim()
-                    if (q.length >= 2) misses.add(q)
-                }
-            }
-            Pair(picks, misses)
-        } catch (_: Exception) {
-            null
-        }
-    }
-
     private fun recordRouteMode(botId: String, mode: MemoryEngine.RagRouteMode) {
+        if (botRouteModes.size >= MAX_TRACKED_BOT_ROUTE_MODES && !botRouteModes.containsKey(botId)) {
+            botRouteModes.keys.firstOrNull()?.let { botRouteModes.remove(it) }
+        }
         botRouteModes[botId] = mode
         _lastRouteMode.value = mode
     }
@@ -1177,7 +1360,13 @@ Eğer kullanıcı çok soyut/dolaylı bir konuya değindiyse ve aşağıdaki ada
         memoryEventDao.getActiveEventsFlow(botId)
 
     suspend fun deleteMemoryFact(id: Long, botId: String? = null) = withContext(Dispatchers.IO) {
-        val existing = try { memoryFactDao.getFactById(id) } catch (_: Exception) { null }
+        val existing = try {
+            memoryFactDao.getFactById(id)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            null
+        }
         memoryFactDao.deleteFact(id)
         val resolvedBot = botId ?: existing?.botId
         if (!resolvedBot.isNullOrBlank()) vectorCache.invalidate(resolvedBot) else vectorCache.clearAll()

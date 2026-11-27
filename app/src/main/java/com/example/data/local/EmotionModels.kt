@@ -4,7 +4,14 @@ import com.example.data.repository.TurkishTextAnalyzer
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
-import kotlin.math.roundToInt
+
+private fun JSONObject.optCleanString(key: String, fallback: String = ""): String {
+    if (!has(key) || isNull(key)) return fallback
+    val raw = optString(key, fallback).trim()
+    return if (raw.equals("null", ignoreCase = true)) fallback else raw
+}
+
+private val VALID_ATTACHMENT_STYLES = setOf("secure", "anxious", "avoidant", "fearful_avoidant")
 
 // ==========================================
 // BÖLÜM C: Personality Profile (Big Five + Attachment Style)
@@ -35,13 +42,15 @@ data class PersonalityProfile(
             if (jsonStr.isNullOrBlank()) return DEFAULT
             return try {
                 val json = JSONObject(jsonStr)
+                val rawAttach = json.optCleanString("attachment_style", "secure").lowercase(Locale.ROOT)
+                val safeAttach = if (rawAttach in VALID_ATTACHMENT_STYLES) rawAttach else "secure"
                 PersonalityProfile(
                     openness = json.optInt("openness", 50).coerceIn(0, 100),
                     conscientiousness = json.optInt("conscientiousness", 50).coerceIn(0, 100),
                     extraversion = json.optInt("extraversion", 50).coerceIn(0, 100),
                     agreeableness = json.optInt("agreeableness", 50).coerceIn(0, 100),
                     neuroticism = json.optInt("neuroticism", 50).coerceIn(0, 100),
-                    attachmentStyle = json.optString("attachment_style", "secure")
+                    attachmentStyle = safeAttach
                 )
             } catch (e: Exception) {
                 DEFAULT
@@ -271,31 +280,32 @@ data class SideCharacterEmotionUpdate(
     companion object {
         fun fromJsonObject(json: JSONObject?): SideCharacterEmotionUpdate? {
             if (json == null) return null
-            val name = json.optString("character_name", "").ifBlank {
-                json.optString("name", "").ifBlank {
-                    json.optString("target", "")
+            val name = json.optCleanString("character_name").ifBlank {
+                json.optCleanString("name").ifBlank {
+                    json.optCleanString("target")
                 }
             }
             if (name.isBlank()) return null
-            val mood = json.optString("mood", "nötr")
+            val rawMood = json.optCleanString("mood", "nötr").ifBlank { "nötr" }
+            val mood = com.example.data.repository.EmotionEngine.normalizeTurkishEmotionLabel(rawMood)
             val affDelta = when {
                 json.has("affection_delta") -> json.optInt("affection_delta", 0)
                 json.has("aff_delta") -> json.optInt("aff_delta", 0)
                 json.has("delta") -> json.optInt("delta", 0)
                 json.has("aff") -> json.optInt("aff", 0)
                 else -> 0
-            }
+            }.coerceIn(-25, 25)
             val trustDelta = when {
                 json.has("trust_delta") -> json.optInt("trust_delta", 0)
                 json.has("trust") -> json.optInt("trust", 0)
                 else -> 0
-            }
+            }.coerceIn(-25, 25)
             val tensionDelta = when {
                 json.has("tension_delta") -> json.optInt("tension_delta", 0)
                 json.has("tension") -> json.optInt("tension", 0)
                 else -> 0
-            }
-            val reason = json.optString("reason", "").ifBlank { json.optString("rsn", "") }
+            }.coerceIn(-25, 25)
+            val reason = json.optCleanString("reason").ifBlank { json.optCleanString("rsn") }
             return SideCharacterEmotionUpdate(
                 characterName = name,
                 mood = mood,
@@ -543,14 +553,19 @@ data class CustomEmotionDefinition(
 
     companion object {
         fun fromJsonObject(json: JSONObject): CustomEmotionDefinition {
+            val rawMin = json.optInt("minValue", 0)
+            val rawMax = json.optInt("maxValue", 100)
+            val safeMin = minOf(rawMin, rawMax)
+            val safeMax = maxOf(rawMin, rawMax)
+            val safeCur = json.optInt("currentValue", safeMin).coerceIn(safeMin, safeMax)
             return CustomEmotionDefinition(
-                id = json.optString("id", java.util.UUID.randomUUID().toString()),
-                name = json.optString("name", "Bilinmeyen Duygu"),
-                difficulty = json.optString("difficulty", "Orta"),
-                minValue = json.optInt("minValue", 0),
-                maxValue = json.optInt("maxValue", 100),
-                currentValue = json.optInt("currentValue", 0),
-                purpose = json.optString("purpose", "")
+                id = json.optCleanString("id", java.util.UUID.randomUUID().toString()).ifBlank { java.util.UUID.randomUUID().toString() },
+                name = json.optCleanString("name", "Bilinmeyen Duygu").ifBlank { "Bilinmeyen Duygu" },
+                difficulty = json.optCleanString("difficulty", "Orta").ifBlank { "Orta" },
+                minValue = safeMin,
+                maxValue = safeMax,
+                currentValue = safeCur,
+                purpose = json.optCleanString("purpose", "")
             )
         }
 
@@ -693,16 +708,20 @@ data class EmotionState(
     }
 
     fun getMoodEmoji(): String {
-        val combined = "$dominantEmotion $computedSecondaryEmotion $suppressedEmotion".lowercase().trim()
+        val combined = listOfNotNull(
+            dominantEmotion.takeIf { it.isNotBlank() },
+            computedSecondaryEmotion?.takeIf { it.isNotBlank() },
+            suppressedEmotion.takeIf { it.isNotBlank() }
+        ).joinToString(" ").lowercase(Locale.forLanguageTag("tr-TR")).trim()
         return when {
-            combined.contains("mutlu") || combined.contains("joy") || combined.contains("neşeli") -> "😊"
-            combined.contains("kırgın") || combined.contains("hurt") || combined.contains("sadness") || combined.contains("üzgün") -> "🥺"
+            combined.contains("mutlu") || combined.contains("joy") || combined.contains("neşeli") || combined.contains("umut") -> "😊"
+            combined.contains("kırgın") || combined.contains("hurt") || combined.contains("sadness") || combined.contains("üzgün") || combined.contains("hüzün") -> "🥺"
             combined.contains("öfkeli") || combined.contains("anger") || combined.contains("kızgın") -> "😠"
             combined.contains("koruma") || combined.contains("love") || combined.contains("şefkat") -> "🤗"
-            combined.contains("heyecan") || combined.contains("surprise") -> "🤩"
-            combined.contains("şüphe") || combined.contains("fear") || combined.contains("temkin") -> "🤨"
+            combined.contains("heyecan") || combined.contains("surprise") || combined.contains("şaşkın") -> "🤩"
+            combined.contains("şüphe") || combined.contains("fear") || combined.contains("temkin") || combined.contains("kork") || combined.contains("endişe") -> "🤨"
             combined.contains("romantik") || combined.contains("aşık") -> "🥰"
-            combined.contains("sakin") || combined.contains("neutral") -> "😌"
+            combined.contains("sakin") || combined.contains("neutral") || combined.contains("nötr") -> "😌"
             else -> "🙂"
         }
     }
@@ -722,8 +741,8 @@ data class EmotionState(
                     PrimaryEmotions.fromJsonObject(primObj)
                 } else {
                     PrimaryEmotions(
-                        trust = json.optInt("trust", 50),
-                        anger = json.optInt("hurt", 0)
+                        trust = json.optInt("trust", 50).coerceIn(0, 100),
+                        anger = json.optInt("hurt", 0).coerceIn(0, 100)
                     )
                 }
 
@@ -731,15 +750,23 @@ data class EmotionState(
                     RelationshipAxes.fromJsonObject(relObj)
                 } else {
                     RelationshipAxes(
-                        affectionScore = json.optInt("affection", 50),
+                        affectionScore = json.optInt("affection", 50).coerceIn(0, 100),
                         respectScore = 50,
                         comfortScore = 50,
-                        resentmentScore = json.optInt("hurt", 0)
+                        resentmentScore = json.optInt("hurt", 0).coerceIn(0, 100)
                     )
                 }
 
                 val deltaObj = json.optJSONObject("delta")
                 val ctxObj = deltaObj?.optJSONObject("context")
+
+                val domRaw = json.optCleanString("dominant_emotion").ifBlank {
+                    json.optCleanString("mood", "nötr").ifBlank { "nötr" }
+                }
+                val suppRaw = json.optCleanString("suppressed_emotion").ifBlank {
+                    json.optCleanString("suppressedEmotion", "")
+                }
+                val secRaw = json.optCleanString("computed_secondary_emotion").takeIf { it.isNotBlank() }
 
                 EmotionState(
                     primaryEmotions = primary,
@@ -747,28 +774,28 @@ data class EmotionState(
                     physicalComfortScore = json.optInt("physicalComfortScore", 30).coerceIn(0, 100),
                     obsessionScore = json.optInt("obsessionScore", json.optInt("obsession", 0)).coerceIn(0, 100),
                     emotionalResidue = json.optInt("emotionalResidue", 0).coerceIn(0, 100),
-                    dominantEmotion = json.optString("dominant_emotion", json.optString("mood", "nötr")),
-                    suppressedEmotion = json.optString("suppressed_emotion", json.optString("suppressedEmotion", "")),
-                    computedSecondaryEmotion = if (json.isNull("computed_secondary_emotion")) null else json.optString("computed_secondary_emotion"),
-                    defenseMechanism = json.optString("defense_mechanism", "none"),
-                    deltaAxis = deltaObj?.optString("axis", "affectionScore") ?: "affectionScore",
+                    dominantEmotion = domRaw,
+                    suppressedEmotion = suppRaw,
+                    computedSecondaryEmotion = secRaw,
+                    defenseMechanism = json.optCleanString("defense_mechanism", "none").ifBlank { "none" },
+                    deltaAxis = deltaObj?.optCleanString("axis", "affectionScore")?.ifBlank { "affectionScore" } ?: "affectionScore",
                     deltaValue = deltaObj?.optInt("value", 0) ?: 0,
-                    deltaReason = deltaObj?.optString("reason", "") ?: "",
-                    setting = ctxObj?.optString("setting", "private") ?: "private",
-                    mode = ctxObj?.optString("mode", "casual") ?: "casual",
-                    tension = ctxObj?.optString("tension", "none") ?: "none",
+                    deltaReason = deltaObj?.optCleanString("reason", "") ?: "",
+                    setting = ctxObj?.optCleanString("setting", "private")?.ifBlank { "private" } ?: "private",
+                    mode = ctxObj?.optCleanString("mode", "casual")?.ifBlank { "casual" } ?: "casual",
+                    tension = ctxObj?.optCleanString("tension", "none")?.ifBlank { "none" } ?: "none",
                     schemaVersion = json.optInt("schemaVersion", 3),
-                    highAffectionStreak = json.optInt("highAffectionStreak", 0),
-                    consecutivePositiveCount = json.optInt("consecutivePositiveCount", 0),
+                    highAffectionStreak = json.optInt("highAffectionStreak", 0).coerceAtLeast(0),
+                    consecutivePositiveCount = json.optInt("consecutivePositiveCount", 0).coerceAtLeast(0),
                     dailyAffectionGain = json.optInt("dailyAffectionGain", 0),
-                    lastGainResetDate = json.optString("lastGainResetDate", ""),
-                    peakAffectionScore = json.optInt("peakAffectionScore", 0),
-                    recoveryLockUntilMessageCount = json.optInt("recoveryLockUntilMessageCount", 0),
-                    userToneHistoryJson = json.optString("userToneHistoryJson", "[]"),
+                    lastGainResetDate = json.optCleanString("lastGainResetDate", ""),
+                    peakAffectionScore = json.optInt("peakAffectionScore", 0).coerceIn(0, 100),
+                    recoveryLockUntilMessageCount = json.optInt("recoveryLockUntilMessageCount", 0).coerceAtLeast(0),
+                    userToneHistoryJson = json.optCleanString("userToneHistoryJson", "[]").ifBlank { "[]" },
                     userInconsistencyFlag = json.optBoolean("userInconsistencyFlag", false),
-                    resilience = json.optInt("resilience", 5),
-                    speechPattern = json.optString("speechPattern", ""),
-                    customEmotionsJson = json.optString("customEmotionsJson", "[]")
+                    resilience = json.optInt("resilience", 5).coerceIn(1, 10),
+                    speechPattern = json.optCleanString("speechPattern", ""),
+                    customEmotionsJson = json.optCleanString("customEmotionsJson", "[]").ifBlank { "[]" }
                 )
             } catch (e: Exception) {
                 DEFAULT

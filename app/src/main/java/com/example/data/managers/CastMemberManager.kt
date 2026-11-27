@@ -11,6 +11,7 @@ import com.example.data.local.PersonalityProfile
 import com.example.data.repository.CastDetectorEngine
 import com.example.data.repository.EmochiRepository
 import com.example.data.repository.KeyCharacter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -24,13 +25,74 @@ class CastMemberManager(
     private val emotionDao: CharacterEmotionDao,
     private val botDao: BotDao
 ) {
-    private val turkishLocale = Locale.forLanguageTag("tr-TR")
+    companion object {
+        private val TURKISH_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
+        private val BRACKET_REGEX = Regex("""\[.*?\]""")
+        private val PAREN_REGEX = Regex("""\(.*?\)""")
+        private val QUOTE_PUNCT_REGEX = Regex("""["'«»“”‘’*`_~]""")
+        private val WHITESPACE_SPLIT_REGEX = Regex("""\s+""")
+        private val CAST_TAG_REGEX = Regex("""\[CAST_MEMBER:\s*([^|\]]+?)(?:\s*\|\s*([^\]]+))?\]""", RegexOption.IGNORE_CASE)
+        private val YEAR_REGEX = Regex("""\b(19\d{2}|20\d{2}|21\d{2})\b""")
+
+        /**
+         * Canonical Turkish-locale comparison key (safely folds İ/i and I/ı and stray combining dots).
+         */
+        fun turkishNameKey(raw: String): String {
+            return raw.trim()
+                .lowercase(TURKISH_LOCALE)
+                .replace('\u0307', ' ')
+                .replace(WHITESPACE_SPLIT_REGEX, " ")
+                .trim()
+        }
+
+        fun sanitizeAffectionScore(score: Int, delta: Int = 0): Int =
+            (score + delta.coerceIn(-15, 15)).coerceIn(0, 100)
+
+        /**
+         * Pure UTC month/day-aware birthday age calculator (falls back to 4-digit year difference).
+         * Returns null when inputs are invalid or birthDate is after currentDate.
+         */
+        fun computeExactAge(birthDateStr: String, currentDateStr: String): Int? {
+            if (birthDateStr.isBlank() || currentDateStr.isBlank()) return null
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
+            }
+            val currentFullDate = try {
+                val iso = currentDateStr.trim().take(10)
+                if (iso.length == 10) sdf.parse(iso) else null
+            } catch (_: Exception) {
+                null
+            }
+            val birthFullDate = try {
+                val iso = birthDateStr.trim().take(10)
+                if (iso.length == 10) sdf.parse(iso) else null
+            } catch (_: Exception) {
+                null
+            }
+            if (currentFullDate != null && birthFullDate != null) {
+                if (birthFullDate.after(currentFullDate)) return null
+                val calCur = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = currentFullDate }
+                val calBirth = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = birthFullDate }
+                var age = calCur.get(Calendar.YEAR) - calBirth.get(Calendar.YEAR)
+                val curMd = calCur.get(Calendar.MONTH) * 100 + calCur.get(Calendar.DAY_OF_MONTH)
+                val birthMd = calBirth.get(Calendar.MONTH) * 100 + calBirth.get(Calendar.DAY_OF_MONTH)
+                if (curMd < birthMd) age--
+                return if (age >= 0) age.coerceIn(1, 150) else null
+            }
+            val currentYear = YEAR_REGEX.find(currentDateStr)?.value?.toIntOrNull() ?: return null
+            val birthYear = YEAR_REGEX.find(birthDateStr)?.value?.toIntOrNull() ?: return null
+            return if (currentYear >= birthYear) (currentYear - birthYear).coerceIn(1, 150) else null
+        }
+    }
+
+    private val turkishLocale: Locale get() = TURKISH_LOCALE
 
     fun cleanCharacterNameCandidate(raw: String): String {
         val cleaned = raw
-            .replace(Regex("""\[.*?\]"""), "")
-            .replace(Regex("""\(.*?\)"""), "")
-            .replace(Regex("""["'«»“”‘’*`_~]"""), "")
+            .replace(BRACKET_REGEX, "")
+            .replace(PAREN_REGEX, "")
+            .replace(QUOTE_PUNCT_REGEX, "")
             .trim()
         val firstPart = cleaned.split(":", "-", "—", "|", "/").firstOrNull()?.trim() ?: cleaned
         return firstPart.take(45).trim()
@@ -66,10 +128,21 @@ class CastMemberManager(
         val cleanName = cleanCharacterNameCandidate(keyChar.name)
         if (cleanName.length < 2) return@withContext
 
-        val blacklisted = castMemberDao.getBlacklistedNamesForBot(botId).map { it.lowercase(turkishLocale) }
-        if (blacklisted.contains(cleanName.lowercase(turkishLocale))) return@withContext
+        val blacklistedTokens = getBlacklistedAliasTokensForBot(botId)
+        val cleanKey = turkishNameKey(CastDetectorEngine.normalizeTurkishEntityName(cleanName))
+        if (blacklistedTokens.contains(cleanKey) ||
+            blacklistedTokens.contains(turkishNameKey(cleanName)) ||
+            blacklistedTokens.any { bl -> CastDetectorEngine.isLikelyAlias(cleanName, bl) }
+        ) {
+            return@withContext
+        }
 
+        val allExisting = castMemberDao.getCastMembersForBot(botId)
         val existing = castMemberDao.findByName(botId, cleanName)
+            ?: allExisting.firstOrNull { member ->
+                turkishNameKey(member.name) == turkishNameKey(cleanName) ||
+                    CastDetectorEngine.matchesMemberOrAlias(cleanName, listOf(keyChar.name), member)
+            }
         val baseMult = EmochiRepository.calculateCastMemberDifficultyMultiplier(
             role = keyChar.desc.ifBlank { "Anahtar Karakter" },
             characterName = cleanName,
@@ -94,7 +167,7 @@ class CastMemberManager(
                     personalityJson = personalityJson
                 )
             )
-        } else if (existing.description.isBlank() && keyChar.desc.isNotBlank()) {
+        } else if (!existing.isBlacklisted && existing.description.isBlank() && keyChar.desc.isNotBlank()) {
             castMemberDao.updateCastMember(
                 existing.copy(
                     description = keyChar.desc,
@@ -108,26 +181,30 @@ class CastMemberManager(
     suspend fun getBlacklistedAliasTokensForBot(botId: String): Set<String> = withContext(Dispatchers.IO) {
         val blacklistedRows = try {
             castMemberDao.getBlacklistedCastMembersForBot(botId)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptyList()
         }
         val namesFromQuery = try {
             castMemberDao.getBlacklistedNamesForBot(botId)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptyList()
         }
         buildSet {
             namesFromQuery.forEach { n ->
-                val norm = CastDetectorEngine.normalizeTurkishEntityName(n).lowercase(turkishLocale)
+                val norm = turkishNameKey(CastDetectorEngine.normalizeTurkishEntityName(n))
                 if (norm.isNotBlank()) add(norm)
-                val raw = n.trim().lowercase(turkishLocale)
+                val raw = turkishNameKey(n)
                 if (raw.isNotBlank()) add(raw)
             }
             blacklistedRows.forEach { row ->
-                val norm = CastDetectorEngine.normalizeTurkishEntityName(row.name).lowercase(turkishLocale)
+                val norm = turkishNameKey(CastDetectorEngine.normalizeTurkishEntityName(row.name))
                 if (norm.isNotBlank()) add(norm)
                 CastDetectorEngine.extractStoredAliases(row.multiRoleJson).forEach { alias ->
-                    val alNorm = CastDetectorEngine.normalizeTurkishEntityName(alias).lowercase(turkishLocale)
+                    val alNorm = turkishNameKey(CastDetectorEngine.normalizeTurkishEntityName(alias))
                     if (alNorm.isNotBlank()) add(alNorm)
                 }
             }
@@ -176,11 +253,13 @@ class CastMemberManager(
         }
         if (isBlacklistedCandidate) return@withContext
 
-        // Alias-aware lookup: "Doktor Elif" <-> "Elif", stored aliases in multiRoleJson, Turkish normalized names
+        // Alias-aware lookup: "Doktor Elif" <-> "Elif", Turkish İ/ı case fold, stored aliases in multiRoleJson
         val allExisting = castMemberDao.getCastMembersForBot(botId)
+        val cleanKey = turkishNameKey(cleanName)
         val existing = castMemberDao.findByName(botId, cleanName)
             ?: allExisting.firstOrNull { member ->
-                CastDetectorEngine.matchesMemberOrAlias(cleanName, aliases + rawClean, member)
+                turkishNameKey(member.name) == cleanKey ||
+                    CastDetectorEngine.matchesMemberOrAlias(cleanName, aliases + rawClean, member)
             }
 
         val candidateScore = CastDetectorEngine.scoreCandidate(
@@ -205,7 +284,7 @@ class CastMemberManager(
 
         val aliasesToPersist = buildList {
             addAll(aliases)
-            if (rawClean.isNotBlank() && !rawClean.equals(cleanName, ignoreCase = true)) {
+            if (rawClean.isNotBlank() && turkishNameKey(rawClean) != cleanKey) {
                 add(rawClean)
             }
         }
@@ -217,9 +296,10 @@ class CastMemberManager(
             }
         }.take(240)
 
+        var canonicalForEmotion = cleanName
         if (existing == null) {
             if (confidence == null && !candidateScore.isSignificant && effectiveConfidence < 45) return@withContext
-            val initialAffection = (50 + affectionDelta.coerceIn(-15, 15)).coerceIn(0, 100)
+            val initialAffection = sanitizeAffectionScore(50, affectionDelta)
             val resolvedPending = pendingConfirmation ?: (effectiveConfidence in 50..70)
             val initialImportance = when {
                 effectiveConfidence >= 85 -> 75
@@ -255,22 +335,23 @@ class CastMemberManager(
             )
         } else if (!existing.isBlacklisted) {
             val newCount = existing.appearanceCount + 1
-            val updatedAffection = (existing.affectionScore + affectionDelta.coerceIn(-15, 15)).coerceIn(0, 100)
+            val updatedAffection = sanitizeAffectionScore(existing.affectionScore, affectionDelta)
             val promotedImportance = when {
                 newCount >= 6 -> maxOf(existing.importanceScore, 90)
                 newCount >= 3 -> maxOf(existing.importanceScore, 80)
                 else -> maxOf(existing.importanceScore, 60)
-            }
+            }.coerceIn(0, 100)
             // Canonical full-name promotion: if an auto-added card was "Natasha" and now "Natasha Romanoff"
             // appears as a strict superset alias, promote the canonical name & keep "Natasha" as alias!
-            val existingTokens = existing.name.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
-            val newTokens = cleanName.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
+            val existingTokens = existing.name.trim().split(WHITESPACE_SPLIT_REGEX).filter { it.isNotBlank() }
+            val newTokens = cleanName.trim().split(WHITESPACE_SPLIT_REGEX).filter { it.isNotBlank() }
             val shouldPromoteFullName = existing.isAutoAdded &&
                 newTokens.size in 2..3 &&
                 newTokens.size > existingTokens.size &&
                 CastDetectorEngine.isLikelyAlias(existing.name, cleanName) &&
-                allExisting.none { it.id != existing.id && it.name.equals(cleanName, ignoreCase = true) }
+                allExisting.none { it.id != existing.id && turkishNameKey(it.name) == cleanKey }
             val finalCanonicalName = if (shouldPromoteFullName) cleanName else existing.name
+            canonicalForEmotion = finalCanonicalName
             val combinedAliases = buildList {
                 addAll(aliasesToPersist)
                 if (shouldPromoteFullName) add(existing.name)
@@ -316,17 +397,10 @@ class CastMemberManager(
                     emotionDao.deleteByCharacterName(botId, existing.name)
                 }
             }
+        } else {
+            return@withContext
         }
 
-        val canonicalForEmotion = if (existing != null && !existing.isBlacklisted) {
-            val existingTokens = existing.name.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
-            val newTokens = cleanName.trim().split(Regex("""\s+""")).filter { it.isNotBlank() }
-            if (existing.isAutoAdded && newTokens.size in 2..3 && newTokens.size > existingTokens.size &&
-                CastDetectorEngine.isLikelyAlias(existing.name, cleanName)
-            ) cleanName else existing.name
-        } else {
-            existing?.name ?: cleanName
-        }
         val existingEmotion = emotionDao.getEmotionForCharacter(botId, canonicalForEmotion)
         if (existingEmotion == null) {
             val baseState = EmotionState.calculateBaselineEmotionState(
@@ -398,8 +472,7 @@ class CastMemberManager(
         val handledNames = mutableSetOf<String>()
 
         // 1) Explicit [CAST_MEMBER: Name | Role] tag (high confidence, auto-confirmed)
-        val tagRegex = Regex("""\[CAST_MEMBER:\s*([^|\]]+?)(?:\s*\|\s*([^\]]+))?\]""", RegexOption.IGNORE_CASE)
-        for (match in tagRegex.findAll(aiReplyText)) {
+        for (match in CAST_TAG_REGEX.findAll(aiReplyText)) {
             val name = CastDetectorEngine.normalizeTurkishEntityName(cleanCharacterNameCandidate(match.groupValues[1]))
             val role = match.groupValues.getOrNull(2)?.trim().orEmpty().ifBlank { "Yan Karakter" }
             if (name.length < 2) continue
@@ -484,7 +557,7 @@ class CastMemberManager(
             }
 
             // Periodic 30-message relationship evolution (e.g., Yabancı with affection >= 80 -> Yakın Dost, 1.3)
-            if (isPeriodicDue && member.role.equals("Yabancı", ignoreCase = true) && member.affectionScore >= 80) {
+            if (isPeriodicDue && turkishNameKey(member.role) == turkishNameKey("Yabancı") && member.affectionScore >= 80) {
                 castMemberDao.updateCastMember(
                     member.copy(
                         role = "Yakın Dost",
@@ -565,6 +638,9 @@ class CastMemberManager(
         castMemberDao.blacklistCastMember(castMemberId)
         if (member != null) {
             emotionDao.deleteByCharacterName(botId, member.name)
+            CastDetectorEngine.extractStoredAliases(member.multiRoleJson).forEach { alias ->
+                if (alias.isNotBlank()) emotionDao.deleteByCharacterName(botId, alias)
+            }
         }
     }
 
@@ -573,12 +649,22 @@ class CastMemberManager(
         castMemberDao.deleteCastMember(castMemberId)
         if (member != null) {
             emotionDao.deleteByCharacterName(botId, member.name)
+            CastDetectorEngine.extractStoredAliases(member.multiRoleJson).forEach { alias ->
+                if (alias.isNotBlank()) emotionDao.deleteByCharacterName(botId, alias)
+            }
         }
     }
 
     suspend fun deleteCharacterAndBlacklist(botId: String, characterName: String) = withContext(Dispatchers.IO) {
         val cleanName = cleanCharacterNameCandidate(characterName)
-        val existing = castMemberDao.findByName(botId, cleanName) ?: castMemberDao.findByName(botId, characterName)
+        if (cleanName.isBlank() && characterName.isBlank()) return@withContext
+        val cleanKey = turkishNameKey(cleanName)
+        val existing = castMemberDao.findByName(botId, cleanName)
+            ?: castMemberDao.findByName(botId, characterName)
+            ?: castMemberDao.getCastMembersForBot(botId).firstOrNull { member ->
+                (cleanKey.isNotBlank() && turkishNameKey(member.name) == cleanKey) ||
+                    (cleanName.length >= 2 && CastDetectorEngine.matchesMemberOrAlias(cleanName, listOf(characterName), member))
+            }
         if (existing != null) {
             castMemberDao.updateCastMember(
                 existing.copy(
@@ -586,6 +672,10 @@ class CastMemberManager(
                     pendingUserConfirmation = false
                 )
             )
+            emotionDao.deleteByCharacterName(botId, existing.name)
+            CastDetectorEngine.extractStoredAliases(existing.multiRoleJson).forEach { alias ->
+                if (alias.isNotBlank()) emotionDao.deleteByCharacterName(botId, alias)
+            }
         } else if (cleanName.isNotBlank()) {
             castMemberDao.insertCastMember(
                 CastMemberEntity(
@@ -598,8 +688,10 @@ class CastMemberManager(
                 )
             )
         }
-        emotionDao.deleteByCharacterName(botId, characterName)
-        if (cleanName != characterName) {
+        if (characterName.isNotBlank()) {
+            emotionDao.deleteByCharacterName(botId, characterName)
+        }
+        if (cleanName.isNotBlank() && cleanName != characterName) {
             emotionDao.deleteByCharacterName(botId, cleanName)
         }
     }
@@ -609,40 +701,11 @@ class CastMemberManager(
      * Falls back to year-only difference only when full yyyy-MM-dd is unavailable.
      */
     suspend fun updateCastMembersAgeForBot(botId: String, currentStoryCalendarDateStr: String) = withContext(Dispatchers.IO) {
-        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
-            timeZone = TimeZone.getTimeZone("UTC")
-            isLenient = false
-        }
-        val currentFullDate = try {
-            val iso = currentStoryCalendarDateStr.trim().take(10)
-            if (iso.length == 10) sdf.parse(iso) else null
-        } catch (_: Exception) {
-            null
-        }
-        val currentYear = Regex("""\b(19\d{2}|20\d{2}|21\d{2})\b""").find(currentStoryCalendarDateStr)?.value?.toIntOrNull()
-            ?: return@withContext
-
+        if (currentStoryCalendarDateStr.isBlank()) return@withContext
         val members = castMemberDao.getCastMembersForBot(botId)
         for (member in members) {
             if (member.birthDate.isBlank()) continue
-            val birthFullDate = try {
-                val iso = member.birthDate.trim().take(10)
-                if (iso.length == 10) sdf.parse(iso) else null
-            } catch (_: Exception) {
-                null
-            }
-            val computedAge: Int? = if (currentFullDate != null && birthFullDate != null) {
-                val calCur = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = currentFullDate }
-                val calBirth = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { time = birthFullDate }
-                var age = calCur.get(Calendar.YEAR) - calBirth.get(Calendar.YEAR)
-                val curMd = calCur.get(Calendar.MONTH) * 100 + calCur.get(Calendar.DAY_OF_MONTH)
-                val birthMd = calBirth.get(Calendar.MONTH) * 100 + calBirth.get(Calendar.DAY_OF_MONTH)
-                if (curMd < birthMd) age--
-                age.coerceIn(1, 150)
-            } else {
-                val birthYear = Regex("""\b(19\d{2}|20\d{2}|21\d{2})\b""").find(member.birthDate)?.value?.toIntOrNull()
-                if (birthYear != null && currentYear >= birthYear) (currentYear - birthYear).coerceIn(1, 150) else null
-            }
+            val computedAge = computeExactAge(member.birthDate, currentStoryCalendarDateStr)
             if (computedAge != null && computedAge != member.currentAge) {
                 castMemberDao.updateCastMember(member.copy(currentAge = computedAge))
             }
@@ -657,9 +720,9 @@ class CastMemberManager(
 
     /**
      * Audits and self-heals a bot's auto-added cast roster:
-     * 1. Removes auto-added false positives (generic extras, places, buildings, organizations, English non-names).
-     * 2. Merges duplicate alias cards (e.g. "Natasha" + "Natasha Romanoff") into the fuller canonical card.
-     * 3. Normalizes any leaked English role/secondaryRole labels into crisp Turkish.
+     * 1. Removes auto-added false positives (generic extras, places, buildings, organizations, English non-names, corrupt names).
+     * 2. Merges duplicate alias & Turkish case-colliding cards (e.g. "Natasha" + "Natasha Romanoff", "İrem" + "irem").
+     * 3. Normalizes any leaked English role/secondaryRole labels into crisp Turkish and clamps scores.
      */
     suspend fun auditAndCleanCastForBot(botId: String): CastCleanupReport = withContext(Dispatchers.IO) {
         val all = castMemberDao.getCastMembersForBot(botId).filter { !it.isBlacklisted }
@@ -673,14 +736,17 @@ class CastMemberManager(
         // Prioritize manual cards & fuller names & higher appearance counts
         val ordered = all.sortedWith(
             compareBy<CastMemberEntity> { it.isAutoAdded }
-                .thenByDescending { it.name.trim().split(Regex("""\s+""")).size }
+                .thenByDescending { it.name.trim().split(WHITESPACE_SPLIT_REGEX).size }
                 .thenByDescending { it.appearanceCount }
                 .thenByDescending { it.importanceScore }
         )
 
         for (member in ordered) {
+            val cleanedName = cleanCharacterNameCandidate(member.name)
             if (member.isAutoAdded && (
-                CastDetectorEngine.isGenericBackgroundExtra(member.name, member.role) ||
+                cleanedName.length < 2 ||
+                    cleanedName.count { it.isLetter() } < 2 ||
+                    CastDetectorEngine.isGenericBackgroundExtra(member.name, member.role) ||
                     CastDetectorEngine.isNonPersonPlaceOrOrganization(member.name)
                 )
             ) {
@@ -690,12 +756,14 @@ class CastMemberManager(
                 continue
             }
 
+            val memberKey = turkishNameKey(member.name)
             val existingMatchIdx = survivors.indexOfFirst { kept ->
-                CastDetectorEngine.matchesMemberOrAlias(
-                    candidateName = member.name,
-                    candidateAliases = CastDetectorEngine.extractStoredAliases(member.multiRoleJson),
-                    member = kept
-                )
+                turkishNameKey(kept.name) == memberKey ||
+                    CastDetectorEngine.matchesMemberOrAlias(
+                        candidateName = member.name,
+                        candidateAliases = CastDetectorEngine.extractStoredAliases(member.multiRoleJson),
+                        member = kept
+                    )
             }
             if (existingMatchIdx >= 0 && member.isAutoAdded) {
                 val kept = survivors[existingMatchIdx]
@@ -706,7 +774,8 @@ class CastMemberManager(
                 )
                 val upgradedKept = kept.copy(
                     appearanceCount = kept.appearanceCount + member.appearanceCount,
-                    importanceScore = maxOf(kept.importanceScore, member.importanceScore),
+                    importanceScore = maxOf(kept.importanceScore, member.importanceScore).coerceIn(0, 100),
+                    affectionScore = kept.affectionScore.coerceIn(0, 100),
                     description = kept.description.ifBlank { member.description },
                     secondaryRole = kept.secondaryRole.ifBlank { member.secondaryRole },
                     multiRoleJson = mergedAliases
@@ -721,11 +790,24 @@ class CastMemberManager(
 
             val cleanRole = CastDetectorEngine.normalizeTurkishCastRole(member.role)
             val cleanSecondary = CastDetectorEngine.normalizeTurkishCastRelation(member.secondaryRole)
-            if (cleanRole != member.role || cleanSecondary != member.secondaryRole) {
-                val updated = member.copy(role = cleanRole, secondaryRole = cleanSecondary)
+            val clampedAffection = member.affectionScore.coerceIn(0, 100)
+            val clampedImportance = member.importanceScore.coerceIn(0, 100)
+            if (cleanRole != member.role ||
+                cleanSecondary != member.secondaryRole ||
+                clampedAffection != member.affectionScore ||
+                clampedImportance != member.importanceScore
+            ) {
+                val updated = member.copy(
+                    role = cleanRole,
+                    secondaryRole = cleanSecondary,
+                    affectionScore = clampedAffection,
+                    importanceScore = clampedImportance
+                )
                 castMemberDao.updateCastMember(updated)
                 survivors.add(updated)
-                normalizedRoles++
+                if (cleanRole != member.role || cleanSecondary != member.secondaryRole) {
+                    normalizedRoles++
+                }
             } else {
                 survivors.add(member)
             }

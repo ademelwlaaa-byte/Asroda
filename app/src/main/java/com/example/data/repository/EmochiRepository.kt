@@ -200,17 +200,17 @@ object ContextMultiplierConfig {
     var crisisTensionMultiplier: Double = 0.0
 
     fun getSettingMultiplier(setting: String): Double {
-        val s = setting.lowercase().trim()
+        val s = setting.lowercase(java.util.Locale.ROOT).trim()
         return if (s.contains("public") || s == "pub" || s == "p_pub") publicSettingMultiplier else privateSettingMultiplier
     }
 
     fun getModeMultiplier(mode: String): Double {
-        val m = mode.lowercase().trim()
+        val m = mode.lowercase(java.util.Locale.ROOT).trim()
         return if (m.contains("formal") || m == "form" || m == "f") formalModeMultiplier else casualModeMultiplier
     }
 
     fun getTensionMultiplier(tension: String): Double {
-        val t = tension.lowercase().trim()
+        val t = tension.lowercase(java.util.Locale.ROOT).trim()
         return when {
             t.contains("crisis") || t == "cris" || t == "cr" -> crisisTensionMultiplier
             t.contains("conflict") || t == "conf" || t == "c" -> conflictTensionMultiplier
@@ -3372,7 +3372,7 @@ class EmochiRepository(
         archive: ArchivedMemoryEntity
     ): Boolean = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        when (archive.memoryType.lowercase()) {
+        when (archive.memoryType.lowercase(java.util.Locale.ROOT)) {
             "fact" -> {
                 val original = try { memoryFactDao.getFactById(archive.originalMemoryId) } catch (_: Exception) { null }
                 if (original != null && original.botId == botId) {
@@ -4014,7 +4014,7 @@ $aiChar: ${latestAiReply.take(850)}
             val limit = minOf(opsArr.length(), 6)
             for (i in 0 until limit) {
                 val opObj = opsArr.optJSONObject(i) ?: continue
-                when (opObj.optString("op", "").lowercase().trim()) {
+                when (opObj.optString("op", "").lowercase(java.util.Locale.ROOT).trim()) {
                     "add", "save", "insert" -> {
                         val subj = opObj.optString("subject", "").trim().ifBlank { userChar }
                         val k = opObj.optString("key", "").trim()
@@ -4574,12 +4574,15 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
         }
         if (slice.isEmpty()) return@withContext null
 
-        val transcript = slice.takeLast(24).joinToString("\n") { m ->
-            val who = if (m.role == "user") "Kullanıcı" else "Karakter"
-            "$who: ${m.text.replace('\n', ' ').trim().take(160)}"
-        }
+        val transcript = slice.takeLast(24).mapNotNull { m ->
+            val cleanMsg = cleanEmotionTags(m.text).replace('\n', ' ').trim()
+            if (cleanMsg.isBlank()) null else {
+                val who = if (m.role == "user") "Kullanıcı" else "Karakter"
+                "$who: ${cleanMsg.take(160)}"
+            }
+        }.joinToString("\n")
 
-        val settings = try { getOrCreateSettings() } catch (_: Exception) { null }
+        val settings = try { getOrCreateSettings() } catch (ce: kotlinx.coroutines.CancellationException) { throw ce } catch (_: Exception) { null }
         val hasAnyKey = settings != null && (
             settings.customApiKey.isNotBlank() ||
                 settings.groqApiKey.isNotBlank() ||
@@ -4591,16 +4594,20 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
                 settings.selectedProvider.startsWith("custom_")
             )
 
-        val aiSummary = if (settings != null && hasAnyKey) {
+        val aiSummary = if (settings != null && hasAnyKey && transcript.isNotBlank()) {
             try {
-                callUtilityLlm(
-                    settings = settings,
-                    systemPrompt = "Sen kısa sahne özetleyicisin. Verilen 50 mesajlık bölümü YALNIZCA %100 DOĞAL TÜRKÇE ile 2-3 yoğun, olgusal cümleyle özetle (önemli olaylar, yerler, karakter kararları, duygusal kırılmalar). İngilizce cümle veya başlık ASLA yazma.",
-                    userMessage = "SAHNE #$cpNumber (${startIdx + 1}–$currentMessageCount. mesajlar):\n$transcript",
-                    botId = botId,
-                    maxTokens = 200,
-                    timeoutMs = 5000L
+                cleanEmotionTags(
+                    callUtilityLlm(
+                        settings = settings,
+                        systemPrompt = "Sen kısa sahne özetleyicisin. Verilen 50 mesajlık bölümü YALNIZCA %100 DOĞAL TÜRKÇE ile 2-3 yoğun, olgusal cümleyle özetle (önemli olaylar, yerler, karakter kararları, duygusal kırılmalar). İngilizce cümle veya başlık ASLA yazma.",
+                        userMessage = "SAHNE #$cpNumber (${startIdx + 1}–$currentMessageCount. mesajlar):\n$transcript",
+                        botId = botId,
+                        maxTokens = 200,
+                        timeoutMs = 5000L
+                    )
                 ).trim()
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 ""
             }
@@ -4610,7 +4617,7 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
             "Sahne #$cpNumber: $aiSummary"
         } else {
             val distinctSamples = slice
-                .map { it.text.replace('\n', ' ').trim() }
+                .map { cleanEmotionTags(it.text).replace('\n', ' ').trim() }
                 .filter { it.isNotBlank() }
                 .distinct()
                 .take(4)
@@ -5221,6 +5228,12 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
         var hasExplicitAxesFromJson = false
 
         if (jsonObj != null) {
+            fun optJsonStr(obj: org.json.JSONObject, key: String, fallback: String = ""): String {
+                if (!obj.has(key) || obj.isNull(key)) return fallback
+                val raw = obj.optString(key, fallback).trim()
+                return if (raw.equals("null", ignoreCase = true)) fallback else raw
+            }
+
             val primObj = jsonObj.optJSONObject("primary_emotions")
             if (primObj != null) {
                 rawPrimaryEmotions = com.example.data.local.PrimaryEmotions.fromJsonObject(primObj)
@@ -5235,22 +5248,23 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
 
             rawPhysicalComfort = jsonObj.optInt("physicalComfortScore", current.physicalComfortScore).coerceIn(0, 100)
             rawObsession = jsonObj.optInt("obsessionScore", current.obsessionScore).coerceIn(0, 100)
-            rawDominant = jsonObj.optString("dom", "").ifBlank {
-                jsonObj.optString("dominant_emotion", "").ifBlank {
-                    jsonObj.optString("mood", current.dominantEmotion)
+            val parsedDomRaw = optJsonStr(jsonObj, "dom").ifBlank {
+                optJsonStr(jsonObj, "dominant_emotion").ifBlank {
+                    optJsonStr(jsonObj, "mood", current.dominantEmotion)
                 }
             }
-            rawSuppressed = jsonObj.optString("suppressed_emotion", current.suppressedEmotion)
+            rawDominant = EmotionEngine.normalizeTurkishEmotionLabel(parsedDomRaw)
+            rawSuppressed = optJsonStr(jsonObj, "suppressed_emotion", current.suppressedEmotion)
 
             val deltaObj = jsonObj.optJSONObject("delta")
             if (deltaObj != null) {
                 parsedDelta = deltaObj.optInt("value", 0)
-                parsedReason = deltaObj.optString("reason", "")
+                parsedReason = optJsonStr(deltaObj, "reason")
                 val ctxObj = deltaObj.optJSONObject("context")
                 if (ctxObj != null) {
-                    parsedSetting = ctxObj.optString("setting", "private")
-                    parsedMode = ctxObj.optString("mode", "casual")
-                    parsedTension = ctxObj.optString("tension", "none")
+                    parsedSetting = optJsonStr(ctxObj, "setting", "private").ifBlank { "private" }
+                    parsedMode = optJsonStr(ctxObj, "mode", "casual").ifBlank { "casual" }
+                    parsedTension = optJsonStr(ctxObj, "tension", "none").ifBlank { "none" }
                 }
             } else if (jsonObj.has("aff") && jsonObj.opt("aff") is Number) {
                 parsedDelta = jsonObj.optInt("aff", 0).coerceIn(-10, 10)
@@ -5267,7 +5281,7 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
             }
 
             if (parsedTension == "none" && jsonObj.has("tension")) {
-                parsedTension = when (jsonObj.optString("tension", "").lowercase().trim()) {
+                parsedTension = when (optJsonStr(jsonObj, "tension").lowercase(java.util.Locale.ROOT)) {
                     "yüksek", "high", "crisis", "kriz" -> "crisis"
                     "orta", "medium", "conflict", "çatışma" -> "conflict"
                     else -> "none"
@@ -5275,7 +5289,7 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
             }
 
             // V3.1: "why" alanı — delta gerekçesi (delta.reason yoksa buradan alınır)
-            parsedWhy = jsonObj.optString("why", "").ifBlank { parsedReason }
+            parsedWhy = optJsonStr(jsonObj, "why").ifBlank { parsedReason }
 
             // V3.1 / #8: "trig" — anlamsal olarak dokunan hassas konu kimlikleri (LLM kararı)
             runCatching {
@@ -5283,8 +5297,9 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
                 if (trigArr != null) {
                     val ids = mutableListOf<String>()
                     for (i in 0 until trigArr.length()) {
+                        if (trigArr.isNull(i)) continue
                         val id = trigArr.optString(i, "").trim()
-                        if (id.isNotBlank()) ids.add(id)
+                        if (id.isNotBlank() && !id.equals("null", ignoreCase = true)) ids.add(id)
                     }
                     parsedTrigIds = ids
                 }
@@ -5301,13 +5316,13 @@ Verilen anı alanlarını %100 DOĞAL, AKICI, 1. TEKİL ŞAHIS ("Ben...") EDEBİ
             }
 
             // V3.1: "supp" / "supp_emo" — bastırılan duygu
-            val suppRaw = jsonObj.optString("suppressed_emotion", "").ifBlank {
-                jsonObj.optString("supp_emo", "")
+            val suppRaw = optJsonStr(jsonObj, "suppressed_emotion").ifBlank {
+                optJsonStr(jsonObj, "supp_emo")
             }
             parsedSuppNew = suppRaw.ifBlank { rawSuppressed }
 
             // Sistem #17: Optional "u_tone" fallback from [[STATE_JSON]] for next-turn difficulty calibration
-            val uToneRaw = jsonObj.optString("u_tone", "").trim()
+            val uToneRaw = optJsonStr(jsonObj, "u_tone")
             if (uToneRaw.isNotBlank()) {
                 lastDetectedUserToneMap[botId] = uToneRaw
             }
@@ -9587,7 +9602,7 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
             val isSig = obj.optBoolean("is_significant", true)
             val role = obj.optString("role", "Yan Karakter").ifBlank { "Yan Karakter" }
             val conf = obj.optInt("confidence", 75).coerceIn(0, 100)
-            val status = obj.optString("status", "").lowercase()
+            val status = obj.optString("status", "").lowercase(java.util.Locale.ROOT)
             val mult = when (status) {
                 "authority" -> 0.70
                 "stranger" -> 0.85
@@ -9596,6 +9611,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 else -> calculateCastMemberDifficultyMultiplier(role, candidateName, sceneContext)
             }
             Quadruple(isSig, role, conf, mult)
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (e: Exception) {
             recordClassificationFailure(activeProvider, e.message ?: "Error classifying character")
             EmochiRepository.evaluateCharacterSignificance(candidateName, sceneContext)
@@ -10310,6 +10327,8 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
         val effectiveModel = resolveEffectiveModelForProvider(settings)
         try {
             prepareContextAndSummarizeIfNeeded(bot, messages, effectiveModel)
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {}
     }
 
@@ -10339,6 +10358,10 @@ Hikayeyi yeniden oynamak için bölüm listesinden herhangi bir bölümü seçeb
                 recordTokenUsage(botId, res.promptTokens, res.candidateTokens)
             }
             res.text.trim()
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            ""
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {
             ""
         }
