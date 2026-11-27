@@ -10,14 +10,18 @@ object BookSessionResumeHelper {
         totalChapters: Int = CosmicDriftBookRegistry.TOTAL_PLAYABLE_CHAPTERS
     ): String {
         val summary = BookProgressSummaryFormatter.compute(state, totalChapters)
+        val safeChapter = state.activeChapter.coerceIn(1, summary.totalChapters)
         val remaining = (summary.totalChapters - summary.completedChapters).coerceAtLeast(0)
         return when {
             summary.completedChapters == 0 && summary.totalDecisions == 0 ->
-                "Yeni yolculuk • Bölüm ${state.activeChapter} seni bekliyor"
+                "Yeni yolculuk • Bölüm $safeChapter seni bekliyor"
             remaining == 0 ->
                 "Tamamlandı (%100) • ${summary.totalDecisions} karar • ${summary.discoveredSecrets} sır"
             else ->
-                "Bölüm ${state.activeChapter} • %${summary.completionPercent} tamamlandı • $remaining bölüm kaldı"
+                "Bölüm $safeChapter • %${summary.completionPercent} tamamlandı • $remaining bölüm kaldı"
         }
     }
+
+    fun seasonLabelForChapter(chapterNumber: Int): String =
+        if (chapterNumber >= 11) "2. Sezon" else "1. Sezon"
 }

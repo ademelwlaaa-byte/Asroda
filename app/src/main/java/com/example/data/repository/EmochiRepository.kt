@@ -1415,14 +1415,33 @@ class EmochiRepository(
 
     suspend fun deleteBot(id: String) {
         val existingBot = try { botDao.getBotById(id) } catch (_: Exception) { null }
+        lastLivingMemoryMsgCountMap.remove(id)
+        lastNarrativeMilestoneMsgCountMap.remove(id)
+        activeInSceneCastMap.remove(id)
+        lastSummarizedMessageCount.remove(id)
         db.withTransaction {
             messageDao.deleteMessagesForBot(id)
             emotionDao.deleteEmotionsForBot(id)
             fragmentDao.deleteFragmentsForBot(id)
+            memoryFactDao.deleteAllFactsForBot(id)
+            memoryEventDao.deleteAllEventsForBot(id)
+            memoryCheckpointDao.deleteCheckpointsForBot(id)
+            castMemberDao.getCastMembersForBot(id).forEach { castMemberDao.deleteCastMember(it.id) }
+            sensitiveTriggerDao.deleteTriggersForBot(id)
+            routineDao.deleteRoutinesForBot(id)
+            entityRelationDao.getRelationsForBot(id).forEach { entityRelationDao.deleteRelation(it.id) }
+            entityRegistryDao.getEntitiesForBot(id).forEach { entityRegistryDao.deleteEntity(it.id) }
+            db.milestoneDao().deleteMilestonesForBot(id)
+            pendingReappraisalDao.deleteForBot(id)
+            emotionHistoryDao.deleteHistoryForBot(id)
+            db.affectionEventDao().deleteEventsForBot(id)
+            db.storyProgressDao().deleteForBot(id)
             lorebookDao.deleteLinksForBot(id)
             turnRollbackSnapshotDao.deleteForBot(id)
+            db.openHelper.writableDatabase.execSQL("DELETE FROM archived_memories WHERE botId = ?", arrayOf(id))
             botDao.deleteBotById(id)
         }
+        invalidateMemoryCache(id)
         context?.let { ctx ->
             com.example.util.ImageStorageManager.deleteLocalBackgroundIfOwned(ctx, existingBot?.chatBgUrl)
         }
@@ -1432,12 +1451,55 @@ class EmochiRepository(
     suspend fun resetBotMemoryAndEmotion(botId: String) {
         lastLivingMemoryMsgCountMap.remove(botId)
         lastNarrativeMilestoneMsgCountMap.remove(botId)
+        activeInSceneCastMap.remove(botId)
+        lastSummarizedMessageCount.remove(botId)
         db.withTransaction {
             emotionDao.deleteEmotionsForBot(botId)
             fragmentDao.deleteFragmentsForBot(botId)
+            memoryFactDao.deleteAllFactsForBot(botId)
+            memoryEventDao.deleteAllEventsForBot(botId)
+            memoryCheckpointDao.deleteCheckpointsForBot(botId)
+            entityRelationDao.getRelationsForBot(botId).forEach { entityRelationDao.deleteRelation(it.id) }
+            entityRegistryDao.getEntitiesForBot(botId).forEach { entityRegistryDao.deleteEntity(it.id) }
+            db.milestoneDao().deleteMilestonesForBot(botId)
+            pendingReappraisalDao.deleteForBot(botId)
+            emotionHistoryDao.deleteHistoryForBot(botId)
+            db.affectionEventDao().deleteEventsForBot(botId)
+            routineDao.deleteRoutinesForBot(botId)
             turnRollbackSnapshotDao.deleteForBot(botId)
+            db.openHelper.writableDatabase.execSQL("DELETE FROM archived_memories WHERE botId = ?", arrayOf(botId))
+
+            // Remove auto-added dynamic cast; preserve user/manual key characters with reset scores
+            castMemberDao.getCastMembersForBot(botId).forEach { cm ->
+                if (cm.isAutoAdded) {
+                    castMemberDao.deleteCastMember(cm.id)
+                } else {
+                    castMemberDao.updateCastMember(
+                        cm.copy(
+                            affectionScore = 50,
+                            relationshipState = "Tanıdık"
+                        )
+                    )
+                }
+            }
+            // Reset trigger activation counters without wiping authored character triggers
+            sensitiveTriggerDao.getTriggersForBot(botId).forEach { tr ->
+                if (tr.recentTriggerCount != 0) {
+                    sensitiveTriggerDao.insertOrUpdate(tr.copy(recentTriggerCount = 0))
+                }
+            }
+
             val bot = botDao.getBotById(botId) ?: return@withTransaction
-            val calculatedBaseline = EmotionState.calculateBaselineEmotionState(
+            val storedBaseline = if (bot.baselineEmotionAnalysisJson.isNotBlank()) {
+                try {
+                    getStoredBaselineResult(bot).baselineEmotionState.toJson()
+                } catch (_: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+            val calculatedBaseline = storedBaseline ?: EmotionState.calculateBaselineEmotionState(
                 aiName = bot.aiName,
                 personality = bot.aiPersonality,
                 scenario = bot.scenario,
@@ -1451,11 +1513,15 @@ class EmochiRepository(
                 storyNotes = "",
                 memoryNotes = "",
                 pinnedMemory = "",
+                storyDayCounter = 1L,
+                currentAge = bot.initialAge,
+                storyCalendarDate = if (bot.hasExplicitStoryDate) bot.storyCalendarDate else "",
                 needsSummarization = false,
                 updatedAt = System.currentTimeMillis()
             )
             botDao.insertOrUpdate(updatedBot)
         }
+        invalidateMemoryCache(botId)
     }
 
     suspend fun saveMessage(msg: MessageEntity) {
@@ -3630,8 +3696,33 @@ class EmochiRepository(
                 return@withContext true
             }
 
-            // Cross-day or cross-POV near-duplicate check
+            // Cross-day or unstructured near-duplicate check:
+            // Never spawn a duplicate card; if the incoming observation carries higher importance,
+            // upgrade existing.importanceScore in-place on the same record ID.
             if (sim >= 0.80f || overlap >= 0.72f) {
+                if (newImportance > existing.importanceScore) {
+                    val upgradedDesc = if (exParsed.isStructured) {
+                        LivingMemoryCodec.encode(
+                            povCharacter = exParsed.povCharacter.ifBlank { povCharacter },
+                            title = exParsed.title.ifBlank { cleanTitle },
+                            emotionTag = exParsed.emotionTag.ifBlank { cleanEmotion },
+                            salience = (newImportance / 10).coerceIn(LivingMemoryPolicy.MIN_SALIENCE, 10),
+                            narrative = exParsed.narrative.ifBlank { cleanNarrative },
+                            innerThought = exParsed.innerThought.ifBlank { cleanInner }
+                        )
+                    } else {
+                        existing.description
+                    }
+                    memoryEventDao.updateEvent(
+                        existing.copy(
+                            description = upgradedDesc,
+                            importanceScore = newImportance,
+                            timestamp = now
+                        )
+                    )
+                    invalidateMemoryCache(botId)
+                    return@withContext true
+                }
                 return@withContext false
             }
         }

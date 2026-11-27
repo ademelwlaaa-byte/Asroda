@@ -33,7 +33,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.ZoomIn
@@ -43,7 +42,6 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
@@ -51,6 +49,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -1239,9 +1241,10 @@ private fun ShowcasePhotosTab(
 @Composable
 private fun ShowcaseVoicesTab() {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
-    val installedPacks by com.example.book.BookContentPackManager.installedPacks.collectAsState()
-    val activeDownload by com.example.book.BookContentPackManager.activeDownload.collectAsState()
+    val installedPacks by com.example.book.BookContentPackManager.installedPacks.collectAsStateWithLifecycle()
+    val activeDownload by com.example.book.BookContentPackManager.activeDownload.collectAsStateWithLifecycle()
     var statusNote by remember { mutableStateOf<String?>(null) }
     var playingSpeaker by remember { mutableStateOf<String?>(null) }
     val voiceEngine = remember {
@@ -1250,9 +1253,19 @@ private fun ShowcaseVoicesTab() {
         }
     }
 
-    DisposableEffect(Unit) {
+    DisposableEffect(lifecycleOwner, voiceEngine) {
         com.example.book.BookContentPackManager.ensureLoaded(context)
-        onDispose { voiceEngine.stopAndRelease() }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
+                voiceEngine.stopCurrentLine()
+                playingSpeaker = null
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            voiceEngine.stopAndRelease()
+        }
     }
 
     val isPackInstalled = remember(installedPacks) {

@@ -808,7 +808,9 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun openMenu() {
         stopSpeaking()
+        stopGeneration()
         _errorMessage.value = null
+        _memoryCommitNotice.value = null
         setActiveBotId(null)
         _immediateBotCache.value = null
         _immediateOpeningMessageCache.value = emptyList()
@@ -824,6 +826,12 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun openBot(botId: String) {
         stopSpeaking()
+        if (_activeBotId.value != botId) {
+            stopGeneration()
+            _archivedMemories.value = emptyList()
+            _hiddenRagCount.value = 0
+            _memoryCommitNotice.value = null
+        }
         _errorMessage.value = null
         val cachedBot = botList.value.firstOrNull { it.id == botId } ?: _immediateBotCache.value?.takeIf { it.id == botId }
         if (cachedBot != null) {
@@ -1185,6 +1193,8 @@ class EmochiViewModel @JvmOverloads constructor(
                 if (_activeBotId.value == bot.id) {
                     _hiddenRagCount.value = repository.getHiddenRagFragmentCount(bot.id)
                 }
+            } catch (ce: kotlinx.coroutines.CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 // Silent background extraction — never interrupts chat flow
             }
@@ -1198,7 +1208,7 @@ class EmochiViewModel @JvmOverloads constructor(
 
     private suspend fun withSendLock(block: suspend () -> Unit) {
         if (!sendMutex.tryLock()) {
-            _isSending.value = false
+            // Another generation actively owns sendMutex & _isSending — never clobber its UI state
             return
         }
         try {
@@ -1505,6 +1515,9 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun resetChat(botId: String, fullReset: Boolean = false) {
         viewModelScope.launch {
+            if (_activeBotId.value == botId) {
+                stopGeneration()
+            }
             cancelPostTurnExtraction(botId)
             lastSummarizationMsgCountMap.remove(botId)
             val currentBot = repository.getBot(botId) ?: return@launch
@@ -1527,6 +1540,11 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun deleteBot(botId: String) {
         viewModelScope.launch {
+            if (_activeBotId.value == botId) {
+                stopGeneration()
+            }
+            cancelPostTurnExtraction(botId)
+            lastSummarizationMsgCountMap.remove(botId)
             com.example.util.ChatDraftStore.clearDraft(getApplication(), botId)
             com.example.util.StoryBookmarkStore.clearAllForBot(getApplication(), botId)
             com.example.util.BotScratchpadStore.clearNote(getApplication(), botId)

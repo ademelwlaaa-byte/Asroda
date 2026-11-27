@@ -22,12 +22,22 @@ object BookReadingEstimator {
         val clampedCurrent = currentSceneOrder.coerceIn(1, totalScenes)
         val remainingScenes = (totalScenes - clampedCurrent + 1).coerceAtLeast(1)
         val avgWordsPerScene = if (observedSceneCount > 0 && observedTranscriptWordCount > 0) {
-            (observedTranscriptWordCount / observedSceneCount).coerceIn(140, 650)
+            (observedTranscriptWordCount.toLong() / observedSceneCount.toLong()).toInt().coerceIn(140, 650)
         } else {
             DEFAULT_WORDS_PER_SCENE
         }
-        val estimatedWords = remainingScenes * avgWordsPerScene
+        val estimatedWords = remainingScenes.toLong() * avgWordsPerScene.toLong()
         return ceil(estimatedWords / WORDS_PER_MINUTE).toInt().coerceAtLeast(1)
+    }
+
+    fun estimateBookRemainingMinutes(
+        completedChapters: Set<Int>,
+        chapters: List<BookChapterMeta> = CosmicDriftBookRegistry.chapters
+    ): Int {
+        if (chapters.isEmpty()) return 0
+        return chapters
+            .filter { it.number !in completedChapters }
+            .sumOf { it.estimatedMinutes.coerceAtLeast(1) }
     }
 
     fun formatBadgeText(remainingMinutes: Int): String {

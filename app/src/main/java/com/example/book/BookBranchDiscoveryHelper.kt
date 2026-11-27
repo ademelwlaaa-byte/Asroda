@@ -12,9 +12,12 @@ object BookBranchDiscoveryHelper {
     )
 
     fun compute(state: BookReadState): BranchSummary {
-        val branches = state.discoveredBranches.size
-        val flags = state.flags.size
+        val branches = state.discoveredBranches.count { it.isNotBlank() }
+        val stringFlags = state.flags.count { it.key.isNotBlank() && it.value.isNotBlank() }
+        val activeNumericFlags = state.numericFlags.count { it.key.isNotBlank() && it.value != 0 }
+        val flags = stringFlags + activeNumericFlags
         val badge = when {
+            branches >= 10 -> "🌌 Çoklu Evren Mimarı"
             branches >= 6 -> "🌟 Çoklu Rota Ustası"
             branches >= 3 -> "🧭 Rota Kaşifi"
             branches >= 1 -> "🌿 İlk Dallanma"

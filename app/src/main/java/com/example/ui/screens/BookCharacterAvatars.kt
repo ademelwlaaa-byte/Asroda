@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import androidx.annotation.DrawableRes
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -9,14 +8,17 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.book.BookCharacterId
 import java.util.Locale
@@ -59,26 +61,29 @@ enum class CharacterPortraitKey(val accentColor: Color, val displayName: String)
         }
 
         fun resolveFromLabel(rawLabel: String): CharacterPortraitKey? {
+            if (rawLabel.isBlank()) return null
             val u = rawLabel.uppercase(Locale.ROOT)
+            val uTr = rawLabel.uppercase(Locale.forLanguageTag("tr-TR"))
+            fun has(vararg tokens: String): Boolean = tokens.any { it in u || it in uTr }
             return when {
-                "SIFIR" in u || "YARA İZLİ" in u || "TWIN" in u || "GELECEK AIDEN" in u -> ZERO
-                "MİMAR" in u || "ARCHITECT" in u -> ARCHITECT
-                "ULTRON" in u -> ULTRON
-                "VISION" in u || "VİZYON" in u || "JARVIS" in u -> VISION
-                "PIETRO" in u || "QUICKSILVER" in u -> PIETRO
-                "STRANGE" in u || "SANCTUM" in u -> STRANGE
-                "VOSS" in u || "ELIAS" in u || "6-B" in u -> VOSS
-                "MIRA" in u || "MİRA" in u || "8-C" in u -> MIRA
-                "NATASHA" in u || "ROMANOFF" in u || "WIDOW" in u -> NATASHA
-                "TONY" in u || "STARK" in u || "IRON" in u -> TONY
-                "STEVE" in u || "ROGERS" in u || "KAPTAN" in u -> STEVE
-                "WANDA" in u || "MAXIMOFF" in u -> WANDA
-                "BRUCE" in u || "BANNER" in u -> BRUCE
-                "CLINT" in u || "BARTON" in u || "HAWKEYE" in u -> CLINT
-                "THOR" in u || "ODINSON" in u || "ASGARD" in u -> THOR
-                "FURY" in u -> FURY
-                "VAELOR" in u || "SOLUK MÜHÜR" in u -> VAELOR
-                "AIDEN" in u || "BLACKWOOD" in u -> AIDEN
+                has("SIFIR", "YARA İZLİ", "YARA IZLI", "TWIN", "GELECEK AIDEN") -> ZERO
+                has("MİMAR", "MIMAR", "ARCHITECT") -> ARCHITECT
+                has("ULTRON") -> ULTRON
+                has("VISION", "VİZYON", "VIZYON", "JARVIS") -> VISION
+                has("PIETRO", "PİETRO", "QUICKSILVER") -> PIETRO
+                has("STRANGE", "SANCTUM") -> STRANGE
+                has("VOSS", "ELIAS", "ELİAS", "6-B") -> VOSS
+                has("MIRA", "MİRA", "8-C") -> MIRA
+                has("NATASHA", "ROMANOFF", "WIDOW") -> NATASHA
+                has("TONY", "STARK", "IRON") -> TONY
+                has("STEVE", "ROGERS", "KAPTAN") -> STEVE
+                has("WANDA", "MAXIMOFF") -> WANDA
+                has("BRUCE", "BANNER") -> BRUCE
+                has("CLINT", "CLİNT", "BARTON", "HAWKEYE") -> CLINT
+                has("THOR", "ODINSON", "ODİNSON", "ASGARD") -> THOR
+                has("FURY") -> FURY
+                has("VAELOR", "SOLUK MÜHÜR", "SOLUK MUHUR") -> VAELOR
+                has("AIDEN", "AİDEN", "BLACKWOOD") -> AIDEN
                 else -> null
             }
         }
@@ -121,6 +126,15 @@ fun CinematicCharacterAvatar(
         CharacterPortraitKey.VAELOR -> R.drawable.img_char_vaelor
     }
 
+    val context = LocalContext.current
+    val avatarRequest = remember(context, directResId) {
+        ImageRequest.Builder(context)
+            .data(directResId)
+            .allowRgb565(true)
+            .crossfade(160)
+            .build()
+    }
+
     Box(
         modifier = modifier
             .size(size)
@@ -129,8 +143,8 @@ fun CinematicCharacterAvatar(
             .border(borderWidth, borderColor.copy(alpha = 0.85f), CircleShape),
         contentAlignment = Alignment.Center
     ) {
-        Image(
-            painter = painterResource(id = directResId),
+        AsyncImage(
+            model = avatarRequest,
             contentDescription = key.displayName,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()

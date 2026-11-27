@@ -23,7 +23,6 @@ import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -32,7 +31,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import coil.compose.AsyncImage
@@ -53,15 +51,15 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import kotlinx.coroutines.delay
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.State
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -221,7 +219,7 @@ fun InStoryAnimatedScene(
     DisposableEffect(lifecycleOwner, isFullscreenOpen) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> inlineSoundRef?.setMuted(true)
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> inlineSoundRef?.setMuted(true)
                 Lifecycle.Event.ON_RESUME -> if (inlineAudioEnabled && !isFullscreenOpen) inlineSoundRef?.setMuted(false)
                 else -> Unit
             }
@@ -450,14 +448,25 @@ private fun rememberGyroscopeTilt(enabled: Boolean): Pair<Float, Float> {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
         }
 
+        var isRegistered = false
         fun register() {
-            sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+            if (!isRegistered) {
+                isRegistered = sensorManager.registerListener(listener, sensor, SensorManager.SENSOR_DELAY_GAME)
+            }
         }
-        register()
+        fun unregister() {
+            if (isRegistered) {
+                sensorManager.unregisterListener(listener)
+                isRegistered = false
+            }
+        }
+        if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+            register()
+        }
 
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> sensorManager.unregisterListener(listener)
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> unregister()
                 Lifecycle.Event.ON_RESUME -> register()
                 else -> Unit
             }
@@ -466,7 +475,7 @@ private fun rememberGyroscopeTilt(enabled: Boolean): Pair<Float, Float> {
 
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            sensorManager.unregisterListener(listener)
+            unregister()
         }
     }
 
@@ -506,8 +515,45 @@ private fun cinemaBeatLabels(sceneId: String): List<String> = when (sceneId) {
     )
 }
 
+internal fun computeCinemaClimaxIntensity(timeline: Float): Float {
+    val t = if (timeline.isFinite()) timeline.coerceIn(0f, 1f) else 0f
+    return when {
+        t < 0.25f -> (t / 0.25f) * 0.35f
+        t < 0.55f -> 0.35f + ((t - 0.25f) / 0.30f) * 0.45f
+        t < 0.82f -> 0.80f + sin(((t - 0.55f) / 0.27f) * PI.toFloat()) * 0.20f
+        else -> (1f - ((t - 0.82f) / 0.18f)) * 0.65f + 0.18f
+    }.coerceIn(0f, 1f)
+}
+
+internal fun computeCinemaDirectedZoom(timeline: Float): Float {
+    val t = if (timeline.isFinite()) timeline.coerceIn(0f, 1f) else 0f
+    return when {
+        t < 0.25f -> 1.02f + (t / 0.25f) * 0.03f
+        t < 0.55f -> 1.05f + ((t - 0.25f) / 0.30f) * 0.045f
+        t < 0.82f -> 1.095f + sin(((t - 0.55f) / 0.27f) * PI.toFloat()) * 0.025f
+        else -> 1.095f - ((t - 0.82f) / 0.18f) * 0.055f
+    }.coerceIn(1.0f, 1.15f)
+}
+
+internal fun computeCinemaBeatIndex(directorProgress: Float): Int {
+    val p = if (directorProgress.isFinite()) directorProgress.coerceIn(0f, 0.9999f) else 0f
+    return (p * 4f).toInt().coerceIn(0, 3)
+}
+
+internal fun advanceCinemaProgress(current: Float, deltaSec: Float, durationSec: Float = 12f): Float {
+    val safeCur = if (current.isFinite()) current.coerceIn(0f, 1f) else 0f
+    val safeDt = if (deltaSec.isFinite()) deltaSec.coerceIn(0f, 0.25f) else 0f
+    val safeDur = if (durationSec.isFinite() && durationSec > 0.1f) durationSec else 12f
+    return ((safeCur + safeDt / safeDur) % 1f + 1f) % 1f
+}
+
+private val reusableLightningMainPath = Path()
+private val reusableLightningBranchPath = Path()
+private val reusableLightningPoints = Array(7) { Offset.Zero }
+
 /**
  * Procedural branching lightning renderer for Manhattan Armada & Blue Sky 2006 cinematics.
+ * Uses pre-allocated Path/Array buffers -> zero per-frame allocations at 60fps.
  */
 private fun DrawScope.drawBranchingLightning(
     start: Offset,
@@ -516,55 +562,51 @@ private fun DrawScope.drawBranchingLightning(
     glowColor: Color,
     alpha: Float
 ) {
-    if (alpha <= 0.02f) return
+    if (!alpha.isFinite() || alpha <= 0.02f) return
+    val clampedAlpha = alpha.coerceIn(0f, 1f)
     val rng = Random(seed)
     val segments = 6
-    val mainPoints = mutableListOf(start)
+    reusableLightningPoints[0] = start
     for (i in 1 until segments) {
         val t = i / segments.toFloat()
         val jitterX = (rng.nextFloat() - 0.5f) * size.width * 0.085f
         val jitterY = (rng.nextFloat() - 0.5f) * size.height * 0.03f
-        mainPoints.add(
-            Offset(
-                start.x + (end.x - start.x) * t + jitterX,
-                start.y + (end.y - start.y) * t + jitterY
-            )
+        reusableLightningPoints[i] = Offset(
+            start.x + (end.x - start.x) * t + jitterX,
+            start.y + (end.y - start.y) * t + jitterY
         )
     }
-    mainPoints.add(end)
+    reusableLightningPoints[segments] = end
 
-    val mainPath = Path().apply {
-        moveTo(mainPoints.first().x, mainPoints.first().y)
-        mainPoints.drop(1).forEach { lineTo(it.x, it.y) }
+    reusableLightningMainPath.reset()
+    reusableLightningMainPath.moveTo(reusableLightningPoints[0].x, reusableLightningPoints[0].y)
+    for (i in 1..segments) {
+        reusableLightningMainPath.lineTo(reusableLightningPoints[i].x, reusableLightningPoints[i].y)
     }
-    drawPath(mainPath, glowColor.copy(alpha = alpha * 0.42f), style = Stroke(width = 11f, cap = StrokeCap.Round))
-    drawPath(mainPath, glowColor.copy(alpha = alpha * 0.85f), style = Stroke(width = 4.5f, cap = StrokeCap.Round))
-    drawPath(mainPath, Color.White.copy(alpha = alpha), style = Stroke(width = 1.9f, cap = StrokeCap.Round))
+    drawPath(reusableLightningMainPath, glowColor.copy(alpha = clampedAlpha * 0.42f), style = Stroke(width = 11f, cap = StrokeCap.Round))
+    drawPath(reusableLightningMainPath, glowColor.copy(alpha = clampedAlpha * 0.85f), style = Stroke(width = 4.5f, cap = StrokeCap.Round))
+    drawPath(reusableLightningMainPath, Color.White.copy(alpha = clampedAlpha), style = Stroke(width = 1.9f, cap = StrokeCap.Round))
 
     // 2 procedural secondary forks
-    listOf(2, 4).forEachIndexed { idx, nodeIdx ->
-        val origin = mainPoints.getOrNull(nodeIdx) ?: return@forEachIndexed
+    for (idx in 0..1) {
+        val origin = reusableLightningPoints[if (idx == 0) 2 else 4]
         val dir = if (idx == 0) -1f else 1f
-        val mid = Offset(
-            origin.x + dir * size.width * (0.045f + rng.nextFloat() * 0.04f),
-            origin.y + size.height * 0.085f
-        )
-        val tip = Offset(
-            mid.x + dir * size.width * 0.035f,
-            mid.y + size.height * 0.075f
-        )
-        val branch = Path().apply {
-            moveTo(origin.x, origin.y)
-            lineTo(mid.x, mid.y)
-            lineTo(tip.x, tip.y)
-        }
-        drawPath(branch, glowColor.copy(alpha = alpha * 0.55f), style = Stroke(width = 3.2f, cap = StrokeCap.Round))
-        drawPath(branch, Color.White.copy(alpha = alpha * 0.80f), style = Stroke(width = 1.2f, cap = StrokeCap.Round))
+        val midX = origin.x + dir * size.width * (0.045f + rng.nextFloat() * 0.04f)
+        val midY = origin.y + size.height * 0.085f
+        val tipX = midX + dir * size.width * 0.035f
+        val tipY = midY + size.height * 0.075f
+        reusableLightningBranchPath.reset()
+        reusableLightningBranchPath.moveTo(origin.x, origin.y)
+        reusableLightningBranchPath.lineTo(midX, midY)
+        reusableLightningBranchPath.lineTo(tipX, tipY)
+        drawPath(reusableLightningBranchPath, glowColor.copy(alpha = clampedAlpha * 0.55f), style = Stroke(width = 3.2f, cap = StrokeCap.Round))
+        drawPath(reusableLightningBranchPath, Color.White.copy(alpha = clampedAlpha * 0.80f), style = Stroke(width = 1.2f, cap = StrokeCap.Round))
     }
 }
 
 /**
  * Reusable 60fps Live-Action 2.5D Multi-Beat Directed Cinema + Procedural GPU VFX Engine.
+ * Reads continuous animation phases strictly inside graphicsLayer & Canvas -> 0 root recompositions/sec!
  */
 @Composable
 private fun LiveActionCinemaMotionCanvas(
@@ -572,55 +614,40 @@ private fun LiveActionCinemaMotionCanvas(
     tiltYawDeg: Float,
     tiltPitchDeg: Float,
     directorProgress: Float = -1f,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    directorProgressProvider: (() -> Float)? = null,
+    tiltYawProvider: (() -> Float)? = null,
+    tiltPitchProvider: (() -> Float)? = null
 ) {
     val motionConfig = LocalCosmicMotionConfig.current
-    val inf = rememberInfiniteTransition(label = "cinema_vfx_$sceneId")
-    val flowPhase by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Restart),
-        label = "flow"
-    )
-    val ambientTimeline by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Restart),
-        label = "ambient_timeline"
-    )
-    val energyPulse by inf.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(1750, easing = LinearEasing), RepeatMode.Reverse),
-        label = "energy"
-    )
-
-    val timeline = when {
-        directorProgress >= 0f -> directorProgress.coerceIn(0f, 1f)
-        motionConfig.enableAmbientLoops -> ambientTimeline
-        else -> 0.35f
+    val flowPhaseState: State<Float>
+    val ambientTimelineState: State<Float>
+    val energyPulseState: State<Float>
+    if (motionConfig.enableAmbientLoops) {
+        val inf = rememberInfiniteTransition(label = "cinema_vfx_$sceneId")
+        flowPhaseState = inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(4200, easing = LinearEasing), RepeatMode.Restart),
+            label = "flow"
+        )
+        ambientTimelineState = inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Restart),
+            label = "ambient_timeline"
+        )
+        energyPulseState = inf.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(1750, easing = LinearEasing), RepeatMode.Reverse),
+            label = "energy"
+        )
+    } else {
+        flowPhaseState = remember { mutableFloatStateOf(0.25f) }
+        ambientTimelineState = remember { mutableFloatStateOf(0.35f) }
+        energyPulseState = remember { mutableFloatStateOf(0.45f) }
     }
-
-    // 4-Beat dramatic intensity curve peaking cleanly across Act 3 (0.55..0.82)
-    val climaxIntensity = when {
-        timeline < 0.25f -> timeline / 0.25f * 0.35f
-        timeline < 0.55f -> 0.35f + ((timeline - 0.25f) / 0.30f) * 0.45f
-        timeline < 0.82f -> 0.80f + sin(((timeline - 0.55f) / 0.27f) * PI.toFloat()) * 0.20f
-        else -> (1f - ((timeline - 0.82f) / 0.18f)) * 0.65f + 0.18f
-    }.coerceIn(0f, 1f)
-
-    // Directed camera dolly curve across the 4 acts
-    val directedZoom = when {
-        timeline < 0.25f -> 1.02f + (timeline / 0.25f) * 0.03f
-        timeline < 0.55f -> 1.05f + ((timeline - 0.25f) / 0.30f) * 0.045f
-        timeline < 0.82f -> 1.095f + sin(((timeline - 0.55f) / 0.27f) * PI.toFloat()) * 0.025f
-        else -> 1.095f - ((timeline - 0.82f) / 0.18f) * 0.055f
-    }
-    val directedPanX = sin(timeline * 2f * PI.toFloat()) * 9f
-    val directedPanY = cos(timeline * 2f * PI.toFloat()) * 4f
-    val microShake = if (motionConfig.enableAmbientLoops && climaxIntensity > 0.86f && (sceneId == "MANHATTAN_ARMADA" || sceneId == "BLUE_SKY_2006")) {
-        sin(flowPhase * 42f) * 3.2f
-    } else 0f
 
     val particles = remember(sceneId) {
         List(44) { idx ->
@@ -629,6 +656,18 @@ private fun LiveActionCinemaMotionCanvas(
                 Random(idx * 67 + 5).nextFloat(),
                 0.55f + Random(idx * 23 + 3).nextFloat() * 0.95f
             )
+        }
+    }
+    val reusableShaftPath = remember { Path() }
+    val reusableBlueRibbon = remember { Path() }
+    val reusableCrimsonRibbon = remember { Path() }
+
+    fun resolveTimeline(): Float {
+        val dir = directorProgressProvider?.invoke() ?: directorProgress
+        return when {
+            dir >= 0f -> dir.coerceIn(0f, 1f)
+            motionConfig.enableAmbientLoops -> ambientTimelineState.value
+            else -> 0.35f
         }
     }
 
@@ -650,26 +689,42 @@ private fun LiveActionCinemaMotionCanvas(
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
+                    val timeline = resolveTimeline()
+                    val climaxIntensity = computeCinemaClimaxIntensity(timeline)
+                    val directedZoom = computeCinemaDirectedZoom(timeline)
+                    val directedPanX = sin(timeline * 2f * PI.toFloat()) * 9f
+                    val directedPanY = cos(timeline * 2f * PI.toFloat()) * 4f
+                    val microShake = if (motionConfig.enableAmbientLoops && climaxIntensity > 0.86f && (sceneId == "MANHATTAN_ARMADA" || sceneId == "BLUE_SKY_2006")) {
+                        sin(flowPhaseState.value * 42f) * 3.2f
+                    } else 0f
+                    val yaw = tiltYawProvider?.invoke() ?: tiltYawDeg
+                    val pitch = tiltPitchProvider?.invoke() ?: tiltPitchDeg
                     scaleX = directedZoom
                     scaleY = directedZoom
-                    translationX = directedPanX + microShake - tiltYawDeg * 1.65f
-                    translationY = directedPanY - tiltPitchDeg * 1.25f
-                    rotationY = tiltYawDeg * 0.72f
-                    rotationX = -tiltPitchDeg * 0.56f
+                    translationX = directedPanX + microShake - yaw * 1.65f
+                    translationY = directedPanY - pitch * 1.25f
+                    rotationY = yaw * 0.72f
+                    rotationX = -pitch * 0.56f
                     cameraDistance = 14f * density
                 }
         )
 
         // Layer 2 & 3 (3D Depth Volumetric Light Shafts + Midground 1.25x + Foreground 2.1x Parallax GPU VFX)
         Canvas(modifier = Modifier.fillMaxSize()) {
+            val flowPhase = flowPhaseState.value
+            val energyPulse = energyPulseState.value
+            val timeline = resolveTimeline()
+            val climaxIntensity = computeCinemaClimaxIntensity(timeline)
+            val yaw = tiltYawProvider?.invoke() ?: tiltYawDeg
+            val pitch = tiltPitchProvider?.invoke() ?: tiltPitchDeg
             val w = size.width
             val h = size.height
             val cx = w / 2f
             val cy = h / 2f
-            val midParallaxX = -tiltYawDeg * 2.5f
-            val midParallaxY = -tiltPitchDeg * 1.8f
-            val fgParallaxX = -tiltYawDeg * 4.4f
-            val fgParallaxY = -tiltPitchDeg * 3.0f
+            val midParallaxX = -yaw * 2.5f
+            val midParallaxY = -pitch * 1.8f
+            val fgParallaxX = -yaw * 4.4f
+            val fgParallaxY = -pitch * 3.0f
 
             // Volumetric 3D diagonal light shafts sweeping across depth plane
             val shaftColor = when (sceneId) {
@@ -680,15 +735,14 @@ private fun LiveActionCinemaMotionCanvas(
             }
             for (s in 0..2) {
                 val baseX = w * (0.18f + s * 0.30f) + sin(flowPhase * 6.28f + s * 1.7f) * w * 0.05f + midParallaxX * 0.8f
-                val shaftPath = Path().apply {
-                    moveTo(baseX - w * 0.04f, 0f)
-                    lineTo(baseX + w * 0.06f, 0f)
-                    lineTo(baseX + w * 0.22f + fgParallaxX * 0.35f, h)
-                    lineTo(baseX + w * 0.06f + fgParallaxX * 0.35f, h)
-                    close()
-                }
+                reusableShaftPath.reset()
+                reusableShaftPath.moveTo(baseX - w * 0.04f, 0f)
+                reusableShaftPath.lineTo(baseX + w * 0.06f, 0f)
+                reusableShaftPath.lineTo(baseX + w * 0.22f + fgParallaxX * 0.35f, h)
+                reusableShaftPath.lineTo(baseX + w * 0.06f + fgParallaxX * 0.35f, h)
+                reusableShaftPath.close()
                 drawPath(
-                    path = shaftPath,
+                    path = reusableShaftPath,
                     brush = Brush.verticalGradient(
                         listOf(
                             shaftColor.copy(alpha = (0.08f + climaxIntensity * 0.14f)),
@@ -812,8 +866,8 @@ private fun LiveActionCinemaMotionCanvas(
                 "BOSPHORUS_RESONANCE" -> {
                     // Counter-rotating twin blue (Aiden) & crimson (Mira) energy ribbons + vortex sparks
                     val vortexX = w * 0.54f + midParallaxX
-                    val blueRibbon = Path()
-                    val crimsonRibbon = Path()
+                    reusableBlueRibbon.reset()
+                    reusableCrimsonRibbon.reset()
                     val steps = 28
                     for (i in 0..steps) {
                         val t = i / steps.toFloat()
@@ -824,17 +878,17 @@ private fun LiveActionCinemaMotionCanvas(
                         val ax = vortexX + cos(angA) * radius
                         val bx = vortexX + cos(angB) * radius
                         if (i == 0) {
-                            blueRibbon.moveTo(ax, y)
-                            crimsonRibbon.moveTo(bx, y)
+                            reusableBlueRibbon.moveTo(ax, y)
+                            reusableCrimsonRibbon.moveTo(bx, y)
                         } else {
-                            blueRibbon.lineTo(ax, y)
-                            crimsonRibbon.lineTo(bx, y)
+                            reusableBlueRibbon.lineTo(ax, y)
+                            reusableCrimsonRibbon.lineTo(bx, y)
                         }
                     }
-                    drawPath(blueRibbon, Color(0xFF38BDF8).copy(alpha = 0.35f + climaxIntensity * 0.45f), style = Stroke(width = 6f, cap = StrokeCap.Round))
-                    drawPath(blueRibbon, Color(0xFFE0F2FE).copy(alpha = 0.55f + climaxIntensity * 0.35f), style = Stroke(width = 2f, cap = StrokeCap.Round))
-                    drawPath(crimsonRibbon, Color(0xFFF43F5E).copy(alpha = 0.35f + climaxIntensity * 0.45f), style = Stroke(width = 6f, cap = StrokeCap.Round))
-                    drawPath(crimsonRibbon, Color(0xFFFDA4AF).copy(alpha = 0.50f + climaxIntensity * 0.35f), style = Stroke(width = 2f, cap = StrokeCap.Round))
+                    drawPath(reusableBlueRibbon, Color(0xFF38BDF8).copy(alpha = 0.35f + climaxIntensity * 0.45f), style = Stroke(width = 6f, cap = StrokeCap.Round))
+                    drawPath(reusableBlueRibbon, Color(0xFFE0F2FE).copy(alpha = 0.55f + climaxIntensity * 0.35f), style = Stroke(width = 2f, cap = StrokeCap.Round))
+                    drawPath(reusableCrimsonRibbon, Color(0xFFF43F5E).copy(alpha = 0.35f + climaxIntensity * 0.45f), style = Stroke(width = 6f, cap = StrokeCap.Round))
+                    drawPath(reusableCrimsonRibbon, Color(0xFFFDA4AF).copy(alpha = 0.50f + climaxIntensity * 0.35f), style = Stroke(width = 2f, cap = StrokeCap.Round))
 
                     particles.take(26).forEachIndexed { idx, (px, py, spd) ->
                         val prog = (1f - ((py + flowPhase * spd) % 1f))
@@ -951,18 +1005,23 @@ private fun LiveActionFullscreenCinemaDialog(
     var lastHapticBeat by remember { mutableIntStateOf(-1) }
 
     val (gyroYaw, gyroPitch) = rememberGyroscopeTilt(enabled = gyroEnabled && motionConfig.enableAmbientLoops)
-    val smoothYaw by animateFloatAsState(
+    val smoothYawState = animateFloatAsState(
         targetValue = (tiltYaw + if (gyroEnabled) gyroYaw * 0.85f else 0f).coerceIn(-36f, 36f),
         animationSpec = tween(140),
         label = "cinema_fps_yaw"
     )
-    val smoothPitch by animateFloatAsState(
+    val smoothPitchState = animateFloatAsState(
         targetValue = (tiltPitch + if (gyroEnabled) gyroPitch * 0.70f else 0f).coerceIn(-14f, 14f),
         animationSpec = tween(140),
         label = "cinema_fps_pitch"
     )
     val beatLabels = remember(sceneId) { cinemaBeatLabels(sceneId) }
-    val currentBeatIndex = (directorProgress * 4f).toInt().coerceIn(0, 3)
+    val currentBeatIndex by remember {
+        derivedStateOf { computeCinemaBeatIndex(directorProgress) }
+    }
+    var isLifecycleResumed by remember(lifecycleOwner) {
+        mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+    }
 
     val soundEngine = remember(sceneId) {
         Cosmic3DSoundEngine(context, enableOrchestralMusic = true)
@@ -970,14 +1029,23 @@ private fun LiveActionFullscreenCinemaDialog(
 
     DisposableEffect(soundEngine, sceneId) {
         soundEngine.start(ambientSceneId = sceneId, ambientVolume = 0.64f)
+        if (!isLifecycleResumed || isMuted) {
+            soundEngine.setMuted(true)
+        }
         onDispose { soundEngine.stopAndRelease() }
     }
 
     DisposableEffect(lifecycleOwner, soundEngine) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> soundEngine.setMuted(true)
-                Lifecycle.Event.ON_RESUME -> soundEngine.setMuted(isMuted)
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    isLifecycleResumed = false
+                    soundEngine.setMuted(true)
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    isLifecycleResumed = true
+                    soundEngine.setMuted(isMuted)
+                }
                 else -> Unit
             }
         }
@@ -985,15 +1053,15 @@ private fun LiveActionFullscreenCinemaDialog(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 60fps 12-second 4-Act Director Timeline loop
-    LaunchedEffect(isPlaying, sceneId) {
-        if (!isPlaying) return@LaunchedEffect
+    // 60fps 12-second 4-Act Director Timeline loop — pauses automatically on background!
+    LaunchedEffect(isPlaying, sceneId, isLifecycleResumed) {
+        if (!isPlaying || !isLifecycleResumed) return@LaunchedEffect
         var lastNanos = 0L
-        while (isPlaying) {
+        while (isPlaying && isLifecycleResumed) {
             withFrameNanos { now ->
                 if (lastNanos != 0L) {
                     val dt = ((now - lastNanos) / 1_000_000_000f).coerceIn(0f, 0.05f)
-                    directorProgress = (directorProgress + dt / 12f) % 1f
+                    directorProgress = advanceCinemaProgress(directorProgress, dt, 12f)
                 }
                 lastNanos = now
             }
@@ -1033,22 +1101,29 @@ private fun LiveActionFullscreenCinemaDialog(
                     )
                 }
         ) {
-            val combinedYaw = smoothYaw
-            val combinedPitch = smoothPitch
-
             if (fillEntireScreen) {
                 // TRUE FULL-BLEED EDGE-TO-EDGE FIRST-PERSON IMAX STAGE (fills 100% of phone screen!)
                 LiveActionCinemaMotionCanvas(
                     sceneId = sceneId,
-                    tiltYawDeg = combinedYaw,
-                    tiltPitchDeg = combinedPitch,
-                    directorProgress = directorProgress,
-                    modifier = Modifier.fillMaxSize()
+                    tiltYawDeg = 0f,
+                    tiltPitchDeg = 0f,
+                    directorProgress = -1f,
+                    modifier = Modifier.fillMaxSize(),
+                    directorProgressProvider = { directorProgress },
+                    tiltYawProvider = { smoothYawState.value },
+                    tiltPitchProvider = { smoothPitchState.value }
                 )
             } else {
-                // Wide 16:9 letterbox mode with ambient cinema aura
-                Image(
-                    painter = painterResource(id = sceneBackdropRes(sceneId)),
+                // Wide 16:9 letterbox mode with ambient cinema aura (async Coil RGB_565 off main thread)
+                val letterboxReq = remember(context, sceneId) {
+                    ImageRequest.Builder(context)
+                        .data(sceneBackdropRes(sceneId))
+                        .allowRgb565(true)
+                        .crossfade(200)
+                        .build()
+                }
+                AsyncImage(
+                    model = letterboxReq,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
@@ -1071,8 +1146,8 @@ private fun LiveActionFullscreenCinemaDialog(
                         .padding(horizontal = 8.dp)
                         .aspectRatio(16f / 9f)
                         .graphicsLayer {
-                            rotationY = combinedYaw * 0.45f
-                            rotationX = -combinedPitch * 0.45f
+                            rotationY = smoothYawState.value * 0.45f
+                            rotationX = -smoothPitchState.value * 0.45f
                             cameraDistance = 18f * density
                         }
                         .clip(RoundedCornerShape(18.dp))
@@ -1080,10 +1155,13 @@ private fun LiveActionFullscreenCinemaDialog(
                 ) {
                     LiveActionCinemaMotionCanvas(
                         sceneId = sceneId,
-                        tiltYawDeg = combinedYaw * 0.55f,
-                        tiltPitchDeg = combinedPitch * 0.55f,
-                        directorProgress = directorProgress,
-                        modifier = Modifier.fillMaxSize()
+                        tiltYawDeg = 0f,
+                        tiltPitchDeg = 0f,
+                        directorProgress = -1f,
+                        modifier = Modifier.fillMaxSize(),
+                        directorProgressProvider = { directorProgress },
+                        tiltYawProvider = { smoothYawState.value * 0.55f },
+                        tiltPitchProvider = { smoothPitchState.value * 0.55f }
                     )
                 }
             }
@@ -1567,7 +1645,7 @@ fun TwinAidenPostCreditsDialog(
         )
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
                     voiceEngine.stopCurrentLine()
                     sfxEngine.setMuted(true)
                 }
@@ -1682,22 +1760,32 @@ fun TwinAidenPostCreditsDialog(
         }
     }
 
-    val inf = rememberInfiniteTransition(label = "postcredits_motion")
-    val kenBurns by inf.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "kb"
-    )
-    val rainFlow by inf.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
-        label = "rf"
-    )
-    val pulse by inf.animateFloat(
-        initialValue = 0.55f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse),
-        label = "pl"
-    )
+    val pcMotionConfig = LocalCosmicMotionConfig.current
+    val kenBurnsState: State<Float>
+    val rainFlowState: State<Float>
+    val pulseState: State<Float>
+    if (pcMotionConfig.enableAmbientLoops) {
+        val inf = rememberInfiniteTransition(label = "postcredits_motion")
+        kenBurnsState = inf.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(9000, easing = LinearEasing), RepeatMode.Reverse),
+            label = "kb"
+        )
+        rainFlowState = inf.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(3400, easing = LinearEasing), RepeatMode.Restart),
+            label = "rf"
+        )
+        pulseState = inf.animateFloat(
+            initialValue = 0.55f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse),
+            label = "pl"
+        )
+    } else {
+        kenBurnsState = remember { mutableFloatStateOf(0.5f) }
+        rainFlowState = remember { mutableFloatStateOf(0.25f) }
+        pulseState = remember { mutableFloatStateOf(0.82f) }
+    }
 
     val ashParticles = remember {
         List(36) { i ->
@@ -1738,9 +1826,10 @@ fun TwinAidenPostCreditsDialog(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .graphicsLayer {
-                                    val sc = 1.08f + kenBurns * 0.12f
+                                    val kb = kenBurnsState.value
+                                    val sc = 1.08f + kb * 0.12f
                                     scaleX = sc; scaleY = sc
-                                    translationX = (kenBurns - 0.5f) * 32f
+                                    translationX = (kb - 0.5f) * 32f
                                 }
                         )
                     }
@@ -1748,14 +1837,7 @@ fun TwinAidenPostCreditsDialog(
                         // CUT 2 & 3: Twin Aiden INSTANTLY VISIBLE & SLOWLY WALKING FORWARD out of the ruined Manhattan rift!
                         val walkPhase = twinWalkProgress * 7f * PI.toFloat()
                         val isWalkingNow = activeCut == 2 && twinWalkProgress < 0.995f
-                        val strideBobY = if (isWalkingNow) -abs(sin(walkPhase)) * 16f else sin(kenBurns * 6.28f) * 3f
                         val shoulderRollDeg = if (isWalkingNow) sin(walkPhase) * 2.0f else 0f
-                        val lateralWeightSway = if (isWalkingNow) sin(walkPhase) * 10f else -(kenBurns - 0.5f) * 8f
-                        val approachScale = if (activeCut == 3) {
-                            1.18f + kenBurns * 0.04f
-                        } else {
-                            0.98f + twinWalkProgress * 0.22f
-                        }
                         val approachRiseY = if (activeCut == 2) (1f - twinWalkProgress) * 36f else 0f
 
                         Box(modifier = Modifier.fillMaxSize()) {
@@ -1765,6 +1847,14 @@ fun TwinAidenPostCreditsDialog(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .graphicsLayer {
+                                        val kb = kenBurnsState.value
+                                        val strideBobY = if (isWalkingNow) -abs(sin(walkPhase)) * 16f else sin(kb * 6.28f) * 3f
+                                        val lateralWeightSway = if (isWalkingNow) sin(walkPhase) * 10f else -(kb - 0.5f) * 8f
+                                        val approachScale = if (activeCut == 3) {
+                                            1.18f + kb * 0.04f
+                                        } else {
+                                            0.98f + twinWalkProgress * 0.22f
+                                        }
                                         scaleX = approachScale
                                         scaleY = approachScale
                                         translationX = lateralWeightSway
@@ -1799,7 +1889,7 @@ fun TwinAidenPostCreditsDialog(
                                     fun px(nx: Float) = offX + nx * drawnW
                                     fun py(ny: Float) = offY + ny * drawnH
 
-                                    val eyeIntensity = (0.48f + twinWalkProgress * 0.52f) * pulse
+                                    val eyeIntensity = (0.48f + twinWalkProgress * 0.52f) * pulseState.value
                                     val lx = px(0.460f)
                                     val rx = px(0.534f)
                                     val ey = py(0.328f)
@@ -1840,6 +1930,7 @@ fun TwinAidenPostCreditsDialog(
                             Canvas(modifier = Modifier.fillMaxSize()) {
                                 val w = size.width
                                 val h = size.height
+                                val lateralWeightSway = if (isWalkingNow) sin(walkPhase) * 10f else -(kenBurnsState.value - 0.5f) * 8f
                                 val cx = w * 0.50f + lateralWeightSway * 0.65f
 
                                 val fogAlpha = ((1f - twinWalkProgress) * 0.30f).coerceIn(0f, 0.32f)
@@ -1883,6 +1974,8 @@ fun TwinAidenPostCreditsDialog(
             // LAYER 2: LIVE 60FPS 3D DEPTH-RUSHING ASH EMBERS, STORM RAIN & CRACKLING RIFT LIGHTNING
             if (cutIndex in 1..4) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
+                    val rainFlow = rainFlowState.value
+                    val pulse = pulseState.value
                     val w = size.width
                     val h = size.height
                     ashParticles.forEachIndexed { idx, (px, py, spd) ->
@@ -2015,14 +2108,14 @@ fun TwinAidenPostCreditsDialog(
                         modifier = Modifier
                             .align(Alignment.Center)
                             .size(132.dp)
-                            .morCamCosmicGlow(cornerRadius = 66.dp, glowColor = Color(0xFF38BDF8), alpha = 0.72f * pulse, blurDp = 28.dp)
+                            .morCamCosmicGlow(cornerRadius = 66.dp, glowColor = Color(0xFF38BDF8), blurDp = 28.dp, alphaProvider = { 0.72f * pulseState.value })
                             .clip(CircleShape)
                             .background(
                                 Brush.radialGradient(
                                     listOf(Color(0xCCBAE6FD), Color(0xAA0284C7), Color(0x66060D24))
                                 )
                             )
-                            .border(2.2.dp, Color.White.copy(alpha = pulse), CircleShape)
+                            .border(2.2.dp, Color.White.copy(alpha = 0.85f), CircleShape)
                             .clickable { cutIndex = 4 },
                         contentAlignment = Alignment.Center
                     ) {
@@ -2234,7 +2327,7 @@ fun Season2ArchitectPostCreditsDialog(
         )
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> {
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
                     voiceEngine.stopCurrentLine()
                     sfxEngine.setMuted(true)
                 }
@@ -2290,22 +2383,32 @@ fun Season2ArchitectPostCreditsDialog(
         }
     }
 
-    val inf = rememberInfiniteTransition(label = "s2_pc_motion")
-    val pulse by inf.animateFloat(
-        initialValue = 0.55f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
-        label = "s2_pl"
-    )
-    val kenBurns by inf.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(8500, easing = LinearEasing), RepeatMode.Reverse),
-        label = "s2_kb"
-    )
-    val emberPhase by inf.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(6400, easing = LinearEasing), RepeatMode.Restart),
-        label = "s2_ember"
-    )
+    val s2MotionConfig = LocalCosmicMotionConfig.current
+    val pulseState: State<Float>
+    val kenBurnsState: State<Float>
+    val emberPhaseState: State<Float>
+    if (s2MotionConfig.enableAmbientLoops) {
+        val inf = rememberInfiniteTransition(label = "s2_pc_motion")
+        pulseState = inf.animateFloat(
+            initialValue = 0.55f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
+            label = "s2_pl"
+        )
+        kenBurnsState = inf.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(8500, easing = LinearEasing), RepeatMode.Reverse),
+            label = "s2_kb"
+        )
+        emberPhaseState = inf.animateFloat(
+            initialValue = 0f, targetValue = 1f,
+            animationSpec = infiniteRepeatable(tween(6400, easing = LinearEasing), RepeatMode.Restart),
+            label = "s2_ember"
+        )
+    } else {
+        pulseState = remember { mutableFloatStateOf(0.82f) }
+        kenBurnsState = remember { mutableFloatStateOf(0.5f) }
+        emberPhaseState = remember { mutableFloatStateOf(0.25f) }
+    }
 
     Dialog(
         onDismissRequest = onContinueToChoicesSummary,
@@ -2343,13 +2446,14 @@ fun Season2ArchitectPostCreditsDialog(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
+                            val kb = kenBurnsState.value
                             val sc = when (cutIndex) {
-                                1 -> 1.06f + kenBurns * 0.08f
-                                2, 3 -> 1.04f + kenBurns * 0.09f + architectVoiceAmp * 0.025f
-                                else -> 1.10f + kenBurns * 0.08f
+                                1 -> 1.06f + kb * 0.08f
+                                2, 3 -> 1.04f + kb * 0.09f + architectVoiceAmp * 0.025f
+                                else -> 1.10f + kb * 0.08f
                             }
                             scaleX = sc; scaleY = sc
-                            translationY = if (cutIndex == 2 || cutIndex == 3) -kenBurns * 16f else 0f
+                            translationY = if (cutIndex == 2 || cutIndex == 3) -kb * 16f else 0f
                             alpha = when (cutIndex) {
                                 1 -> 0.84f
                                 2, 3 -> 0.92f
@@ -2377,6 +2481,8 @@ fun Season2ArchitectPostCreditsDialog(
             // Cut 1: Crimson-to-Gold Visor Glitch Pulse | Cut 2 & 3: Audio-Synced Celestial Rings & Golden Embers!
             if (cutIndex == 1 || cutIndex == 2 || cutIndex == 3) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
+                    val pulse = pulseState.value
+                    val emberPhase = emberPhaseState.value
                     val cx = size.width / 2f
                     val cy = size.height * 0.36f
                     if (cutIndex == 1) {

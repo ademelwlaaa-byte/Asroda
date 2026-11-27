@@ -13,9 +13,76 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Shader
 import androidx.annotation.DrawableRes
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.sin
+
+internal fun safeFiniteFloat(value: Float, fallback: Float = 0f): Float =
+    if (value.isFinite()) value else fallback
+
+internal data class PanoramicViewportBounds(
+    val originX: Float,
+    val originY: Float,
+    val panW: Float,
+    val panH: Float
+)
+
+/**
+ * Computes full-bleed 16:9 panoramic projection bounds mathematically clamped inside the viewport
+ * so zero black bars or NaN/Infinity coordinates can ever occur.
+ */
+internal fun computePanoramicViewportBounds(
+    canvasW: Float,
+    canvasH: Float,
+    bmpW: Float,
+    bmpH: Float,
+    camYawDeg: Float,
+    camPitchDeg: Float,
+    leanZoom: Float,
+    turnProgress: Float,
+    charCenterXLookout: Float,
+    charCenterXTurned: Float,
+    headCenterY: Float
+): PanoramicViewportBounds? {
+    if (!canvasW.isFinite() || !canvasH.isFinite() || canvasW <= 1f || canvasH <= 1f) return null
+    val safeBmpW = safeFiniteFloat(bmpW, 1f).coerceAtLeast(1f)
+    val safeBmpH = safeFiniteFloat(bmpH, 1f).coerceAtLeast(1f)
+    val bmpAspect = (safeBmpW / safeBmpH).coerceIn(0.25f, 4.0f)
+
+    val safeZoom = safeFiniteFloat(leanZoom, 1f).coerceIn(0.95f, 2.0f)
+    val minCoverH = max(canvasH, canvasW / bmpAspect)
+    val panH = max(minCoverH, minCoverH * 1.06f * safeZoom)
+    val panW = panH * bmpAspect
+
+    val t = safeFiniteFloat(turnProgress, 0f).coerceIn(0f, 1f)
+    val activeCharCenterX = (safeFiniteFloat(charCenterXLookout, 0.5f) +
+        (safeFiniteFloat(charCenterXTurned, 0.5f) - safeFiniteFloat(charCenterXLookout, 0.5f)) * t)
+        .coerceIn(0f, 1f)
+
+    val minOriginX = (canvasW - panW).coerceAtMost(0f)
+    val maxOriginX = 0f
+    val homeOriginX = (canvasW * 0.50f - activeCharCenterX * panW).coerceIn(minOriginX, maxOriginX)
+
+    val yawNorm = (safeFiniteFloat(camYawDeg, 0f) / 78f).coerceIn(-1f, 1f)
+    val rawOriginX = if (yawNorm < 0f) {
+        homeOriginX + (-yawNorm) * (maxOriginX - homeOriginX)
+    } else {
+        homeOriginX + yawNorm * (minOriginX - homeOriginX)
+    }
+    val originX = rawOriginX.coerceIn(minOriginX, maxOriginX)
+
+    val minOriginY = (canvasH - panH).coerceAtMost(0f)
+    val maxOriginY = 0f
+    val desiredHeadScreenY = canvasH * 0.31f
+    val safeHeadY = safeFiniteFloat(headCenterY, 0.31f).coerceIn(0f, 1f)
+    val homeOriginY = (desiredHeadScreenY - safeHeadY * panH).coerceIn(minOriginY, maxOriginY)
+    val pitchNorm = (safeFiniteFloat(camPitchDeg, 0f) / 18f).coerceIn(-1f, 1f)
+    val pitchRange = abs(minOriginY) * 0.44f
+    val originY = (homeOriginY - pitchNorm * pitchRange).coerceIn(minOriginY, maxOriginY)
+
+    return PanoramicViewportBounds(originX = originX, originY = originY, panW = panW, panH = panH)
+}
 
 /**
  * Calibrated normalized [0..1] anatomical coordinates on a pixel-locked 16:9 companion frame set.
@@ -65,6 +132,8 @@ data class FacialVisemeFrame(
  * the real photographed mouth smoothly.
  */
 object TurkishSpeechVisemeAnalyzer {
+    private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
+
     private enum class VisemeClass(
         val jaw: Float,
         val width: Float,
@@ -85,16 +154,17 @@ object TurkishSpeechVisemeAnalyzer {
         speechElapsedSec: Float,
         audioRms: Float
     ): FacialVisemeFrame {
-        if (audioRms <= 0.03f || dialogueText.isBlank()) {
+        if (!speechElapsedSec.isFinite() || !audioRms.isFinite() || audioRms <= 0.03f || dialogueText.isBlank()) {
             return FacialVisemeFrame()
         }
-        val clean = dialogueText.lowercase()
+        val clean = dialogueText.lowercase(TR_LOCALE)
         val len = clean.length
+        val safeElapsed = speechElapsedSec.coerceAtLeast(0f)
         // Natural Turkish conversational pacing (~13.2 chars/sec)
-        val cursor = (speechElapsedSec * 13.2f) % max(len, 1).toFloat()
+        val cursor = (safeElapsed * 13.2f) % max(len, 1).toFloat()
         val idx0 = cursor.toInt().coerceIn(0, len - 1)
         val idx1 = (idx0 + 1) % len
-        val frac = cursor - idx0.toFloat()
+        val frac = (cursor - idx0.toFloat()).coerceIn(0f, 1f)
 
         val v0 = classifyChar(clean[idx0])
         val v1 = classifyChar(clean[idx1])
@@ -104,15 +174,15 @@ object TurkishSpeechVisemeAnalyzer {
         val jaw = lerp(v0.jaw, v1.jaw, smooth) * rmsGain
         val width = lerp(v0.width, v1.width, smooth) * (0.45f + 0.55f * rmsGain)
         val upper = lerp(v0.upperLift, v1.upperLift, smooth) * rmsGain
-        val brow = lerp(v0.brow, v1.brow, smooth) * rmsGain * (0.65f + 0.35f * sin(speechElapsedSec * 2.7f))
+        val brow = lerp(v0.brow, v1.brow, smooth) * rmsGain * (0.65f + 0.35f * sin(safeElapsed * 2.7f))
         val smile = (if (width > 0.08f) width * 0.45f else 0f) * rmsGain
 
         return FacialVisemeFrame(
-            jawDrop = jaw.coerceIn(0f, 1f),
-            lipWidth = width.coerceIn(-0.36f, 0.36f),
-            upperLipLift = upper.coerceIn(0f, 0.35f),
-            browLift = brow.coerceIn(0f, 0.32f),
-            cheekSmile = smile.coerceIn(0f, 0.25f)
+            jawDrop = safeFiniteFloat(jaw).coerceIn(0f, 1f),
+            lipWidth = safeFiniteFloat(width).coerceIn(-0.36f, 0.36f),
+            upperLipLift = safeFiniteFloat(upper).coerceIn(0f, 0.35f),
+            browLift = safeFiniteFloat(brow).coerceIn(0f, 0.32f),
+            cheekSmile = safeFiniteFloat(smile).coerceIn(0f, 0.25f)
         )
     }
 
@@ -464,43 +534,30 @@ class Living3DEncounterMeshRenderer {
         rig: LivingFaceRigSpec,
         params: FrameParams
     ) {
-        val cw = params.canvasW
-        val ch = params.canvasH
-        if (cw <= 1f || ch <= 1f) return
-
-        val bmpW = textures.turnedBitmap.width.toFloat().coerceAtLeast(1f)
-        val bmpH = textures.turnedBitmap.height.toFloat().coerceAtLeast(1f)
-        val bmpAspect = bmpW / bmpH
-
-        // Full-bleed panoramic sizing with 6% overscan safety -> ZERO black pixels mathematically guaranteed!
-        val minCoverH = max(ch, cw / bmpAspect)
-        val panH = minCoverH * 1.06f * params.leanZoom
-        val panW = panH * bmpAspect
-
-        val t = params.turnProgress.coerceIn(0f, 1f)
-        val activeCharCenterX = rig.charCenterXLookout + (rig.charCenterXTurned - rig.charCenterXLookout) * t
-
-        // Horizontal panoramic sweep clamped strictly inside [cw - panW, 0] -> ZERO black bars left/right!
-        val minOriginX = (cw - panW).coerceAtMost(0f)
-        val maxOriginX = 0f
-        val homeOriginX = (cw * 0.50f - activeCharCenterX * panW).coerceIn(minOriginX, maxOriginX)
-
-        val yawNorm = (params.camYawDeg / 78f).coerceIn(-1f, 1f)
-        val rawOriginX = if (yawNorm < 0f) {
-            homeOriginX + (-yawNorm) * (maxOriginX - homeOriginX)
-        } else {
-            homeOriginX + yawNorm * (minOriginX - homeOriginX)
+        if (textures.lookoutBitmap.isRecycled || textures.midTurnBitmap.isRecycled || textures.turnedBitmap.isRecycled) {
+            return
         }
-        val originX = rawOriginX.coerceIn(minOriginX, maxOriginX)
+        val bounds = computePanoramicViewportBounds(
+            canvasW = params.canvasW,
+            canvasH = params.canvasH,
+            bmpW = textures.turnedBitmap.width.toFloat(),
+            bmpH = textures.turnedBitmap.height.toFloat(),
+            camYawDeg = params.camYawDeg,
+            camPitchDeg = params.camPitchDeg,
+            leanZoom = params.leanZoom,
+            turnProgress = params.turnProgress,
+            charCenterXLookout = rig.charCenterXLookout,
+            charCenterXTurned = rig.charCenterXTurned,
+            headCenterY = rig.headCenterY
+        ) ?: return
 
-        // Vertical framing: keep eyes at golden eye-level (~31% from top) at both 1.0x and 1.30x zoom!
-        val minOriginY = (ch - panH).coerceAtMost(0f)
-        val maxOriginY = 0f
-        val desiredHeadScreenY = ch * 0.31f
-        val homeOriginY = (desiredHeadScreenY - rig.headCenterY * panH).coerceIn(minOriginY, maxOriginY)
-        val pitchNorm = (params.camPitchDeg / 18f).coerceIn(-1f, 1f)
-        val pitchRange = abs(minOriginY) * 0.44f
-        val originY = (homeOriginY - pitchNorm * pitchRange).coerceIn(minOriginY, maxOriginY)
+        val originX = bounds.originX
+        val originY = bounds.originY
+        val panW = bounds.panW
+        val panH = bounds.panH
+        val t = safeFiniteFloat(params.turnProgress, 0f).coerceIn(0f, 1f)
+        val safeWindGust = safeFiniteFloat(params.windGust, 0f).coerceIn(0f, 1f)
+        val safeBlink = safeFiniteFloat(params.blink, 0f).coerceIn(0f, 1f)
 
         dstRect.set(originX, originY, originX + panW, originY + panH)
 
@@ -535,8 +592,8 @@ class Living3DEncounterMeshRenderer {
 
         // ── PASS 2: REAL PHOTOREALISTIC WIND-SWEPT HAIR HALO (ONLY ON GUSTS, ZERO FACE/SKYLINE WARP!) ──
         val windPatch = textures.windHairPatch
-        if (windPatch != null && t > 0.85f && params.windGust > 0.28f) {
-            val gustWeight = smoothStep(0.28f, 0.94f, params.windGust) * smoothStep(0.85f, 0.98f, t)
+        if (windPatch != null && !windPatch.bitmap.isRecycled && t > 0.85f && safeWindGust > 0.28f) {
+            val gustWeight = smoothStep(0.28f, 0.94f, safeWindGust) * smoothStep(0.85f, 0.98f, t)
             if (gustWeight > 0.02f) {
                 patchRect.set(
                     originX + windPatch.normLeft * panW,
@@ -564,7 +621,7 @@ class Living3DEncounterMeshRenderer {
             originY = originY,
             panW = panW,
             panH = panH,
-            blink = params.blink,
+            blink = safeBlink,
             visibility = faceVisibility
         )
         drawRealEyelidBlinkPatch(
@@ -574,7 +631,7 @@ class Living3DEncounterMeshRenderer {
             originY = originY,
             panW = panW,
             panH = panH,
-            blink = params.blink,
+            blink = safeBlink,
             visibility = faceVisibility
         )
 
@@ -607,7 +664,7 @@ class Living3DEncounterMeshRenderer {
         blink: Float,
         visibility: Float
     ) {
-        if (patch == null || blink <= 0.02f) return
+        if (patch == null || patch.bitmap.isRecycled || blink <= 0.02f) return
         val left = originX + patch.normLeft * panW
         val top = originY + patch.normTop * panH
         val right = originX + patch.normRight * panW
@@ -644,8 +701,8 @@ class Living3DEncounterMeshRenderer {
         viseme: FacialVisemeFrame,
         visibility: Float
     ) {
-        if (patch == null || viseme.jawDrop <= 0.04f) return
-        val jaw = viseme.jawDrop.coerceIn(0f, 1f)
+        val jaw = safeFiniteFloat(viseme.jawDrop, 0f).coerceIn(0f, 1f)
+        if (patch == null || patch.bitmap.isRecycled || jaw <= 0.04f) return
 
         val left = originX + patch.normLeft * panW
         val top = originY + patch.normTop * panH
@@ -663,7 +720,7 @@ class Living3DEncounterMeshRenderer {
         val pivotX = left + w * 0.50f
         val pivotY = top + h * 0.24f
         val scaleY = (0.88f + jaw * 0.16f).coerceIn(0.88f, 1.05f)
-        val scaleX = (1.00f + viseme.lipWidth * 0.16f).coerceIn(0.94f, 1.06f)
+        val scaleX = (1.00f + safeFiniteFloat(viseme.lipWidth, 0f) * 0.16f).coerceIn(0.94f, 1.06f)
 
         patchRect.set(left, top, right, bottom)
         canvas.save()
@@ -674,7 +731,8 @@ class Living3DEncounterMeshRenderer {
     }
 
     private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
-        val t = ((x - edge0) / max(edge1 - edge0, 0.0001f)).coerceIn(0f, 1f)
+        val safeX = safeFiniteFloat(x, edge0)
+        val t = ((safeX - edge0) / max(edge1 - edge0, 0.0001f)).coerceIn(0f, 1f)
         return t * t * (3f - 2f * t)
     }
 }
