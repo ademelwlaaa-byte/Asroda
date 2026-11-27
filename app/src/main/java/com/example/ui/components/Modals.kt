@@ -1201,7 +1201,12 @@ fun UpdateCheckerModal(
                         val notesText = remember(rel.releaseNotes) {
                             rel.releaseNotes.trim().ifBlank { "Yeni iyileştirmeler ve hata düzeltmeleri." }
                         }
-                        MorCamGlassCard(highlighted = true, cornerRadius = 18.dp) {
+                        val notesScrollState = rememberScrollState()
+                        MorCamGlassCard(
+                            highlighted = true,
+                            cornerRadius = 18.dp,
+                            modifier = Modifier.weight(1f, fill = false)
+                        ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -1232,13 +1237,21 @@ fun UpdateCheckerModal(
                                 }
                             }
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = notesText,
-                                fontFamily = com.example.ui.theme.InterFontFamily,
-                                color = MorCamTokens.LavenderMuted,
-                                fontSize = 12.sp,
-                                lineHeight = 18.sp
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f, fill = false)
+                                    .heightIn(max = 260.dp)
+                                    .verticalScroll(notesScrollState)
+                            ) {
+                                Text(
+                                    text = notesText,
+                                    fontFamily = com.example.ui.theme.InterFontFamily,
+                                    color = MorCamTokens.LavenderMuted,
+                                    fontSize = 12.sp,
+                                    lineHeight = 18.sp
+                                )
+                            }
                         }
 
                         statusMessage?.let { err ->
