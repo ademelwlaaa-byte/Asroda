@@ -664,7 +664,7 @@ class EmochiViewModel @JvmOverloads constructor(
                 pendingFlushJob?.cancel()
                 pendingFlushJob = null
             }
-            val partial = latestVisibleText.trim()
+            val partial = com.example.util.ResponseSanitizer.sanitizeForDisplay(latestVisibleText).trim()
             if (placeholderInserted) {
                 if (partial.length >= 8) {
                     kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
@@ -1803,15 +1803,16 @@ class EmochiViewModel @JvmOverloads constructor(
 
     fun updateBotProfile(updatedBot: BotEntity) {
         viewModelScope.launch {
+            val trLocale = java.util.Locale.forLanguageTag("tr-TR")
             val oldBot = repository.getBot(updatedBot.id)
             if (oldBot != null) {
                 val oldChars = repository.parseKeyCharacters(oldBot.keyCharactersJson)
                 val newChars = repository.parseKeyCharacters(updatedBot.keyCharactersJson)
-                val newNames = newChars.map { repository.cleanCharacterNameCandidate(it.name).lowercase() }.toSet()
+                val newNames = newChars.map { repository.cleanCharacterNameCandidate(it.name).lowercase(trLocale) }.toSet()
 
                 for (oldChar in oldChars) {
                     val oldClean = repository.cleanCharacterNameCandidate(oldChar.name)
-                    if (oldClean.isNotBlank() && !newNames.contains(oldClean.lowercase())) {
+                    if (oldClean.isNotBlank() && !newNames.contains(oldClean.lowercase(trLocale))) {
                         repository.deleteCharacterAndBlacklist(updatedBot.id, oldChar.name)
                         repository.deleteCharacterAndBlacklist(updatedBot.id, oldClean)
                     }
@@ -1824,13 +1825,20 @@ class EmochiViewModel @JvmOverloads constructor(
     fun updateCharacterEmotion(botId: String, characterName: String, newMood: String, affection: Int, trust: Int, tension: Int, intensity: Int = 5) {
         viewModelScope.launch {
             val existing = repository.getEmotionForCharacter(botId, characterName)
-            val updatedStateJson = JSONObject().apply {
-                put("mood", newMood)
-                put("intensity", intensity)
-                put("affection", affection)
-                put("trust", trust)
-                put("tension", tension)
-            }.toString()
+            val baseState = com.example.data.local.EmotionState.fromJson(existing?.emotionState)
+            val normalizedMood = com.example.data.repository.EmotionEngine.normalizeTurkishEmotionLabel(newMood, fallback = baseState.dominantEmotion.ifBlank { "nötr" })
+            val mappedTension = when {
+                tension >= 70 -> "crisis"
+                tension >= 40 -> "conflict"
+                else -> "none"
+            }
+            val updatedState = baseState.copy(
+                dominantEmotion = normalizedMood,
+                primaryEmotions = baseState.primaryEmotions.copy(trust = trust.coerceIn(0, 100)),
+                relationshipAxes = baseState.relationshipAxes.copy(affectionScore = affection.coerceIn(0, 100)),
+                tension = mappedTension
+            )
+            val updatedStateJson = updatedState.toJson()
 
             val entity = existing?.copy(emotionState = updatedStateJson)
                 ?: CharacterEmotionEntity(botId = botId, characterName = characterName, emotionState = updatedStateJson)

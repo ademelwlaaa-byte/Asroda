@@ -54,6 +54,38 @@ object CastDetectorEngine {
     private val TR_LOCALE = Locale.forLanguageTag("tr-TR")
     private const val ALIAS_PREFIX = "alias:"
 
+    private val MULTI_SPACE_REGEX = Regex("""\s+""")
+    private val LETTERS_ONLY_REGEX = Regex("""[^A-Za-zÇĞİÖŞÜçğıöşü]""")
+    private val APOSTROPHE_REGEX = Regex("""['‘’`]""")
+    private val BRACKET_REGEX = Regex("""\[.*?\]""")
+    private val PAREN_REGEX = Regex("""\(.*?\)""")
+    private val QUOTE_PUNCT_REGEX = Regex("""["«»“”*`_~]""")
+    private val STRIP_DQ_REGEX = Regex(""""[^"]{0,400}"""")
+    private val STRIP_GUILLEMET_REGEX = Regex("""«[^»]{0,400}»""")
+    private val STRIP_PAREN_SHORT_REGEX = Regex("""\([^)]{0,200}\)""")
+    private val STRIP_BRACKET_SHORT_REGEX = Regex("""\[[^\]]{0,200}\]""")
+    private val JSON_FENCE_REGEX = Regex("""```(?:json)?\s*""", RegexOption.IGNORE_CASE)
+
+    private fun safeOptString(obj: JSONObject, key: String, default: String = ""): String {
+        if (!obj.has(key) || obj.isNull(key)) return default
+        val v = obj.optString(key, "").trim()
+        return if (v.isBlank() || v.equals("null", ignoreCase = true)) default else v
+    }
+
+    private fun safeOptArrayString(arr: JSONArray, index: Int): String {
+        if (arr.isNull(index)) return ""
+        val v = arr.optString(index, "").trim()
+        return if (v.isBlank() || v.equals("null", ignoreCase = true)) "" else v
+    }
+
+    private fun trKey(raw: String): String {
+        return raw.trim()
+            .lowercase(TR_LOCALE)
+            .replace('\u0307', ' ')
+            .replace(MULTI_SPACE_REGEX, " ")
+            .trim()
+    }
+
     private val DEFAULT_FALLBACK_BLACKLIST = setOf(
         "bugün", "yarın", "dün", "sabah", "akşam", "gece", "gündüz", "şimdi", "sonra", "önce", "burada", "orada", "şurada",
         "burası", "orası", "şurası", "çünkü", "sadece", "oysa", "lakin", "fakat", "ayrıca", "özellikle", "nitekim", "ancak",
@@ -231,22 +263,37 @@ object CastDetectorEngine {
      */
     fun isNonPersonPlaceOrOrganization(candidateName: String): Boolean {
         val clean = normalizeTurkishEntityName(candidateName).ifBlank { candidateName.trim() }
-        val lower = clean.lowercase(TR_LOCALE).replace(Regex("""\s+"""), " ").trim()
-        if (lower.length < 2) return true
-        if (lower in ENGLISH_NON_NAME_BLACKLIST) return true
-        if (lower.any { it.isDigit() }) return true // e.g. "Denek 7-A", "Bölüm 3", "Kat 4"
+        if (clean.count { it.isLetter() } < 2) return true
+        val lowerTr = trKey(clean)
+        val lowerRoot = clean.lowercase(Locale.ROOT).replace(MULTI_SPACE_REGEX, " ").trim()
+        if (lowerTr.length < 2) return true
+        if (lowerTr in ENGLISH_NON_NAME_BLACKLIST || lowerRoot in ENGLISH_NON_NAME_BLACKLIST) return true
+        if (lowerTr.any { it.isDigit() }) return true // e.g. "Denek 7-A", "Bölüm 3", "Kat 4"
 
-        val tokens = lower.split(" ").filter { it.isNotBlank() }
-        if (tokens.isEmpty() || tokens.size > 4) return true
-        if (tokens.size == 1 && (tokens[0] in ENGLISH_NON_NAME_BLACKLIST || tokens[0] in NON_PERSON_SUFFIX_WORDS)) {
+        val tokensTr = lowerTr.split(" ").filter { it.isNotBlank() }
+        val tokensRoot = lowerRoot.split(" ").filter { it.isNotBlank() }
+        if (tokensTr.isEmpty() || tokensTr.size > 4) return true
+        if (tokensTr.size == 1 && (
+            tokensTr[0] in ENGLISH_NON_NAME_BLACKLIST ||
+                tokensRoot[0] in ENGLISH_NON_NAME_BLACKLIST ||
+                tokensTr[0] in NON_PERSON_SUFFIX_WORDS ||
+                tokensRoot[0] in NON_PERSON_SUFFIX_WORDS
+            )
+        ) {
             return true
         }
         // Multi-word candidate ending in a place/building/org/artifact noun -> NOT a person!
-        if (tokens.size >= 2 && (tokens.last() in NON_PERSON_SUFFIX_WORDS || tokens.first() in NON_PERSON_SUFFIX_WORDS)) {
+        if (tokensTr.size >= 2 && (
+            tokensTr.last() in NON_PERSON_SUFFIX_WORDS ||
+                tokensTr.first() in NON_PERSON_SUFFIX_WORDS ||
+                tokensRoot.last() in NON_PERSON_SUFFIX_WORDS ||
+                tokensRoot.first() in NON_PERSON_SUFFIX_WORDS
+            )
+        ) {
             return true
         }
         // Pure abbreviation / acronym (e.g. "S.H.I.E.L.D.", "FBI", "CIA", "NATO")
-        val lettersOnly = clean.replace(Regex("""[^A-Za-zÇĞİÖŞÜçğıöşü]"""), "")
+        val lettersOnly = clean.replace(LETTERS_ONLY_REGEX, "")
         if (lettersOnly.length in 2..8 && lettersOnly.all { it.isUpperCase() } && clean.contains('.')) {
             return true
         }
@@ -255,8 +302,8 @@ object CastDetectorEngine {
 
     /** Normalizes any leaked English cast role into crisp Turkish. */
     fun normalizeTurkishCastRole(rawRole: String, fallback: String = "Yan Karakter"): String {
-        val clean = rawRole.trim().replace(Regex("""\s+"""), " ")
-        if (clean.isBlank()) return fallback
+        val clean = rawRole.trim().replace(MULTI_SPACE_REGEX, " ")
+        if (clean.isBlank() || clean.equals("null", ignoreCase = true)) return fallback
         val low = clean.lowercase(Locale.ROOT)
         CAST_ROLE_EN_TO_TR[low]?.let { return it }
         if (TurkishLanguageGuard.isEnglishDominant(clean)) return fallback
@@ -265,8 +312,8 @@ object CastDetectorEngine {
 
     /** Normalizes any leaked English cast relation into crisp Turkish. */
     fun normalizeTurkishCastRelation(rawRelation: String): String {
-        val clean = rawRelation.trim().replace(Regex("""\s+"""), " ")
-        if (clean.isBlank()) return ""
+        val clean = rawRelation.trim().replace(MULTI_SPACE_REGEX, " ")
+        if (clean.isBlank() || clean.equals("null", ignoreCase = true)) return ""
         val fromRel = TurkishLanguageGuard.normalizeTurkishRelation(clean)
         if (fromRel.isNotBlank()) return fromRel
         val low = clean.lowercase(Locale.ROOT)
@@ -282,30 +329,45 @@ object CastDetectorEngine {
      */
     fun isGenericBackgroundExtra(candidateName: String, role: String = ""): Boolean {
         val clean = normalizeTurkishEntityName(candidateName).ifBlank { candidateName.trim() }
-        val lower = clean.lowercase(TR_LOCALE).replace(Regex("""\s+"""), " ").trim()
-        if (lower.length < 2) return true
-        if (lower in GENERIC_EXTRAS_BLACKLIST) return true
+        val lowerTr = trKey(clean)
+        val lowerRoot = clean.lowercase(Locale.ROOT).replace(MULTI_SPACE_REGEX, " ").trim()
+        if (lowerTr.length < 2) return true
+        if (lowerTr in GENERIC_EXTRAS_BLACKLIST || lowerRoot in GENERIC_EXTRAS_BLACKLIST) return true
 
-        val roleLower = role.trim().lowercase(TR_LOCALE)
-        if (roleLower.isNotBlank() && MINOR_ROLE_KEYWORDS.any { roleLower.contains(it) }) {
+        val roleLowerTr = trKey(role)
+        val roleLowerRoot = role.trim().lowercase(Locale.ROOT)
+        if (roleLowerTr.isNotBlank() && MINOR_ROLE_KEYWORDS.any { roleLowerTr.contains(it) || roleLowerRoot.contains(it) }) {
             return true
         }
 
-        val tokens = lower.split(" ").filter { it.isNotBlank() }
-        if (tokens.isEmpty()) return true
+        val tokensTr = lowerTr.split(" ").filter { it.isNotBlank() }
+        val tokensRoot = lowerRoot.split(" ").filter { it.isNotBlank() }
+        if (tokensTr.isEmpty()) return true
+
+        fun isGenericToken(tokTr: String, tokRoot: String): Boolean =
+            tokTr in GENERIC_EXTRAS_BLACKLIST || tokRoot in GENERIC_EXTRAS_BLACKLIST ||
+                tokTr in GENERIC_EXTRA_ADJECTIVES || tokRoot in GENERIC_EXTRA_ADJECTIVES ||
+                tokTr in GENERIC_EXTRA_NOUNS || tokRoot in GENERIC_EXTRA_NOUNS ||
+                tokTr in DEFAULT_FALLBACK_BLACKLIST
 
         // Multi-word generic phrases like "zorba çocuk", "kaba lise öğrencisi", "angry school bully"
-        val allGenericTokens = tokens.all { tok ->
-            tok in GENERIC_EXTRAS_BLACKLIST ||
-                tok in GENERIC_EXTRA_ADJECTIVES ||
-                tok in GENERIC_EXTRA_NOUNS ||
-                tok in DEFAULT_FALLBACK_BLACKLIST
+        val allGenericTokens = tokensTr.indices.all { i ->
+            isGenericToken(tokensTr[i], tokensRoot.getOrElse(i) { tokensTr[i] })
         }
-        val containsGenericNoun = tokens.any { it in GENERIC_EXTRA_NOUNS || it in GENERIC_EXTRAS_BLACKLIST }
+        val containsGenericNoun = tokensTr.indices.any { i ->
+            val tTr = tokensTr[i]
+            val tRoot = tokensRoot.getOrElse(i) { tTr }
+            tTr in GENERIC_EXTRA_NOUNS || tRoot in GENERIC_EXTRA_NOUNS ||
+                tTr in GENERIC_EXTRAS_BLACKLIST || tRoot in GENERIC_EXTRAS_BLACKLIST
+        }
         if (allGenericTokens && containsGenericNoun) return true
 
         // Single-word generic archetype
-        if (tokens.size == 1 && (tokens[0] in GENERIC_EXTRA_NOUNS || tokens[0] in GENERIC_EXTRA_ADJECTIVES)) {
+        if (tokensTr.size == 1 && (
+            tokensTr[0] in GENERIC_EXTRA_NOUNS || tokensRoot[0] in GENERIC_EXTRA_NOUNS ||
+                tokensTr[0] in GENERIC_EXTRA_ADJECTIVES || tokensRoot[0] in GENERIC_EXTRA_ADJECTIVES
+            )
+        ) {
             return true
         }
         return false
@@ -356,12 +418,14 @@ object CastDetectorEngine {
                 val arr = JSONArray(jsonStr)
                 val set = mutableSetOf<String>()
                 for (i in 0 until arr.length()) {
-                    val item = arr.optString(i)?.trim()?.lowercase(TR_LOCALE)
-                    if (!item.isNullOrBlank()) set.add(item)
+                    val item = trKey(safeOptArrayString(arr, i))
+                    if (item.isNotBlank()) set.add(item)
                 }
                 val result = set + DEFAULT_FALLBACK_BLACKLIST
                 cachedBlacklist = result
                 result
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 DEFAULT_FALLBACK_BLACKLIST
             }
@@ -369,11 +433,11 @@ object CastDetectorEngine {
     }
 
     fun addToBlacklist(context: Context? = null, name: String) {
-        val clean = normalizeTurkishEntityName(name).ifBlank { name.trim() }.lowercase(TR_LOCALE)
+        val clean = trKey(normalizeTurkishEntityName(name).ifBlank { name.trim() })
         if (clean.isBlank()) return
         synchronized(blacklistLock) {
             val current = getBlacklist(context)
-            cachedBlacklist = current + clean + name.trim().lowercase(TR_LOCALE)
+            cachedBlacklist = current + clean + trKey(name)
         }
     }
 
@@ -396,6 +460,10 @@ object CastDetectorEngine {
     private const val WB_L = """(?<![\p{L}\p{N}])"""
     private const val WB_R = """(?![\p{L}\p{N}])"""
 
+    private val KINSHIP_CUE_REGEXES: List<Regex> = KINSHIP_OR_ROLE_CUES.map { cue ->
+        Regex("""${WB_L}${Regex.escape(cue)}$WB_R""")
+    }
+
     /**
      * Proper name stemmer: apostrof varsa Türkçe hal/iyelik eklerini doğrular ve soyar.
      * Örnek: "Leyla'nın" / "Leyla’yla" / "Leyla'ya" -> "Leyla", "Zar'thul" -> "Zar'thul".
@@ -410,21 +478,20 @@ object CastDetectorEngine {
             .trim()
         if (clean.isBlank()) return ""
 
-        val apostropheRegex = Regex("""['‘’`]""")
-        if (apostropheRegex.containsMatchIn(clean)) {
+        if (APOSTROPHE_REGEX.containsMatchIn(clean)) {
             // Support multi-word names where last token carries the suffix: "Aiden Blackwood'un" -> "Aiden Blackwood"
-            val tokens = clean.split(Regex("""\s+""")).filter { it.isNotBlank() }
-            if (tokens.size > 1 && apostropheRegex.containsMatchIn(tokens.last())) {
-                val stemmedLast = stemSingleToken(tokens.last(), apostropheRegex)
+            val tokens = clean.split(MULTI_SPACE_REGEX).filter { it.isNotBlank() }
+            if (tokens.size > 1 && APOSTROPHE_REGEX.containsMatchIn(tokens.last())) {
+                val stemmedLast = stemSingleToken(tokens.last())
                 return (tokens.dropLast(1) + stemmedLast).joinToString(" ").trim()
             }
-            return stemSingleToken(clean, apostropheRegex)
+            return stemSingleToken(clean)
         }
         return clean
     }
 
-    private fun stemSingleToken(token: String, apostropheRegex: Regex): String {
-        val parts = token.split(apostropheRegex, limit = 2)
+    private fun stemSingleToken(token: String): String {
+        val parts = token.split(APOSTROPHE_REGEX, limit = 2)
         val base = parts[0].trim()
         val suffix = if (parts.size > 1) parts[1].trim().lowercase(TR_LOCALE) else ""
         return if (suffix in TURKISH_INFLECTION_SUFFIXES && base.length >= 2) base else token
@@ -437,15 +504,15 @@ object CastDetectorEngine {
      */
     fun normalizeTurkishEntityName(raw: String): String {
         val stripped = raw
-            .replace(Regex("""\[.*?\]"""), " ")
-            .replace(Regex("""\(.*?\)"""), " ")
-            .replace(Regex("""["«»“”*`_~]"""), "")
-            .replace(Regex("""\s+"""), " ")
+            .replace(BRACKET_REGEX, " ")
+            .replace(PAREN_REGEX, " ")
+            .replace(QUOTE_PUNCT_REGEX, "")
+            .replace(MULTI_SPACE_REGEX, " ")
             .trim()
             .trimEnd('.', ',', ';', ':', '!', '?')
-        if (stripped.isBlank()) return ""
+        if (stripped.isBlank() || stripped.equals("null", ignoreCase = true)) return ""
         val (canonical, _) = extractCanonicalNameAndRole(stripped)
-        return stemTurkishProperName(canonical).replace(Regex("""\s+"""), " ").trim()
+        return stemTurkishProperName(canonical).replace(MULTI_SPACE_REGEX, " ").trim()
     }
 
     /**
@@ -453,15 +520,17 @@ object CastDetectorEngine {
      */
     fun extractCanonicalNameAndRole(rawCandidate: String): Pair<String, String?> {
         val trimmed = rawCandidate.trim()
+        val trimmedKey = trKey(trimmed)
         var roleFromTitle: String? = null
 
         for (title in TITLES) {
-            if (trimmed.startsWith("$title ", ignoreCase = true)) {
+            val titleKey = trKey(title)
+            if (trimmedKey.startsWith("$titleKey ") && trimmed.length > title.length) {
                 val root = trimmed.substring(title.length).trim()
                 roleFromTitle = when {
-                    title.contains("Doktor", ignoreCase = true) || title.contains("Dr.", ignoreCase = true) -> "Doktor"
-                    title.contains("Komutan", ignoreCase = true) || title.contains("Kaptan", ignoreCase = true) -> "Komutan"
-                    title.contains("Komiser", ignoreCase = true) -> "Komiser"
+                    titleKey.contains("doktor") || titleKey.contains("dr.") -> "Doktor"
+                    titleKey.contains("komutan") || titleKey.contains("kaptan") -> "Komutan"
+                    titleKey.contains("komiser") -> "Komiser"
                     else -> title
                 }
                 return Pair(stemTurkishProperName(root), roleFromTitle)
@@ -469,7 +538,8 @@ object CastDetectorEngine {
         }
 
         for (hon in HONORIFICS) {
-            if (trimmed.endsWith(" $hon", ignoreCase = true)) {
+            val honKey = trKey(hon)
+            if (trimmedKey.endsWith(" $honKey") && trimmed.length > hon.length) {
                 val root = trimmed.substring(0, trimmed.length - hon.length).trim()
                 roleFromTitle = when (hon) {
                     "Doktor" -> "Doktor"
@@ -578,7 +648,32 @@ object CastDetectorEngine {
         val cueSnippet: String
     )
 
-    private val NAME_PATTERN = """[\p{Lu}\p{Lt}][\p{L}\p{M}'‘’`-]{1,29}"""
+    private const val NAME_PATTERN = """[\p{Lu}\p{Lt}][\p{L}\p{M}'‘’`-]{1,29}"""
+    private const val SPEECH_VERBS_PATTERN = """(?:dedi|sordu|fısıldadı|bağırdı|güldü|mırıldandı|haykırdı|söyledi|yanıtladı|ekledi|çıkıştı|karşılık\s+verdi|seslendi|atıldı|cevap\s+verdi|cevapladı)"""
+    private const val ACTION_VERBS_PATTERN = """(?:içeri\s+girdi|kapıyı\s+çaldı|masaya\s+oturdu|elini\s+uzattı|gülümsedi|arkasını\s+döndü|ayağa\s+kalktı|bize\s+katıldı|yaklaştı|konuşmaya\s+başladı|yanımıza\s+geldi|bize\s+baktı|odaya\s+girdi|kapıdan\s+çıktı)"""
+
+    private val TAG_REGEX = Regex("""(?is)\[\[?(?:CHARACTER_EMOTION|CAST_MEMBER|CHARACTER):\s*([^\]\n|,]+)(?:[|\s,]([^\]\n]*))?]]?""")
+    private val TITLE_PATTERN = Regex(
+        """${WB_L}(Bay|Bayan|Doktor|Prof|Profesör|Dr\.|Komiser|Başkomiser|Yüzbaşı|Kaptan|Amiral|Komutan|Lord|Prens|Prenses|Kral|Kraliçe|Usta|Hoca|Savaşçı|Büyücü|Şövalye|Mimar|Aziz|Üstat|Gözcü|Dedektif|Ajan|Müfettiş|Savcı|Hâkim|Teğmen|Binbaşı|Albay|General|Sultan|Paşa|Dük|Kont|Baron|Barones|Rahip|Cadı|Gölge|Muhafız|Hizmetkar|Tüccar|Eczacı|Yargıç|Bakan|Başkan|Reis|Çavuş|Efe|Kethüda|Seyis|Avukat|Hemşire)\s+($NAME_PATTERN)$WB_R"""
+    )
+    private val KINSHIP_PATTERN = Regex(
+        """(?i)${WB_L}(eski\s+sevgilisi|eski\s+sevgilim|kardeşi|kardeşim|abisi|abim|ablası|ablam|kuzeni|kuzenim|amcası|dayısı|teyzesi|halası|annesi|babası|dedesi|arkadaşı|dostu|komşusu|patronu|ortağı|sevgilisi|nişanlısı|eşi|saatçi|terzi|fırıncı|yardımcısı|koruması)\s+($NAME_PATTERN)$WB_R"""
+    )
+    private val FULL_NAME_PATTERN = Regex("""(?<=[\s,;:–—-])($NAME_PATTERN)\s+($NAME_PATTERN)$WB_R""")
+    private val HONORIFIC_PATTERN = Regex(
+        """${WB_L}($NAME_PATTERN)\s+(Bey|Hanım|Efendi|Ağa|Usta|Abi|Abla|Komutan|Kaptan|Doktor|Hazretleri|Paşa|Hoca|Teyze|Amca|Dayı|Yenge|Dede|Peder)$WB_R"""
+    )
+    private val INTRO_PATTERN = Regex(
+        """${WB_L}($NAME_PATTERN)\s+(adında|isminde|adlı|denen|diye\s+çağrılan|isimli|adındaki|ismindeki|arkadaşım|doktorum|yardımcım|sekreterim|muhafızım)$WB_R"""
+    )
+    private val SPEECH_POST_REGEX = Regex("""(?:"[^"]{3,300}"|«[^»]{3,300}»)\s*,?\s*$SPEECH_VERBS_PATTERN\s+($NAME_PATTERN)$WB_R""")
+    private val SPEECH_PRE_REGEX = Regex("""${WB_L}($NAME_PATTERN)\s*,\s*(?:"[^"]{3,300}"|«[^»]{3,300}»)""")
+    private val SPEECH_DIRECT_REGEX = Regex("""${WB_L}($NAME_PATTERN)\s+$SPEECH_VERBS_PATTERN$WB_R""")
+    private val ACTION_PATTERN = Regex("""${WB_L}($NAME_PATTERN)\s+$ACTION_VERBS_PATTERN$WB_R""")
+    private val APOSTROPHE_NAME_PATTERN = Regex(
+        """${WB_L}([\p{L}]{2,25})['‘’`](${TURKISH_INFLECTION_SUFFIXES.joinToString("|") { Regex.escape(it) }})$WB_R"""
+    )
+    private val MID_SENTENCE_CAP_REGEX = Regex("""(?<=[\s,;:–—"'«“*])($NAME_PATTERN)$WB_R""")
 
     /**
      * Detects character name candidates from combined text with signal strength classification.
@@ -595,14 +690,14 @@ object CastDetectorEngine {
             val canonical = normalizeTurkishEntityName(rawName)
             if (canonical.isBlank() || canonical.length < 2) return
             if (strength == SignalStrength.WEAK && canonical.length <= 2) return
-            val lower = canonical.lowercase(TR_LOCALE)
+            val lower = trKey(canonical)
             val normalizedRole = normalizeTurkishCastRole(role)
             if (isGenericBackgroundExtra(canonical, normalizedRole)) return
             if (isNonPersonPlaceOrOrganization(canonical)) return
             if (lower in AMBIGUOUS_PROPER_NAMES && strength == SignalStrength.WEAK) return
             if (lower in blacklist && lower !in AMBIGUOUS_PROPER_NAMES) return
             if (lower in blacklist && lower in AMBIGUOUS_PROPER_NAMES && strength == SignalStrength.WEAK) return
-            val tokens = lower.split(Regex("""\s+""")).filter { it.isNotBlank() }
+            val tokens = lower.split(MULTI_SPACE_REGEX).filter { it.isNotBlank() }
             if (tokens.isNotEmpty() && tokens.all { it in blacklist }) return
 
             val existing = candidates[lower]
@@ -612,10 +707,10 @@ object CastDetectorEngine {
         }
 
         val stripped = combinedText
-            .replace(Regex(""""[^"]{0,400}""""), " ")
-            .replace(Regex("""«[^»]{0,400}»"""), " ")
-            .replace(Regex("""\([^)]{0,200}\)"""), " ")
-            .replace(Regex("""\[[^\]]{0,200}\]"""), " ")
+            .replace(STRIP_DQ_REGEX, " ")
+            .replace(STRIP_GUILLEMET_REGEX, " ")
+            .replace(STRIP_PAREN_SHORT_REGEX, " ")
+            .replace(STRIP_BRACKET_SHORT_REGEX, " ")
 
         // 0. newChars JSON (STRONG)
         if (newCharsJson.isNotBlank()) {
@@ -628,38 +723,37 @@ object CastDetectorEngine {
                     val role: String
                     when (item) {
                         is JSONObject -> {
-                            name = (item.optString("n").ifBlank { item.optString("name") }).ifBlank { null }
-                            role = item.optString("r").ifBlank { item.optString("role").ifBlank { "Yan Karakter" } }
+                            name = safeOptString(item, "n").ifBlank { safeOptString(item, "name") }.ifBlank { null }
+                            role = safeOptString(item, "r").ifBlank { safeOptString(item, "role", "Yan Karakter") }.ifBlank { "Yan Karakter" }
                         }
-                        is String -> { name = item.ifBlank { null }; role = "Yan Karakter" }
+                        is String -> {
+                            val s = item.trim()
+                            name = if (s.isBlank() || s.equals("null", ignoreCase = true)) null else s
+                            role = "Yan Karakter"
+                        }
                         else -> continue
                     }
                     if (!name.isNullOrBlank()) addCandidate(name, role, SignalStrength.STRONG, "newChars:$name")
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {}
         }
 
         // 1. Açık etiketler [CHARACTER_EMOTION: Ad | Rol] (STRONG)
-        val tagRegex = Regex("""(?is)\[\[?(?:CHARACTER_EMOTION|CAST_MEMBER|CHARACTER):\s*([^\]\n|,]+)(?:[|\s,]([^\]\n]*))?]]?""")
-        tagRegex.findAll(combinedText).forEach { m ->
+        TAG_REGEX.findAll(combinedText).forEach { m ->
             val name = m.groupValues[1].trim()
             val role = m.groupValues[2].trim().ifBlank { "Yan Karakter" }
             if (name.isNotBlank()) addCandidate(name, role, SignalStrength.STRONG, m.value.take(120))
         }
 
         // 2. Unvan + İsim  "Doktor Elif", "Komiser Hakan", "Kaptan Voss" (STRONG)
-        val titlePattern = Regex(
-            """${WB_L}(Bay|Bayan|Doktor|Prof|Profesör|Dr\.|Komiser|Başkomiser|Yüzbaşı|Kaptan|Amiral|Komutan|Lord|Prens|Prenses|Kral|Kraliçe|Usta|Hoca|Savaşçı|Büyücü|Şövalye|Mimar|Aziz|Üstat|Gözcü|Dedektif|Ajan|Müfettiş|Savcı|Hâkim|Teğmen|Binbaşı|Albay|General|Sultan|Paşa|Dük|Kont|Baron|Barones|Rahip|Cadı|Gölge|Muhafız|Hizmetkar|Tüccar|Eczacı|Yargıç|Bakan|Başkan|Reis|Çavuş|Efe|Kethüda|Seyis|Avukat|Hemşire)\s+($NAME_PATTERN)$WB_R"""
-        )
-        titlePattern.findAll(stripped).forEach { m ->
+        TITLE_PATTERN.findAll(stripped).forEach { m ->
             addCandidate(m.groupValues[2], m.groupValues[1], SignalStrength.STRONG, m.value.take(120))
         }
 
         // 2b. Akrabalık / Meslek / Rol + İsim: "kardeşi Mehmet", "eski sevgilisi Deniz", "saatçi Kadir", "kuzeni Mira" (STRONG)
-        val kinshipPattern = Regex(
-            """(?i)${WB_L}(eski\s+sevgilisi|eski\s+sevgilim|kardeşi|kardeşim|abisi|abim|ablası|ablam|kuzeni|kuzenim|amcası|dayısı|teyzesi|halası|annesi|babası|dedesi|arkadaşı|dostu|komşusu|patronu|ortağı|sevgilisi|nişanlısı|eşi|saatçi|terzi|fırıncı|yardımcısı|koruması)\s+($NAME_PATTERN)$WB_R"""
-        )
-        kinshipPattern.findAll(stripped).forEach { m ->
+        KINSHIP_PATTERN.findAll(stripped).forEach { m ->
             val rawName = m.groupValues[2]
             if (rawName.firstOrNull()?.isUpperCase() == true) {
                 addCandidate(rawName, m.groupValues[1].trim().replaceFirstChar { it.titlecase(TR_LOCALE) }, SignalStrength.STRONG, m.value.take(120))
@@ -667,14 +761,13 @@ object CastDetectorEngine {
         }
 
         // 2c. İki kelimeli tam ad: "Aiden Blackwood" (STRONG if mid-sentence and both tokens proper-cased & non-blacklisted)
-        val fullNamePattern = Regex("""(?<=[\s,;:–—-])($NAME_PATTERN)\s+($NAME_PATTERN)$WB_R""")
-        fullNamePattern.findAll(stripped).forEach { m ->
+        FULL_NAME_PATTERN.findAll(stripped).forEach { m ->
             val first = stemTurkishProperName(m.groupValues[1])
             val second = stemTurkishProperName(m.groupValues[2])
-            val fLower = first.lowercase(TR_LOCALE)
-            val sLower = second.lowercase(TR_LOCALE)
-            val isTitle = TITLES.any { it.equals(first, ignoreCase = true) }
-            val isHon = HONORIFICS.any { it.equals(second, ignoreCase = true) }
+            val fLower = trKey(first)
+            val sLower = trKey(second)
+            val isTitle = TITLES.any { trKey(it) == fLower }
+            val isHon = HONORIFICS.any { trKey(it) == sLower }
             if (!isTitle && !isHon &&
                 first.length >= 3 && second.length >= 3 &&
                 fLower !in blacklist && sLower !in blacklist &&
@@ -685,39 +778,26 @@ object CastDetectorEngine {
         }
 
         // 3. İsim + Hitap  "Kerem Bey" (STRONG)
-        val honorificPattern = Regex(
-            """${WB_L}($NAME_PATTERN)\s+(Bey|Hanım|Efendi|Ağa|Usta|Abi|Abla|Komutan|Kaptan|Doktor|Hazretleri|Paşa|Hoca|Teyze|Amca|Dayı|Yenge|Dede|Peder)$WB_R"""
-        )
-        honorificPattern.findAll(stripped).forEach { m ->
+        HONORIFIC_PATTERN.findAll(stripped).forEach { m ->
             val name = m.groupValues[1].trim()
             addCandidate(name, m.groupValues[2], SignalStrength.STRONG, m.value.take(120))
         }
 
         // 4. Açık tanıtma  "X adında / X adlı" (STRONG)
-        val introPattern = Regex(
-            """${WB_L}($NAME_PATTERN)\s+(adında|isminde|adlı|denen|diye\s+çağrılan|isimli|adındaki|ismindeki|arkadaşım|doktorum|yardımcım|sekreterim|muhafızım)$WB_R"""
-        )
-        introPattern.findAll(stripped).forEach { m ->
+        INTRO_PATTERN.findAll(stripped).forEach { m ->
             addCandidate(m.groupValues[1], "Yan Karakter", SignalStrength.STRONG, m.value.take(120))
         }
 
         // 5. Konuşma atfı (STRONG)
-        val speechVerbs = """(?:dedi|sordu|fısıldadı|bağırdı|güldü|mırıldandı|haykırdı|söyledi|yanıtladı|ekledi|çıkıştı|karşılık\s+verdi|seslendi|atıldı|cevap\s+verdi|cevapladı)"""
-        val speechPost = Regex("""(?:"[^"]{3,300}"|«[^»]{3,300}»)\s*,?\s*$speechVerbs\s+($NAME_PATTERN)$WB_R""")
-        val speechPre = Regex("""${WB_L}($NAME_PATTERN)\s*,\s*(?:"[^"]{3,300}"|«[^»]{3,300}»)""")
-        val speechDirect = Regex("""${WB_L}($NAME_PATTERN)\s+$speechVerbs$WB_R""")
-        speechPost.findAll(combinedText).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
-        speechPre.findAll(combinedText).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
-        speechDirect.findAll(stripped).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
+        SPEECH_POST_REGEX.findAll(combinedText).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
+        SPEECH_PRE_REGEX.findAll(combinedText).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
+        SPEECH_DIRECT_REGEX.findAll(stripped).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Konuşan Karakter", SignalStrength.STRONG, m.value.take(120)) }
 
         // 6. Eylem kalıpları (STRONG)
-        val actionVerbs = """(?:içeri\s+girdi|kapıyı\s+çaldı|masaya\s+oturdu|elini\s+uzattı|gülümsedi|arkasını\s+döndü|ayağa\s+kalktı|bize\s+katıldı|yaklaştı|konuşmaya\s+başladı|yanımıza\s+geldi|bize\s+baktı|odaya\s+girdi|kapıdan\s+çıktı)"""
-        val actionPattern = Regex("""${WB_L}($NAME_PATTERN)\s+$actionVerbs$WB_R""")
-        actionPattern.findAll(stripped).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Eyleme Geçen Karakter", SignalStrength.STRONG, m.value.take(120)) }
+        ACTION_PATTERN.findAll(stripped).forEach { m -> addCandidate(m.groupValues[1], "Sahnede Eyleme Geçen Karakter", SignalStrength.STRONG, m.value.take(120)) }
 
         // 7. Apostroflu özel isim (WEAK)
-        val apostrophePattern = Regex("""${WB_L}([\p{L}]{2,25})['‘’`](${TURKISH_INFLECTION_SUFFIXES.joinToString("|") { Regex.escape(it) }})$WB_R""")
-        apostrophePattern.findAll(combinedText).forEach { m ->
+        APOSTROPHE_NAME_PATTERN.findAll(combinedText).forEach { m ->
             val base = m.groupValues[1]
             val capitalized = base.replaceFirstChar { if (it.isLowerCase()) it.titlecase(TR_LOCALE) else it.toString() }
             addCandidate(capitalized, "Yan Karakter", SignalStrength.WEAK, m.value.take(80))
@@ -740,31 +820,28 @@ object CastDetectorEngine {
     ): Boolean {
         val clean = text.trim()
         if (clean.length < 24) return false
-        val words = clean.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        val words = clean.split(MULTI_SPACE_REGEX).filter { it.isNotBlank() }
         if (words.size < 4) return false
 
         val excludedLower = buildSet {
             addAll(blacklist)
-            if (botName.isNotBlank()) add(normalizeTurkishEntityName(botName).lowercase(TR_LOCALE))
-            if (userCharName.isNotBlank()) add(normalizeTurkishEntityName(userCharName).lowercase(TR_LOCALE))
+            if (botName.isNotBlank()) add(trKey(normalizeTurkishEntityName(botName)))
+            if (userCharName.isNotBlank()) add(trKey(normalizeTurkishEntityName(userCharName)))
             knownNames.forEach { n ->
-                val norm = normalizeTurkishEntityName(n).lowercase(TR_LOCALE)
+                val norm = trKey(normalizeTurkishEntityName(n))
                 if (norm.isNotBlank()) add(norm)
             }
         }
 
         // 1. Check for role/kinship/literary intro cues
         val lowerText = clean.lowercase(TR_LOCALE)
-        val hasRoleCue = KINSHIP_OR_ROLE_CUES.any { cue ->
-            Regex("""${WB_L}${Regex.escape(cue)}$WB_R""").containsMatchIn(lowerText)
-        }
+        val hasRoleCue = KINSHIP_CUE_REGEXES.any { it.containsMatchIn(lowerText) }
         if (hasRoleCue) return true
 
         // 2. Check for any mid-sentence capitalized proper noun not already known/blacklisted
-        val midSentenceCapRegex = Regex("""(?<=[\s,;:–—"'«“*])($NAME_PATTERN)$WB_R""")
-        val hasNewProperNoun = midSentenceCapRegex.findAll(clean).any { m ->
+        val hasNewProperNoun = MID_SENTENCE_CAP_REGEX.findAll(clean).any { m ->
             val norm = normalizeTurkishEntityName(m.groupValues[1])
-            val low = norm.lowercase(TR_LOCALE)
+            val low = trKey(norm)
             norm.length >= 3 && low !in excludedLower
         }
         if (hasNewProperNoun) return true
@@ -772,7 +849,7 @@ object CastDetectorEngine {
         // 3. Check if local detector found any candidate needing validation/disambiguation
         val localHits = detectCandidates(clean, blacklist)
         return localHits.any { hit ->
-            val low = hit.canonicalName.lowercase(TR_LOCALE)
+            val low = trKey(hit.canonicalName)
             low !in excludedLower
         }
     }
@@ -812,7 +889,7 @@ object CastDetectorEngine {
                     MicroAiCastMemberDto(
                         name = hit.canonicalName,
                         isPerson = true,
-                        aliases = if (!hit.rawName.equals(hit.canonicalName, ignoreCase = true)) listOf(hit.rawName) else emptyList(),
+                        aliases = if (trKey(hit.rawName) != trKey(hit.canonicalName)) listOf(hit.rawName) else emptyList(),
                         role = hit.role,
                         relation = "",
                         age = null,
@@ -885,9 +962,8 @@ JSON ŞEMASI:
     fun parseMicroAiCastResponse(rawJson: String): MicroAiCastResponse? {
         if (rawJson.isBlank()) return null
         val cleaned = rawJson.trim()
-            .removePrefix("```json")
-            .removePrefix("```")
-            .removeSuffix("```")
+            .replace(JSON_FENCE_REGEX, "")
+            .replace("```", "")
             .trim()
         val start = cleaned.indexOf('{')
         val end = cleaned.lastIndexOf('}')
@@ -895,6 +971,8 @@ JSON ŞEMASI:
         return try {
             val obj = JSONObject(cleaned.substring(start, end + 1))
             parseMicroAiCastFromJsonObject(obj)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             null
         }
@@ -909,19 +987,19 @@ JSON ŞEMASI:
         if (castArr != null) {
             for (i in 0 until minOf(castArr.length(), 8)) {
                 val item = castArr.optJSONObject(i) ?: continue
-                val name = item.optString("name", "").trim()
+                val name = safeOptString(item, "name")
                 if (name.isBlank()) continue
                 val isPerson = item.optBoolean("is_person", true)
                 val aliases = mutableListOf<String>()
                 val aliasArr = item.optJSONArray("aliases")
                 if (aliasArr != null) {
                     for (a in 0 until minOf(aliasArr.length(), 6)) {
-                        val al = aliasArr.optString(a, "").trim()
+                        val al = safeOptArrayString(aliasArr, a)
                         if (al.length >= 2) aliases.add(al)
                     }
                 }
-                val role = item.optString("role", "Yan Karakter").trim().ifBlank { "Yan Karakter" }
-                val relation = item.optString("relation", "").trim()
+                val role = safeOptString(item, "role", "Yan Karakter").ifBlank { "Yan Karakter" }
+                val relation = safeOptString(item, "relation")
                 val age = if (item.has("age") && !item.isNull("age")) {
                     item.optInt("age", -1).takeIf { it in 1..150 }
                 } else null
@@ -943,7 +1021,7 @@ JSON ŞEMASI:
         val rejected = mutableListOf<String>()
         if (rejArr != null) {
             for (i in 0 until minOf(rejArr.length(), 12)) {
-                val r = rejArr.optString(i, "").trim()
+                val r = safeOptArrayString(rejArr, i)
                 if (r.isNotBlank()) rejected.add(r)
             }
         }
@@ -958,19 +1036,19 @@ JSON ŞEMASI:
         blacklistedDbNames: Set<String> = emptySet()
     ): CastExtractionResult {
         val rejectedNormalized = response.rejected
-            .map { normalizeTurkishEntityName(it).lowercase(TR_LOCALE) }
+            .map { trKey(normalizeTurkishEntityName(it)) }
             .filter { it.isNotBlank() }
             .toMutableSet()
 
         val excludedMain = buildSet {
-            if (botName.isNotBlank()) add(normalizeTurkishEntityName(botName).lowercase(TR_LOCALE))
-            if (userCharName.isNotBlank()) add(normalizeTurkishEntityName(userCharName).lowercase(TR_LOCALE))
+            if (botName.isNotBlank()) add(trKey(normalizeTurkishEntityName(botName)))
+            if (userCharName.isNotBlank()) add(trKey(normalizeTurkishEntityName(userCharName)))
         }
 
         val deduped = linkedMapOf<String, MicroAiCastMemberDto>()
         for (rawMember in response.cast) {
             val normalizedName = normalizeTurkishEntityName(rawMember.name)
-            val lower = normalizedName.lowercase(TR_LOCALE)
+            val lower = trKey(normalizedName)
             if (!rawMember.isPerson) {
                 if (lower.isNotBlank()) rejectedNormalized.add(lower)
                 continue
@@ -991,8 +1069,8 @@ JSON ŞEMASI:
             }
             val cleanedAliases = rawMember.aliases
                 .map { it.trim() }
-                .filter { it.length >= 2 && !it.equals(normalizedName, ignoreCase = true) }
-                .distinct()
+                .filter { it.length >= 2 && !it.equals("null", ignoreCase = true) && trKey(it) != lower }
+                .distinctBy { trKey(it) }
 
             val hitsBlacklistedDb = blacklistedDbNames.any { bl ->
                 isLikelyAlias(normalizedName, bl) ||
@@ -1023,10 +1101,11 @@ JSON ŞEMASI:
                 val preferNewName = normalizedName.split(' ').size > existing.name.split(' ').size &&
                     isLikelyAlias(existing.name, normalizedName)
                 val finalName = if (preferNewName) normalizedName else existing.name
+                val finalKey = trKey(finalName)
                 val extraAlias = if (preferNewName) existing.name else normalizedName
                 val mergedAliases = (existing.aliases + cleanedAliases + extraAlias)
-                    .filter { it.length >= 2 && !it.equals(finalName, ignoreCase = true) }
-                    .distinct()
+                    .filter { it.length >= 2 && !it.equals("null", ignoreCase = true) && trKey(it) != finalKey }
+                    .distinctBy { trKey(it) }
                 val mergedDto = existing.copy(
                     name = finalName,
                     aliases = mergedAliases,
@@ -1037,7 +1116,7 @@ JSON ŞEMASI:
                 )
                 if (preferNewName) {
                     deduped.remove(aliasKey!!)
-                    deduped[finalName.lowercase(TR_LOCALE)] = mergedDto
+                    deduped[finalKey] = mergedDto
                 } else {
                     deduped[aliasKey!!] = mergedDto
                 }
@@ -1061,13 +1140,15 @@ JSON ŞEMASI:
             val arr = JSONArray(multiRoleJson)
             buildSet {
                 for (i in 0 until arr.length()) {
-                    val item = arr.optString(i, "").trim()
+                    val item = safeOptArrayString(arr, i)
                     if (item.startsWith(ALIAS_PREFIX, ignoreCase = true)) {
                         val alias = item.substring(ALIAS_PREFIX.length).trim()
-                        if (alias.length >= 2) add(alias)
+                        if (alias.length >= 2 && !alias.equals("null", ignoreCase = true)) add(alias)
                     }
                 }
             }
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             emptySet()
         }
@@ -1082,18 +1163,19 @@ JSON ŞEMASI:
             try {
                 val arr = JSONArray(existingMultiRoleJson)
                 for (i in 0 until arr.length()) {
-                    val item = arr.optString(i, "").trim()
+                    val item = safeOptArrayString(arr, i)
                     if (item.isNotBlank()) entries.add(item)
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {}
         }
-        val canonicalLower = canonicalName.trim().lowercase(TR_LOCALE)
+        val canonicalLower = trKey(canonicalName)
         for (raw in newAliases) {
             val clean = raw.trim()
-            if (clean.length >= 2 && clean.lowercase(TR_LOCALE) != canonicalLower) {
-                val alreadyPresent = entries.any {
-                    it.equals("$ALIAS_PREFIX$clean", ignoreCase = true)
-                }
+            if (clean.length >= 2 && !clean.equals("null", ignoreCase = true) && trKey(clean) != canonicalLower) {
+                val cleanKey = trKey("$ALIAS_PREFIX$clean")
+                val alreadyPresent = entries.any { trKey(it) == cleanKey }
                 if (!alreadyPresent) entries.add("$ALIAS_PREFIX$clean")
             }
         }
@@ -1142,12 +1224,12 @@ JSON ŞEMASI:
      * "Doktor Elif" <-> "Elif", "Leyla'nın" <-> "Leyla", "Kerem" <-> "Kerem Aydın".
      */
     fun isLikelyAlias(candidate: String, existingName: String): Boolean {
-        val c = normalizeTurkishEntityName(candidate).lowercase(TR_LOCALE)
-        val e = normalizeTurkishEntityName(existingName).lowercase(TR_LOCALE)
+        val c = trKey(normalizeTurkishEntityName(candidate))
+        val e = trKey(normalizeTurkishEntityName(existingName))
         if (c.isBlank() || e.isBlank()) return false
         if (c == e) return true
-        val cTokens = c.split(Regex("""\s+""")).filter { it.length >= 2 }.toSet()
-        val eTokens = e.split(Regex("""\s+""")).filter { it.length >= 2 }.toSet()
+        val cTokens = c.split(MULTI_SPACE_REGEX).filter { it.length >= 2 }.toSet()
+        val eTokens = e.split(MULTI_SPACE_REGEX).filter { it.length >= 2 }.toSet()
         return (cTokens.isNotEmpty() && eTokens.containsAll(cTokens)) ||
             (eTokens.isNotEmpty() && cTokens.containsAll(eTokens))
     }

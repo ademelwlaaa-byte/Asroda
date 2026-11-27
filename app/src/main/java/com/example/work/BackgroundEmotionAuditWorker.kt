@@ -31,6 +31,7 @@ class BackgroundEmotionAuditWorker(
         return try {
             val db = AppDatabase.getInstance(applicationContext)
             val bot = db.botDao().getBotById(botId) ?: return Result.success()
+            if (bot.id.startsWith("book_") || bot.mode == "book") return Result.success()
             val settings = db.userSettingsDao().getUserSettings() ?: return Result.success()
 
             val recentHistory = db.emotionHistoryDao().getRecentHistoryForBot(botId, limit = 20)
@@ -82,7 +83,8 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
         } catch (ce: kotlinx.coroutines.CancellationException) {
             throw ce
         } catch (e: Exception) {
-            Log.w("EmotionAudit", "Audit worker error for bot=$botId (attempt=$runAttemptCount): ${e.message}")
+            val safeErr = com.example.util.SecureApiKeyVault.redactSecrets(e.message.orEmpty())
+            Log.w("EmotionAudit", "Audit worker error for bot=$botId (attempt=$runAttemptCount): $safeErr")
             if (runAttemptCount < 2) Result.retry() else Result.success()
         }
     }
@@ -94,9 +96,10 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
     }
 
     private fun buildMessagesSnapshot(messages: List<MessageEntity>): String {
-        return messages.joinToString("\n") { m ->
-            "[${m.role}]: ${m.text.take(120).replace("\n", " ")}"
-        }
+        return messages.mapNotNull { m ->
+            val clean = EmochiRepository.cleanEmotionTags(m.text).replace("\n", " ").trim()
+            if (clean.isBlank()) null else "[${m.role}]: ${clean.take(120)}"
+        }.joinToString("\n")
     }
 
     private suspend fun applyAuditCorrection(
@@ -106,15 +109,20 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
         rawResult: String
     ) {
         try {
-            val jsonMatch = Regex("""(?is)\{.*\}""").find(rawResult)?.value ?: return
+            val visibleResult = EmochiRepository.cleanEmotionTags(rawResult).trim()
+            val jsonMatch = Regex("""(?is)\{.*\}""").find(visibleResult)?.value ?: return
             val json = org.json.JSONObject(jsonMatch)
             if (json.optBoolean("consistent", true)) return
 
             val corrObj = json.optJSONObject("correction") ?: return
-            val field = corrObj.optString("field", "")
+            val field = if (corrObj.isNull("field")) "" else corrObj.optString("field", "").trim()
             val suggested = corrObj.optInt("suggested", -1)
-            val reason = corrObj.optString("reason", "arka plan denetimi")
-            if (field.isBlank() || suggested < 0) return
+            val reason = if (corrObj.isNull("reason")) {
+                "arka plan denetimi"
+            } else {
+                corrObj.optString("reason", "arka plan denetimi").trim().ifBlank { "arka plan denetimi" }
+            }
+            if (field.isBlank() || field.equals("null", ignoreCase = true) || suggested < 0) return
 
             // Güvenlik: tek seferde en fazla ±15 düzeltme, kullanıcı verisi silinmez
             val MAX_CORRECTION = 15
@@ -195,6 +203,8 @@ Bu veriler tutarlı mı? Büyük bir kayma veya gerçeklikten kopma var mı?
                     fullVectorJson = finalState.toJson()
                 )
             )
+        } catch (ce: kotlinx.coroutines.CancellationException) {
+            throw ce
         } catch (_: Exception) {}
     }
 }

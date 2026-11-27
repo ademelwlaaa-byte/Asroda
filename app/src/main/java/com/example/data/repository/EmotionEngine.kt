@@ -1,12 +1,8 @@
 package com.example.data.repository
 
-import com.example.data.local.AppDatabase
-import com.example.data.local.BotEntity
-import com.example.data.local.DeltaData
 import com.example.data.local.EmotionState
 import com.example.data.local.PrimaryEmotions
 import com.example.data.local.RelationshipAxes
-import com.example.data.local.SideCharacterEmotionUpdate
 import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.roundToInt
@@ -23,6 +19,20 @@ import kotlin.math.roundToInt
  * - Passive per-message micro-decay for anger/resentment (realistic slow cooling)
  */
 object EmotionEngine {
+
+    private val TR_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
+    private val MULTI_SPACE_REGEX = Regex("""\s+""")
+    private val STATE_JSON_EXTRACT_REGEX = Regex("""(?is)\{.*\}""")
+    private val FALLBACK_VAL_REGEX = Regex("""(?:value|val|delta|aff)["':\s]+([+-]?\d+)""")
+
+    private fun safeOptString(json: JSONObject, key: String, fallback: String = ""): String {
+        if (!json.has(key) || json.isNull(key)) return fallback
+        val v = json.optString(key, "").trim()
+        return if (v.isBlank() || v.equals("null", ignoreCase = true)) fallback else v
+    }
+
+    private fun safePositiveMultiplier(value: Double, default: Double = 1.0): Double =
+        if (value.isFinite() && value > 0.0) value else default
 
     // ─────────────────────────────────────────────────────────────────────────
     // KANONIK ALAN ADI EŞLEMESİ
@@ -112,11 +122,11 @@ object EmotionEngine {
         "sarcastic" to "alaycı",
         "bored" to "sıkılmış",
         "determined" to "kararlı",
-        "conflicted" to "çelişkili",
+        "conflicted" to "kararsız",
         "proud" to "gururlu",
         "embarrassed" to "mahcup",
         "shy" to "utangaç",
-        "vulnerable" to "savunmasız",
+        "vulnerable" to "kırılgan",
         "grateful" to "minnettar",
         "hopeful" to "umutlu",
         "nostalgic" to "nostaljik",
@@ -139,23 +149,8 @@ object EmotionEngine {
         "remorseful" to "pişman",
         "regretful" to "pişman",
         "ashamed" to "mahcup",
-        "shy" to "utangaç",
-        "embarrassed" to "mahcup",
-        "proud" to "gururlu",
         "confident" to "kendinden emin",
-        "determined" to "kararlı",
-        "focused" to "odaklanmış",
-        "grateful" to "minnettar",
-        "hopeful" to "umutlu",
         "lonely" to "yalnız",
-        "longing" to "özlem dolu",
-        "nostalgic" to "nostaljik",
-        "tired" to "yorgun",
-        "exhausted" to "bitkin",
-        "vulnerable" to "kırılgan",
-        "conflicted" to "kararsız",
-        "defensive" to "savunmacı",
-        "serious" to "ciddi",
         "thoughtful" to "düşünceli"
     )
 
@@ -164,13 +159,13 @@ object EmotionEngine {
      * into natural Turkish labels ("şüpheci", "koruyucu") for consistent UI display & prompt continuity.
      */
     fun normalizeTurkishEmotionLabel(raw: String, fallback: String = "nötr"): String {
-        val clean = raw.trim().replace(Regex("""\s+"""), " ")
-        if (clean.isBlank()) return fallback
+        val clean = raw.trim().replace(MULTI_SPACE_REGEX, " ")
+        if (clean.isBlank() || clean.equals("null", ignoreCase = true)) return fallback
         val low = clean.lowercase(Locale.ROOT)
         EMOTION_LABEL_EN_TO_TR[low]?.let { return it }
         if (TurkishLanguageGuard.isEnglishDominant(clean)) {
             return TurkishLanguageGuard.normalizeTurkishEmotionTag(clean, fallback = fallback)
-                .lowercase(Locale.forLanguageTag("tr-TR"))
+                .lowercase(TR_LOCALE)
         }
         return clean.take(32)
     }
@@ -203,7 +198,8 @@ object EmotionEngine {
             return EmotionalRegulationResult(rawDelta, rawDelta, 0, false)
         }
 
-        val dampeningFactor = 1.0 - (capacity / 100.0 * 0.45)
+        val clampedCap = capacity.coerceIn(0, 100)
+        val dampeningFactor = 1.0 - (clampedCap / 100.0 * 0.45)
         val dampened = (rawDelta * dampeningFactor).toInt()
         val suppressed = rawDelta - dampened
 
@@ -237,14 +233,19 @@ object EmotionEngine {
             return rawDelta.coerceIn(-35, 0)
         }
 
+        val safePrev = prevAffection.coerceIn(0, 100)
+        val safeBaseMult = safePositiveMultiplier(baseMultiplier, 1.0).coerceIn(0.25, 3.0)
+        val safeContextMult = safePositiveMultiplier(combinedContextMult, 1.0).coerceIn(0.25, 3.0)
+        val safePersMult = safePositiveMultiplier(personalityAffectionMult, 1.0).coerceIn(0.25, 3.0)
+
         var delta = rawDelta.coerceIn(0, 15)
         if (totalMsgCount < 5 && !isEstablishedRomantic) {
             delta = minOf(delta, 3)
         }
 
         var maxAllowed = when {
-            prevAffection < 60 -> 8
-            prevAffection in 60..85 -> 6
+            safePrev < 60 -> 8
+            safePrev in 60..85 -> 6
             else -> 4
         }
 
@@ -252,13 +253,13 @@ object EmotionEngine {
             maxAllowed = (maxAllowed * 0.5).roundToInt().coerceAtLeast(1)
         }
 
-        val effectiveMaxAllowed = (maxAllowed * baseMultiplier * combinedContextMult * personalityAffectionMult)
+        val effectiveMaxAllowed = (maxAllowed * safeBaseMult * safeContextMult * safePersMult)
             .roundToInt()
             .coerceAtLeast(1)
         delta = minOf(delta, effectiveMaxAllowed)
 
-        val maxDailyBudget = (35 * baseMultiplier).roundToInt().coerceAtLeast(12)
-        val remainingDailyBudget = (maxDailyBudget - dailyAffectionGain).coerceAtLeast(0)
+        val maxDailyBudget = (35 * safeBaseMult).roundToInt().coerceAtLeast(12)
+        val remainingDailyBudget = (maxDailyBudget - dailyAffectionGain.coerceAtLeast(0)).coerceAtLeast(0)
         delta = minOf(delta, remainingDailyBudget)
 
         if (regCount > 3) delta = 0
@@ -276,7 +277,9 @@ object EmotionEngine {
     ): Int {
         if (rawDelta == 0) return 0
 
-        var effectiveDelta = rawDelta.toDouble() * difficultyMultiplier
+        val safeScore = currentScore.coerceIn(0, 100)
+        val safeMult = safePositiveMultiplier(difficultyMultiplier, 1.0).coerceIn(0.1, 3.0)
+        var effectiveDelta = rawDelta.toDouble() * safeMult
 
         // Positive delta clamping: streak bonus or daily gain limit
         if (effectiveDelta > 0) {
@@ -287,15 +290,15 @@ object EmotionEngine {
             if (streakCount >= 5) {
                 effectiveDelta *= 1.25 // small streak reward
             }
-            val ceilingRemaining = 100 - currentScore
+            val ceilingRemaining = 100 - safeScore
             effectiveDelta = minOf(effectiveDelta, ceilingRemaining.toDouble())
         } else {
             // Negative delta (cannot drop below 0)
-            val floorRemaining = currentScore.toDouble()
+            val floorRemaining = safeScore.toDouble()
             effectiveDelta = maxOf(effectiveDelta, -floorRemaining)
         }
 
-        return effectiveDelta.toInt()
+        return if (effectiveDelta.isFinite()) effectiveDelta.toInt() else 0
     }
 
     /**
@@ -447,11 +450,12 @@ object EmotionEngine {
         messageIndex: Int,
         regulationCapacity: Int = 50
     ): EmotionState {
-        val interval = if (regulationCapacity >= 60) 8 else 10
+        if (messageIndex <= 0) return currentState
+        val interval = if (regulationCapacity.coerceIn(0, 100) >= 60) 8 else 10
         if (messageIndex % interval != 0) return currentState
 
-        var anger = currentState.primaryEmotions.anger
-        var resentment = currentState.relationshipAxes.resentmentScore
+        var anger = currentState.primaryEmotions.anger.coerceIn(0, 100)
+        var resentment = currentState.relationshipAxes.resentmentScore.coerceIn(0, 100)
 
         if (anger > 20) anger = (anger - 1).coerceAtLeast(0)
         if (resentment > 20) resentment = (resentment - 1).coerceAtLeast(0)
@@ -467,7 +471,7 @@ object EmotionEngine {
 
     /**
      * Audits and enforces psychological consistency in Kotlin.
-     * Prevents absurd contradictions (e.g. anger=80 but dominantEmotion="neşeli").
+     * Prevents absurd contradictions (e.g. anger=80 but dominantEmotion="neşeli" or leaked English "happy").
      * Returns the corrected state AND a consistency note (empty if no contradiction found).
      * The note is injected into the NEXT message's prompt as a single line so the LLM self-corrects.
      */
@@ -477,12 +481,15 @@ object EmotionEngine {
         enforcePsychologicalConsistencyWithNote(state).state
 
     fun enforcePsychologicalConsistencyWithNote(state: EmotionState): ConsistencyResult {
-        var dom = state.dominantEmotion.lowercase(Locale.forLanguageTag("tr-TR")).trim()
-        val anger = state.primaryEmotions.anger
-        val resentment = state.relationshipAxes.resentmentScore
-        val joy = state.primaryEmotions.joy
-        val sadness = state.primaryEmotions.sadness
-        val fear = state.primaryEmotions.fear
+        var dom = normalizeTurkishEmotionLabel(state.dominantEmotion, fallback = "nötr")
+            .lowercase(TR_LOCALE)
+            .trim()
+        val anger = state.primaryEmotions.anger.coerceIn(0, 100)
+        val resentment = state.relationshipAxes.resentmentScore.coerceIn(0, 100)
+        val joy = state.primaryEmotions.joy.coerceIn(0, 100)
+        val sadness = state.primaryEmotions.sadness.coerceIn(0, 100)
+        val fear = state.primaryEmotions.fear.coerceIn(0, 100)
+        val affection = state.affection.coerceIn(0, 100)
 
         var note = ""
         var corrected = false
@@ -509,11 +516,11 @@ object EmotionEngine {
         }
 
         // Kural 3: Çok düşük affection ile "tam güven/derin aşk" baskın duygu çelişkisi
-        if (!corrected && state.affection < 25) {
+        if (!corrected && affection < 25) {
             if (dom.contains("derin aşk") || dom.contains("tam güven") || dom.contains("aşık")) {
                 val oldDom = dom
                 dom = "nötr ve temkinli"
-                note = "Önceki state çelişkiliydi: affection düşük (${state.affection}) ama baskın duygu \"$oldDom\" idi. Tutarlı bir state üret."
+                note = "Önceki state çelişkiliydi: affection düşük ($affection) ama baskın duygu \"$oldDom\" idi. Tutarlı bir state üret."
                 corrected = true
             }
         }
@@ -527,8 +534,29 @@ object EmotionEngine {
             }
         }
 
+        val clampedPrimary = state.primaryEmotions.copy(
+            joy = joy,
+            trust = state.primaryEmotions.trust.coerceIn(0, 100),
+            fear = fear,
+            surprise = state.primaryEmotions.surprise.coerceIn(0, 100),
+            sadness = sadness,
+            disgust = state.primaryEmotions.disgust.coerceIn(0, 100),
+            anger = anger,
+            anticipation = state.primaryEmotions.anticipation.coerceIn(0, 100)
+        )
+        val clampedAxes = state.relationshipAxes.copy(
+            affectionScore = affection,
+            respectScore = state.relationshipAxes.respectScore.coerceIn(0, 100),
+            comfortScore = state.relationshipAxes.comfortScore.coerceIn(0, 100),
+            resentmentScore = resentment
+        )
+
         return ConsistencyResult(
-            state = state.copy(dominantEmotion = dom),
+            state = state.copy(
+                primaryEmotions = clampedPrimary,
+                relationshipAxes = clampedAxes,
+                dominantEmotion = dom
+            ),
             contradictionNote = note
         )
     }
@@ -544,17 +572,17 @@ object EmotionEngine {
         if (rawStateBlock.isBlank()) return previousState
 
         return try {
-            val jsonMatch = Regex("""(?is)\{.*\}""").find(rawStateBlock)?.value ?: rawStateBlock
+            val jsonMatch = STATE_JSON_EXTRACT_REGEX.find(rawStateBlock)?.value ?: rawStateBlock
             val json = resolveAliases(JSONObject(jsonMatch))
 
             // Delta: tüm kısa/uzun formlar alias tablosu ile çözüldükten sonra okunur
             val deltaObj = json.optJSONObject("delta")?.let { resolveAliases(it) }
-            val deltaAxis = deltaObj?.optString("axis", "")?.ifBlank { "affectionScore" }
+            val deltaAxis = deltaObj?.let { safeOptString(it, "axis") }?.ifBlank { "affectionScore" }
                 ?: "affectionScore"
-            val deltaVal = deltaObj?.optInt("value", 0) ?: json.optInt("delta", 0)
+            val deltaVal = (deltaObj?.optInt("value", 0) ?: json.optInt("delta", 0)).coerceIn(-100, 100)
             // "why" alanı delta.reason ile aynı slota düşer
-            val deltaReason = deltaObj?.optString("reason", "")
-                ?: json.optString("why", "")
+            val deltaReason = deltaObj?.let { safeOptString(it, "reason") }?.ifBlank { safeOptString(json, "why") }
+                ?: safeOptString(json, "why")
 
             // Primary emotions: varsa merge, yoksa koru
             val primObj = json.optJSONObject("primary_emotions")
@@ -571,14 +599,15 @@ object EmotionEngine {
             } else {
                 val newAff = if (deltaAxis == "affectionScore")
                     (previousState.affection + deltaVal).coerceIn(0, 100)
-                else previousState.affection
+                else previousState.affection.coerceIn(0, 100)
                 previousState.relationshipAxes.copy(affectionScore = newAff)
             }
 
-            val domEmotion = json.optString("dominant_emotion", "").ifBlank {
-                json.optString("mood", previousState.dominantEmotion)
+            val rawDomEmotion = safeOptString(json, "dominant_emotion").ifBlank {
+                safeOptString(json, "mood", previousState.dominantEmotion)
             }
-            val suppEmotion = json.optString("suppressed_emotion", previousState.suppressedEmotion)
+            val domEmotion = normalizeTurkishEmotionLabel(rawDomEmotion, fallback = previousState.dominantEmotion.ifBlank { "nötr" })
+            val suppEmotion = safeOptString(json, "suppressed_emotion", previousState.suppressedEmotion)
 
             val state = previousState.copy(
                 primaryEmotions = updatedPrimary,
@@ -593,8 +622,8 @@ object EmotionEngine {
             enforcePsychologicalConsistency(state)
         } catch (_: Exception) {
             // Regex kurtarma — delta değeri çıkarılabiliyorsa kısmi uygula, yoksa son geçerli state
-            val valMatch = Regex("""(?:value|val|delta|aff)["':\s]+([+-]?\d+)""")
-                .find(rawStateBlock)?.groupValues?.get(1)?.toIntOrNull()
+            val valMatch = FALLBACK_VAL_REGEX
+                .find(rawStateBlock)?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(-100, 100)
             if (valMatch != null) {
                 val newAff = (previousState.affection + valMatch).coerceIn(0, 100)
                 previousState.copy(

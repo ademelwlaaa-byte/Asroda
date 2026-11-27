@@ -2,6 +2,7 @@ package com.example.work
 
 import android.content.Context
 import android.util.Log
+import androidx.room.withTransaction
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -158,28 +159,30 @@ class BackgroundMemoryMergeWorker(
                     val maxImportance = group.maxOf { it.importanceScore }
                     val sourceIds = group.map { it.id }.joinToString(",")
                     val vec = MemoryEngine.computeTurkishFeatureEmbedding(mergedContent)
-                    db.memoryEventDao().insertEvent(
-                        MemoryEventEntity(
-                            botId = botId,
-                            description = mergedContent,
-                            importanceScore = maxImportance,
-                            embedding = repository.floatArrayToJson(vec),
-                            isBotSaved = false,
-                            storyDayIndex = group.minOf { it.storyDayIndex }
-                        )
-                    )
-
-                    for (old in group) {
-                        db.archivedMemoryDao().insertArchive(
-                            ArchivedMemoryEntity(
+                    db.withTransaction {
+                        db.memoryEventDao().insertEvent(
+                            MemoryEventEntity(
                                 botId = botId,
-                                originalMemoryId = old.id,
-                                memoryType = "event",
-                                content = old.description,
-                                archivedReason = "merge:[$sourceIds]"
+                                description = mergedContent,
+                                importanceScore = maxImportance,
+                                embedding = repository.floatArrayToJson(vec),
+                                isBotSaved = false,
+                                storyDayIndex = group.minOf { it.storyDayIndex }
                             )
                         )
-                        db.memoryEventDao().updateEvent(old.copy(supersededBy = -1L))
+
+                        for (old in group) {
+                            db.archivedMemoryDao().insertArchive(
+                                ArchivedMemoryEntity(
+                                    botId = botId,
+                                    originalMemoryId = old.id,
+                                    memoryType = "event",
+                                    content = old.description,
+                                    archivedReason = "merge:[$sourceIds]"
+                                )
+                            )
+                            db.memoryEventDao().updateEvent(old.copy(supersededBy = -1L))
+                        }
                     }
 
                     group.forEach { merged.add(it.id) }
@@ -224,16 +227,17 @@ class BackgroundMemoryMergeWorker(
                     "Eğer bunlar aynı bilgiyi veya olayı anlatıyorsa, tek bir kısa ve olgusal %100 DOĞAL TÜRKÇE cümle olarak birleştir (İngilizce kelime/cümle ASLA yazma).\n" +
                     "Eğer farklı olaylarsa sadece 'FARKLI' yaz.\n\n$numbered"
 
-                val text = repository.callUtilityLlm(
+                val rawText = repository.callUtilityLlm(
                     settings = settings,
                     systemPrompt = "Sen Asroda'nın Türkçe hafıza birleştirici motorusun. Yalnızca tek bir %100 TÜRKÇE birleşik cümle veya FARKLI yaz.",
                     userMessage = userMessage,
                     botId = group.first().botId,
                     maxTokens = 180,
                     timeoutMs = 5000L
-                ).trim()
+                )
+                val text = EmochiRepository.cleanEmotionTags(rawText).trim()
 
-                val firstLine = text.lines().firstOrNull()?.trim().orEmpty().take(300)
+                val firstLine = text.lines().firstOrNull { it.isNotBlank() }?.trim().orEmpty().take(300)
                 if (firstLine.equals("FARKLI", ignoreCase = true) ||
                     firstLine.length < 10 ||
                     com.example.data.repository.TurkishLanguageGuard.isEnglishDominant(firstLine)
@@ -254,18 +258,18 @@ class BackgroundMemoryMergeWorker(
         } catch (ce: CancellationException) {
             throw ce
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to load bots for memory merge: ${e.message}")
+            Log.w(TAG, "Failed to load bots for memory merge: ${com.example.util.SecureApiKeyVault.redactSecrets(e.message.orEmpty())}")
             return if (runAttemptCount < 2) Result.retry() else Result.success()
         }
 
         for (bot in bots) {
-            if (bot.id == EmochiRepository.activeBotId) continue
+            if (bot.id == EmochiRepository.activeBotId || bot.id.startsWith("book_") || bot.mode == "book") continue
             try {
                 runMaintenanceForBot(bot.id, repository, db)
             } catch (ce: CancellationException) {
                 throw ce
             } catch (e: Exception) {
-                Log.w(TAG, "Memory merge skipped for bot=${bot.id}: ${e.message}")
+                Log.w(TAG, "Memory merge skipped for bot=${bot.id}: ${com.example.util.SecureApiKeyVault.redactSecrets(e.message.orEmpty())}")
             }
         }
 

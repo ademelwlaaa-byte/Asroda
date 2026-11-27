@@ -41,6 +41,18 @@ class ProactiveMessageWorker(
         const val IDLE_THRESHOLD_MS = 2 * 60 * 60 * 1000L // 2 saat
         const val UNANSWERED_FOLLOWUP_COOLDOWN_MS = 12 * 60 * 60 * 1000L // 12 saat
         const val MAX_CONSECUTIVE_ASSISTANT_MESSAGES = 2
+        const val MAX_PROACTIVE_PER_RUN = 3
+
+        internal fun notificationIdForBot(botId: String): Int =
+            (botId.hashCode() and 0x3FFFFFFF) + 200_000
+
+        internal fun sanitizeNotificationPreview(rawText: String, maxChars: Int = 110): String {
+            val clean = EmochiRepository.cleanEmotionTags(rawText)
+                .replace("*", "")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+            return if (clean.length > maxChars) clean.take(maxChars - 1).trimEnd() + "…" else clean
+        }
 
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
@@ -131,10 +143,12 @@ class ProactiveMessageWorker(
             val db = AppDatabase.getInstance(applicationContext)
             val repository = EmochiApplication.getSharedRepository(applicationContext)
 
-            val allBots = db.botDao().getAllBotsList()
+            val allBots = db.botDao().getAllBotsList().sortedByDescending { it.lastMessageTimestamp }
             val now = System.currentTimeMillis()
+            var sentCount = 0
 
             for (bot in allBots) {
+                if (sentCount >= MAX_PROACTIVE_PER_RUN) break
                 if (!bot.proactiveEnabled ||
                     bot.id == EmochiRepository.activeBotId ||
                     bot.id.startsWith("book_") ||
@@ -182,12 +196,13 @@ class ProactiveMessageWorker(
                     sendNotification(
                         botId = bot.id,
                         botName = bot.aiName,
-                        messagePreview = replyText.take(80)
+                        messagePreview = sanitizeNotificationPreview(replyText)
                     )
+                    sentCount++
                 } catch (ce: CancellationException) {
                     throw ce
                 } catch (e: Exception) {
-                    Log.w(TAG, "Proactive reply skipped for bot=${bot.id}: ${e.message}")
+                    Log.w(TAG, "Proactive reply skipped for bot=${bot.id}: ${com.example.util.SecureApiKeyVault.redactSecrets(e.message.orEmpty())}")
                 }
             }
 
@@ -195,7 +210,7 @@ class ProactiveMessageWorker(
         } catch (ce: CancellationException) {
             throw ce
         } catch (e: Exception) {
-            Log.w(TAG, "Proactive worker failed (attempt=$runAttemptCount): ${e.message}")
+            Log.w(TAG, "Proactive worker failed (attempt=$runAttemptCount): ${com.example.util.SecureApiKeyVault.redactSecrets(e.message.orEmpty())}")
             if (runAttemptCount < 2) Result.retry() else Result.success()
         }
     }
@@ -224,9 +239,10 @@ Maksimum 2 cümle.
             putExtra("botId", botId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
+        val notifId = notificationIdForBot(botId)
         val pendingIntent = PendingIntent.getActivity(
             applicationContext,
-            botId.hashCode(),
+            notifId,
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -242,6 +258,6 @@ Maksimum 2 cümle.
             .build()
 
         val nm = applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(botId.hashCode(), notification)
+        nm.notify(notifId, notification)
     }
 }

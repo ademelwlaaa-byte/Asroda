@@ -5,12 +5,32 @@ import com.example.data.local.PersonalityProfile
 import com.example.data.local.PrimaryEmotions
 import com.example.data.local.RelationshipAxes
 import com.example.data.local.SensitiveTriggerEntity
+import kotlinx.coroutines.CancellationException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
 import kotlin.math.roundToInt
 
 object BaselineEmotionEngine {
+
+    private val TR_LOCALE: Locale = Locale.forLanguageTag("tr-TR")
+    private val JSON_FENCE_REGEX = Regex("```(?:json)?|```", RegexOption.IGNORE_CASE)
+    private val TRAILING_COMMA_REGEX = Regex(",\\s*([}\\]])")
+    private val SINGLE_QUOTE_KEY_REGEX = Regex("(?<=\\{|,|\\[|\\s)'([^']*)'(?=\\s*:|\\s*,|\\s*\\}|\\s*\\])")
+    private val FALLBACK_PUNCT_REGEX = Regex("[.,!?;:]")
+    private val NON_LETTER_DOM_REGEX = Regex("""[^\p{L}\s-]""")
+    private val ANNELIK_REGEX = Regex("(?<![\\p{L}])annelik\\p{L}*")
+    private val BABACAN_REGEX = Regex("(?<![\\p{L}])babacan\\p{L}*")
+    private val KARDESCE_REGEX = Regex("(?<![\\p{L}])kardeşçe\\p{L}*")
+    private val ARKADASCA_REGEX = Regex("(?<![\\p{L}])arkadaşça\\p{L}*")
+    private val SEVGISIZ_REGEX = Regex("(?<![\\p{L}])sevgisiz\\p{L}*")
+    private val EX_WORD_REGEX = Regex("(?<![\\p{L}])ex(?![\\p{L}])")
+
+    private fun safeOptString(obj: JSONObject, key: String, default: String = ""): String {
+        if (!obj.has(key) || obj.isNull(key)) return default
+        val v = obj.optString(key, "").trim()
+        return if (v.isBlank() || v.equals("null", ignoreCase = true)) default else v
+    }
 
     // ── Relationship type registry ────────────────────────────────────────────
 
@@ -38,9 +58,13 @@ object BaselineEmotionEngine {
     )
 
     fun normalizeRelType(raw: String): String {
-        val lower = raw.trim().lowercase(Locale.forLanguageTag("tr-TR"))
-        if (lower in VALID_REL_TYPES) return lower
-        return REL_TYPE_ALIASES[lower] ?: "other"
+        val trimmed = raw.trim()
+        if (trimmed.isBlank() || trimmed.equals("null", ignoreCase = true)) return "other"
+        val lowerRoot = trimmed.lowercase(Locale.ROOT)
+        if (lowerRoot in VALID_REL_TYPES) return lowerRoot
+        REL_TYPE_ALIASES[lowerRoot]?.let { return it }
+        val lowerTr = trimmed.lowercase(TR_LOCALE)
+        return REL_TYPE_ALIASES[lowerTr] ?: "other"
     }
 
     // ── Relationship consistency table ────────────────────────────────────────
@@ -221,7 +245,8 @@ object BaselineEmotionEngine {
             root.put("bigFive", bf)
             root.put("attachmentStyle", normalizeAttachment(personalityProfile.attachmentStyle))
             root.put("regulationCapacity", regulationCapacity.coerceIn(10, 100))
-            root.put("affectionDifficultyMultiplier", difficultyMultiplier.coerceIn(0.50, 2.00))
+            val safeDiffMult = if (difficultyMultiplier.isFinite()) difficultyMultiplier.coerceIn(0.50, 2.00) else 1.0
+            root.put("affectionDifficultyMultiplier", safeDiffMult)
 
             val pe = baselineEmotionState.primaryEmotions
             root.put("initialPlutchik", JSONObject().apply {
@@ -243,14 +268,19 @@ object BaselineEmotionEngine {
                 put("resentment", ax.resentmentScore.coerceIn(0, 100))
             })
 
-            root.put("dominantEmotion", baselineEmotionState.dominantEmotion.ifBlank { "nötr" })
+            root.put(
+                "dominantEmotion",
+                EmotionEngine.normalizeTurkishEmotionLabel(baselineEmotionState.dominantEmotion, fallback = "nötr")
+            )
 
             val trigArr = JSONArray()
             sensitiveTriggers.filter { it.triggerTopic.isNotBlank() }.take(3).forEach { t ->
-                val sev = (((t.intensityMultiplier - 1.0) / 0.4).roundToInt() + 1).coerceIn(1, 5)
+                val clampedMult = if (t.intensityMultiplier.isFinite()) t.intensityMultiplier.coerceIn(1.2, 2.5) else 1.8
+                val sev = (((clampedMult - 1.2) / 0.325).roundToInt() + 1).coerceIn(1, 5)
                 trigArr.put(JSONObject().apply {
                     put("topic", t.triggerTopic.trim())
                     put("severity", sev)
+                    put("intensityMultiplier", clampedMult)
                     put("reaction", t.sourceDescription.ifBlank { "Karakter geçmişi" })
                 })
             }
@@ -378,8 +408,8 @@ Kullanıcı tanımı: $safeUserDesc
 
         // Strip markdown fences and trailing commas ONLY — NEVER mutate Turkish apostrophes (e.g. "Aiden'ın", "İstanbul'da")
         val cleaned = jsonStr
-            .replace(Regex("```(?:json)?|```", RegexOption.IGNORE_CASE), "")
-            .replace(Regex(",\\s*([}\\]])"), "$1")
+            .replace(JSON_FENCE_REGEX, "")
+            .replace(TRAILING_COMMA_REGEX, "$1")
             .trim()
 
         val start = cleaned.indexOf('{')
@@ -389,23 +419,39 @@ Kullanıcı tanımı: $safeUserDesc
 
         val root = try {
             JSONObject(candidateJson)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (_: Exception) {
             // Secondary tolerant rescue ONLY if keys used single quotes (never touches apostrophes inside double-quoted strings)
             try {
                 if (!candidateJson.contains('"')) {
-                    val rescued = candidateJson.replace(Regex("(?<=\\{|,|\\[|\\s)'([^']*)'(?=\\s*:|\\s*,|\\s*\\}|\\s*\\])"), "\"$1\"")
+                    val rescued = candidateJson.replace(SINGLE_QUOTE_KEY_REGEX, "\"$1\"")
                     JSONObject(rescued)
                 } else {
                     return fallback
                 }
+            } catch (ce: CancellationException) {
+                throw ce
             } catch (_: Exception) {
                 return fallback
             }
         }
 
         // ── relationshipType ──────────────────────────────────────────────────
-        val relType = try { normalizeRelType(root.optString("relationshipType", "other")) } catch (_: Exception) { fallback.relationshipType }
-        val relNote = try { root.optString("relationshipNote", "").trim() } catch (_: Exception) { "" }
+        val relType = try {
+            normalizeRelType(safeOptString(root, "relationshipType", "other"))
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.relationshipType
+        }
+        val relNote = try {
+            safeOptString(root, "relationshipNote")
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            ""
+        }
 
         // ── Big Five ──────────────────────────────────────────────────────────
         val rawProfile = try {
@@ -420,15 +466,31 @@ Kullanıcı tanımı: $safeUserDesc
                 extraversion      = getInt("extraversion", 50).coerceIn(0, 100),
                 agreeableness     = getInt("agreeableness", 50).coerceIn(0, 100),
                 neuroticism       = getInt("neuroticism", 50).coerceIn(0, 100),
-                attachmentStyle   = normalizeAttachment(root.optString("attachmentStyle", "secure"))
+                attachmentStyle   = normalizeAttachment(safeOptString(root, "attachmentStyle", "secure"))
             )
-        } catch (_: Exception) { fallback.personalityProfile }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.personalityProfile
+        }
 
         // ── Regulation capacity ───────────────────────────────────────────────
-        val regCap = try { safeInt(root, "regulationCapacity", 50).coerceIn(10, 100) } catch (_: Exception) { fallback.regulationCapacity }
+        val regCap = try {
+            safeInt(root, "regulationCapacity", 50).coerceIn(10, 100)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.regulationCapacity
+        }
 
         // ── Difficulty multiplier ─────────────────────────────────────────────
-        val diffMult = try { safeDouble(root, "affectionDifficultyMultiplier", 1.0).coerceIn(0.50, 2.00) } catch (_: Exception) { fallback.difficultyMultiplier }
+        val diffMult = try {
+            safeDouble(root, "affectionDifficultyMultiplier", 1.0).coerceIn(0.50, 2.00)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.difficultyMultiplier
+        }
 
         // ── Plutchik emotions ─────────────────────────────────────────────────
         val primaryEmotions = try {
@@ -443,17 +505,21 @@ Kullanıcı tanımı: $safeUserDesc
                 surprise     = pe?.let { safeInt(it, "surprise", 0) }?.coerceIn(0, 100) ?: 0,
                 disgust      = pe?.let { safeInt(it, "disgust", 0) }?.coerceIn(0, 100) ?: 0
             )
-        } catch (_: Exception) { fallback.baselineEmotionState.primaryEmotions }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.baselineEmotionState.primaryEmotions
+        }
 
         // ── Source detection (preserve user_edited on canonical round-trip) ──
-        val parsedSource = when (root.optString("analysisSource", "").trim().lowercase(Locale.ROOT)) {
+        val parsedSource = when (safeOptString(root, "analysisSource").lowercase(Locale.ROOT)) {
             "user_edited" -> "user_edited"
             "keyword"     -> "keyword"
             else          -> "llm"
         }
 
         // ── Relationship axes ─────────────────────────────────────────────────
-        val combinedText = "$aiName $personality $scenario $userCharName $userCharDesc".lowercase(Locale.forLanguageTag("tr-TR"))
+        val combinedText = "$aiName $personality $scenario $userCharName $userCharDesc".lowercase(TR_LOCALE)
         val hasConflict = CONFLICT_KEYWORDS.containsMatchIn(combinedText)
 
         val rawAxes = try {
@@ -464,7 +530,11 @@ Kullanıcı tanımı: $safeUserDesc
                 comfortScore    = (ax?.let { safeInt(it, "comfort",    -1).takeIf { v -> v >= 0 } ?: safeInt(it, "comfortScore",    50) } ?: 50).coerceIn(0, 100),
                 resentmentScore = (ax?.let { safeInt(it, "resentment", -1).takeIf { v -> v >= 0 } ?: safeInt(it, "resentmentScore",  0) } ?: 0).coerceIn(0, 100)
             )
-        } catch (_: Exception) { fallback.baselineEmotionState.relationshipAxes }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.baselineEmotionState.relationshipAxes
+        }
 
         // Respect explicit user_edited axes verbatim without clamping away manual choices
         val (profile, axes) = if (parsedSource == "user_edited") {
@@ -477,12 +547,24 @@ Kullanıcı tanımı: $safeUserDesc
 
         // ── Dominant emotion (sanitized & reconciled) ─────────────────────────
         val rawDom = try {
-            sanitizeDominantEmotion(root.optString("dominantEmotion", "nötr"), primaryEmotions)
-        } catch (_: Exception) { "nötr" }
+            sanitizeDominantEmotion(safeOptString(root, "dominantEmotion", "nötr"), primaryEmotions)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            "nötr"
+        }
         val dominantEmotion = if (parsedSource == "user_edited") rawDom else reconcileDominantEmotion(rawDom, primaryEmotions)
 
         // ── Speech pattern ────────────────────────────────────────────────────
-        val speechPattern = try { root.optString("speechStyle", root.optString("speech_pattern", "Doğal ve samimi")).ifBlank { "Doğal ve samimi" } } catch (_: Exception) { "Doğal ve samimi" }
+        val speechPattern = try {
+            safeOptString(root, "speechStyle").ifBlank {
+                safeOptString(root, "speech_pattern", "Doğal ve samimi")
+            }.ifBlank { "Doğal ve samimi" }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            "Doğal ve samimi"
+        }
 
         // ── Sensitive triggers (up to 3, strictly clamped multiplier 1.2..2.5) ─
         val triggers = try {
@@ -491,9 +573,11 @@ Kullanıcı tanımı: $safeUserDesc
             if (arr != null) {
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
-                    val topic = o.optString("topic", "").trim()
+                    val topic = safeOptString(o, "topic")
                     if (topic.isBlank()) continue
-                    val reaction = o.optString("reaction", o.optString("description", "Karakter geçmişi")).trim().ifBlank { "Karakter geçmişi" }
+                    val reaction = safeOptString(o, "reaction").ifBlank {
+                        safeOptString(o, "description", "Karakter geçmişi")
+                    }.ifBlank { "Karakter geçmişi" }
                     val explicitMult = safeDouble(o, "intensityMultiplier", Double.NaN)
                         .takeIf { it.isFinite() }
                         ?: safeDouble(o, "multiplier", Double.NaN).takeIf { it.isFinite() }
@@ -514,14 +598,18 @@ Kullanıcı tanımı: $safeUserDesc
             }
             if (parsedSource == "user_edited" && raw.isNotEmpty()) raw.take(3)
             else padOrTrimTriggers(raw, botId, relType, hasConflict)
-        } catch (_: Exception) { fallback.sensitiveTriggers }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            fallback.sensitiveTriggers
+        }
 
         // ── Optional Universe Atmosphere ──────────────────────────────────────
         val universeAtmosphere = try {
             root.optJSONObject("worldAtmosphere")?.let { wa ->
-                val loc = wa.optString("currentLocation", "").trim()
-                val tod = wa.optString("timeOfDay", "").trim()
-                val mood = wa.optString("sceneMood", "").trim()
+                val loc = safeOptString(wa, "currentLocation")
+                val tod = safeOptString(wa, "timeOfDay")
+                val mood = safeOptString(wa, "sceneMood")
                 if (loc.isNotBlank() || mood.isNotBlank() || tod.isNotBlank()) {
                     UniverseAtmosphereSeed(
                         currentLocation = loc,
@@ -532,10 +620,20 @@ Kullanıcı tanımı: $safeUserDesc
                     )
                 } else null
             }
-        } catch (_: Exception) { null }
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            null
+        }
 
         // ── Confidence ────────────────────────────────────────────────────────
-        val confidence = try { safeInt(root, "confidence", 80).coerceIn(0, 100) } catch (_: Exception) { 80 }
+        val confidence = try {
+            safeInt(root, "confidence", 80).coerceIn(0, 100)
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (_: Exception) {
+            80
+        }
 
         val emotionState = EmotionState(
             primaryEmotions  = primaryEmotions,
@@ -571,8 +669,8 @@ Kullanıcı tanımı: $safeUserDesc
         userCharDesc: String = ""
     ): BaselineAnalysisResult {
         val text = "$aiName $personality $scenario $userCharName $userCharDesc"
-            .lowercase(Locale.forLanguageTag("tr-TR"))
-            .replace(Regex("[.,!?;:]"), " ")
+            .lowercase(TR_LOCALE)
+            .replace(FALLBACK_PUNCT_REGEX, " ")
 
         // Word-boundary Turkish suffix-tolerant matching
         fun w(vararg words: String) = words.any { w ->
@@ -580,14 +678,14 @@ Kullanıcı tanımı: $safeUserDesc
         }
 
         // Adjective false-positive guards (e.g., "annelik", "babacan", "arkadaşça", "kardeşçe", "sevgisiz")
-        val hasAnnelik    = Regex("(?<![\\p{L}])annelik\\p{L}*").containsMatchIn(text)
-        val hasBabacan    = Regex("(?<![\\p{L}])babacan\\p{L}*").containsMatchIn(text)
-        val hasKardesce   = Regex("(?<![\\p{L}])kardeşçe\\p{L}*").containsMatchIn(text)
-        val hasArkadasca  = Regex("(?<![\\p{L}])arkadaşça\\p{L}*").containsMatchIn(text)
-        val hasSevgisiz   = Regex("(?<![\\p{L}])sevgisiz\\p{L}*").containsMatchIn(text)
+        val hasAnnelik    = ANNELIK_REGEX.containsMatchIn(text)
+        val hasBabacan    = BABACAN_REGEX.containsMatchIn(text)
+        val hasKardesce   = KARDESCE_REGEX.containsMatchIn(text)
+        val hasArkadasca  = ARKADASCA_REGEX.containsMatchIn(text)
+        val hasSevgisiz   = SEVGISIZ_REGEX.containsMatchIn(text)
 
         // Multi-word patterns checked first
-        val isExLover         = text.contains("eski sevgili") || text.contains("ayrıldık") || Regex("(?<![\\p{L}])ex(?![\\p{L}])").containsMatchIn(text)
+        val isExLover         = text.contains("eski sevgili") || text.contains("ayrıldık") || EX_WORD_REGEX.containsMatchIn(text)
         val isConflictLover   = !isExLover && !hasSevgisiz && (w("sevgili","aşık","partner","nişanlı") && w("kavga","küs","kırgın","çatışma","soğukluk"))
         val isLover           = !isExLover && !isConflictLover && !hasSevgisiz && w("sevgili","aşık","partner","nişanlı","karım","kocam","eşim")
         val isBestFriend      = !hasArkadasca && (text.contains("yakın dost") || text.contains("en iyi arkadaş") || text.contains("sırdaş") || text.contains("çocukluk arkadaşı") || w("kanka"))
@@ -778,16 +876,21 @@ Kullanıcı tanımı: $safeUserDesc
     private val ALLOWED_DOMINANT_EMOTION_TOKENS = setOf(
         "nötr", "sakin", "ilgili", "meraklı", "temkinli", "şüpheci", "tetikte", "soğuk", "mesafeli",
         "neşeli", "mutlu", "sevecen", "sevinçli", "coşkulu", "şen", "sıcak", "samimi", "tutkulu",
-        "romantik", "korumacı", "şefkatli", "alaycı", "iğneleyici", "gururlu", "otoriter", "sabırlı",
-        "öfkeli", "sinirli", "kızgın", "düşmanca", "gergin", "kıskanç",
-        "hüzünlü", "üzgün", "kırgın", "buruk", "özlemli", "melankolik", "çatışmalı",
-        "korkmuş", "tedirgin", "kaygılı", "şaşkın", "tiksinmiş", "saygılı", "işbirlikçi", "yol gösterici"
+        "romantik", "korumacı", "koruyucu", "şefkatli", "alaycı", "iğneleyici", "gururlu", "otoriter", "sabırlı",
+        "öfkeli", "sinirli", "kızgın", "düşmanca", "gergin", "kıskanç", "hiddetli", "bunalmış",
+        "hüzünlü", "üzgün", "kırgın", "buruk", "özlemli", "özlem", "melankolik", "çatışmalı", "kederli", "çökkün",
+        "korkmuş", "tedirgin", "kaygılı", "endişeli", "huzursuz", "şaşkın", "tiksinmiş", "saygılı",
+        "işbirlikçi", "yol gösterici", "rahatlamış", "rahat", "huzurlu", "kararlı", "odaklanmış",
+        "minnettar", "umutlu", "düşünceli", "savunmacı", "pişman", "suçlu", "mahcup", "utangaç",
+        "bitkin", "yorgun", "yalnız", "flörtöz", "oyuncu", "sahiplenici", "kırılgan", "kararsız",
+        "eğlenmiş", "sıkılmış", "ciddi", "güvenen", "sevgi", "kendinden emin", "nostaljik"
     )
 
     fun sanitizeDominantEmotion(raw: String, emotions: PrimaryEmotions): String {
-        val cleaned = raw.trim().replace(Regex("""[^\p{L}\s-]"""), "").trim().take(36)
+        val translated = EmotionEngine.normalizeTurkishEmotionLabel(raw, fallback = "")
+        val cleaned = translated.trim().replace(NON_LETTER_DOM_REGEX, "").trim().take(36)
         if (cleaned.isNotBlank()) {
-            val lower = cleaned.lowercase(Locale.forLanguageTag("tr-TR"))
+            val lower = cleaned.lowercase(TR_LOCALE)
             val matchesWhitelist = ALLOWED_DOMINANT_EMOTION_TOKENS.any { token -> lower.contains(token) }
             if (matchesWhitelist) return cleaned
         }
@@ -830,12 +933,16 @@ Kullanıcı tanımı: $safeUserDesc
     }
 
     fun normalizeAttachment(raw: String): String {
-        val lower = raw.trim().lowercase(Locale.forLanguageTag("tr-TR"))
+        val trimmed = raw.trim()
+        if (trimmed.isBlank() || trimmed.equals("null", ignoreCase = true)) return "secure"
+        val lowerRoot = trimmed.lowercase(Locale.ROOT)
+        val lowerTr = trimmed.lowercase(TR_LOCALE)
         return when {
-            lower == "fearful_avoidant" || lower.contains("fearful") || lower.contains("disorganized") || lower.contains("korkulu") || lower.contains("düzensiz") -> "fearful_avoidant"
-            lower == "anxious" || lower.contains("anxious") || lower.contains("kaygılı") -> "anxious"
-            lower == "avoidant" || lower.contains("avoidant") || lower.contains("kaçınan") -> "avoidant"
-            lower == "secure" || lower.contains("secure") || lower.contains("güvenli") -> "secure"
+            lowerRoot == "fearful_avoidant" || lowerRoot.contains("fearful") || lowerRoot.contains("disorganized") ||
+                lowerTr.contains("korkulu") || lowerTr.contains("düzensiz") -> "fearful_avoidant"
+            lowerRoot == "anxious" || lowerRoot.contains("anxious") || lowerTr.contains("kaygılı") -> "anxious"
+            lowerRoot == "avoidant" || lowerRoot.contains("avoidant") || lowerTr.contains("kaçınan") -> "avoidant"
+            lowerRoot == "secure" || lowerRoot.contains("secure") || lowerTr.contains("güvenli") -> "secure"
             else -> "secure"
         }
     }
@@ -862,11 +969,18 @@ Kullanıcı tanımı: $safeUserDesc
         relType: String,
         hasConflict: Boolean
     ): List<SensitiveTriggerEntity> {
-        val unique = existing.distinctBy { it.triggerTopic.lowercase(Locale.forLanguageTag("tr-TR")) }.take(3).toMutableList()
+        val unique = existing
+            .map { t ->
+                val clamped = if (t.intensityMultiplier.isFinite()) t.intensityMultiplier.coerceIn(1.2, 2.5) else 1.8
+                if (clamped != t.intensityMultiplier) t.copy(intensityMultiplier = clamped) else t
+            }
+            .distinctBy { it.triggerTopic.lowercase(TR_LOCALE) }
+            .take(3)
+            .toMutableList()
         val defaults = DEFAULT_TRIGGERS[relType] ?: DEFAULT_TRIGGERS["friend"]!!
         val extraDefault = if (hasConflict) "yalan ve kırık güven" else "dışlanma"
         val pool = (defaults + extraDefault).filter { d ->
-            unique.none { it.triggerTopic.lowercase(Locale.forLanguageTag("tr-TR")) == d.lowercase(Locale.forLanguageTag("tr-TR")) }
+            unique.none { it.triggerTopic.lowercase(TR_LOCALE) == d.lowercase(TR_LOCALE) }
         }
         var idx = 0
         while (unique.size < 3 && idx < pool.size) {
