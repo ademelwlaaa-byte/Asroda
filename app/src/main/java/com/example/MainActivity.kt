@@ -155,6 +155,7 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
     val motionConfig = LocalCosmicMotionConfig.current
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val botList by viewModel.botList.collectAsStateWithLifecycle()
+    val lastMessagePreviewByBotId by viewModel.lastMessagePreviewByBotId.collectAsStateWithLifecycle()
     val userSettings by viewModel.userSettings.collectAsStateWithLifecycle()
 
     AnimatedContent(
@@ -175,6 +176,7 @@ fun EmochiAppMain(viewModel: EmochiViewModel) {
             is UiState.Menu -> {
                 BotListScreen(
                     botList = botList,
+                    lastMessagePreviewByBotId = lastMessagePreviewByBotId,
                     userSettings = userSettings,
                     onOpenBot = { viewModel.openBot(it) },
                     onNewBot = { viewModel.startWizard() },

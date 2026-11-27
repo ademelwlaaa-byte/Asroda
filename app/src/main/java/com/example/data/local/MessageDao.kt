@@ -5,6 +5,11 @@ import androidx.room.Query
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
+data class BotLastMessagePreview(
+    val botId: String,
+    val text: String
+)
+
 @Dao
 interface MessageDao {
     @Query("SELECT * FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0 ORDER BY timestamp ASC")
@@ -12,6 +17,16 @@ interface MessageDao {
 
     @Query("SELECT * FROM messages WHERE botId = :botId AND LENGTH(TRIM(text)) > 0 ORDER BY timestamp ASC")
     suspend fun getMessagesForBotList(botId: String): List<MessageEntity>
+
+    @Query(
+        "SELECT m.botId AS botId, m.text AS text FROM messages m " +
+            "INNER JOIN (" +
+            "    SELECT botId, MAX(timestamp) AS maxTs FROM messages " +
+            "    WHERE LENGTH(TRIM(text)) > 0 GROUP BY botId" +
+            ") latest ON m.botId = latest.botId AND m.timestamp = latest.maxTs " +
+            "WHERE LENGTH(TRIM(m.text)) > 0"
+    )
+    fun getLatestMessagePreviews(): Flow<List<BotLastMessagePreview>>
 
     /** Returns only the latest [limit] messages in chronological ASC order without loading full chat history into RAM. */
     @Query(

@@ -194,6 +194,8 @@ import com.example.ui.theme.EmochiTextMuted
 import com.example.ui.theme.EmochiTextPrimary
 import com.example.ui.theme.EmochiTextSecondary
 
+private const val DEFAULT_BOT_SORT_MODE = "favorites_first"
+
 @Composable
 fun BotListScreen(
     botList: List<BotEntity>,
@@ -206,7 +208,8 @@ fun BotListScreen(
     onImportData: suspend (String, Boolean) -> com.example.data.repository.BackupImportSummary,
     onImportPresetBot: ((BotEntity) -> Unit)? = null,
     onTogglePrivacy: ((BotEntity) -> Unit)? = null,
-    onCloneBot: ((String) -> Unit)? = null
+    onCloneBot: ((String) -> Unit)? = null,
+    lastMessagePreviewByBotId: Map<String, String> = emptyMap()
 ) {
     var showGlobalSettings by remember { mutableStateOf(false) }
     var showAidenStoriesMenu by remember { mutableStateOf(false) }
@@ -1024,6 +1027,7 @@ fun BotListScreen(
                         // "chats" tab -> Shows user's active bots
                         ChatsTabContent(
                             botList = botList,
+                            lastMessagePreviewByBotId = lastMessagePreviewByBotId,
                             userSettings = userSettings,
                             searchQuery = searchQuery,
                             onSearchQueryChange = { searchQuery = it },
@@ -1148,14 +1152,20 @@ fun TopHeader(
             verticalAlignment = Alignment.Top
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                // Greeting Row
+                // Greeting Row (Mor Cam silver-lavender sparkle replacing yellow system emoji)
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "👋",
-                        fontSize = 17.sp,
-                        modifier = Modifier.graphicsLayer { rotationZ = waveAngle }
+                    Icon(
+                        imageVector = Icons.Default.AutoAwesome,
+                        contentDescription = null,
+                        tint = Color(0xFFE9D5FF),
+                        modifier = Modifier
+                            .size(14.dp)
+                            .graphicsLayer {
+                                alpha = 0.78f + 0.22f * starPulse
+                                rotationZ = waveAngle * 0.45f
+                            }
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Hoş geldin",
                         fontFamily = LiterarySerifFontFamily,
@@ -1252,20 +1262,36 @@ fun TopHeader(
         }
 
         // Clean Editorial Serif Subtitle directly below the script title + underline
+        // Subtle zero-layout-height dark scrim behind text ensures crisp legibility over bright stained glass
         Text(
             text = subtitleText,
             fontFamily = LiterarySerifFontFamily,
-            color = Color(0xFFEAE1FA).copy(alpha = 0.90f),
+            color = Color(0xFFF6F0FF).copy(alpha = 0.96f),
             fontSize = 13.5.sp,
             lineHeight = 18.sp,
             style = androidx.compose.ui.text.TextStyle(
                 shadow = Shadow(
-                    color = Color(0xAA120524),
+                    color = Color(0xEE0B0418),
                     offset = Offset(0f, 1.5f),
-                    blurRadius = 6f
+                    blurRadius = 10f
                 )
             ),
-            modifier = Modifier.offset(y = (-2).dp)
+            modifier = Modifier
+                .offset(y = (-2).dp)
+                .drawBehind {
+                    val padX = 10.dp.toPx()
+                    val padY = 4.dp.toPx()
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(
+                            0.00f to Color(0x700B0418),
+                            0.72f to Color(0x5E0B0418),
+                            1.00f to Color.Transparent
+                        ),
+                        topLeft = Offset(-padX * 0.4f, -padY * 0.5f),
+                        size = Size(size.width + padX * 1.4f, size.height + padY),
+                        cornerRadius = CornerRadius(10.dp.toPx(), 10.dp.toPx())
+                    )
+                }
         )
     }
 }
@@ -1291,7 +1317,8 @@ fun ChatsTabContent(
     favoriteBotIds: Set<String> = emptySet(),
     onToggleFavorite: ((String) -> Unit)? = null,
     frostedBackdrop: ImageBitmap? = null,
-    scrollSync: Int = 0
+    scrollSync: Int = 0,
+    lastMessagePreviewByBotId: Map<String, String> = emptyMap()
 ) {
     val context = LocalContext.current
     val resolvedBackdrop = frostedBackdrop ?: remember(context) {
@@ -1303,8 +1330,8 @@ fun ChatsTabContent(
     }
 
     // Sort & Quick Filter Mode controlled by the circular Tune Glass Orb next to the Search bar
-    // Default to "favorites_first" so starring any bot immediately pins it to the top of the list!
-    var sortMode by remember { mutableStateOf("favorites_first") }
+    // Default to DEFAULT_BOT_SORT_MODE ("favorites_first") so starring any bot immediately pins it to top
+    var sortMode by remember { mutableStateOf(DEFAULT_BOT_SORT_MODE) }
     var showSortMenu by remember { mutableStateOf(false) }
 
     val chatsOnlyList = remember(botList) {
@@ -1412,9 +1439,9 @@ fun ChatsTabContent(
                             .background(
                                 Brush.verticalGradient(
                                     listOf(
-                                        Color(0x56241044),
-                                        Color(0x48140829),
-                                        Color(0x521F0D3B)
+                                        Color(0x7817092E),
+                                        Color(0x660E0520),
+                                        Color(0x7215082B)
                                     )
                                 )
                             )
@@ -1457,7 +1484,7 @@ fun ChatsTabContent(
                                 Text(
                                     text = "Botlarını ara...",
                                     fontFamily = LiterarySerifFontFamily,
-                                    color = Color(0xFFD4C4EE).copy(alpha = 0.80f),
+                                    color = Color(0xFFE9DCFF).copy(alpha = 0.88f),
                                     fontSize = 14.5.sp
                                 )
                             }
@@ -1498,9 +1525,9 @@ fun ChatsTabContent(
                         }
                     }
 
-                    // Right Circular Frosted Glass Tune / Sort Orb (Matches Reference)
+                    // Right Circular Frosted Glass Tune / Sort Orb (neutral glass when on default sort)
                     Box {
-                        val hasActiveSort = sortMode != "recent"
+                        val hasActiveSort = sortMode != DEFAULT_BOT_SORT_MODE
                         Box(
                             modifier = Modifier
                                 .size(50.dp)
@@ -1582,8 +1609,8 @@ fun ChatsTabContent(
                             minWidth = 232.dp
                         ) {
                             val sortOptions = listOf(
-                                Triple("recent", "Varsayılan Sıralama", Icons.Default.AutoAwesome),
-                                Triple("favorites_first", "Önce Favoriler", Icons.Default.Star),
+                                Triple(DEFAULT_BOT_SORT_MODE, "Varsayılan (Önce Favoriler)", Icons.Default.Star),
+                                Triple("recent", "Son Mesaja Göre", Icons.Default.AutoAwesome),
                                 Triple("drafts_first", "Önce Taslaklar", Icons.Default.AutoAwesome),
                                 Triple("favorites_only", "Sadece Favoriler", Icons.Default.Favorite),
                                 Triple("name_asc", "İsme Göre (A-Z)", Icons.Default.SortByAlpha)
@@ -1980,7 +2007,7 @@ fun ChatsTabContent(
                             fontWeight = FontWeight.Medium,
                             textAlign = TextAlign.Center
                         )
-                        if (searchQuery.isNotBlank() || sortMode != "favorites_first" || selectedFilter != "all") {
+                        if (searchQuery.isNotBlank() || sortMode != DEFAULT_BOT_SORT_MODE || selectedFilter != "all") {
                             Spacer(modifier = Modifier.height(4.dp))
                             MorCamChipPill(
                                 label = "Filtreyi Sıfırla",
@@ -1989,7 +2016,7 @@ fun ChatsTabContent(
                                 onClick = {
                                     onSearchQueryChange("")
                                     onFilterChange("all")
-                                    sortMode = "favorites_first"
+                                    sortMode = DEFAULT_BOT_SORT_MODE
                                 }
                             )
                         }
@@ -2010,7 +2037,8 @@ fun ChatsTabContent(
                     onToggleFavorite = { toggleFavorite(bot.id) },
                     frostedBackdrop = resolvedBackdrop,
                     scrollSync = scrollSync,
-                    staggerIndex = idx
+                    staggerIndex = idx,
+                    lastMessagePreview = lastMessagePreviewByBotId[bot.id]
                 )
             }
         }

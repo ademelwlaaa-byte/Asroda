@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteOutline
@@ -33,7 +34,6 @@ import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Star
@@ -93,6 +93,7 @@ import com.example.ui.components.MorCamTokens
 import com.example.ui.components.OrbView
 import com.example.ui.components.StoryOverlayTextSanitizer
 import com.example.ui.theme.LiterarySerifFontFamily
+import com.example.util.MessageTimestampFormatter
 
 private val BotCardShape = RoundedCornerShape(24.dp)
 private val BotCardAvatarShape = RoundedCornerShape(18.dp)
@@ -183,20 +184,93 @@ internal fun resolveBotCardDescription(
 }
 
 @DrawableRes
-private fun resolveBuiltInBotAvatarRes(bot: BotEntity): Int? = when {
-    bot.id == "starter_ayla" || bot.aiName.equals("Ayla", ignoreCase = true) ->
-        R.drawable.img_ayla_avatar
-    bot.id == "starter_aetheria" || bot.universeName.contains("Aetheria", ignoreCase = true) ->
-        R.drawable.img_aetheria_universe
-    bot.id == "preset_aiden_mcu_cosmic" ||
-        bot.aiName.contains("Kozmik Sürükleniş", ignoreCase = true) ||
-        bot.aiName.contains("Cosmic Drift", ignoreCase = true) ->
-        R.drawable.img_aiden_blackwood_avatar
-    bot.id == "preset_aria" || bot.aiName.startsWith("Aria", ignoreCase = true) ->
-        R.drawable.img_template_aria_left
-    bot.id == "preset_eldoria" || bot.universeName.contains("Eldoria", ignoreCase = true) ->
-        R.drawable.img_template_eldoria_left
-    else -> null
+internal fun resolveBuiltInBotAvatarRes(bot: BotEntity): Int? {
+    // 1. Direct built-in preset ID match first (highest precision)
+    when (bot.id) {
+        "starter_ayla" -> return R.drawable.img_ayla_avatar
+        "starter_aetheria" -> return R.drawable.img_aetheria_universe
+        "preset_aiden_mcu_cosmic" -> return R.drawable.img_aiden_blackwood_avatar
+        "preset_aiden_zoktay" -> return R.drawable.img_aiden_wide_thumb1_gs
+        "preset_aiden_dispatch" -> return R.drawable.img_aiden_wide_thumb2_dispatch
+        "preset_aiden_joker_emma" -> return R.drawable.img_aiden_wide_thumb3_joker
+        "preset_aiden_doctor_jenna" -> return R.drawable.img_aiden_wide_thumb4_hospital
+        "preset_aiden_obsidian_sydney" -> return R.drawable.img_aiden_wide_thumb5_tokyo
+        "preset_aiden_nevermore_wednesday" -> return R.drawable.img_aiden_wide_thumb6_nevermore_1795547716938
+        "preset_aiden_lambo_football" -> return R.drawable.img_aiden_modal_carousel_gs
+        "preset_aiden_marvel_thanos" -> return R.drawable.img_postcredits_twin_aiden
+        "preset_aiden_impossible_spiderman" -> return R.drawable.img_ch1_c5_tower_night
+        "preset_aiden_eilish_family" -> return R.drawable.img_aiden_portrait
+        "preset_aria" -> return R.drawable.img_template_aria_left
+        "preset_eldoria" -> return R.drawable.img_template_eldoria_left
+        "preset_tokyo" -> return R.drawable.aiden_dispatch
+        "preset_crimson_clocktower" -> return R.drawable.img_tpl_clocktower_1795553971128
+        "preset_neon_kowloon_noir" -> return R.drawable.img_tpl_neon_noir_1795553970903
+        "preset_stormbreak_corsairs" -> return R.drawable.img_aetheria_universe
+        "preset_aurora_lodge" -> return R.drawable.img_tpl_aurora_lodge_1795553969948
+    }
+
+    // 2. Match cloned / UUID-instantiated bots via title/name first, then scenario metadata
+    val titleMeta = "${bot.aiName} ${bot.universeName}"
+    val fullMeta = "$titleMeta ${bot.scenario}"
+    return when {
+        bot.aiName.equals("Ayla", ignoreCase = true) ->
+            R.drawable.img_ayla_avatar
+        bot.universeName.contains("Aetheria", ignoreCase = true) ->
+            R.drawable.img_aetheria_universe
+        titleMeta.contains("Kozmik Sürükleniş", ignoreCase = true) ||
+            titleMeta.contains("Cosmic Drift", ignoreCase = true) ->
+            R.drawable.img_aiden_blackwood_avatar
+        fullMeta.contains("Zoktay", ignoreCase = true) ||
+            fullMeta.contains("Galatasaray", ignoreCase = true) ->
+            R.drawable.img_aiden_wide_thumb1_gs
+        fullMeta.contains("Dispatch", ignoreCase = true) ||
+            fullMeta.contains("Blonde Blazer", ignoreCase = true) ->
+            R.drawable.img_aiden_wide_thumb2_dispatch
+        fullMeta.contains("Viren City", ignoreCase = true) ||
+            fullMeta.contains("Joker", ignoreCase = true) ||
+            titleMeta.contains("Emma Myers", ignoreCase = true) ->
+            R.drawable.img_aiden_wide_thumb3_joker
+        fullMeta.contains("Presbyterian", ignoreCase = true) ||
+            fullMeta.contains("Cerrah", ignoreCase = true) ||
+            fullMeta.contains("Mucize Doktor", ignoreCase = true) ||
+            fullMeta.contains("Miracle Doctor", ignoreCase = true) ||
+            fullMeta.contains("Jenna", ignoreCase = true) ->
+            R.drawable.img_aiden_wide_thumb4_hospital
+        fullMeta.contains("Obsidian", ignoreCase = true) ||
+            fullMeta.contains("Sydney", ignoreCase = true) ||
+            fullMeta.contains("Shibuya", ignoreCase = true) ->
+            R.drawable.img_aiden_wide_thumb5_tokyo
+        fullMeta.contains("Nevermore", ignoreCase = true) ||
+            fullMeta.contains("Wednesday", ignoreCase = true) ->
+            R.drawable.img_aiden_wide_thumb6_nevermore_1795547716938
+        fullMeta.contains("Lamborghini", ignoreCase = true) ||
+            fullMeta.contains("Lambo", ignoreCase = true) ->
+            R.drawable.img_aiden_modal_carousel_gs
+        fullMeta.contains("Thanos", ignoreCase = true) ->
+            R.drawable.img_postcredits_twin_aiden
+        fullMeta.contains("Spider-Man", ignoreCase = true) ||
+            fullMeta.contains("Queens", ignoreCase = true) ->
+            R.drawable.img_ch1_c5_tower_night
+        fullMeta.contains("Eilish", ignoreCase = true) ||
+            fullMeta.contains("Billie", ignoreCase = true) ->
+            R.drawable.img_aiden_portrait
+        bot.aiName.startsWith("Aria", ignoreCase = true) ->
+            R.drawable.img_template_aria_left
+        bot.universeName.contains("Eldoria", ignoreCase = true) ->
+            R.drawable.img_template_eldoria_left
+        fullMeta.contains("Saat Kulesi", ignoreCase = true) ||
+            fullMeta.contains("Clocktower", ignoreCase = true) ->
+            R.drawable.img_tpl_clocktower_1795553971128
+        fullMeta.contains("Kowloon", ignoreCase = true) ->
+            R.drawable.img_tpl_neon_noir_1795553970903
+        fullMeta.contains("Fırtına Kıyısı", ignoreCase = true) ||
+            fullMeta.contains("Stormbreak", ignoreCase = true) ->
+            R.drawable.img_aetheria_universe
+        fullMeta.contains("Kuzey Işıkları Oteli", ignoreCase = true) ||
+            fullMeta.contains("Aurora Lodge", ignoreCase = true) ->
+            R.drawable.img_tpl_aurora_lodge_1795553969948
+        else -> null
+    }
 }
 
 @Composable
@@ -212,7 +286,8 @@ fun BotCardItem(
     onToggleFavorite: (() -> Unit)? = null,
     frostedBackdrop: ImageBitmap? = null,
     scrollSync: Int = 0,
-    staggerIndex: Int = 0
+    staggerIndex: Int = 0,
+    lastMessagePreview: String? = null
 ) {
     val motionConfig = LocalCosmicMotionConfig.current
     val motionPolicy = LocalCosmicMotionPolicy.current
@@ -280,14 +355,25 @@ fun BotCardItem(
         }
     }
 
-    val isOnlineActive = !isUniverse && (
+    val isRecentActiveChat = remember(bot.lastMessageTimestamp) {
+        bot.lastMessageTimestamp > 0L &&
+            (System.currentTimeMillis() - bot.lastMessageTimestamp) <= 86_400_000L
+    }
+    val isOnlineActive = isRecentActiveChat ||
         bot.proactiveEnabled ||
-            bot.id == "starter_ayla" ||
-            bot.lastMessageTimestamp > 0L
-        )
+        bot.id == "starter_ayla"
 
-    val cardDescription = remember(bot.id, bot.scenario, bot.openingMessage) {
-        resolveBotCardDescription(bot.id, bot.scenario, bot.openingMessage)
+    val relativeTimeLabel = remember(bot.lastMessageTimestamp) {
+        if (bot.lastMessageTimestamp > 0L) {
+            MessageTimestampFormatter.formatRelative(bot.lastMessageTimestamp)
+        } else {
+            "Yeni"
+        }
+    }
+
+    val cardDescription = remember(bot.id, bot.scenario, bot.openingMessage, lastMessagePreview) {
+        lastMessagePreview?.takeIf { it.isNotBlank() }
+            ?: resolveBotCardDescription(bot.id, bot.scenario, bot.openingMessage)
     }
 
     Box(
@@ -422,7 +508,7 @@ fun BotCardItem(
                         .border(BorderStroke(1.25.dp, BotAvatarBorderBrush), BotCardAvatarShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    val builtInAvatarRes = remember(bot.id, bot.aiName, bot.universeName) {
+                    val builtInAvatarRes = remember(bot.id, bot.aiName, bot.universeName, bot.scenario) {
                         resolveBuiltInBotAvatarRes(bot)
                     }
                     when {
@@ -460,60 +546,24 @@ fun BotCardItem(
                     }
                 }
 
-                // Bottom-Right Status Badge (Online Emerald Dot or Soft Crescent Moon)
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(6.dp)
-                        .size(23.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xDD130728))
-                        .border(BorderStroke(1.dp, BotStatusBadgeBorderBrush), CircleShape),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (isOnlineActive) {
+                // Bottom-Right Active Emerald Indicator (only shown for recently active/proactive bots;
+                // omitted on fresh/inactive bots instead of a misleading crescent moon)
+                if (isOnlineActive) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(6.dp)
+                            .size(22.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xDD130728))
+                            .border(BorderStroke(1.dp, BotStatusBadgeBorderBrush), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(11.dp)
+                                .size(10.5.dp)
                                 .clip(CircleShape)
                                 .background(BotOnlineDotBrush)
-                        )
-                    } else {
-                        Spacer(
-                            modifier = Modifier
-                                .size(12.dp)
-                                .drawWithCache {
-                                    val cx = size.width * 0.52f
-                                    val cy = size.height * 0.50f
-                                    val r = size.minDimension * 0.42f
-                                    val moonPath = Path().apply {
-                                        moveTo(cx + r * 0.15f, cy - r * 0.92f)
-                                        cubicTo(
-                                            cx - r * 0.95f, cy - r * 0.65f,
-                                            cx - r * 0.95f, cy + r * 0.72f,
-                                            cx + r * 0.25f, cy + r * 0.92f
-                                        )
-                                        cubicTo(
-                                            cx + r * 0.75f, cy + r * 0.85f,
-                                            cx + r * 0.95f, cy + r * 0.42f,
-                                            cx + r * 0.82f, cy + r * 0.22f
-                                        )
-                                        cubicTo(
-                                            cx + r * 0.18f, cy + r * 0.45f,
-                                            cx - r * 0.35f, cy + r * 0.02f,
-                                            cx - r * 0.12f, cy - r * 0.45f
-                                        )
-                                        cubicTo(
-                                            cx + r * 0.02f, cy - r * 0.70f,
-                                            cx + r * 0.25f, cy - r * 0.82f,
-                                            cx + r * 0.15f, cy - r * 0.92f
-                                        )
-                                        close()
-                                    }
-                                    onDrawBehind {
-                                        drawPath(path = moonPath, color = Color(0xFFE9D5FF))
-                                    }
-                                }
                         )
                     }
                 }
@@ -526,29 +576,30 @@ fun BotCardItem(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Row 1: Character Name + Interactive Star + More Orb
+                // Row 1: 2-Line Character/Universe Title + Interactive Star + More Orb
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
+                    verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
                         modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.Top
                     ) {
                         Text(
                             text = displayName,
                             fontFamily = LiterarySerifFontFamily,
                             color = Color(0xFFFBF8FF),
-                            fontSize = 20.5.sp,
+                            fontSize = 16.5.sp,
+                            lineHeight = 20.sp,
                             fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                             style = BotTitleShadowStyle,
                             modifier = Modifier.weight(1f, fill = false)
                         )
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
 
                         Box(
                             modifier = Modifier
@@ -663,22 +714,36 @@ fun BotCardItem(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(5.dp))
+                if (relativeTimeLabel.isNotBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = relativeTimeLabel,
+                        fontFamily = LiterarySerifFontFamily,
+                        color = Color(0xFFD8C8F2).copy(alpha = 0.68f),
+                        fontSize = 11.sp,
+                        lineHeight = 14.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
 
-                // Row 2: Description Snippet (2-3 Lines, Editorial Serif)
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Row 2: Last Message Preview or Description Snippet (2 Lines, Editorial Serif)
                 Text(
                     text = cardDescription,
                     fontFamily = LiterarySerifFontFamily,
                     color = Color(0xFFEAE1FA).copy(alpha = 0.90f),
-                    fontSize = 12.8.sp,
-                    lineHeight = 17.5.sp,
-                    maxLines = 3,
+                    fontSize = 12.6.sp,
+                    lineHeight = 17.sp,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(9.dp))
 
-                // Row 3: Two Compact Glass Tag Pills (Left) + Circular Crystal Play Button (Right)
+                // Row 3: Two Compact Glass Tag Pills (Left) + Subtle Matte Chevron Indicator (Right)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -714,59 +779,22 @@ fun BotCardItem(
                     val playInteraction = remember { MutableInteractionSource() }
                     val playPressed by playInteraction.collectIsPressedAsState()
                     val playScaleState = animateFloatAsState(
-                        targetValue = if (playPressed && motionConfig.enableMicroSprings) 0.88f else 1f,
+                        targetValue = if (playPressed && motionConfig.enableMicroSprings) 0.90f else 1f,
                         animationSpec = CosmicMotionSpecs.snappyOrb(),
                         label = "playOrbScale"
                     )
 
                     Box(
                         modifier = Modifier
-                            .size(40.dp)
+                            .size(32.dp)
                             .graphicsLayer {
                                 val s = playScaleState.value
                                 scaleX = s
                                 scaleY = s
                             }
-                            .drawWithCache {
-                                val orbGlow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                    style = android.graphics.Paint.Style.STROKE
-                                    strokeWidth = 2.dp.toPx()
-                                    maskFilter = android.graphics.BlurMaskFilter(
-                                        7.dp.toPx(),
-                                        android.graphics.BlurMaskFilter.Blur.NORMAL
-                                    )
-                                }
-                                val cx = size.width * 0.5f
-                                val cy = size.height * 0.5f
-                                val rad = size.minDimension * 0.5f
-                                onDrawBehind {
-                                    orbGlow.color = Color(0xFFA855F7)
-                                        .copy(alpha = 0.50f * cardGlowAlphaState.value.coerceIn(0f, 1f))
-                                        .toArgb()
-                                    drawIntoCanvas { canvas ->
-                                        canvas.nativeCanvas.drawCircle(cx, cy, rad, orbGlow)
-                                    }
-                                }
-                            }
                             .clip(CircleShape)
-                            .background(BotPlayOrbBgBrush)
-                            .drawWithCache {
-                                val sheenCenter = Offset(size.width * 0.38f, size.height * 0.14f)
-                                val sheenRadius = size.width * 0.42f
-                                val sheenBrush = Brush.radialGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.34f),
-                                        Color(0xFFE9D5FF).copy(alpha = 0.12f),
-                                        Color.Transparent
-                                    ),
-                                    center = sheenCenter,
-                                    radius = sheenRadius
-                                )
-                                onDrawBehind {
-                                    drawCircle(brush = sheenBrush, center = sheenCenter, radius = sheenRadius)
-                                }
-                            }
-                            .border(BorderStroke(1.25.dp, BotPlayOrbBorderBrush), CircleShape)
+                            .background(Color(0x4221103D))
+                            .border(BorderStroke(0.8.dp, Color(0x70D8B4FE)), CircleShape)
                             .clickable(
                                 interactionSource = playInteraction,
                                 indication = null
@@ -775,10 +803,10 @@ fun BotCardItem(
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
-                            imageVector = Icons.Default.PlayArrow,
+                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                             contentDescription = "Sohbete Başla",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
+                            tint = Color(0xFFE9D5FF).copy(alpha = 0.88f),
+                            modifier = Modifier.size(19.dp)
                         )
                     }
                 }

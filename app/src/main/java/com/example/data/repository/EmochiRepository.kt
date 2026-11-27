@@ -964,6 +964,15 @@ class EmochiRepository(
     }
 
     val allBots: Flow<List<BotEntity>> = botDao.getAllBots()
+    val lastMessagePreviewByBotId: Flow<Map<String, String>> = messageDao.getLatestMessagePreviews()
+        .map { rows ->
+            rows.associate { row ->
+                row.botId to com.example.ui.components.StoryOverlayTextSanitizer.sanitizePreview(
+                    row.text,
+                    maxLength = 180
+                )
+            }.filterValues { it.isNotBlank() }
+        }
     val userSettingsFlow: Flow<UserSettingsEntity?> = settingsDao.getUserSettingsFlow()
         .map { it?.let(SecureApiKeyVault::decryptSettingsKeys) }
 

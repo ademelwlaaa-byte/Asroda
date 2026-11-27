@@ -71,6 +71,13 @@ class EmochiViewModel @JvmOverloads constructor(
             initialValue = emptyList()
         )
 
+    val lastMessagePreviewByBotId: StateFlow<Map<String, String>> = repository.lastMessagePreviewByBotId
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5_000L),
+            initialValue = emptyMap()
+        )
+
     val userSettings: StateFlow<UserSettingsEntity?> = repository.userSettingsFlow
         .stateIn(
             scope = viewModelScope,

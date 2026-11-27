@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
@@ -137,7 +138,7 @@ private val CenteredButtonTextStyle = TextStyle(
 
 private val PopoverCubicBezier = CubicBezierEasing(0.22f, 1.0f, 0.36f, 1.0f)
 
-private enum class AidenBadgeIconType {
+internal enum class AidenBadgeIconType {
     TROPHY,
     STAR,
     EYE,
@@ -146,20 +147,20 @@ private enum class AidenBadgeIconType {
     LIGHTNING
 }
 
-private data class AidenBadgeSpec(
+internal data class AidenBadgeSpec(
     val iconType: AidenBadgeIconType,
     val label: String,
     val badgeGlowColor: Color
 )
 
-private data class AidenReactiveThemeColors(
+internal data class AidenReactiveThemeColors(
     val primaryOrb: Color,
     val secondaryOrb: Color,
     val deepAtmosphere: Color,
     val emberAccent: Color
 )
 
-private data class AidenCatalogRowSpec(
+internal data class AidenCatalogRowSpec(
     val presetId: String,
     val title: String,
     val fullTitle: String,
@@ -177,11 +178,12 @@ private data class AidenCatalogRowSpec(
 )
 
 /**
- * Single Source of Truth (SSOT) for the 5 Aiden Blackwood Universe Catalog Stories:
- * Feeds the Top Hero Carousel, the ANA EVREN Featured Card, the 5 Story Row Cards,
- * the Reactive Ambient Background, and the Floating Glass Story Preview Popover.
+ * Single Source of Truth (SSOT) for the Aiden Blackwood Universe Catalog Stories:
+ * Feeds the Top Hero Carousel, the ANA EVREN Featured Card, the Story Row Cards,
+ * the Reactive Ambient Background, the Floating Glass Story Preview Popover,
+ * and the Templates tab counters.
  */
-private val AIDEN_CATALOG_SPECS = listOf(
+internal val AIDEN_CATALOG_SPECS = listOf(
     AidenCatalogRowSpec(
         presetId = "preset_aiden_zoktay",
         title = "Galatasaray Efsanesi",
@@ -1001,11 +1003,16 @@ fun AidenStoriesModalContent(
             modifier = Modifier
                 .fillMaxSize()
                 .navigationBarsPadding(),
-            contentPadding = PaddingValues(top = 0.dp, bottom = 84.dp)
+            contentPadding = PaddingValues(top = 0.dp, bottom = 96.dp)
         ) {
             // 1. Unified Header + Carousel Section with Lightning Flash, Breathing "Stories" Logo & 3D Pager
             item(key = "aiden_modal_top_header_and_carousel", contentType = "aiden_header_carousel") {
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(top = 4.dp)
+                ) {
                     AidenTopHeaderBanner(
                         glowPulse = glowPulse,
                         lightningFlash = lightningFlash,
@@ -1248,27 +1255,32 @@ private fun AidenShowMorePillButton(
 @Composable
 private fun AidenInProgressBadge(
     glowPulse: Float,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    darkGlassBacking: Boolean = false
 ) {
     val pillShape = RoundedCornerShape(50)
+    val bgColors = if (darkGlassBacking) {
+        listOf(
+            Color(0xDD042F25),
+            Color(0xD4064E3B)
+        )
+    } else {
+        listOf(
+            Color(0xFF065F46).copy(alpha = 0.68f),
+            Color(0xFF047857).copy(alpha = 0.56f)
+        )
+    }
     Row(
         modifier = modifier
-            .height(19.dp)
+            .height(20.dp)
             .clip(pillShape)
-            .background(
-                Brush.horizontalGradient(
-                    colors = listOf(
-                        Color(0xFF065F46).copy(alpha = 0.68f),
-                        Color(0xFF047857).copy(alpha = 0.56f)
-                    )
-                )
-            )
+            .background(Brush.horizontalGradient(colors = bgColors))
             .border(
-                width = 0.85.dp,
-                color = Color(0xFF34D399).copy(alpha = 0.72f * glowPulse),
+                width = 0.9.dp,
+                color = Color(0xFF34D399).copy(alpha = (if (darkGlassBacking) 0.85f else 0.72f) * glowPulse),
                 shape = pillShape
             )
-            .padding(horizontal = 7.5.dp),
+            .padding(horizontal = 8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -1802,10 +1814,11 @@ private fun AidenTopHeaderBanner(
                         )
                     }
 
-                    // 3. Long, silky-smooth vertical feathering across the bottom 36% of the extended 260px header
+                    // 3. Soft top blend into the edge-to-edge ambient background + silky bottom feathering
                     drawRect(
                         brush = Brush.verticalGradient(
-                            0.00f to Color.Black,
+                            0.00f to Color.Transparent,
+                            0.08f to Color.Black,
                             0.64f to Color.Black,
                             0.82f to Color.Black.copy(alpha = 0.52f),
                             0.93f to Color.Black.copy(alpha = 0.15f),
@@ -1819,7 +1832,7 @@ private fun AidenTopHeaderBanner(
         Box(
             modifier = Modifier
                 .align(Alignment.TopEnd)
-                .padding(top = 18.dp, end = 8.dp)
+                .padding(top = 12.dp, end = 12.dp)
                 .size(48.dp)
                 .graphicsLayer {
                     scaleX = closeScale
@@ -1918,7 +1931,7 @@ private fun AidenStickyMiniTopBar(
 
             Box(
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .background(Color(0x662E1065))
                     .border(
@@ -1934,7 +1947,7 @@ private fun AidenStickyMiniTopBar(
                     imageVector = Icons.Default.Close,
                     contentDescription = "Kapat",
                     tint = Color.White,
-                    modifier = Modifier.size(16.dp)
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
@@ -2093,7 +2106,10 @@ private fun AidenHeroPeekingCarousel(
                 val cardAlpha = 0.60f + (0.40f * centerFactor)
                 val contentTextAlpha = (1f - absOffset * 1.55f).coerceIn(0f, 1f)
 
-                val cardShape = RoundedCornerShape(22.dp)
+                val outerCornerRadius = 22.dp
+                val innerCornerRadius = 20.5.dp
+                val cardShape = RoundedCornerShape(outerCornerRadius)
+                val innerShape = RoundedCornerShape(innerCornerRadius)
 
                 Box(
                     modifier = Modifier
@@ -2107,7 +2123,7 @@ private fun AidenHeroPeekingCarousel(
                             cameraDistance = 16f * density
                         }
                         .neonOuterGlow(
-                            cornerRadius = 22.dp,
+                            cornerRadius = outerCornerRadius,
                             glowColor = if (centerFactor > 0.5f) Color(0xFF9333EA) else Color(0xFF818CF8),
                             secondaryColor = if (centerFactor > 0.5f) Color(0xFFF5D0FE) else Color(0xFFD8B4FE),
                             blurRadius = (10f + 5f * centerFactor).dp,
@@ -2116,7 +2132,7 @@ private fun AidenHeroPeekingCarousel(
                             hotspotFlares = centerFactor > 0.5f
                         )
                         .clip(cardShape)
-                        .background(Color(0x661C0838))
+                        .background(Color(0xFF14062A))
                         .border(
                             width = (1.2f + 0.35f * centerFactor).dp,
                             brush = Brush.linearGradient(
@@ -2158,14 +2174,19 @@ private fun AidenHeroPeekingCarousel(
                             }
                         )
                 ) {
+                    // Full-bleed inner artwork clipped tightly to innerCornerRadius with overscale
+                    // so horizontal parallax never exposes a dark gap against the neon frame
                     AidenCoilCoverImage(
                         drawableResId = spec.carouselDrawableRes,
                         contentDescription = spec.carouselTitle,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier
                             .fillMaxSize()
+                            .clip(innerShape)
                             .graphicsLayer {
-                                translationX = pageOffset * 14.dp.toPx()
+                                scaleX = 1.12f
+                                scaleY = 1.04f
+                                translationX = pageOffset.coerceIn(-1f, 1f) * 12.dp.toPx()
                             }
                     )
 
@@ -2194,16 +2215,16 @@ private fun AidenHeroPeekingCarousel(
                             )
                     )
 
-                    // Fast GPU Inner Frosted Glass Rim around the Carousel Card
+                    // Fast GPU Inner Frosted Glass Rim hugging the outer border without a double-frame gap
                     Canvas(modifier = Modifier.fillMaxSize()) {
-                        val cr = 22.dp.toPx()
-                        val inset = 1.5.dp.toPx()
+                        val cr = innerCornerRadius.toPx()
+                        val inset = 1.2.dp.toPx()
                         drawRoundRect(
                             color = Color(0xFFD8B4FE).copy(alpha = (0.28f * glowPulse).coerceIn(0f, 0.45f)),
                             topLeft = Offset(inset, inset),
                             size = Size(size.width - inset * 2f, size.height - inset * 2f),
                             cornerRadius = CornerRadius(cr, cr),
-                            style = Stroke(width = 2.2.dp.toPx())
+                            style = Stroke(width = 1.8.dp.toPx())
                         )
                     }
 
@@ -2226,11 +2247,11 @@ private fun AidenHeroPeekingCarousel(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = 0.1.sp,
                                 maxLines = 1,
-                                overflow = TextOverflow.Clip,
+                                overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f, fill = false)
                             )
                             if (startedPresetIds.contains(spec.presetId)) {
-                                AidenInProgressBadge(glowPulse = glowPulse)
+                                AidenInProgressBadge(glowPulse = glowPulse, darkGlassBacking = true)
                             }
                         }
                         Spacer(modifier = Modifier.height(2.dp))
@@ -2240,7 +2261,8 @@ private fun AidenHeroPeekingCarousel(
                             fontSize = 11.2.sp,
                             lineHeight = 14.sp,
                             fontWeight = FontWeight.Normal,
-                            maxLines = 2
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         AidenShowMorePillButton(
@@ -2295,8 +2317,9 @@ private fun AidenHeroPeekingCarousel(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // Section 3.2: 5 Balanced Pagination Dots — normal 8.dp inactive dots, compact 14.dp active pill
-        // that fills smoothly from 0% to 100% once settled without oversized bloat.
+        // Section 3.2: 5-Dot Cyclic Pagination Bar (DOTS_PER_GROUP = 5)
+        // Always displays at most 5 dots for the active group (0..4, 5..9, etc.) and resets to slot 0
+        // cleanly at each group boundary (4 -> 5 and 9 -> 0) without cross-group ghost glow.
         Row(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -2307,21 +2330,27 @@ private fun AidenHeroPeekingCarousel(
                 .padding(horizontal = 9.dp, vertical = 4.5.dp)
                 .testTag("aiden_carousel_pagination_row")
         ) {
+            val dotsPerGroup = 5
             val rawFractionalPage = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
             val fractionalMod = ((rawFractionalPage % count.toFloat()) + count.toFloat()) % count.toFloat()
+            val activeIndex = ((pagerState.currentPage % count) + count) % count
             val ownerUniverseIndex = ((timerOwnerPage % count) + count) % count
+            val groupIndex = activeIndex / dotsPerGroup
+            val groupStart = groupIndex * dotsPerGroup
+            val visibleDots = minOf(dotsPerGroup, count - groupStart)
 
-            specs.forEachIndexed { idx, _ ->
-                val rawDist = abs(fractionalMod - idx.toFloat())
+            for (slotIdx in 0 until visibleDots) {
+                val storyIdx = groupStart + slotIdx
+                val rawDist = abs(fractionalMod - storyIdx.toFloat())
                 val circularDist = min(rawDist, count.toFloat() - rawDist)
                 val linearSelection = (1f - circularDist).coerceIn(0f, 1f)
                 // Direct frame-accurate smoothstep curve synced 1:1 with pager scroll (zero rubber-band lag!)
                 val smoothSel = linearSelection * linearSelection * (3f - 2f * linearSelection)
 
-                val capsuleWidth = 11.dp // Equal uniform size across all pagination indicators
+                val capsuleWidth = 11.5.dp // Uniform balanced pill width across all 5 slots
                 val capsuleHeight = 6.5.dp
 
-                val isTimerOwner = idx == ownerUniverseIndex
+                val isTimerOwner = storyIdx == ownerUniverseIndex
                 val fillProgress = if (isTimerOwner) {
                     slideTimerProgress.value.coerceIn(0f, 1f)
                 } else {
@@ -2368,7 +2397,7 @@ private fun AidenHeroPeekingCarousel(
                                     cornerRadius = CornerRadius(size.height / 2f, size.height / 2f)
                                 )
 
-                                // Smooth 0% -> 100% progress fill; fades cleanly with smoothSel as outgoing pill shrinks
+                                // Smooth 0% -> 100% progress fill; fades cleanly with smoothSel as outgoing pill exits
                                 if (fillProgress > 0.002f) {
                                     val fillWidth = (size.width * fillProgress).coerceIn(0f, size.width)
                                     val barAlpha = smoothSel.coerceIn(0f, 1f)
@@ -2389,7 +2418,7 @@ private fun AidenHeroPeekingCarousel(
                         }
                         .clickable {
                             val currentMod = ((pagerState.currentPage % count) + count) % count
-                            var delta = idx - currentMod
+                            var delta = storyIdx - currentMod
                             if (delta > count / 2) delta -= count
                             if (delta < -count / 2) delta += count
                             if (delta != 0) {
@@ -2825,51 +2854,69 @@ private fun AidenFeaturedUniverseCard(
             modifier = Modifier.matchParentSize()
         )
 
+        // 2b. Smooth horizontal dark scrim behind the right content column for crisp text contrast
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.horizontalGradient(
+                        0.00f to Color.Transparent,
+                        0.34f to Color.Transparent,
+                        0.48f to Color(0xCC0D051D),
+                        1.00f to Color(0xE80A0318)
+                    )
+                )
+        )
+
         // 3. Fast GPU 360° Perimeter Inner Neon Border Rim
         Canvas(modifier = Modifier.matchParentSize()) {
-            val cr = 22.dp.toPx()
-            val inset = 1.8.dp.toPx()
+            val cr = 20.5.dp.toPx()
+            val inset = 1.5.dp.toPx()
             drawRoundRect(
                 color = Color(0xFFC084FC).copy(alpha = (0.30f * glowPulse).coerceIn(0f, 0.45f)),
                 topLeft = Offset(inset, inset),
                 size = Size(size.width - inset * 2f, size.height - inset * 2f),
                 cornerRadius = CornerRadius(cr, cr),
-                style = Stroke(width = 2.4.dp.toPx())
+                style = Stroke(width = 2.0.dp.toPx())
             )
         }
 
-        // 4. Right Content Column (50.0% width, aligned to the right so Aiden's photo & transition are 100% unobstructed)
+        // 3b. Top-left semi-transparent glass status badge over Aiden's photo when already started
+        if (isStarted) {
+            AidenInProgressBadge(
+                glowPulse = glowPulse,
+                darkGlassBacking = true,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(10.dp)
+            )
+        }
+
+        // 4. Right Content Column (55% width for generous text & full-width CTA without clipping)
         Column(
             modifier = Modifier
-                .fillMaxWidth(0.50f)
+                .fillMaxWidth(0.55f)
                 .heightIn(min = 215.dp)
                 .align(Alignment.CenterEnd)
-                .padding(top = 12.dp, bottom = 11.dp, start = 2.dp, end = 12.dp),
+                .padding(top = 12.dp, bottom = 11.dp, start = 6.dp, end = 11.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
-                ) {
-                    AidenAnaEvrenGlassBadge(
-                        ambientPhase = ambientPhase,
-                        glowPulse = glowPulse
-                    )
-                    if (isStarted) {
-                        AidenInProgressBadge(glowPulse = glowPulse)
-                    }
-                }
+                AidenAnaEvrenGlassBadge(
+                    ambientPhase = ambientPhase,
+                    glowPulse = glowPulse
+                )
 
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
                     text = "Aiden Blackwood",
                     color = Color.White,
-                    fontSize = 18.sp,
+                    fontSize = 17.5.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.1.sp,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     style = CenteredButtonTextStyle
                 )
 
@@ -2888,6 +2935,8 @@ private fun AidenFeaturedUniverseCard(
                         color = Color(0xFFF3E8FF),
                         fontSize = 11.4.sp,
                         fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
                         style = CenteredButtonTextStyle
                     )
                     Text(
@@ -2895,6 +2944,8 @@ private fun AidenFeaturedUniverseCard(
                         color = Color(0xFFA78BFA).copy(alpha = 0.75f),
                         fontSize = 11.4.sp,
                         fontWeight = FontWeight.Normal,
+                        maxLines = 1,
+                        softWrap = false,
                         style = CenteredButtonTextStyle
                     )
                     Text(
@@ -2902,19 +2953,22 @@ private fun AidenFeaturedUniverseCard(
                         color = Color(0xFFF3E8FF),
                         fontSize = 11.4.sp,
                         fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis,
                         style = CenteredButtonTextStyle
                     )
                 }
 
                 Spacer(modifier = Modifier.height(5.dp))
 
-                // 2-line clean summary without ugly "..." truncation, followed by the custom "✦ Daha Fazla Göster ↗" pill
                 Text(
                     text = "Galatasaray'ın 21 yaşındaki genç yeteneği Aiden Blackwood, futbol dünyasında adından söz ettiriyor.",
                     color = Color(0xFFEDE2F8).copy(alpha = 0.96f),
                     fontSize = 10.6.sp,
                     lineHeight = 13.8.sp,
-                    maxLines = 2
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 Spacer(modifier = Modifier.height(5.dp))
@@ -2928,15 +2982,14 @@ private fun AidenFeaturedUniverseCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Box(modifier = Modifier.align(Alignment.End)) {
-                AidenReferenceHikayeyiBaslatButton(
-                    label = if (isStarted) "Hikayeye Devam Et" else "Hikayeyi Başlat",
-                    ambientPhase = ambientPhase,
-                    glowPulse = glowPulse,
-                    arrowNudge = arrowNudge,
-                    onClick = onStartClick
-                )
-            }
+            AidenReferenceHikayeyiBaslatButton(
+                label = if (isStarted) "Hikayeye Devam Et" else "Hikayeyi Başlat",
+                ambientPhase = ambientPhase,
+                glowPulse = glowPulse,
+                arrowNudge = arrowNudge,
+                onClick = onStartClick,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }
@@ -2994,6 +3047,8 @@ private fun AidenAnaEvrenGlassBadge(
             fontSize = 9.5.sp,
             fontWeight = FontWeight.SemiBold,
             letterSpacing = 0.55.sp,
+            maxLines = 1,
+            softWrap = false,
             style = CenteredButtonTextStyle
         )
     }
@@ -3010,7 +3065,8 @@ private fun AidenReferenceHikayeyiBaslatButton(
     ambientPhase: Float,
     glowPulse: Float,
     arrowNudge: Dp,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val btnInteraction = remember { MutableInteractionSource() }
     val isPressed by btnInteraction.collectIsPressedAsState()
@@ -3027,7 +3083,7 @@ private fun AidenReferenceHikayeyiBaslatButton(
 
     val pillShape = RoundedCornerShape(50)
     Row(
-        modifier = Modifier
+        modifier = modifier
             .heightIn(min = 40.dp)
             .graphicsLayer {
                 scaleX = btnScale
@@ -3076,11 +3132,11 @@ private fun AidenReferenceHikayeyiBaslatButton(
                 drawCircle(
                     brush = Brush.radialGradient(
                         listOf(Color(0xFFFFB41E).copy(alpha = 0.28f * glowPulse), Color.Transparent),
-                        center = Offset(22.dp.toPx(), size.height / 2f),
+                        center = Offset(20.dp.toPx(), size.height / 2f),
                         radius = 12.dp.toPx()
                     ),
                     radius = 12.dp.toPx(),
-                    center = Offset(22.dp.toPx(), size.height / 2f)
+                    center = Offset(20.dp.toPx(), size.height / 2f)
                 )
             }
             .clickable(
@@ -3088,7 +3144,7 @@ private fun AidenReferenceHikayeyiBaslatButton(
                 indication = null,
                 onClick = onClick
             )
-            .padding(horizontal = 13.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 8.dp)
             .testTag("aiden_featured_start_button"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Center
@@ -3097,27 +3153,29 @@ private fun AidenReferenceHikayeyiBaslatButton(
             painter = painterResource(id = R.drawable.img_aiden_btn_bolt_3d),
             contentDescription = null,
             contentScale = ContentScale.Fit,
-            modifier = Modifier.size(width = 18.dp, height = 21.dp)
+            modifier = Modifier.requiredSize(width = 15.dp, height = 18.dp)
         )
 
-        Spacer(modifier = Modifier.width(6.dp))
+        Spacer(modifier = Modifier.width(5.dp))
 
         Text(
             text = label,
             color = Color.White,
-            fontSize = 11.8.sp,
+            fontSize = 11.2.sp,
             fontWeight = FontWeight.Bold,
-            letterSpacing = 0.1.sp,
+            letterSpacing = 0.05.sp,
             maxLines = 1,
             softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
             style = CenteredButtonTextStyle
         )
 
-        Spacer(modifier = Modifier.width(7.dp))
+        Spacer(modifier = Modifier.width(5.dp))
 
         Canvas(
             modifier = Modifier
-                .size(width = 11.dp, height = 9.dp)
+                .requiredSize(width = 11.dp, height = 9.dp)
                 .offset(x = localArrowNudge)
         ) {
             val cy = size.height / 2f
@@ -3300,12 +3358,7 @@ private fun AidenWideStoryRowCard(
     )
 
     val cardShape = RoundedCornerShape(18.dp)
-    val thumbShape = RoundedCornerShape(
-        topStart = 13.dp,
-        bottomStart = 13.dp,
-        topEnd = 10.dp,
-        bottomEnd = 10.dp
-    )
+    val thumbShape = RoundedCornerShape(14.dp)
 
     val cardFlowPhase = (ambientPhase + cardIndex * 0.17f) % 1f
 
@@ -3423,74 +3476,91 @@ private fun AidenWideStoryRowCard(
             )
         }
 
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 9.dp, end = 10.dp, top = 10.dp, bottom = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .padding(11.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .width(104.dp)
-                    .height(86.dp)
-                    .clip(thumbShape)
-                    .border(
-                        width = 0.8.dp,
-                        color = spec.accentTint.copy(alpha = 0.45f),
-                        shape = thumbShape
-                    )
+            // Top Tier: 88dp square cover + full-width title, 2-line description, and Show More pill
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
             ) {
-                AidenCoilCoverImage(
-                    drawableResId = spec.thumbDrawableRes,
-                    contentDescription = spec.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+                Box(
+                    modifier = Modifier
+                        .size(88.dp)
+                        .clip(thumbShape)
+                        .border(
+                            width = 0.85.dp,
+                            color = spec.accentTint.copy(alpha = 0.48f),
+                            shape = thumbShape
+                        )
+                ) {
+                    AidenCoilCoverImage(
+                        drawableResId = spec.thumbDrawableRes,
+                        contentDescription = spec.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                Spacer(modifier = Modifier.width(12.dp))
+
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.Top
+                ) {
+                    Text(
+                        text = spec.title,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        lineHeight = 17.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.05.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(3.5.dp))
+
+                    Text(
+                        text = spec.description,
+                        color = Color(0xFFE5D8F2).copy(alpha = 0.95f),
+                        fontSize = 10.8.sp,
+                        lineHeight = 14.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    AidenShowMorePillButton(
+                        glowPulse = glowPulse,
+                        onClick = onShowMoreClick,
+                        testTag = "aiden_row_show_more_${spec.presetId}"
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
+            // Subtle Lavender Hairline Divider
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(Color(0x44C4B5FD))
+            )
+            Spacer(modifier = Modifier.height(8.dp))
 
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.Center
+            // Bottom Action Strip: Wrapping category & status badges on left, CTA button fixed on right
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = spec.title,
-                    color = Color.White,
-                    fontSize = 13.2.sp,
-                    lineHeight = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.05.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(2.5.dp))
-
-                // 2-line clean description (without raw "..." truncation)
-                Text(
-                    text = spec.description,
-                    color = Color(0xFFE5D8F2).copy(alpha = 0.95f),
-                    fontSize = 10.3.sp,
-                    lineHeight = 13.2.sp,
-                    maxLines = 2
-                )
-
-                Spacer(modifier = Modifier.height(4.5.dp))
-
-                // Custom "✦ Daha Fazla Göster ↗" pill trigger
-                AidenShowMorePillButton(
-                    glowPulse = glowPulse,
-                    onClick = onShowMoreClick,
-                    testTag = "aiden_row_show_more_${spec.presetId}"
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Section 3.4: Thematic glowing category badges + "● Devam Ediyor" badge
                 FlowRow(
+                    modifier = Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     spec.badges.forEach { badge ->
                         AidenThematicCategoryBadge(
@@ -3502,17 +3572,17 @@ private fun AidenWideStoryRowCard(
                         AidenInProgressBadge(glowPulse = glowPulse)
                     }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                AidenReferenceKesfetButton(
+                    label = if (isStarted) "Devam Et" else "Keşfet",
+                    ambientPhase = cardFlowPhase,
+                    glowPulse = glowPulse,
+                    playNudge = playNudge,
+                    onClick = onClick
+                )
             }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            AidenReferenceKesfetButton(
-                label = if (isStarted) "Devam Et" else "Keşfet",
-                ambientPhase = cardFlowPhase,
-                glowPulse = glowPulse,
-                playNudge = playNudge,
-                onClick = onClick
-            )
         }
     }
 }

@@ -49,8 +49,10 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.withStyle
 import com.example.ui.theme.InterFontFamily
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -690,6 +692,7 @@ fun ExploreTabContent(
     }
 
     val navBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val aidenStoryCount = AIDEN_CATALOG_SPECS.size
 
     Box(modifier = Modifier.fillMaxSize()) {
     LazyColumn(
@@ -804,7 +807,7 @@ fun ExploreTabContent(
                         }
 
                         Text(
-                            text = if (isEnglish) "5 Aiden Blackwood Stories" else "5 Aiden Blackwood Hikayesi",
+                            text = if (isEnglish) "$aidenStoryCount Aiden Blackwood Stories" else "$aidenStoryCount Aiden Blackwood Hikayesi",
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                             color = Color(0xFFEDE4FF),
                             fontSize = 12.sp,
@@ -850,7 +853,7 @@ fun ExploreTabContent(
                     fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                     fontStyle = FontStyle.Italic,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 34.sp,
+                    fontSize = 30.sp,
                     letterSpacing = 0.2.sp,
                     modifier = Modifier.padding(start = 6.dp),
                     style = androidx.compose.ui.text.TextStyle(
@@ -869,19 +872,19 @@ fun ExploreTabContent(
                     )
                 )
 
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
 
-                // ── Hero Banner Row: Left (🔥 Title + Balanced 3-Line Subtitle) | Right (Living 3D Play Portal) ──
+                // ── Hero Banner Row: Left (🔥 Clean 2-Line Title + Subtitle) | Right (Decorative 3D Play Portal) ──
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(148.dp)
+                        .height(134.dp)
                 ) {
-                    // Left Column (max 62% width so 3-line subtitle flows naturally)
+                    // Left Column (63% width so 2-line title & subtitle flow cleanly without 3-line breaks)
                     Column(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
-                            .fillMaxWidth(0.62f)
+                            .fillMaxWidth(0.63f)
                             .padding(end = 4.dp)
                     ) {
                         Row(
@@ -893,7 +896,7 @@ fun ExploreTabContent(
                                 contentDescription = null,
                                 contentScale = ContentScale.Fit,
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(40.dp)
                                     .graphicsLayer {
                                         val s = 0.98f + 0.03f * neonBreathState.value
                                         scaleX = s
@@ -914,16 +917,18 @@ fun ExploreTabContent(
                                     }
                             )
 
-                            Spacer(modifier = Modifier.width(8.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
 
                             Text(
-                                text = if (isEnglish) "Ready Templates &\nSpecial Stories" else "Hazır Şablonlar & Özel\nHikayeler",
+                                text = if (isEnglish) "Ready Templates\n& Special Stories" else "Hazır Şablonlar\n& Özel Hikayeler",
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                                 fontStyle = FontStyle.Italic,
                                 fontWeight = FontWeight.SemiBold,
                                 color = Color.White,
-                                fontSize = 18.8.sp,
-                                lineHeight = 23.sp,
+                                fontSize = 17.5.sp,
+                                lineHeight = 21.sp,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                                 style = androidx.compose.ui.text.TextStyle(
                                     shadow = Shadow(
                                         color = Color(0xEE120524),
@@ -934,7 +939,7 @@ fun ExploreTabContent(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(5.dp))
 
                         Text(
                             text = if (isEnglish) {
@@ -944,8 +949,10 @@ fun ExploreTabContent(
                             },
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                             color = Color(0xFFEDE4FF),
-                            fontSize = 12.8.sp,
-                            lineHeight = 17.5.sp,
+                            fontSize = 12.2.sp,
+                            lineHeight = 16.5.sp,
+                            maxLines = 3,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(start = 4.dp),
                             style = androidx.compose.ui.text.TextStyle(
                                 shadow = Shadow(
@@ -957,7 +964,7 @@ fun ExploreTabContent(
                         )
                     }
 
-                    // BÖLÜM 1.1: Right 3D Animated Play Portal (Vibrant, Solid, NO ugly diagonal line!)
+                    // BÖLÜM 1.1: Right 3D Animated Play Portal (Strictly decorative visual — no click handler)
                     AnimatedPlayPortal3D(
                         levitateProgressProvider = { cardLevitateProgressState.value },
                         playTrianglePulseProvider = { playTrianglePulseState.value },
@@ -966,7 +973,7 @@ fun ExploreTabContent(
                         flarePulseProvider = { flarePulseState.value },
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .size(158.dp)
+                            .size(144.dp)
                             .offset(x = 6.dp)
                     )
                 }
@@ -997,6 +1004,7 @@ fun ExploreTabContent(
                         rootSize = rootSize,
                         frostedManorBitmap = frostedManorBitmap,
                         scrollSync = scrollSync,
+                        storyCount = aidenStoryCount,
                         isEnglish = isEnglish,
                         borderBeamDegProvider = { borderBeamDegState.value },
                         neonBreathProvider = { neonBreathState.value },
@@ -1014,6 +1022,9 @@ fun ExploreTabContent(
         ) { idx, preset ->
             val cascadeIdx = if (showAidenHeroCard) idx + 1 else idx
             val phaseOffsetDeg = (idx + 1) * 75f
+            val isStarted = remember(existingBots, preset.id) {
+                findExistingBotForTemplate(preset) != null
+            }
             StaggeredCascadeItem(
                 index = cascadeIdx,
                 triggerKey = cascadeTrigger
@@ -1023,6 +1034,7 @@ fun ExploreTabContent(
                     frostedManorBitmap = frostedManorBitmap,
                     scrollSync = scrollSync,
                     preset = preset,
+                    isStarted = isStarted,
                     isEnglish = isEnglish,
                     borderBeamDegProvider = { (borderBeamDegState.value + phaseOffsetDeg) % 360f },
                     radarPulseProvider = { radarPulseState.value },
@@ -1641,7 +1653,7 @@ private fun SlidingMorCamFilterBar(
                 .fillMaxWidth()
                 .height(44.dp)
         ) {
-            val spacing = 10.dp
+            val spacing = 8.dp
             val pillWidth = (maxWidth - spacing * 2) / 3f
             val indicatorOffsetX = (pillWidth + spacing) * slideFraction
 
@@ -1829,16 +1841,20 @@ private fun SlidingMorCamFilterBar(
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
+                            modifier = Modifier.padding(horizontal = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             FilterPillIcon3D(key = key)
                             Text(
                                 text = label,
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                                 color = if (isSelected) Color.White else Color(0xFFEDE4FF),
-                                fontSize = 14.sp,
-                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                fontSize = 12.6.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -1939,6 +1955,7 @@ private fun MorCamAidenHeroCard(
     rootSize: IntSize,
     frostedManorBitmap: ImageBitmap,
     scrollSync: Int,
+    storyCount: Int,
     isEnglish: Boolean,
     borderBeamDegProvider: () -> Float,
     neonBreathProvider: () -> Float,
@@ -1973,7 +1990,7 @@ private fun MorCamAidenHeroCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
-            .height(174.dp)
+            .height(162.dp)
             .graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale
@@ -2102,7 +2119,7 @@ private fun MorCamAidenHeroCard(
                             contentDescription = "Stories",
                             contentScale = ContentScale.Fit,
                             modifier = Modifier
-                                .height(40.dp)
+                                .height(34.dp)
                                 .offset(x = (-4).dp, y = (-2).dp)
                                 .graphicsLayer {
                                     val s = 0.99f + 0.02f * neonBreathProvider()
@@ -2128,23 +2145,27 @@ private fun MorCamAidenHeroCard(
                             glowIntensityProvider = neonBreathProvider,
                             modifier = Modifier
                                 .fillMaxWidth(0.88f)
-                                .height(12.dp)
+                                .height(11.dp)
                         )
                     }
 
-                    // 3. Bottom Row: "Tüm 5 Aiden Blackwood Hikayesi" + See-Through Frosted Mor Cam Arrow Button (➔)
+                    // 3. Bottom Row: Dynamic Story Count + See-Through Frosted Mor Cam Arrow Button (➔)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (isEnglish) "All 5 Aiden Blackwood\nStories" else "Tüm 5 Aiden Blackwood\nHikayesi",
+                            text = if (isEnglish) "All $storyCount Aiden\nBlackwood Stories" else "Tüm $storyCount Aiden\nBlackwood Hikayesi",
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                             color = Color(0xFFF3E8FF),
-                            fontSize = 12.2.sp,
-                            lineHeight = 15.5.sp,
-                            modifier = Modifier.weight(1f)
+                            fontSize = 11.8.sp,
+                            lineHeight = 14.5.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 6.dp)
                         )
 
                         // Translucent Mor Cam Circle Arrow Button (➔)
@@ -2221,6 +2242,7 @@ private fun MorCamTemplateCard(
     frostedManorBitmap: ImageBitmap,
     scrollSync: Int,
     preset: BotEntity,
+    isStarted: Boolean,
     isEnglish: Boolean,
     borderBeamDegProvider: () -> Float,
     radarPulseProvider: () -> Float,
@@ -2289,7 +2311,7 @@ private fun MorCamTemplateCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp)
-            .height(126.dp)
+            .heightIn(min = 134.dp)
             .graphicsLayer {
                 scaleX = cardScale
                 scaleY = cardScale
@@ -2317,18 +2339,21 @@ private fun MorCamTemplateCard(
             .padding(8.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left Rounded Artwork Thumbnail
+            // Left Rounded Artwork Thumbnail (108dp width for +26dp breathing room in text column)
             Box(
                 modifier = Modifier
+                    .width(108.dp)
                     .fillMaxHeight()
-                    .width(134.dp)
+                    .heightIn(min = 118.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .border(
                         width = 1.dp,
-                        color = Color(0x88E9D5FF),
+                        color = if (isStarted) Color(0xAA6EE7B7) else Color(0x88E9D5FF),
                         shape = RoundedCornerShape(16.dp)
                     )
             ) {
@@ -2344,8 +2369,42 @@ private fun MorCamTemplateCard(
                     model = coverRequest,
                     contentDescription = titleText,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.matchParentSize()
                 )
+
+                // Compact Semi-Transparent Dark Glass "● Devam" Badge when already started
+                if (isStarted) {
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(6.dp)
+                            .clip(RoundedCornerShape(50))
+                            .background(Color(0xD805281F))
+                            .border(
+                                width = 0.85.dp,
+                                color = Color(0xCC34D399),
+                                shape = RoundedCornerShape(50)
+                            )
+                            .padding(horizontal = 6.5.dp, vertical = 2.5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(5.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF6EE7B7))
+                        )
+                        Text(
+                            text = if (isEnglish) "Active" else "Devam",
+                            color = Color(0xFFECFDF5),
+                            fontSize = 9.2.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false
+                        )
+                    }
+                }
             }
 
             // Right Content Column
@@ -2353,16 +2412,22 @@ private fun MorCamTemplateCard(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
+                    .heightIn(min = 118.dp)
                     .padding(start = 11.dp, end = 4.dp, top = 2.dp, bottom = 2.dp),
                 verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // 1. Title Row with BÖLÜM 2.4 Radar Pulse Status Sphere + Full Un-truncated Serif Title
+                // 1. Title Row with BÖLÜM 2.4 Radar Pulse Status Sphere + Clean 2-Line Serif Title
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
                     horizontalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     // BÖLÜM 2.4: Live Radar Pulse Sphere
-                    Canvas(modifier = Modifier.size(18.dp)) {
+                    Canvas(
+                        modifier = Modifier
+                            .padding(top = 1.dp)
+                            .size(18.dp)
+                    ) {
                         val pulse = radarPulseProvider()
                         val cx = size.width * 0.5f
                         val cy = size.height * 0.5f
@@ -2403,15 +2468,17 @@ private fun MorCamTemplateCard(
                         )
                     }
 
-                    // BÖLÜM 5.2: Full title without ellipsis truncation ("Aria (Siber Güvenlik)")
                     Text(
                         text = titleText,
                         fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                         color = Color.White,
-                        fontSize = 15.2.sp,
+                        fontSize = 14.2.sp,
+                        lineHeight = 17.sp,
                         fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        letterSpacing = (-0.2).sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        letterSpacing = (-0.15).sp,
+                        modifier = Modifier.weight(1f),
                         style = androidx.compose.ui.text.TextStyle(
                             shadow = Shadow(
                                 color = Color(0xCC120624),
@@ -2422,10 +2489,12 @@ private fun MorCamTemplateCard(
                     )
                 }
 
+                Spacer(modifier = Modifier.height(5.dp))
+
                 // 2. Sheer See-Through Frosted Role Badge: [👤 Karakter (Dedektif)]
                 Box(
                     modifier = Modifier
-                        .height(25.dp)
+                        .height(24.dp)
                         .clip(RoundedCornerShape(50))
                         .background(
                             Brush.verticalGradient(
@@ -2446,7 +2515,7 @@ private fun MorCamTemplateCard(
                             ),
                             shape = RoundedCornerShape(50)
                         )
-                        .padding(horizontal = 10.dp),
+                        .padding(horizontal = 9.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(
@@ -2458,13 +2527,18 @@ private fun MorCamTemplateCard(
                             text = badgeText,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                             color = Color(0xFFF3E8FF),
-                            fontSize = 11.2.sp,
-                            fontWeight = FontWeight.Normal
+                            fontSize = 10.8.sp,
+                            fontWeight = FontWeight.Normal,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
-                // 3. Bottom Row: Full 2-Line Scenario Description (Left) + Sheer See-Through Frosted Mor Cam [▶ Keşfet] Pill (Right)
+                Spacer(modifier = Modifier.height(5.dp))
+
+                // 3. Bottom Row: Full 2-Line Scenario Description (Left) + Frosted Mor Cam [▶ Keşfet / ▶ Devam Et] Pill (Right)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2483,27 +2557,42 @@ private fun MorCamTemplateCard(
                             .padding(end = 6.dp)
                     )
 
-                    // Sheer See-Through Frosted Mor Cam [▶ Keşfet] Capsule matching reference proportions
+                    // Sheer See-Through Frosted Mor Cam Action Capsule (emerald/lavender accent when started)
                     Box(
                         modifier = Modifier
                             .height(28.dp)
                             .clip(RoundedCornerShape(50))
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0x465B2896),
-                                        Color(0x322E1252)
-                                    )
+                                    colors = if (isStarted) {
+                                        listOf(
+                                            Color(0x5A165E4D),
+                                            Color(0x462A154D)
+                                        )
+                                    } else {
+                                        listOf(
+                                            Color(0x465B2896),
+                                            Color(0x322E1252)
+                                        )
+                                    }
                                 )
                             )
                             .drawBehind {
                                 drawCircle(
                                     brush = Brush.radialGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.22f),
-                                            Color(0xFFE9D5FF).copy(alpha = 0.10f),
-                                            Color.Transparent
-                                        ),
+                                        colors = if (isStarted) {
+                                            listOf(
+                                                Color(0xFF6EE7B7).copy(alpha = 0.24f),
+                                                Color(0xFFE9D5FF).copy(alpha = 0.12f),
+                                                Color.Transparent
+                                            )
+                                        } else {
+                                            listOf(
+                                                Color.White.copy(alpha = 0.22f),
+                                                Color(0xFFE9D5FF).copy(alpha = 0.10f),
+                                                Color.Transparent
+                                            )
+                                        },
                                         center = Offset(size.width * 0.50f, size.height),
                                         radius = size.width * 0.36f
                                     ),
@@ -2514,35 +2603,49 @@ private fun MorCamTemplateCard(
                             .border(
                                 width = 1.05.dp,
                                 brush = Brush.horizontalGradient(
-                                    colors = listOf(
-                                        Color(0xCCE9D5FF),
-                                        Color(0xDDE9D5FF),
-                                        Color(0x99A855F7)
-                                    )
+                                    colors = if (isStarted) {
+                                        listOf(
+                                            Color(0xDD6EE7B7),
+                                            Color(0xDDE9D5FF),
+                                            Color(0xBBA855F7)
+                                        )
+                                    } else {
+                                        listOf(
+                                            Color(0xCCE9D5FF),
+                                            Color(0xDDE9D5FF),
+                                            Color(0x99A855F7)
+                                        )
+                                    }
                                 ),
                                 shape = RoundedCornerShape(50)
                             )
-                            .padding(horizontal = 11.dp),
+                            .padding(horizontal = 10.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(3.5.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
                                 contentDescription = null,
-                                tint = Color.White,
+                                tint = if (isStarted) Color(0xFFD1FAE5) else Color.White,
                                 modifier = Modifier
                                     .size(13.dp)
                                     .offset(x = arrowNudgeDp.dp)
                             )
                             Text(
-                                text = if (isEnglish) "Explore" else "Keşfet",
+                                text = if (isStarted) {
+                                    if (isEnglish) "Continue" else "Devam Et"
+                                } else {
+                                    if (isEnglish) "Explore" else "Keşfet"
+                                },
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Serif,
                                 color = Color.White,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium
+                                fontSize = 11.2.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                softWrap = false
                             )
                         }
                     }
