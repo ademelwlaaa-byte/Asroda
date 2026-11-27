@@ -848,6 +848,9 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Current Room schema version; kept in sync with `@Database(version = ...)`. */
+        const val CURRENT_SCHEMA_VERSION = 50
+
         /** Bounded retention across all 7 diagnostic log tables so SQLite never grows unbounded. */
         val DIAGNOSTIC_LOG_TABLES = listOf(
             "prompt_violation_logs",
@@ -859,11 +862,44 @@ abstract class AppDatabase : RoomDatabase() {
             "implicit_correction_logs"
         )
 
+        /**
+         * Verifies that [ALL_MIGRATIONS] forms a contiguous, gapless chain from v1 to [CURRENT_SCHEMA_VERSION].
+         */
+        fun validateMigrationChain(): Boolean {
+            if (ALL_MIGRATIONS.size != CURRENT_SCHEMA_VERSION - 1) return false
+            for (i in ALL_MIGRATIONS.indices) {
+                val expectedStart = i + 1
+                val expectedEnd = i + 2
+                val migration = ALL_MIGRATIONS[i]
+                if (migration.startVersion != expectedStart || migration.endVersion != expectedEnd) {
+                    return false
+                }
+            }
+            return true
+        }
+
+        /**
+         * Performs a safe, non-blocking WAL passive checkpoint (e.g. before backup export).
+         * Returns true if the checkpoint command executed without SQLite error.
+         */
+        fun checkpointWalPassive(database: AppDatabase): Boolean {
+            return try {
+                database.openHelper.writableDatabase
+                    .query("PRAGMA wal_checkpoint(PASSIVE)")
+                    .use { it.moveToFirst() }
+                true
+            } catch (e: Exception) {
+                android.util.Log.w("AppDatabase", "WAL passive checkpoint skipped: ${e.message}")
+                false
+            }
+        }
+
         fun pruneDiagnosticLogs(database: AppDatabase, maxRowsPerTable: Int = 500): Int {
-            val safeCap = maxRowsPerTable.coerceAtLeast(50)
-            var prunedTables = 0
+            val safeCap = maxRowsPerTable.coerceIn(50, 50_000)
+            var committedPrunedTables = 0
             try {
                 val sqlite = database.openHelper.writableDatabase
+                var stagedPrunedTables = 0
                 sqlite.beginTransaction()
                 try {
                     for (table in DIAGNOSTIC_LOG_TABLES) {
@@ -871,20 +907,22 @@ abstract class AppDatabase : RoomDatabase() {
                             "DELETE FROM `$table` WHERE rowid NOT IN (" +
                                 "SELECT rowid FROM `$table` ORDER BY rowid DESC LIMIT $safeCap)"
                         )
-                        prunedTables++
+                        stagedPrunedTables++
                     }
                     sqlite.setTransactionSuccessful()
+                    committedPrunedTables = stagedPrunedTables
                 } finally {
                     sqlite.endTransaction()
                 }
             } catch (e: Exception) {
+                committedPrunedTables = 0
                 android.util.Log.w("AppDatabase", "Diagnostic log pruning skipped: ${e.message}")
             }
-            return prunedTables
+            return committedPrunedTables
         }
 
         /**
-         * Complete, gapless Room migration chain from v1 -> v48.
+         * Complete, gapless Room migration chain from v1 -> v50.
          * Destructive migration is strictly prohibited so user chats, bots, and Neural Vault data
          * are never silently wiped during upgrades.
          */
@@ -956,7 +994,10 @@ abstract class AppDatabase : RoomDatabase() {
                             super.onOpen(db)
                             try {
                                 db.execSQL("PRAGMA foreign_keys = ON")
-                                db.execSQL("PRAGMA busy_timeout = 5000")
+                                // PRAGMA busy_timeout returns a row on SQLite, so use query().use {} for API 24-36 safety
+                                db.query("PRAGMA busy_timeout = 5000").use { }
+                                db.execSQL("PRAGMA temp_store = MEMORY")
+                                db.execSQL("PRAGMA synchronous = NORMAL")
                             } catch (_: Exception) {}
                         }
                     })

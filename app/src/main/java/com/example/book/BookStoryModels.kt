@@ -149,8 +149,10 @@ enum class BookCharacterId(
     );
 
     companion object {
+        private val BY_KEY: Map<String, BookCharacterId> = entries.associateBy { it.key }
+
         fun fromKey(key: String): BookCharacterId? =
-            entries.firstOrNull { it.key == key }
+            BY_KEY[key.trim().lowercase(java.util.Locale.ROOT)]
     }
 }
 
@@ -178,8 +180,10 @@ enum class CharacterFlagAxis(
     FEAR("fear", "çekincesi", 0xFFF87171L, 2, isNegativeTone = true);
 
     companion object {
+        private val BY_KEY: Map<String, CharacterFlagAxis> = entries.associateBy { it.key }
+
         fun fromKey(key: String): CharacterFlagAxis? =
-            entries.firstOrNull { it.key == key }
+            BY_KEY[key.trim().lowercase(java.util.Locale.ROOT)]
     }
 }
 
@@ -212,8 +216,10 @@ enum class StoryFlagAxis(
     PUBLIC_EXPOSURE("public_exposure", "Açığa çıkma riski", 0xFFFDBA74L, 4, isWarning = true);
 
     companion object {
+        private val BY_KEY: Map<String, StoryFlagAxis> = entries.associateBy { it.key }
+
         fun fromKey(key: String): StoryFlagAxis? =
-            entries.firstOrNull { it.key == key }
+            BY_KEY[key.trim().lowercase(java.util.Locale.ROOT)]
     }
 }
 
@@ -229,10 +235,10 @@ data class FlagChangeEntry(
     val characterId: BookCharacterId? = null,
     val isNewlyUnlocked: Boolean = false
 ) {
-    fun formatTurkish(): String = if (delta >= 0) {
-        "$label +$delta arttı"
-    } else {
-        "$label $delta azaldı"
+    fun formatTurkish(): String = when {
+        delta > 0 -> "$label +$delta arttı"
+        delta < 0 -> "$label $delta azaldı"
+        else -> "$label değişmedi"
     }
 }
 

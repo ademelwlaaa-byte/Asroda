@@ -60,6 +60,10 @@ object BookChoiceParser {
     private val choiceLinePrefixRegex = Regex(
         "^\\s*(?:([1-6])\\s*[\\.)\\-:]|([1-6])️⃣|([A-Fa-f])\\s*[\\.):])\\s+(.+)$"
     )
+    private val multiSpaceRegex = Regex("\\s{2,}")
+    private val leadingPunctRegex = Regex("^[-–—:•·]+\\s*")
+    private val bareDigitRegex = Regex("^\\s*([1-6])\\s*$")
+    private val prefixDigitRegex = Regex("^[#]?([1-6])[.):]")
 
     /**
      * Parses a single choice label (deterministic or AI-generated) into clean display text,
@@ -105,7 +109,7 @@ object BookChoiceParser {
         fun addBadge(label: String, kind: ChoiceBadgeKind) {
             val clean = label.trim()
             if (clean.isBlank()) return
-            val key = "${kind.name}:${clean.lowercase()}"
+            val key = "${kind.name}:${clean.lowercase(TR_LOCALE)}"
             if (seenBadgeLabels.add(key)) {
                 badges.add(ParsedChoiceBadge(clean, kind))
             }
@@ -115,7 +119,7 @@ object BookChoiceParser {
         for (m in matches) {
             val inner = m.groupValues.getOrNull(1)?.trim().orEmpty()
             if (inner.isBlank()) continue
-            val lower = inner.lowercase(java.util.Locale.forLanguageTag("tr-TR"))
+            val lower = inner.lowercase(TR_LOCALE)
 
             when {
                 lower.startsWith("kilitli:") || lower.startsWith("locked:") || lower.startsWith("koşul:") || lower.startsWith("şart:") -> {
@@ -166,14 +170,14 @@ object BookChoiceParser {
                 hintLower.contains("risk") || hintLower.contains("tehlike") || hintLower.contains("kırmızı göz") -> ChoiceBadgeKind.RISK
                 else -> ChoiceBadgeKind.TONE
             }
-            if (badges.none { it.label.equals(cleanHint, ignoreCase = true) }) {
+            if (badges.none { it.label.lowercase(TR_LOCALE) == hintLower }) {
                 addBadge(cleanHint, kind)
             }
         }
 
         val stripped = bracketTagRegex.replace(safeRaw, " ")
-            .replace(Regex("\\s{2,}"), " ")
-            .replace(Regex("^[-–—:•·]+\\s*"), "")
+            .replace(multiSpaceRegex, " ")
+            .replace(leadingPunctRegex, "")
             .trim()
 
         val finalDisplay = stripped.ifBlank { safeRaw }
@@ -256,14 +260,14 @@ object BookChoiceParser {
         }
 
         // 2. Bare digit match ("1", "2", "3")
-        val bareDigit = Regex("^\\s*([1-6])\\s*\$").find(normalized)
+        val bareDigit = bareDigitRegex.find(normalized)
         if (bareDigit != null) {
             val n = bareDigit.groupValues[1].toIntOrNull()
             if (n != null && n <= choices.size) return n
         }
 
         // 3. "1." / "1)" / "#1" prefix
-        val prefixDigit = Regex("^[#]?([1-6])[.):]").find(normalized)
+        val prefixDigit = prefixDigitRegex.find(normalized)
         if (prefixDigit != null) {
             val n = prefixDigit.groupValues[1].toIntOrNull()
             if (n != null && n <= choices.size) return n

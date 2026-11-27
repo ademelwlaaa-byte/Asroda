@@ -15,15 +15,19 @@ object ChatDraftStore {
     private const val KEY_TS_PREFIX = "draft_ts_"
     internal const val MAX_DRAFT_CHARS = 16_000
     internal const val MAX_STORED_DRAFTS = 60
+    private val storeLock = Any()
+
+    private fun prefs(context: Context) =
+        (context.applicationContext ?: context).getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun loadDraft(context: Context, botId: String): String {
         val cleanId = botId.trim()
         if (cleanId.isBlank()) return ""
         return try {
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val raw = prefs(context)
                 .getString("$KEY_TEXT_PREFIX$cleanId", "")
                 .orEmpty()
+            if (raw.length > MAX_DRAFT_CHARS) raw.take(MAX_DRAFT_CHARS) else raw
         } catch (_: Exception) {
             ""
         }
@@ -36,44 +40,58 @@ object ChatDraftStore {
             clearDraft(context, cleanId)
             return
         }
-        try {
-            val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val bounded = if (rawText.length > MAX_DRAFT_CHARS) rawText.take(MAX_DRAFT_CHARS) else rawText
-            val editor = prefs.edit()
-                .putString("$KEY_TEXT_PREFIX$cleanId", bounded)
-                .putLong("$KEY_TS_PREFIX$cleanId", System.currentTimeMillis())
+        synchronized(storeLock) {
+            try {
+                val p = prefs(context)
+                val bounded = if (rawText.length > MAX_DRAFT_CHARS) rawText.take(MAX_DRAFT_CHARS) else rawText
+                val editor = p.edit()
+                    .putString("$KEY_TEXT_PREFIX$cleanId", bounded)
+                    .putLong("$KEY_TS_PREFIX$cleanId", System.currentTimeMillis())
 
-            // Enforce LRU cap so old deleted/abandoned bots never bloat preferences
-            val allTs = prefs.all.entries
-                .filter { it.key.startsWith(KEY_TS_PREFIX) }
-                .mapNotNull { entry ->
-                    val id = entry.key.removePrefix(KEY_TS_PREFIX)
-                    val ts = (entry.value as? Number)?.toLong() ?: 0L
-                    if (id == cleanId) null else id to ts
+                // Enforce deterministic LRU cap across all stored draft IDs (including any orphaned text keys)
+                val allEntries = p.all
+                val otherIds = LinkedHashSet<String>()
+                for (key in allEntries.keys) {
+                    when {
+                        key.startsWith(KEY_TEXT_PREFIX) -> {
+                            val id = key.removePrefix(KEY_TEXT_PREFIX)
+                            if (id.isNotBlank() && id != cleanId) otherIds.add(id)
+                        }
+                        key.startsWith(KEY_TS_PREFIX) -> {
+                            val id = key.removePrefix(KEY_TS_PREFIX)
+                            if (id.isNotBlank() && id != cleanId) otherIds.add(id)
+                        }
+                    }
                 }
-            if (allTs.size >= MAX_STORED_DRAFTS) {
-                val overflow = allTs.size - MAX_STORED_DRAFTS + 1
-                allTs.sortedBy { it.second }.take(overflow).forEach { (oldId, _) ->
-                    editor.remove("$KEY_TEXT_PREFIX$oldId")
-                    editor.remove("$KEY_TS_PREFIX$oldId")
+                if (otherIds.size >= MAX_STORED_DRAFTS) {
+                    val overflow = otherIds.size - MAX_STORED_DRAFTS + 1
+                    otherIds
+                        .map { id -> id to ((allEntries["$KEY_TS_PREFIX$id"] as? Number)?.toLong() ?: 0L) }
+                        .sortedWith(compareBy<Pair<String, Long>> { it.second }.thenBy { it.first })
+                        .take(overflow)
+                        .forEach { (oldId, _) ->
+                            editor.remove("$KEY_TEXT_PREFIX$oldId")
+                            editor.remove("$KEY_TS_PREFIX$oldId")
+                        }
                 }
+                editor.apply()
+            } catch (_: Exception) {
             }
-            editor.apply()
-        } catch (_: Exception) {
         }
     }
 
     fun clearDraft(context: Context, botId: String) {
         val cleanId = botId.trim()
         if (cleanId.isBlank()) return
-        try {
-            context.applicationContext
-                .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .remove("$KEY_TEXT_PREFIX$cleanId")
-                .remove("$KEY_TS_PREFIX$cleanId")
-                .apply()
-        } catch (_: Exception) {
+        synchronized(storeLock) {
+            try {
+                prefs(context)
+                    .edit()
+                    .remove("$KEY_TEXT_PREFIX$cleanId")
+                    .remove("$KEY_TS_PREFIX$cleanId")
+                    .apply()
+            } catch (_: Exception) {
+            }
         }
     }
 

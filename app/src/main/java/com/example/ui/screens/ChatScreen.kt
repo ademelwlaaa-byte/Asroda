@@ -1,34 +1,21 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.unit.sp
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -58,6 +45,7 @@ import com.example.data.local.UserSettingsEntity
 import com.example.data.repository.KeyCharacter
 import com.example.ui.components.BotSettingsModal
 import com.example.ui.viewmodel.EmochiViewModel
+import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -112,40 +100,44 @@ fun ChatScreen(
             com.example.util.ChatDraftStore.saveDraft(context, bot.id, latestInputText)
         }
     }
-    var showBotSettings by remember { mutableStateOf(false) }
-    var showQuickProfile by remember { mutableStateOf(false) }
-    var showBackgroundPicker by remember { mutableStateOf(false) }
-    var showPlusToolkit by remember { mutableStateOf(false) }
-    var showStarredSheet by remember { mutableStateOf(false) }
-    var showStoryStatsDialog by remember { mutableStateOf(false) }
-    var showBookmarksDialog by remember { mutableStateOf(false) }
-    var showDirectorDialog by remember { mutableStateOf(false) }
-    var showScratchpadDialog by remember { mutableStateOf(false) }
+    var showBotSettings by remember(bot.id) { mutableStateOf(false) }
+    var showQuickProfile by remember(bot.id) { mutableStateOf(false) }
+    var showBackgroundPicker by remember(bot.id) { mutableStateOf(false) }
+    var showPlusToolkit by remember(bot.id) { mutableStateOf(false) }
+    var showStarredSheet by remember(bot.id) { mutableStateOf(false) }
+    var showStoryStatsDialog by remember(bot.id) { mutableStateOf(false) }
+    var showBookmarksDialog by remember(bot.id) { mutableStateOf(false) }
+    var showDirectorDialog by remember(bot.id) { mutableStateOf(false) }
+    var showScratchpadDialog by remember(bot.id) { mutableStateOf(false) }
     var chatFontScale by remember { mutableStateOf(com.example.util.ChatTypographyStore.loadFontScale(context)) }
     var storyBookmarks by remember(bot.id) {
         mutableStateOf(com.example.util.StoryBookmarkStore.loadBookmarks(context, bot.id))
     }
-    var showQuickNeuralVault by remember { mutableStateOf(false) }
+    var showQuickNeuralVault by remember(bot.id) { mutableStateOf(false) }
 
-    var editingMessageId by remember { mutableStateOf<String?>(null) }
-    var editingText by remember { mutableStateOf("") }
-    var expandedMenuMessageId by remember { mutableStateOf<String?>(null) }
-    var expandedUserMenuMessageId by remember { mutableStateOf<String?>(null) }
-    var rewindTargetMessageId by remember { mutableStateOf<String?>(null) }
-    var reactionPickerMessageId by remember { mutableStateOf<String?>(null) }
-    var showSearchBar by remember { mutableStateOf(false) }
-    var localSearchQuery by remember { mutableStateOf("") }
-    var activeMilestone by remember { mutableStateOf<MilestoneEntity?>(null) }
+    var editingMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var editingText by remember(bot.id) { mutableStateOf("") }
+    var expandedMenuMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var expandedUserMenuMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var rewindTargetMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var reactionPickerMessageId by remember(bot.id) { mutableStateOf<String?>(null) }
+    var showSearchBar by remember(bot.id) { mutableStateOf(false) }
+    var localSearchQuery by remember(bot.id) { mutableStateOf("") }
+    var activeMilestone by remember(bot.id) { mutableStateOf<MilestoneEntity?>(null) }
 
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
     val viewModel: EmochiViewModel = viewModel()
 
-    val searchResults by viewModel.searchResults.collectAsState()
-    val starredMessages by viewModel.starredMessages.collectAsState()
+    DisposableEffect(bot.id) {
+        onDispose { viewModel.clearSearch() }
+    }
+
+    val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
+    val starredMessages by viewModel.starredMessages.collectAsStateWithLifecycle()
     val activeMilestones by viewModel.activeMilestones.collectAsStateWithLifecycle()
-    val memoryCommitNotice by viewModel.memoryCommitNotice.collectAsState()
-    val pendingCastMember by viewModel.pendingCastMember.collectAsState()
+    val memoryCommitNotice by viewModel.memoryCommitNotice.collectAsStateWithLifecycle()
+    val pendingCastMember by viewModel.pendingCastMember.collectAsStateWithLifecycle()
     val reactionEmojis = remember { listOf("❤️", "😂", "😮", "😢", "👍", "🔥") }
 
     // Sistem #18: Auto-dismiss milestone celebration after 4.5s
@@ -334,8 +326,16 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(bot.id, rawValidMessages.isEmpty()) {
-        if (rawValidMessages.isEmpty() && !isSending && bot.mode != "book") {
+    val isBookMode = remember(bot) {
+        bot.mode == "book" ||
+            bot.id == "preset_aiden_mcu_cosmic" ||
+            bot.aiName.contains("Kitap") ||
+            bot.aiPersonality.contains("KİTAP MODU") ||
+            bot.scenario.contains("KİTAP MODU")
+    }
+
+    LaunchedEffect(bot.id, rawValidMessages.isEmpty(), isBookMode) {
+        if (rawValidMessages.isEmpty() && !isSending && !isBookMode) {
             onEnsureOpeningMessage()
         }
     }
@@ -348,7 +348,7 @@ fun ChatScreen(
 
     // Throttled coroutine-only auto-scroll during streaming:
     // follows tall multi-paragraph bubbles line-by-line at the bottom while strictly respecting upward user scrolling.
-    LaunchedEffect(streamingTextFlow) {
+    LaunchedEffect(bot.id, streamingTextFlow) {
         var lastScrollMs = 0L
         streamingTextFlow.collect { chunk ->
             val nowMs = System.currentTimeMillis()
@@ -369,12 +369,16 @@ fun ChatScreen(
     val isUniverse = bot.mode == "universe"
     val displayName = if (isUniverse) bot.universeName.ifBlank { bot.aiName.ifBlank { "Evren" } } else bot.aiName.ifBlank { bot.universeName.ifBlank { "Karakter" } }
     val avatarInitial = remember(displayName) {
-        displayName.trim().firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "A"
+        displayName.trim()
+            .firstOrNull { it.isLetterOrDigit() }
+            ?.toString()
+            ?.uppercase(Locale.forLanguageTag("tr-TR"))
+            ?: "A"
     }
 
     val initialMessageIds = remember(bot.id) { rawValidMessages.map { it.id }.toSet() }
     var sendBurstTrigger by remember(bot.id) { mutableIntStateOf(0) }
-    var copiedMsgId by remember { mutableStateOf<String?>(null) }
+    var copiedMsgId by remember(bot.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(copiedMsgId) {
         if (copiedMsgId != null) {
             delay(1500)
@@ -388,14 +392,6 @@ fun ChatScreen(
     val affectionDeltaText = emotionHud.affectionDeltaText
     val affectionDeltaTrigger = emotionHud.affectionDeltaTrigger
     val affectionDeltaPositive = emotionHud.affectionDeltaPositive
-
-    val isBookMode = remember(bot) {
-        bot.mode == "book" ||
-            bot.id == "preset_aiden_mcu_cosmic" ||
-            bot.aiName.contains("Kitap") ||
-            bot.aiPersonality.contains("KİTAP MODU") ||
-            bot.scenario.contains("KİTAP MODU")
-    }
 
     if (isBookMode) {
         BookReaderView(
@@ -571,14 +567,14 @@ fun ChatScreen(
                             val md = com.example.util.ChatTranscriptFormatter.formatMarkdown(
                                 botDisplayName = displayName,
                                 userDisplayName = bot.userCharName.ifBlank { "Sen" },
-                                messages = validMessages
+                                messages = rawValidMessages
                             )
                             if (md.isNotBlank()) {
                                 val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
                                 cm?.setPrimaryClip(android.content.ClipData.newPlainText(displayName, md))
                                 android.widget.Toast.makeText(
                                     context,
-                                    "Hikaye panoya kopyalandı (${validMessages.size} mesaj)",
+                                    "Hikaye panoya kopyalandı (${rawValidMessages.size} mesaj)",
                                     android.widget.Toast.LENGTH_SHORT
                                 ).show()
                             }
@@ -587,7 +583,7 @@ fun ChatScreen(
                             val md = com.example.util.ChatTranscriptFormatter.formatMarkdown(
                                 botDisplayName = displayName,
                                 userDisplayName = bot.userCharName.ifBlank { "Sen" },
-                                messages = validMessages
+                                messages = rawValidMessages
                             )
                             if (md.isNotBlank()) {
                                 try {
@@ -596,9 +592,12 @@ fun ChatScreen(
                                         putExtra(android.content.Intent.EXTRA_SUBJECT, "$displayName — Asroda Hikayesi")
                                         putExtra(android.content.Intent.EXTRA_TEXT, md)
                                     }
-                                    context.startActivity(
-                                        android.content.Intent.createChooser(shareIntent, "Hikayeyi Paylaş")
-                                    )
+                                    val chooser = android.content.Intent.createChooser(shareIntent, "Hikayeyi Paylaş").apply {
+                                        if (context !is android.app.Activity) {
+                                            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                    }
+                                    context.startActivity(chooser)
                                 } catch (_: Exception) {}
                             }
                         },
@@ -626,8 +625,13 @@ fun ChatScreen(
                         onOpenScratchpad = { showScratchpadDialog = true },
                         onJumpToStart = {
                             isStickyToBottom = false
-                            coroutineScope.launch {
-                                try { listState.animateScrollToItem(0) } catch (_: Exception) {}
+                            val firstMsgId = rawValidMessages.firstOrNull()?.id
+                            if (firstMsgId != null && hiddenOlderCount > 0) {
+                                jumpToMessageById(firstMsgId)
+                            } else {
+                                coroutineScope.launch {
+                                    try { listState.animateScrollToItem(0) } catch (_: Exception) {}
+                                }
                             }
                         }
                     )
@@ -637,7 +641,7 @@ fun ChatScreen(
                 val bottomInsetPadding = innerPadding.calculateBottomPadding()
 
                 LaunchedEffect(bottomInsetPadding, isImeVisible) {
-                    if (isImeVisible) {
+                    if (isImeVisible && isStickyToBottom) {
                         val totalItems = (if (hasLoadOlderHeader) 1 else 0) + validMessages.size + if (isSending) 1 else 0
                         if (totalItems > 0) {
                             try { listState.scrollToItem(totalItems - 1) } catch (_: Exception) {}
@@ -844,7 +848,7 @@ fun ChatScreen(
             context = context,
             bot = bot,
             displayName = displayName,
-            validMessages = validMessages,
+            validMessages = rawValidMessages,
             onDismiss = { showStoryStatsDialog = false }
         )
     }
@@ -854,7 +858,7 @@ fun ChatScreen(
             context = context,
             botId = bot.id,
             displayName = displayName,
-            validMessages = validMessages,
+            validMessages = rawValidMessages,
             storyBookmarks = storyBookmarks,
             onBookmarksChanged = { storyBookmarks = it },
             onJumpToMessage = jumpToMessageById,
@@ -863,7 +867,7 @@ fun ChatScreen(
     }
 
     if (showDirectorDialog) {
-        val lastAiReply = validMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
+        val lastAiReply = rawValidMessages.lastOrNull { it.role == "assistant" }?.text.orEmpty()
         com.example.ui.components.ChatStoryDirectorDialog(
             context = context,
             botId = bot.id,

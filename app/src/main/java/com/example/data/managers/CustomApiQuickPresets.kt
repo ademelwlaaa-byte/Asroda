@@ -1,5 +1,8 @@
 package com.example.data.managers
 
+import com.example.util.CustomApiEndpointInfoHelper
+import java.util.Locale
+
 /**
  * Curated 1-tap quick-fill presets for Custom (OpenAI / Anthropic-compatible) API endpoints.
  * Saves mobile users from manually typing base URLs while still letting them fetch all live models
@@ -74,4 +77,24 @@ object CustomApiQuickPresets {
             suggestedModel = "local-model"
         )
     )
+
+    fun findById(id: String): Preset? {
+        val norm = id.trim().lowercase(Locale.ROOT)
+        if (norm.isBlank()) return null
+        return presets.firstOrNull { it.id == norm }
+    }
+
+    fun findMatchingPreset(rawUrl: String): Preset? {
+        val info = CustomApiEndpointInfoHelper.inspect(rawUrl)
+        if (info.host.isBlank()) return null
+        val sanitized = CustomApiEndpointInfoHelper.sanitizeUrlForDisplay(rawUrl)
+        return when {
+            info.isLocalServer && sanitized.contains(":11434") -> findById("ollama")
+            info.isLocalServer && sanitized.contains(":1234") -> findById("lmstudio")
+            else -> presets.firstOrNull { preset ->
+                val presetHost = CustomApiEndpointInfoHelper.inspect(preset.baseUrl).host
+                presetHost.isNotBlank() && info.host == presetHost
+            }
+        }
+    }
 }

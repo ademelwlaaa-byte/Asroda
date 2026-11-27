@@ -20,17 +20,22 @@ object BotCategoryCountHelper {
         favoriteIds: Set<String> = emptySet(),
         draftBotIds: Set<String> = emptySet()
     ): LibraryCounts {
+        if (bots.isEmpty()) return LibraryCounts(0, 0, 0, 0, 0)
+        var total = 0
         var personal = 0
         var universe = 0
         var favs = 0
         var drafts = 0
+        val seenIds = HashSet<String>(bots.size)
         for (b in bots) {
-            if (b.mode == "universe") universe++ else personal++
+            if (b.id.isNotBlank() && !seenIds.add(b.id)) continue
+            total++
+            if (b.mode.trim().equals("universe", ignoreCase = true)) universe++ else personal++
             if (b.id in favoriteIds) favs++
             if (b.id in draftBotIds) drafts++
         }
         return LibraryCounts(
-            total = bots.size,
+            total = total,
             personal = personal,
             universe = universe,
             favorites = favs,
@@ -40,7 +45,7 @@ object BotCategoryCountHelper {
 
     fun formatSummary(counts: LibraryCounts): String {
         val parts = mutableListOf<String>()
-        parts.add("${counts.total} hikaye")
+        parts.add("${counts.total.coerceAtLeast(0)} hikaye")
         if (counts.universe > 0) parts.add("${counts.universe} evren")
         if (counts.favorites > 0) parts.add("${counts.favorites} favori")
         if (counts.withDrafts > 0) parts.add("${counts.withDrafts} taslak")

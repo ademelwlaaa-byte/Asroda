@@ -28,9 +28,11 @@ object ChatScrollPolicy {
         if (totalItems <= 0 || !canScrollForward) return true
         val idx = lastVisibleIndex ?: return false
         val endPx = lastVisibleEndPx ?: return false
-        val itemsFromEnd = totalItems - 1 - idx
+        if (idx < 0 || idx > totalItems - 1) return false
+        val itemsFromEnd = (totalItems - 1) - idx
         if (itemsFromEnd > 0) return false
-        return (endPx - viewportEndPx) <= tolerancePx
+        val safeTolerance = tolerancePx.coerceAtLeast(0).toLong()
+        return (endPx.toLong() - viewportEndPx.toLong()) <= safeTolerance
     }
 
     /**
@@ -69,9 +71,9 @@ object ChatScrollPolicy {
         if (totalItems <= 0) return 0f
         val idx = lastVisibleIndex ?: return null
         val endPx = lastVisibleEndPx ?: return null
-        if (idx < totalItems - 1) return null
-        val overflow = endPx - viewportEndPx
-        return if (overflow > 0) overflow.toFloat() else 0f
+        if (idx < 0 || idx < totalItems - 1) return null
+        val overflow = endPx.toLong() - viewportEndPx.toLong()
+        return if (overflow > 0L) overflow.toFloat() else 0f
     }
 
     /**
@@ -87,6 +89,8 @@ object ChatScrollPolicy {
     ): Boolean {
         if (chunk.isNullOrEmpty()) return false
         if (!isStickyToBottom || isUserScrollInProgress) return false
-        return (nowMs - lastScrollMs) >= throttleMs
+        if (nowMs < lastScrollMs) return true // Backward wall-clock adjustment must never freeze scrolling
+        val safeThrottle = throttleMs.coerceAtLeast(0L)
+        return (nowMs - lastScrollMs) >= safeThrottle
     }
 }
